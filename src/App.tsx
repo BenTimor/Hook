@@ -6,6 +6,7 @@ import { useChatStore } from "./store/useChatStore";
 import { Composer } from "./components/Composer";
 import { Hero } from "./components/Hero";
 import { PaneHead } from "./components/PaneHead";
+import { SettingsSheet } from "./components/SettingsSheet";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
 
@@ -102,6 +103,7 @@ export default function App() {
           )}
         </div>
       </main>
+      <SettingsSheet />
       <Toaster
         theme="light"
         position="bottom-center"

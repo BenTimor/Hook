@@ -4,7 +4,7 @@
 #  Copy this file to `harness.config.toml` and fill in your provider details.
 #  It is compiled directly into the binary with `include_str!`, so changing any
 #  value here requires a rebuild (`pnpm app:build`). There is no runtime settings
-#  screen by design.
+#  provider screen by design.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [provider]
@@ -40,3 +40,36 @@ thinking = "medium"
 # Optional sampling controls. Omit to leave the provider defaults alone.
 # temperature = 0.7
 # max_tokens = 4096
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Coding agents
+#
+#  The chat agent can launch pi inside a project folder. Each agent is spawned
+#  with your host pi's *auth only*: no extensions, skills, prompt templates or
+#  MCP servers load, and project-local pi config is ignored. The single policy
+#  it inherits is Hook's guard (bash needs an explicit timeout).
+
+# -----------------------------------------------------------------------------
+#  Coding agents
+#
+#  The chat agent can launch pi inside a project folder. Each agent is spawned
+#  with your host pi's *auth only*: no extensions, skills, prompt templates or
+#  MCP servers load, and project-local pi config is ignored. The single policy
+#  it inherits is Hook's guard (bash needs an explicit timeout).
+# -----------------------------------------------------------------------------
+
+[coding]
+# Passed to pi as --model. Empty = pi's own default model.
+model = ""
+# Passed to pi as --thinking: off | minimal | low | medium | high | xhigh | max
+thinking = ""
+# How many coding agents may run at the same time.
+max_concurrent = 3
+# Deadline limits (seconds) enforced on every bash call inside a coding agent.
+bash_max_timeout = 3600
+bash_min_timeout = 1
+
+[agent]
+# Leave empty to use Hook's built-in instructions for the chat agent.
+# Set it to replace them entirely. Sent verbatim as the system prompt.
+system_prompt = ""

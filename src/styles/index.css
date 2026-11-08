@@ -1524,3 +1524,365 @@ textarea {
     background: #fbfbf9;
   }
 }
+
+/* ── Coding-agent indicator ────────────────────────────────────────────── */
+
+.agent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 11px 0 9px;
+  margin-right: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+.agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 0 rgba(63, 143, 91, 0.45);
+  animation: agent-pulse 1.9s var(--ease) infinite;
+}
+
+@keyframes agent-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(63, 143, 91, 0.4);
+    opacity: 1;
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(63, 143, 91, 0);
+    opacity: 0.72;
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(63, 143, 91, 0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-dot {
+    animation: none;
+  }
+}
+
+.foot-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 7px 0 5px;
+  margin-left: -5px;
+  border-radius: 6px;
+  color: var(--ink-3);
+  font-size: 11px;
+  transition: background 120ms, color 120ms;
+}
+
+.foot-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.foot-btn:hover {
+  background: rgba(24, 24, 20, 0.05);
+  color: var(--ink-2);
+}
+
+/* ── Settings sheet ────────────────────────────────────────────────────── */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  background: rgba(24, 24, 20, 0.16);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: sheet-fade 140ms var(--ease);
+}
+
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  max-height: 100%;
+  border-radius: 18px;
+  background: #fbfbf9;
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: sheet-rise 180ms var(--ease);
+}
+
+@keyframes sheet-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-backdrop,
+  .sheet {
+    animation: none;
+  }
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 14px 0 22px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.sheet-head h2 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.sheet-head .icon-btn {
+  margin-left: auto;
+}
+
+.sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding: 22px;
+  overflow-y: auto;
+}
+
+.sheet-section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.sheet-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  color: var(--ink);
+}
+
+.sheet-label .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sheet-label .status svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sheet-label .status.ok {
+  color: var(--ok);
+}
+
+.sheet-label .status.bad {
+  color: var(--danger);
+}
+
+.sheet-help {
+  margin: 0;
+  max-width: 56ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.sheet-help code,
+.sheet-foot code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(24, 24, 20, 0.05);
+}
+
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.path-box,
+.text-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.85);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 32px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-input {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: var(--ink);
+  outline: none;
+}
+
+.text-input:focus {
+  border-color: rgba(61, 90, 224, 0.4);
+  box-shadow: 0 0 0 3px rgba(61, 90, 224, 0.09);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: #fff;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 120ms, border-color 120ms, transform 120ms;
+}
+
+.btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.btn:hover {
+  background: #fdfdfb;
+  border-color: rgba(24, 24, 20, 0.2);
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.btn-ghost {
+  padding: 0 10px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-3);
+}
+
+.btn-ghost:hover {
+  background: rgba(24, 24, 20, 0.05);
+  border-color: transparent;
+  color: var(--ink-2);
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-list li {
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--line-soft);
+}
+
+.project-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink);
+}
+
+.project-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(24, 24, 20, 0.05);
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.badge svg {
+  width: 10px;
+  height: 10px;
+}
+
+.sheet-foot {
+  margin: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-4);
+}
+
+.muted {
+  color: var(--ink-4);
+}

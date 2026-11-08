@@ -4,6 +4,7 @@ import { PanelLeft } from "lucide-react";
 import { win } from "../lib/bridge";
 import { modKey } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
+import { AgentPill } from "./AgentPill";
 import { WindowControls } from "./WindowControls";
 
 export function PaneHead() {
@@ -74,6 +75,7 @@ export function PaneHead() {
       )}
 
       <div className="spacer" />
+      <AgentPill />
       <WindowControls />
     </div>
   );

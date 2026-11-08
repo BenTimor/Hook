@@ -2,16 +2,24 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
-use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, State};
 
+use crate::agent::AgentManager;
 use crate::config;
-use crate::provider::{self, CancelToken, Chunk, Outcome};
+use crate::projects::{Project, ProjectsStore};
+use crate::provider::CancelToken;
+use crate::settings::SettingsStore;
 use crate::store::{now_ms, Chat, ChatMeta, Message, SearchHit, Store, DEFAULT_TITLE};
+use crate::turn::{self, TurnState};
 
 pub struct AppState {
+    pub app: AppHandle,
     pub store: Arc<Store>,
+    pub settings: Arc<SettingsStore>,
+    pub projects: Arc<ProjectsStore>,
+    pub agents: Arc<AgentManager>,
     pub streams: Arc<Mutex<HashMap<String, CancelToken>>>,
+    pub turns: TurnState,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -34,43 +42,19 @@ pub fn app_info() -> Result<AppInfo, String> {
     })
 }
 
-#[derive(Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
-pub enum StreamEvent {
-    Started {
-        messages: Vec<Message>,
-        meta: ChatMeta,
-    },
-    Delta {
-        text: String,
-    },
-    Reasoning {
-        text: String,
-    },
-    Done {
-        messages: Vec<Message>,
-        meta: ChatMeta,
-    },
-    Error {
-        message: String,
-        messages: Vec<Message>,
-        meta: ChatMeta,
-    },
-}
-
 #[tauri::command]
-pub fn list_chats(state: State<'_, AppState>) -> Result<Vec<ChatMeta>, String> {
+pub fn list_chats(state: State<'_, Arc<AppState>>) -> Result<Vec<ChatMeta>, String> {
     state.store.list()
 }
 
 #[tauri::command]
-pub fn get_chat(state: State<'_, AppState>, chat_id: String) -> Result<Chat, String> {
+pub fn get_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<Chat, String> {
     state.store.load(&chat_id)
 }
 
 #[tauri::command]
 pub fn rename_chat(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     chat_id: String,
     title: String,
 ) -> Result<ChatMeta, String> {
@@ -79,7 +63,7 @@ pub fn rename_chat(
 
 #[tauri::command]
 pub fn set_pinned(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     chat_id: String,
     pinned: bool,
 ) -> Result<ChatMeta, String> {
@@ -87,38 +71,41 @@ pub fn set_pinned(
 }
 
 #[tauri::command]
-pub fn delete_chat(state: State<'_, AppState>, chat_id: String) -> Result<(), String> {
+pub fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
+    for agent in state.agents.list() {
+        if agent.chat_id == chat_id && agent.is_live() {
+            let _ = state.agents.stop(&agent.id);
+        }
+    }
     state.store.delete(&chat_id)
 }
 
 #[tauri::command]
-pub fn restore_chat(state: State<'_, AppState>, chat_id: String) -> Result<ChatMeta, String> {
+pub fn restore_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<ChatMeta, String> {
     state.store.restore(&chat_id)
 }
 
 #[tauri::command]
-pub fn search_chats(state: State<'_, AppState>, query: String) -> Result<Vec<SearchHit>, String> {
+pub fn search_chats(state: State<'_, Arc<AppState>>, query: String) -> Result<Vec<SearchHit>, String> {
     state.store.search(&query)
 }
 
 #[tauri::command]
-pub async fn send_message(
-    state: State<'_, AppState>,
+pub fn send_message(
+    state: State<'_, Arc<AppState>>,
     chat_id: Option<String>,
     text: String,
-    channel: Channel<StreamEvent>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("Message is empty".into());
     }
-    let cfg = config::get()?.clone();
 
     let mut chat = match chat_id {
         Some(id) => state.store.load(&id)?,
         None => Chat::new(),
     };
-    if chat.messages.iter().any(|m| m.status == "streaming") {
+    if state.turns.is_busy(&chat.meta.id) {
         return Err("A reply is already streaming in this chat.".into());
     }
 
@@ -126,81 +113,58 @@ pub async fn send_message(
         chat.meta.title = derive_title(&text);
     }
     chat.meta.updated_at = now_ms();
-
-    let user = Message::new("user", &text, "complete");
-    let assistant = Message::new("assistant", "", "streaming");
-    let assistant_id = assistant.id.clone();
-    chat.messages.push(user);
-    chat.messages.push(assistant);
-
+    chat.messages.push(Message::new("user", &text, "complete"));
     state.store.save(&mut chat)?;
-    let history = build_history(&chat, &assistant_id);
 
-    let _ = channel.send(StreamEvent::Started {
-        messages: chat.messages.clone(),
-        meta: chat.meta.clone(),
-    });
-
-    spawn_stream(
-        &state,
-        cfg,
-        channel,
-        chat.meta.id.clone(),
-        assistant_id,
-        history,
-    );
-    Ok(())
+    turn::kick(state.inner().clone(), chat.meta.id.clone());
+    Ok(chat.meta.id)
 }
 
 #[tauri::command]
-pub async fn regenerate(
-    state: State<'_, AppState>,
-    chat_id: String,
-    channel: Channel<StreamEvent>,
-) -> Result<(), String> {
-    let cfg = config::get()?.clone();
+pub fn regenerate(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
     let mut chat = state.store.load(&chat_id)?;
+    if state.turns.is_busy(&chat_id) {
+        return Err("A reply is already streaming in this chat.".into());
+    }
 
-    if let Some(last) = chat.messages.iter().rposition(|m| m.role == "assistant") {
-        chat.messages.truncate(last);
-    } else {
+    let Some(last) = chat.messages.iter().rposition(|m| m.role == "assistant") else {
         return Err("Nothing to regenerate yet.".into());
+    };
+    chat.messages.truncate(last);
+    // Drop any tool traffic that belonged to the removed reply.
+    while chat
+        .messages
+        .last()
+        .map(|m| m.role == "tool" || (m.hidden && m.role == "assistant"))
+        .unwrap_or(false)
+    {
+        chat.messages.pop();
     }
     if !chat.messages.iter().any(|m| m.role == "user") {
         return Err("Nothing to regenerate yet.".into());
     }
-
-    let assistant = Message::new("assistant", "", "streaming");
-    let assistant_id = assistant.id.clone();
-    chat.messages.push(assistant);
     chat.meta.updated_at = now_ms();
-
     state.store.save(&mut chat)?;
-    let history = build_history(&chat, &assistant_id);
 
-    let _ = channel.send(StreamEvent::Started {
-        messages: chat.messages.clone(),
-        meta: chat.meta.clone(),
-    });
-
-    spawn_stream(&state, cfg, channel, chat_id, assistant_id, history);
+    turn::kick(state.inner().clone(), chat_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn edit_message(
-    state: State<'_, AppState>,
+pub fn edit_message(
+    state: State<'_, Arc<AppState>>,
     chat_id: String,
     message_id: String,
     text: String,
-    channel: Channel<StreamEvent>,
 ) -> Result<(), String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("Message is empty".into());
     }
-    let cfg = config::get()?.clone();
     let mut chat = state.store.load(&chat_id)?;
+    if state.turns.is_busy(&chat_id) {
+        return Err("A reply is already streaming in this chat.".into());
+    }
 
     let Some(index) = chat.messages.iter().position(|m| m.id == message_id) else {
         return Err("Message not found".into());
@@ -213,131 +177,90 @@ pub async fn edit_message(
     let mut user = Message::new("user", &text, "complete");
     user.id = message_id;
     chat.messages.push(user);
-
-    let assistant = Message::new("assistant", "", "streaming");
-    let assistant_id = assistant.id.clone();
-    chat.messages.push(assistant);
     chat.meta.updated_at = now_ms();
-
     state.store.save(&mut chat)?;
-    let history = build_history(&chat, &assistant_id);
 
-    let _ = channel.send(StreamEvent::Started {
-        messages: chat.messages.clone(),
-        meta: chat.meta.clone(),
-    });
-
-    spawn_stream(&state, cfg, channel, chat_id, assistant_id, history);
+    turn::kick(state.inner().clone(), chat_id);
     Ok(())
 }
 
 #[tauri::command]
-pub fn stop_stream(state: State<'_, AppState>, chat_id: String) -> Result<(), String> {
-    let streams = lock(&state.streams);
-    if let Some(token) = streams.get(&chat_id) {
+pub fn stop_stream(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
+    let token = lock(&state.streams).get(&chat_id).cloned();
+    if let Some(token) = token {
         token.cancel();
     }
     Ok(())
 }
 
-fn spawn_stream(
-    state: &State<'_, AppState>,
-    cfg: config::HarnessConfig,
-    channel: Channel<StreamEvent>,
-    chat_id: String,
-    assistant_id: String,
-    history: Vec<serde_json::Value>,
-) {
-    let store = state.store.clone();
-    let streams = state.streams.clone();
-    let cancel = CancelToken::new();
-    lock(&streams).insert(chat_id.clone(), cancel.clone());
-
-    tauri::async_runtime::spawn(async move {
-        let mut content = String::new();
-        let mut reasoning = String::new();
-        let delta_channel = channel.clone();
-
-        let result = provider::stream_chat(&cfg, &history, cancel, |chunk| match chunk {
-            Chunk::Text(text) => {
-                content.push_str(&text);
-                let _ = delta_channel.send(StreamEvent::Delta { text });
-            }
-            Chunk::Reasoning(text) => {
-                reasoning.push_str(&text);
-                let _ = delta_channel.send(StreamEvent::Reasoning { text });
-            }
-        })
-        .await;
-
-        lock(&streams).remove(&chat_id);
-
-        let Ok(mut chat) = store.load(&chat_id) else {
-            return;
-        };
-        let Some(index) = chat.messages.iter().position(|m| m.id == assistant_id) else {
-            return;
-        };
-
-        let event = match result {
-            Ok(Outcome::Completed(usage)) => {
-                let message = &mut chat.messages[index];
-                message.content = content;
-                message.reasoning = if reasoning.is_empty() { None } else { Some(reasoning) };
-                message.status = "complete".to_string();
-                message.usage = usage;
-                chat.meta.updated_at = now_ms();
-                let _ = store.save(&mut chat);
-                StreamEvent::Done {
-                    messages: chat.messages.clone(),
-                    meta: chat.meta.clone(),
-                }
-            }
-            Ok(Outcome::Cancelled) => {
-                let message = &mut chat.messages[index];
-                message.content = content;
-                message.reasoning = if reasoning.is_empty() { None } else { Some(reasoning) };
-                message.status = "aborted".to_string();
-                chat.meta.updated_at = now_ms();
-                let _ = store.save(&mut chat);
-                StreamEvent::Done {
-                    messages: chat.messages.clone(),
-                    meta: chat.meta.clone(),
-                }
-            }
-            Err(err) => {
-                let message = &mut chat.messages[index];
-                message.content = content;
-                message.reasoning = if reasoning.is_empty() { None } else { Some(reasoning) };
-                message.status = "error".to_string();
-                message.error = Some(err.clone());
-                chat.meta.updated_at = now_ms();
-                let _ = store.save(&mut chat);
-                StreamEvent::Error {
-                    message: err,
-                    messages: chat.messages.clone(),
-                    meta: chat.meta.clone(),
-                }
-            }
-        };
-
-        let _ = channel.send(event);
-    });
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsView {
+    pub projects_dir: String,
+    pub pi_command: Option<String>,
+    pub pi_configured: bool,
+    pub pi_detected: Option<String>,
+    pub projects: Vec<Project>,
 }
 
-fn build_history(chat: &Chat, exclude_id: &str) -> Vec<serde_json::Value> {
-    chat.messages
-        .iter()
-        .filter(|m| m.id != exclude_id)
-        .filter(|m| m.status != "error" && m.status != "aborted")
-        .filter(|m| !m.content.trim().is_empty())
-        .map(|m| {
-            serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-            })
-        })
-        .collect()
+fn settings_view(state: &AppState) -> SettingsView {
+    let projects_dir = state.settings.projects_dir();
+    let projects = state.projects.list(&projects_dir).unwrap_or_default();
+    SettingsView {
+        projects_dir: projects_dir.to_string_lossy().to_string(),
+        pi_command: state.settings.pi_command(),
+        pi_configured: state.settings.pi_command_configured().is_some(),
+        pi_detected: crate::settings::detect_pi().map(|p| p.to_string_lossy().to_string()),
+        projects,
+    }
+}
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, Arc<AppState>>) -> Result<SettingsView, String> {
+    Ok(settings_view(&state))
+}
+
+#[tauri::command]
+pub async fn set_projects_dir(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<SettingsView, String> {
+    state.settings.set_projects_dir(&path)?;
+    Ok(settings_view(&state))
+}
+
+#[tauri::command]
+pub fn set_pi_command(
+    state: State<'_, Arc<AppState>>,
+    command: Option<String>,
+) -> Result<SettingsView, String> {
+    state.settings.set_pi_command(command.as_deref())?;
+    Ok(settings_view(&state))
+}
+
+#[tauri::command]
+pub fn detect_pi_command() -> Option<String> {
+    crate::settings::detect_pi().map(|p| p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentsOverview {
+    pub working: usize,
+    pub live: usize,
+}
+
+#[tauri::command]
+pub fn agents_overview(state: State<'_, Arc<AppState>>) -> AgentsOverview {
+    AgentsOverview {
+        working: state.agents.working_count(),
+        live: state.agents.live_count(),
+    }
 }
 
 fn derive_title(text: &str) -> String {

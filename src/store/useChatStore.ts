@@ -1,8 +1,15 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 
-import { api } from "../lib/bridge";
-import type { AppInfo, ChatMeta, Message, StreamEvent } from "../lib/types";
+import { api, onAgentsEvent, onChatEvent } from "../lib/bridge";
+import type {
+  AgentsOverview,
+  AppInfo,
+  ChatMeta,
+  Message,
+  SettingsView,
+  StreamEvent,
+} from "../lib/types";
 import { sortMetas, upsertMeta } from "../lib/utils";
 
 type StreamState = { messageId: string; text: string };
@@ -18,6 +25,11 @@ interface ChatStore {
   sidebarOpen: boolean;
   focusToken: number;
   searchToken: number;
+  /** A brand new chat is being created by the first send. */
+  pendingNewChat: boolean;
+  agents: AgentsOverview;
+  settings: SettingsView | null;
+  settingsOpen: boolean;
 
   bootstrap: () => Promise<void>;
   select: (id: string | null) => Promise<void>;
@@ -34,6 +46,11 @@ interface ChatStore {
   focusComposer: () => void;
   toggleSidebar: () => void;
   requestSearch: () => void;
+  openSettings: () => Promise<void>;
+  closeSettings: () => void;
+  refreshSettings: () => Promise<void>;
+  chooseProjectsDir: () => Promise<void>;
+  setPiCommand: (command: string | null) => Promise<void>;
 }
 
 function textOf(error: unknown): string {
@@ -42,14 +59,23 @@ function textOf(error: unknown): string {
   return "Something went wrong.";
 }
 
+/** Tool traffic and agent notes live in history but never on screen. */
+function visible(messages: Message[]): Message[] {
+  return messages.filter(
+    (m) => !m.hidden && m.role !== "tool" && m.role !== "system",
+  );
+}
+
 function settle(messages: Message[], streaming: boolean): Message[] {
-  if (streaming) return messages;
-  return messages.map((m) => (m.status === "streaming" ? { ...m, status: "aborted" } : m));
+  const shown = visible(messages);
+  if (streaming) return shown;
+  return shown.map((m) => (m.status === "streaming" ? { ...m, status: "aborted" } : m));
 }
 
 let deltaQueue: Record<string, string> = {};
 let rafId = 0;
 let booting = false;
+let unsubscribe: (() => void) | null = null;
 
 export const useChatStore = create<ChatStore>((set, get) => {
   const flushDeltas = () => {
@@ -72,65 +98,70 @@ export const useChatStore = create<ChatStore>((set, get) => {
     });
   };
 
-  const streamHandler = (ownerChatId: string | null) => {
-    let chatId = ownerChatId;
-    return (event: StreamEvent) => {
-      switch (event.kind) {
-        case "started": {
-          chatId = event.meta.id;
-          const streaming = [...event.messages].reverse().find((m) => m.status === "streaming");
-          set((state) => ({
-            activeId: event.meta.id,
-            messages: event.messages,
+  const handleEvent = (chatId: string, event: StreamEvent) => {
+    switch (event.kind) {
+      case "started": {
+        const streaming = [...event.messages]
+          .reverse()
+          .find((m) => m.status === "streaming");
+        set((state) => {
+          const shows = state.activeId === chatId || state.pendingNewChat;
+          return {
             chats: upsertMeta(state.chats, event.meta),
-            draft: "",
             streams: streaming
-              ? { ...state.streams, [event.meta.id]: { messageId: streaming.id, text: "" } }
+              ? {
+                  ...state.streams,
+                  [chatId]: { messageId: streaming.id, text: "" },
+                }
               : state.streams,
-          }));
-          break;
-        }
-        case "delta": {
-          if (!chatId) break;
-          if (!get().streams[chatId]) break;
-          deltaQueue[chatId] = (deltaQueue[chatId] ?? "") + event.text;
-          flushDeltas();
-          break;
-        }
-        case "done": {
-          const id = event.meta.id;
-          set((state) => {
-            const streams = { ...state.streams };
-            delete streams[id];
-            return {
-              streams,
-              chats: upsertMeta(state.chats, event.meta),
-              ...(state.activeId === id
-                ? { messages: settle(event.messages, false) }
-                : {}),
-            };
-          });
-          break;
-        }
-        case "error": {
-          const id = event.meta.id;
-          set((state) => {
-            const streams = { ...state.streams };
-            delete streams[id];
-            return {
-              streams,
-              chats: upsertMeta(state.chats, event.meta),
-              ...(state.activeId === id
-                ? { messages: settle(event.messages, false) }
-                : {}),
-            };
-          });
-          // The inline error already covers the chat the user is looking at.
-          if (get().activeId !== id) toast.error(event.message, { duration: 6000 });
-          break;
-        }
+            ...(shows
+              ? {
+                  activeId: chatId,
+                  messages: visible(event.messages),
+                  pendingNewChat: false,
+                }
+              : {}),
+          };
+        });
+        break;
       }
-    };
+      case "delta": {
+        if (!get().streams[chatId]) break;
+        deltaQueue[chatId] = (deltaQueue[chatId] ?? "") + event.text;
+        flushDeltas();
+        break;
+      }
+      case "done": {
+        set((state) => {
+          const streams = { ...state.streams };
+          delete streams[chatId];
+          return {
+            streams,
+            chats: upsertMeta(state.chats, event.meta),
+            ...(state.activeId === chatId
+              ? { messages: settle(event.messages, false) }
+              : {}),
+          };
+        });
+        break;
+      }
+      case "error": {
+        set((state) => {
+          const streams = { ...state.streams };
+          delete streams[chatId];
+          return {
+            streams,
+            chats: upsertMeta(state.chats, event.meta),
+            ...(state.activeId === chatId
+              ? { messages: settle(event.messages, false) }
+              : {}),
+          };
+        });
+        // The inline error already covers the chat the user is looking at.
+        if (get().activeId !== chatId) toast.error(event.message, { duration: 6000 });
+        break;
+      }
+    }
   };
 
   return {
@@ -144,13 +175,26 @@ export const useChatStore = create<ChatStore>((set, get) => {
     sidebarOpen: true,
     focusToken: 0,
     searchToken: 0,
+    pendingNewChat: false,
+    agents: { working: 0, live: 0 },
+    settings: null,
+    settingsOpen: false,
 
     bootstrap: async () => {
       if (booting) return;
       booting = true;
+
+      unsubscribe?.();
+      unsubscribe = onChatEvent(handleEvent);
+      onAgentsEvent((overview) => set({ agents: overview }));
+
       try {
-        const [info, chats] = await Promise.all([api.appInfo(), api.listChats()]);
-        set({ info, chats: sortMetas(chats), ready: true });
+        const [info, chats, agents] = await Promise.all([
+          api.appInfo(),
+          api.listChats(),
+          api.agentsOverview(),
+        ]);
+        set({ info, chats: sortMetas(chats), ready: true, agents });
 
         // Design-time deep link used by the browser preview only.
         const params = new URLSearchParams(window.location.search);
@@ -194,11 +238,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (!trimmed) return;
       const { activeId } = get();
       if (activeId && get().streams[activeId]) return;
-      set({ draft: "" });
+      set({ draft: "", pendingNewChat: !activeId });
       try {
-        await api.sendMessage(activeId, trimmed, streamHandler(activeId));
+        const id = await api.sendMessage(activeId, trimmed);
+        if (!activeId) set({ activeId: id });
       } catch (error) {
-        set({ draft: trimmed });
+        set({ draft: trimmed, pendingNewChat: false });
         toast.error(textOf(error));
       }
     },
@@ -217,7 +262,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const { activeId } = get();
       if (!activeId) return;
       try {
-        await api.regenerate(activeId, streamHandler(activeId));
+        await api.regenerate(activeId);
       } catch (error) {
         toast.error(textOf(error));
       }
@@ -227,7 +272,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const { activeId } = get();
       if (!activeId) return;
       try {
-        await api.editMessage(activeId, messageId, text, streamHandler(activeId));
+        await api.editMessage(activeId, messageId, text);
       } catch (error) {
         toast.error(textOf(error));
       }
@@ -303,5 +348,42 @@ export const useChatStore = create<ChatStore>((set, get) => {
     toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
     requestSearch: () => set((state) => ({ searchToken: state.searchToken + 1 })),
+
+    openSettings: async () => {
+      set({ settingsOpen: true });
+      await get().refreshSettings();
+    },
+
+    closeSettings: () => set({ settingsOpen: false }),
+
+    refreshSettings: async () => {
+      try {
+        const settings = await api.getSettings();
+        set({ settings });
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
+    chooseProjectsDir: async () => {
+      try {
+        const picked = await api.pickFolder();
+        if (!picked) return;
+        const settings = await api.setProjectsDir(picked);
+        set({ settings });
+        toast.success("Projects folder updated");
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
+    setPiCommand: async (command) => {
+      try {
+        const settings = await api.setPiCommand(command);
+        set({ settings });
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
   };
 });

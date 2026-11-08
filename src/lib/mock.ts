@@ -3,7 +3,16 @@
  * It lets the interface be designed and reviewed without the Tauri shell, and
  * gives the real app a graceful no-runtime fallback.
  */
-import type { AppInfo, Chat, ChatMeta, Message, SearchHit, StreamEvent } from "./types";
+import type {
+  AgentsOverview,
+  AppInfo,
+  Chat,
+  ChatMeta,
+  Message,
+  SearchHit,
+  SettingsView,
+  StreamEvent,
+} from "./types";
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
@@ -253,7 +262,7 @@ export const mock = {
     command: string,
     args: Record<string, unknown>,
     onEvent: (event: StreamEvent) => void,
-  ) {
+  ): Promise<string> {
     let chat: Chat | undefined;
     const chatId = typeof args.chatId === "string" ? args.chatId : null;
     let reply = REPLY;
@@ -344,7 +353,7 @@ export const mock = {
           messages: clone(target.messages),
           meta: clone(target.meta),
         });
-        return;
+        return target.meta.id;
       }
     }
 
@@ -353,5 +362,51 @@ export const mock = {
     target.meta.updatedAt = Date.now();
     rehash(target);
     onEvent({ kind: "done", messages: clone(target.messages), meta: clone(target.meta) });
+    return target.meta.id;
+  },
+
+  async getSettings(): Promise<SettingsView> {
+    return {
+      projectsDir: "C:/Users/you/Documents/Hook",
+      piCommand: "C:/nvm4w/nodejs/pi.cmd",
+      piConfigured: false,
+      piDetected: "C:/nvm4w/nodejs/pi.cmd",
+      projects: [
+        {
+          name: "invoice-parser",
+          path: "C:/Users/you/Documents/Hook/invoice-parser",
+          description:
+            "Python CLI that turns supplier PDFs into line items. pdfplumber plus a sqlite cache.",
+          createdAt: Date.now() - 9 * DAY,
+          updatedAt: Date.now() - 2 * DAY,
+          isGit: true,
+        },
+        {
+          name: "site",
+          path: "C:/Users/you/Documents/Hook/site",
+          description: "Personal site: Astro, Tailwind, Cloudflare Pages.",
+          createdAt: Date.now() - 30 * DAY,
+          updatedAt: Date.now() - 5 * HOUR,
+          isGit: true,
+        },
+      ],
+    };
+  },
+
+  async setProjectsDir(path: string): Promise<SettingsView> {
+    const view = await mock.getSettings();
+    return { ...view, projectsDir: path };
+  },
+
+  async setPiCommand(command: string | null): Promise<SettingsView> {
+    const view = await mock.getSettings();
+    return { ...view, piCommand: command, piConfigured: Boolean(command) };
+  },
+
+  async agentsOverview(): Promise<AgentsOverview> {
+    // Design-time preview of the indicator: `?agents=1` in the browser URL.
+    const demo = new URLSearchParams(window.location.search).get("agents");
+    const working = Number(demo ?? 0) || 0;
+    return { working, live: working };
   },
 };

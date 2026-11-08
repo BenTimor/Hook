@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pin, Plus, Search, X } from "lucide-react";
+import { Pin, Plus, Search, Settings2, X } from "lucide-react";
 
 import { api } from "../lib/bridge";
 import type { SearchHit } from "../lib/types";
@@ -18,6 +18,7 @@ export function Sidebar() {
   const open = useChatStore((s) => s.sidebarOpen);
   const searchToken = useChatStore((s) => s.searchToken);
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
+  const openSettings = useChatStore((s) => s.openSettings);
 
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
@@ -164,6 +165,14 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar-foot">
+        <button
+          className="foot-btn"
+          onClick={() => void openSettings()}
+          title="Settings"
+        >
+          <Settings2 strokeWidth={1.9} />
+          Settings
+        </button>
         <span className="grow" />
         <span>v{info?.version ?? "0.1.0"}</span>
       </div>

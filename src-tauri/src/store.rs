@@ -25,6 +25,16 @@ pub struct Usage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ToolCallRecord {
+    pub id: String,
+    pub name: String,
+    /// Raw JSON arguments exactly as the model produced them.
+    #[serde(default)]
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: String,
     pub role: String,
@@ -38,6 +48,19 @@ pub struct Message {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+    /// Assistant tool calls, replayed verbatim to the provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallRecord>>,
+    /// Set on `role: "tool"` results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Internal bookkeeping (agent events, tool traffic) the user never sees.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hidden: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Message {
@@ -51,7 +74,17 @@ impl Message {
             status: status.to_string(),
             error: None,
             usage: None,
+            tool_calls: None,
+            tool_call_id: None,
+            hidden: false,
         }
+    }
+
+    /// A message that participates in the model's history but is never drawn.
+    pub fn hidden(role: &str, content: &str) -> Self {
+        let mut message = Self::new(role, content, "complete");
+        message.hidden = true;
+        message
     }
 }
 
@@ -104,14 +137,28 @@ impl Chat {
 
     /// Recompute derived metadata from the message list.
     pub fn refresh_meta(&mut self) {
-        self.meta.message_count = self.messages.len();
+        self.meta.message_count = self
+            .messages
+            .iter()
+            .filter(|m| !m.hidden && m.role != "tool")
+            .count();
         self.meta.preview = self
             .messages
             .iter()
             .rev()
+            .filter(|m| !m.hidden && m.role != "tool")
             .find(|m| !m.content.trim().is_empty())
             .map(|m| truncate(&m.content.replace('\n', " "), 160))
             .unwrap_or_default();
+    }
+}
+
+/// Rust canonicalizes Windows paths to verbatim form (`\\?\C:\...`).
+/// Strip the prefix so paths stay readable and match what pi writes.
+pub fn strip_verbatim(path: std::path::PathBuf) -> std::path::PathBuf {
+    match path.to_str() {
+        Some(text) if text.starts_with(r"\\?") => std::path::PathBuf::from(&text[4..]),
+        _ => path,
     }
 }
 

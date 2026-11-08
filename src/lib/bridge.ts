@@ -1,26 +1,84 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { mock } from "./mock";
-import type { AppInfo, Chat, ChatMeta, SearchHit, StreamEvent } from "./types";
+import type {
+  AgentsOverview,
+  AppInfo,
+  Chat,
+  ChatEvent,
+  ChatMeta,
+  SearchHit,
+  SettingsView,
+  StreamEvent,
+} from "./types";
 
 export const isTauri = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-type Handler = (event: StreamEvent) => void;
+type ChatListener = (chatId: string, event: StreamEvent) => void;
+type AgentsListener = (overview: AgentsOverview) => void;
 
-async function streamCommand(
+const chatListeners = new Set<ChatListener>();
+const agentsListeners = new Set<AgentsListener>();
+
+function dispatch(chatId: string, event: StreamEvent) {
+  for (const listener of chatListeners) listener(chatId, event);
+}
+
+/**
+ * Every turn — user-sent or woken by a coding agent — arrives on the same
+ * app-wide event, so the UI never has to hold a per-call channel.
+ */
+export function onChatEvent(listener: ChatListener): () => void {
+  if (!isTauri()) {
+    chatListeners.add(listener);
+    return () => chatListeners.delete(listener);
+  }
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void listen<ChatEvent>("hook://chat", (event) =>
+    listener(event.payload.chatId, event.payload.event),
+  ).then((unlisten) => {
+    if (cancelled) unlisten();
+    else off = unlisten;
+  });
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
+export function onAgentsEvent(listener: AgentsListener): () => void {
+  if (!isTauri()) {
+    agentsListeners.add(listener);
+    return () => agentsListeners.delete(listener);
+  }
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void listen<AgentsOverview>("hook://agents", (event) =>
+    listener(event.payload),
+  ).then((unlisten) => {
+    if (cancelled) unlisten();
+    else off = unlisten;
+  });
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
+/** Browser preview: the in-memory backend replays turns through the same bus. */
+async function streamMock(
   command: string,
   args: Record<string, unknown>,
-  onEvent: Handler,
-): Promise<void> {
-  if (!isTauri()) {
-    await mock.stream(command, args, onEvent);
-    return;
-  }
-  const channel = new Channel<StreamEvent>();
-  channel.onmessage = onEvent;
-  await invoke(command, { ...args, channel });
+): Promise<string> {
+  let chatId = typeof args.chatId === "string" ? args.chatId : "";
+  return mock.stream(command, args, (event) => {
+    if ("meta" in event) chatId = event.meta.id;
+    dispatch(chatId, event);
+  });
 }
 
 export const api = {
@@ -56,19 +114,55 @@ export const api = {
       ? invoke<SearchHit[]>("search_chats", { query })
       : mock.searchChats(query),
 
-  sendMessage: (chatId: string | null, text: string, onEvent: Handler) =>
-    streamCommand("send_message", { chatId, text }, onEvent),
+  sendMessage: (chatId: string | null, text: string): Promise<string> =>
+    isTauri()
+      ? invoke<string>("send_message", { chatId, text })
+      : streamMock("send_message", { chatId, text }),
 
-  regenerate: (chatId: string, onEvent: Handler) =>
-    streamCommand("regenerate", { chatId }, onEvent),
+  regenerate: (chatId: string): Promise<void> =>
+    isTauri()
+      ? invoke<void>("regenerate", { chatId })
+      : streamMock("regenerate", { chatId }).then(() => undefined),
 
-  editMessage: (chatId: string, messageId: string, text: string, onEvent: Handler) =>
-    streamCommand("edit_message", { chatId, messageId, text }, onEvent),
+  editMessage: (chatId: string, messageId: string, text: string): Promise<void> =>
+    isTauri()
+      ? invoke<void>("edit_message", { chatId, messageId, text })
+      : streamMock("edit_message", { chatId, messageId, text }).then(() => undefined),
 
   stopStream: (chatId: string): Promise<void> =>
     isTauri()
       ? invoke<void>("stop_stream", { chatId })
       : mock.stopStream(chatId),
+
+  getSettings: (): Promise<SettingsView> =>
+    isTauri() ? invoke<SettingsView>("get_settings") : mock.getSettings(),
+
+  setProjectsDir: (path: string): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("set_projects_dir", { path })
+      : mock.setProjectsDir(path),
+
+  setPiCommand: (command: string | null): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("set_pi_command", { command })
+      : mock.setPiCommand(command),
+
+  openPath: (path: string): Promise<void> =>
+    isTauri() ? invoke<void>("open_path", { path }) : Promise.resolve(),
+
+  agentsOverview: (): Promise<AgentsOverview> =>
+    isTauri() ? invoke<AgentsOverview>("agents_overview") : mock.agentsOverview(),
+
+  async pickFolder(): Promise<string | null> {
+    if (!isTauri()) return null;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose a folder for your projects",
+    });
+    return typeof picked === "string" ? picked : null;
+  },
 };
 
 export const win = {

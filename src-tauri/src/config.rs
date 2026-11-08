@@ -9,6 +9,72 @@ use serde::Deserialize;
 pub struct HarnessConfig {
     pub provider: ProviderConfig,
     pub model: ModelConfig,
+    /// Coding agents (pi subprocesses). Optional section.
+    #[serde(default)]
+    pub coding: CodingConfig,
+    /// Chat-agent behaviour. Optional section.
+    #[serde(default)]
+    pub agent: AgentConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AgentConfig {
+    /// Replaces Hook's built-in instructions when non-empty.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+}
+
+impl AgentConfig {
+    pub fn custom_prompt(&self) -> Option<&str> {
+        self.system_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CodingConfig {
+    /// Passed to pi as `--model`. Empty means "use pi's own default".
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Thinking level for coding agents, pi's `--thinking` values.
+    #[serde(default)]
+    pub thinking: Option<String>,
+    /// How many coding agents may run at once.
+    #[serde(default = "default_max_agents")]
+    pub max_concurrent: usize,
+    /// Hard cap (seconds) for a single bash call inside a coding agent.
+    #[serde(default = "default_bash_max")]
+    pub bash_max_timeout: u64,
+    /// Floor (seconds) for a single bash call inside a coding agent.
+    #[serde(default = "default_bash_min")]
+    pub bash_min_timeout: u64,
+}
+
+fn default_max_agents() -> usize {
+    3
+}
+
+fn default_bash_max() -> u64 {
+    3600
+}
+
+fn default_bash_min() -> u64 {
+    1
+}
+
+impl CodingConfig {
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref().map(str::trim).filter(|m| !m.is_empty())
+    }
+
+    pub fn thinking(&self) -> Option<&str> {
+        self.thinking
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -21,6 +87,10 @@ pub struct ProviderConfig {
     pub reasoning_param: Option<String>,
     #[serde(default = "default_true")]
     pub stream_usage: bool,
+    /// Offer the agent tools to the chat model. Disable if the endpoint
+    /// rejects the `tools` field.
+    #[serde(default = "default_true")]
+    pub tools: bool,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
     #[serde(default)]

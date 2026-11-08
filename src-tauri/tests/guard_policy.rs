@@ -1,0 +1,70 @@
+//! Policy test for the embedded guard extension: the bash timeout rule must
+//! block what it should block and leave everything else alone.
+
+use std::path::PathBuf;
+use std::process::Command;
+
+fn node_available() -> bool {
+    Command::new("node")
+        .arg("--version")
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn guard_blocks_bash_calls_without_a_sane_timeout() {
+    if !node_available() {
+        eprintln!("node not installed — skipping the guard policy test");
+        return;
+    }
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let guard = root.join("resources").join("hook-guard.mjs");
+    let harness = root.join("tests").join("fixtures").join("guard-harness.mjs");
+
+    let output = Command::new("node")
+        .arg(&harness)
+        .arg(&guard)
+        .output()
+        .expect("node should run");
+    assert!(
+        output.status.success(),
+        "harness failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("harness prints JSON");
+
+    assert_eq!(value["hooks"], serde_json::json!(["before_agent_start", "tool_call"]));
+    assert_eq!(value["guidelineAppended"], true);
+
+    for blocked in ["missing", "zero", "huge", "negative", "wrongType"] {
+        assert_eq!(value[blocked]["block"], true, "{blocked} should be blocked");
+        let reason = value[blocked]["reason"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains("BLOCKED by Hook guard"),
+            "{blocked} reason was {reason:?}"
+        );
+    }
+
+    assert!(
+        value["missing"]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("missing a `timeout`"),
+        "the model must be told what is wrong"
+    );
+    assert!(
+        value["huge"]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("hard cap"),
+        "oversized timeouts explain the cap"
+    );
+
+    // Allowed calls must not return a block verdict.
+    assert_eq!(value["ok"].is_null(), true, "a valid timeout should pass");
+    assert_eq!(value["nonBash"].is_null(), true, "other tools are untouched");
+}
