@@ -187,11 +187,20 @@ impl Chat {
 
 /// Rust canonicalizes Windows paths to verbatim form (`\\?\C:\...`).
 /// Strip the prefix so paths stay readable and match what pi writes.
-pub fn strip_verbatim(path: std::path::PathBuf) -> std::path::PathBuf {
-    match path.to_str() {
-        Some(text) if text.starts_with(r"\\?") => std::path::PathBuf::from(&text[4..]),
-        _ => path,
+pub fn strip_verbatim(path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    let path = path.as_ref();
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    // The verbatim forms Windows hands out for long or UNC paths are not
+    // understood by everything we launch, Node included.
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
     }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(rest);
+    }
+    path.to_path_buf()
 }
 
 pub fn truncate(s: &str, max_chars: usize) -> String {

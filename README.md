@@ -160,14 +160,19 @@ conversation while you keep chatting.
   agent uses exactly the chat agent's endpoint, key, model and thinking level,
   and never touches your own `~/.pi` — different extensions, skills, MCP servers
   and logins on your machine cannot change what it does.
-- **Progress updates.** Agents get one extra tool, `report_progress(note, images?)`,
-  and a guideline to use it every couple of minutes and at the end. It writes to
-  a mailbox Hook watches; Hook batches whatever arrived and hands the chat agent
-  one note per minute (immediately when the agent finishes, fails or asks
-  something). Pictures are attached to the message the chat agent writes back,
-  so updates read like "here is the menu as it stands" with the screenshot right
-  there. How an agent produces those pictures is up to it — a headless browser,
-  the project's own test harness, an engine's screenshot API.
+- **Progress updates — only when there is news.** Agents get one extra tool,
+  `report_progress(note, images?)` and are told to use it for milestones,
+  decisions, problems and the final result, never as a heartbeat: "still
+  working" is explicitly off-limits, and long silences are expected. Notes go
+  into a mailbox Hook watches; Hook batches them (at most one batch a minute,
+  immediately on finish/fail/question) and hands the chat agent a note. The chat
+  agent may answer `no_update`, which drops the message entirely — a batch that
+  says nothing worth reading produces nothing in the chat. A quiet job can go
+  from start to finish with a single update, or none until the result. Pictures
+  travel with the message the chat agent writes, so an update reads like "here
+  is the menu as it stands" with the screenshot right there. How an agent
+  produces them is up to it: a headless browser, the project's own harness, an
+  engine's screenshot API.
 - **Pictures from you.** Paste, drag or pick an image in the composer. Bytes are
   downscaled and stored on disk, not in the chat JSON. If `[provider] vision` is
   on, they reach the model as image parts; if not (or if the endpoint rejects
@@ -258,3 +263,16 @@ tool loop, the guard policy (a Node harness feeds it bad `bash` calls), the RPC
 handshake (spawns the real engine, asks `get_state`, never calls a model) and a
 full agent lifecycle against a fake one that speaks the protocol. Tests skip
 themselves when the engine or `node` is missing.
+
+## A note on packaged builds
+
+Two things only break in an installed app, never in `tauri dev`:
+
+- Tauri hands out resource paths with the Windows `\?\` prefix. Node cannot load
+  a script through one, so `runtime.rs` strips it before spawning (`strip_verbatim`).
+- Resources are mapped with a directory rule (`"resources/pi-runtime": "pi-runtime"`).
+  A `**/*` glob flattens the tree and the engine loses `pi/dist/bundle/cli.js`.
+
+Both are covered by tests, and the portable zip is verified with
+`src-tauri/resources/pi-runtime` moved aside so the dev copy cannot mask a
+packaging bug. Agents write their stderr to `%APPDATA%\app.hook.chat\logs\`.

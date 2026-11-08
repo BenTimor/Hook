@@ -130,12 +130,15 @@ export default function (pi) {
       name: "report_progress",
       label: "Report progress",
       description:
-        "Send the user a short progress update, optionally with screenshots. Use it during longer jobs and once when you finish. The update is delivered in a batch, so it does not interrupt your work.",
+        "Tell the user something worth reading about the work, optionally with screenshots: a milestone with something to show, a decision, a problem, or the finished result. Not a heartbeat — if nothing changed that the user would care about, do not call this.",
       promptGuidelines: [
-        "Report progress with `report_progress` a few times during a long job — roughly every couple of minutes or at a meaningful milestone — and always once at the end with a one-line summary of the result.",
-        "Keep notes short and concrete ('menu is working, styling the mobile breakpoint next'), not a changelog. Do not report every tool call.",
+        "Only report when there is something worth interrupting the user for: a milestone you can show them, a decision that changes the outcome, a problem, or the finished result. A few updates across a long job is plenty; often one picture and one final summary is all it takes.",
+        "Never report routine motion: 'still working', 'in progress', 'running tests', 'small delay', 'no news yet', 'making good progress'. If the user would not learn anything from reading it, stay silent and keep working.",
+        "Long stretches of silence are expected and fine. Do not invent an update to fill them, and do not report the same milestone twice.",
+        "When you do report, be concrete and short: what exists now that did not before, or what is blocked and why. No changelog, no list of tool calls.",
         "Attach pictures when they help the user see the work: capture them however the project allows — headless Edge/Chrome screenshots, a project test harness, an engine's own screenshot feature, a generated image — and pass their paths. Never fake a screenshot; skip the picture if you cannot render one.",
         "Keep pictures readable: capture the normal viewport (around 1280x800), not full-page, and attach at most two per update (a 1440x8000 page becomes an unreadable strip in the chat).",
+        "Always send one last report when the work is finished or you are stopping, with the outcome and, if the work is visual, what it looks like now.",
       ],
       parameters: {
         type: "object",

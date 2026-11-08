@@ -78,8 +78,9 @@ thinking = "medium"
 # Context window advertised to the coding engine for the chat model.
 context_window = 128000
 
-# Batched progress from coding agents reaches the chat at most this often
-# (a batch always flushes immediately when an agent finishes or asks something).
+# Upper bound on how often coding-agent progress reaches the chat. Agents only
+# report when something is worth reading, and the chat agent may answer a batch
+# with silence; a batch flushes immediately when an agent finishes or asks.
 update_interval_seconds = 60
 # Passed to pi as --model. Empty = pi's own default model.
 model = ""

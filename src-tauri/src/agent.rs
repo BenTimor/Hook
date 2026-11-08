@@ -324,6 +324,16 @@ impl AgentManager {
         }
     }
 
+    /// Whether this run already reported something to its chat. Used to tell a
+    /// duplicate "finished" wake from the first news the user gets.
+    pub fn delivered_progress(&self, agent_id: &str) -> bool {
+        lock(&self.inner)
+            .agents
+            .get(agent_id)
+            .map(|entry| entry.last_flush_at > entry.info.created_at)
+            .unwrap_or(false)
+    }
+
     /// Drain the notes queued for one agent (called when a wake is delivered).
     pub fn take_updates(&self, agent_id: &str) -> Vec<Update> {
         let mut inner = lock(&self.inner);
@@ -429,17 +439,30 @@ impl AgentManager {
         );
 
         // Where the agent's guard writes progress notes for Hook to collect.
-        let updates_dir = self.updates_dir(&id);
+        let updates_dir = crate::store::strip_verbatim(&self.updates_dir(&id));
         let _ = std::fs::create_dir_all(&updates_dir);
+
+        // Keep the engine's stderr: when it dies before doing anything, this
+        // file is the only thing that explains why.
+        let log_dir = self.data_dir.join("logs");
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log_path = log_dir.join(format!("engine-{id}.log"));
+        let stderr = std::fs::File::create(&log_path)
+            .map(std::process::Stdio::from)
+            .unwrap_or_else(|_| std::process::Stdio::null());
 
         let mut command = build_command(&engine, &args);
         command
             .current_dir(&project_path)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(stderr)
             // The engine's own config directory: Hook's provider, nobody else's.
             .env("PI_CODING_AGENT_DIR", &engine.agent_home)
+            // The app's own WebView2 flags are none of the agent's business:
+            // a debug port in its environment is an invitation to drive the
+            // window it runs inside.
+            .env_remove("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
             .env("HOOK_UPDATES_DIR", &updates_dir)
             .env("PI_BASH_MAX_TIMEOUT", self.coding.bash_max_timeout.to_string())
             .env("PI_BASH_MIN_TIMEOUT", self.coding.bash_min_timeout.to_string());
@@ -1423,6 +1446,8 @@ node \"%~dp0fake-pi.mjs\" %*
         )
         .unwrap();
 
+        assert!(!mgr.delivered_progress(&info.id), "a fresh run has reported nothing");
+
         // Not due yet: nothing is delivered mid-interval.
         mgr.harvest();
         mgr.flush_due(StdDuration::from_secs(60));
@@ -1449,6 +1474,10 @@ node \"%~dp0fake-pi.mjs\" %*
             }
         }
         assert!(woke, "a due batch should wake the chat");
+        assert!(
+            mgr.delivered_progress(&info.id),
+            "after a batch the run has something to compare a settle against"
+        );
         let delivered = mgr.take_updates(&info.id);
         assert_eq!(delivered.len(), 1);
         assert_eq!(delivered[0].note, "third");

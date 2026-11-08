@@ -146,6 +146,14 @@ pub fn definitions() -> Value {
                     "additionalProperties": false
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "no_update",
+                "description": "Say nothing to the user for this progress batch. Use this when the note contains nothing worth interrupting them for: routine steps, 'still working', no new picture, no milestone.",
+                "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+            }
         }
     ])
 }
@@ -306,6 +314,9 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
                 .collect();
             Ok(json!({ "project": project, "sessions": sessions }))
         }
+        // Intercepted by the turn loop before it gets here; the arm exists so
+        // an unexpected call still behaves.
+        "no_update" => Ok(json!({ "sent": false })),
         other => Err(format!("Unknown tool: {other}")),
     }
 }

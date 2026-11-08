@@ -39,6 +39,10 @@ mod tests {
             );
         }
         assert!(GUARD_SOURCE.contains("report_progress"));
+        // The guidance must forbid heartbeat updates, not encourage them.
+        assert!(GUARD_SOURCE.contains("still working"));
+        assert!(GUARD_SOURCE.contains("Long stretches of silence"));
+        assert!(!GUARD_SOURCE.contains("roughly every couple of minutes"));
     }
 
     #[test]

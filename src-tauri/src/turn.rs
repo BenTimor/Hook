@@ -30,17 +30,24 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - If a coding agent asks a question, answer it yourself when the user-s instructions already determine the answer; otherwise ask the user, then answer the agent.
 
 ## Progress
-- While an agent works you get batched progress notes, sometimes with screenshots: at most one batch a minute, plus one when it finishes, fails, or asks something.
-- Turn a batch into a short update in your own words: what changed, what is next, how it looks. Two or three sentences. Never paste the notes, never mention batches, agent ids, tools, or files.
-- Pictures that came with the batch are shown to the user with your reply. Point at them naturally when it helps (here is the menu as it stands); do not describe every detail.
-- Only say what the notes actually say. If nothing came in, say you do not know yet rather than guessing.
-- Once an agent has finished, give the outcome: what works, what does not, what is left. That is the last update for that job.
+- A note arrives when a coding agent reported something. It is not a request to speak, and most notes are not worth a message.
+- Speak only when the user would learn something they would care about: a milestone you can state concretely, a decision that changes the outcome, a problem, or a picture worth looking at. Then two or three sentences, no preamble, no recap of what you already said.
+- Otherwise call no_update and stay silent. Silence is normal: several notes in a row can pass without a word, and a stretch of quiet is expected while work is underway.
+- Never narrate the arrival of a note, never say 'still working', 'in progress', 'no news', 'the agent just filed a note', and never mention batches, agent ids, tools, or files.
+- Pictures that came with a note are shown to the user with your reply. Refer to them naturally (here is the menu as it stands); do not describe every detail.
+- Only state what the notes say. If nothing came in, say you do not know yet rather than guessing.
+- A note that says new_since_last_update: none carries no new information. If you already told the user how it went, call no_update; if you have not, speak.
+- A failure, an error, or a question always gets an answer, even when nothing is new.
 
 ## Style
 - Be concise and concrete. Markdown is fine.
 - No preamble, no restating the question, no filler.
 - The user never sees the coding agents directly; everything they know comes from your messages.
 - The user may attach pictures to their own messages. Treat them as part of the question.";
+
+/// A note the chat agent decided not to talk about. It drops out of the prompt
+/// without producing a message.
+const STATUS_CONSUMED: &str = "consumed";
 
 /// Upper bound on pictures carried by one progress batch.
 const MAX_BATCH_IMAGES: usize = 4;
@@ -160,6 +167,21 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
     } else {
         None
     };
+    // `no_update` only makes sense when a coding-agent note is waiting: there is
+    // nothing to stay quiet about otherwise.
+    let has_notes = state
+        .store
+        .load(&chat_id)
+        .map(|chat| !pending_notes(&chat, "").is_empty())
+        .unwrap_or(false);
+    let toolset = toolset.map(|mut set| {
+        if !has_notes {
+            if let Some(list) = set.as_array_mut() {
+                list.retain(|tool| tool["function"]["name"] != "no_update");
+            }
+        }
+        set
+    });
 
     let mut rounds = 0usize;
 
@@ -285,6 +307,33 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     completion.text
                 };
                 let calls = completion.tool_calls;
+
+                // The chat agent may decide a batch is not worth a message —
+                // but only to a note. A user message always gets an answer.
+                let notes_are_pending = !pending_notes(&chat, &assistant_id).is_empty();
+                if notes_are_pending && calls.iter().any(|call| call.name == "no_update") {
+                    let note_ids: Vec<String> =
+                        pending_notes(&chat, &assistant_id).iter().map(|m| m.id.clone()).collect();
+                    chat.messages.retain(|m| m.id != assistant_id);
+                    for message in chat.messages.iter_mut() {
+                        if note_ids.contains(&message.id) {
+                            // Answered with silence: stop offering it again.
+                            message.status = STATUS_CONSUMED.into();
+                        }
+                    }
+                    chat.meta.updated_at = now_ms();
+                    let _ = state.store.save(&mut chat);
+                    emit(
+                        &state,
+                        &chat_id,
+                        StreamEvent::Done {
+                            messages: chat.messages.clone(),
+                            meta: chat.meta.clone(),
+                        },
+                    );
+                    break;
+                }
+
                 if !calls.is_empty() {
                     if rounds >= MAX_ROUNDS {
                         let message = format!(
@@ -446,7 +495,7 @@ fn system_message(cfg: &config::HarnessConfig, chat: &Chat, exclude_id: &str) ->
 /// Only notes that arrived after the last assistant reply are pending. Once the
 /// chat agent has spoken about an event it drops out of the prompt, so old
 /// events can never be reported twice.
-fn system_notes(chat: &Chat, exclude_id: &str) -> Vec<String> {
+fn pending_notes<'a>(chat: &'a Chat, exclude_id: &str) -> Vec<&'a Message> {
     let last_reply = chat.messages.iter().rposition(|m| {
         m.role == "assistant" && m.id != exclude_id && m.status == "complete"
     });
@@ -456,6 +505,14 @@ fn system_notes(chat: &Chat, exclude_id: &str) -> Vec<String> {
         .skip(start)
         .filter(|m| m.id != exclude_id)
         .filter(|m| m.role == "system" && !m.content.trim().is_empty())
+        // Notes the chat agent explicitly left unanswered stay answered.
+        .filter(|m| m.status != STATUS_CONSUMED)
+        .collect()
+}
+
+fn system_notes(chat: &Chat, exclude_id: &str) -> Vec<String> {
+    pending_notes(chat, exclude_id)
+        .into_iter()
         .map(|m| m.content.trim().to_string())
         .collect()
 }
@@ -503,7 +560,13 @@ pub fn on_agent_event(state: Arc<AppState>, info: AgentInfo) {
 
     // Whatever the agent reported since the last batch rides along with this
     // wake, pictures included — so the chat agent can talk about what it sees.
+    let already_reported = state.agents.delivered_progress(&info.id);
     let updates = state.agents.take_updates(&info.id);
+    if updates.is_empty() && already_reported {
+        // The chat agent has already told the user about this work; the wake
+        // only says "settled", which is rarely news.
+        text.push_str("\nnew_since_last_update: none\n");
+    }
     if !updates.is_empty() {
         text.push_str("\n");
         text.push_str(&tools::progress_block(&updates));
@@ -901,6 +964,34 @@ mod tests {
 
         let notes = system_notes(&chat, "placeholder");
         assert_eq!(notes.len(), 1);
+    }
+
+    #[test]
+    fn a_note_left_unanswered_stops_being_pending() {
+        // The chat agent may answer a weak progress note with silence. That
+        // note must not come back on every later turn.
+        let note = Message::hidden("system", "[coding agent update] nothing new");
+        let mut answered = Message::hidden("system", "[coding agent update] menu done");
+        answered.status = "consumed".into();
+        let chat = chat_with(vec![Message::new("user", "hi", "complete"), note, answered]);
+
+        let pending = pending_notes(&chat, "x");
+        assert_eq!(pending.len(), 1, "only the unanswered note is pending");
+        assert!(pending[0].content.contains("nothing new"));
+        assert_eq!(system_notes(&chat, "x").len(), 1);
+    }
+
+    #[test]
+    fn no_update_is_only_offered_alongside_a_note() {
+        let tools = crate::tools::definitions();
+        let names: Vec<&str> = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str())
+            .collect();
+        assert!(names.contains(&"no_update"));
+        assert!(names.contains(&"list_projects"));
     }
 
     #[test]

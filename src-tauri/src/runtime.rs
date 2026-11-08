@@ -80,10 +80,16 @@ pub fn resolve(resource_dir: Option<&Path>, data_dir: &Path) -> Result<PiRuntime
         let node = dir.join(node_exe());
         let cli = dir.join("pi").join("dist").join("bundle").join("cli.js");
         if node.is_file() && cli.is_file() {
+            // Tauri hands out verbatim paths (`\\?\C:\...`). Node cannot load a
+            // script through one — it reads the `?` as a path segment — so strip
+            // the prefix before anything is executed with it.
+            let program = crate::store::strip_verbatim(&node);
+            let cli = crate::store::strip_verbatim(&cli);
+            eprintln!("hook: coding engine at {}", program.display());
             return Ok(PiRuntime {
-                program: node,
+                program,
                 cli: Some(cli),
-                agent_home,
+                agent_home: crate::store::strip_verbatim(&agent_home),
             });
         }
     }
@@ -92,9 +98,9 @@ pub fn resolve(resource_dir: Option<&Path>, data_dir: &Path) -> Result<PiRuntime
     // take the branch above, so users never end up here.
     if let Some(pi) = which_pi() {
         return Ok(PiRuntime {
-            program: pi,
+            program: crate::store::strip_verbatim(&pi),
             cli: None,
-            agent_home,
+            agent_home: crate::store::strip_verbatim(&agent_home),
         });
     }
 
@@ -225,6 +231,22 @@ mod tests {
         assert_eq!(
             base_url_for_pi("https://gateway.example.com/v1"),
             "https://gateway.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn verbatim_paths_are_stripped_before_use() {
+        // Node rejects `\\?\C:\...` as a script path; Tauri's resource dir is
+        // verbatim, so the prefix must never reach the engine.
+        let verbatim = Path::new(r"\\?\C:\Users\me\AppData\Local\Hook\pi-runtime");
+        let stripped = crate::store::strip_verbatim(verbatim);
+        assert_eq!(stripped, Path::new(r"C:\Users\me\AppData\Local\Hook\pi-runtime"));
+        assert!(!stripped.to_string_lossy().starts_with(r"\\?\"));
+
+        let unc = Path::new(r"\\?\UNC\server\share\pi-runtime");
+        assert_eq!(
+            crate::store::strip_verbatim(unc),
+            Path::new(r"\\server\share\pi-runtime")
         );
     }
 
