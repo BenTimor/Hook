@@ -4,6 +4,7 @@ mod config;
 mod guard;
 mod projects;
 mod provider;
+mod runtime;
 mod settings;
 mod store;
 mod tools;
@@ -47,14 +48,18 @@ pub fn run() {
             let store = Arc::new(store::Store::new(data_dir.clone()).map_err(std::io::Error::other)?);
             let settings = Arc::new(settings::SettingsStore::new(&data_dir));
             let projects = Arc::new(projects::ProjectsStore::new(&data_dir));
-            let coding = config::get()
-                .map(|cfg| cfg.coding.clone())
-                .unwrap_or_default();
+            let cfg = Arc::new(
+                config::get()
+                    .map_err(|e| std::io::Error::other(e))?
+                    .clone(),
+            );
+            let engine = runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir);
 
             let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
             let agents = Arc::new(AgentManager::new(
                 &data_dir,
-                coding,
+                cfg.clone(),
+                engine,
                 settings.clone(),
                 projects.clone(),
                 signal_tx,
@@ -68,6 +73,7 @@ pub fn run() {
                 agents,
                 streams: Arc::new(Mutex::new(HashMap::new())),
                 turns: turn::TurnState::default(),
+                vision_off: Arc::new(Default::default()),
             });
             app.manage(state.clone());
 
@@ -85,6 +91,22 @@ pub fn run() {
                             }
                         }
                     }
+                }
+            });
+
+            // One tick a second: collect progress notes and hand due batches to
+            // the chats. Coding agents write to a mailbox; this is what turns
+            // that into chat messages (at most once per update interval).
+            let ticker = state.clone();
+            let interval = std::time::Duration::from_secs(
+                cfg.coding.update_interval_seconds.clamp(10, 3600),
+            );
+            tauri::async_runtime::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+                loop {
+                    tick.tick().await;
+                    ticker.agents.harvest();
+                    ticker.agents.flush_due(interval);
                 }
             });
 
@@ -109,8 +131,7 @@ pub fn run() {
             commands::stop_stream,
             commands::get_settings,
             commands::set_projects_dir,
-            commands::set_pi_command,
-            commands::detect_pi_command,
+            commands::read_image,
             commands::open_path,
             commands::agents_overview,
         ])

@@ -1,8 +1,9 @@
-//! Integration check that spawns the real pi CLI.
+//! Integration check that spawns the real coding engine.
 //!
 //! It never calls a model: only the RPC handshake, the guard extension load and
-//! the sandbox flags are exercised, so it costs nothing to run. If pi is not
-//! installed the test skips itself.
+//! the sandbox flags are exercised, so it costs nothing to run. The bundled
+//! runtime is preferred (that is what ships); a `pi` on PATH is the fallback.
+//! The test skips itself when neither exists.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -17,10 +18,23 @@ fn detect_pi() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// How to launch the engine: the bundled runtime if it is present, else PATH.
+fn engine() -> Option<(PathBuf, Vec<String>)> {
+    let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("pi-runtime");
+    let node = runtime.join("node.exe");
+    let cli = runtime.join("pi").join("dist").join("bundle").join("cli.js");
+    if node.is_file() && cli.is_file() {
+        return Some((node, vec![cli.to_string_lossy().to_string()]));
+    }
+    detect_pi().map(|pi| (PathBuf::from("cmd"), vec!["/C".into(), pi.to_string_lossy().to_string()]))
+}
+
 #[test]
 fn rpc_handshake_returns_state_without_calling_a_model() {
-    let Some(pi) = detect_pi() else {
-        eprintln!("pi not installed — skipping the RPC handshake test");
+    let Some((program, prefix)) = engine() else {
+        eprintln!("no coding engine available — skipping the RPC handshake test");
         return;
     };
 
@@ -35,17 +49,11 @@ fn rpc_handshake_returns_state_without_calling_a_model() {
     std::fs::create_dir_all(&sessions).unwrap();
     std::fs::create_dir_all(&project).unwrap();
 
-    let args = hook_lib::agent_args(
-        &sessions,
-        "handshake01",
-        "handshake",
-        &guard,
-        &Default::default(),
-    );
+    // Empty model: this test must never depend on a configured provider.
+    let args = hook_lib::agent_args(&sessions, "handshake01", "handshake", &guard, "", None);
 
-    let mut child = Command::new("cmd")
-        .arg("/C")
-        .arg(&pi)
+    let mut child = Command::new(&program)
+        .args(&prefix)
         .args(&args)
         .current_dir(&project)
         .stdin(Stdio::piped())

@@ -28,6 +28,12 @@ stream_usage = true
 # Offer the agent tools (projects + coding agents) to the chat model.
 tools = true
 
+# Does the model accept images? When true, pictures you attach (and screenshots
+# the coding agents produce) are sent as image parts. When false they are kept
+# in the chat and described in text instead. If the endpoint rejects images
+# anyway, Hook retries that turn without them.
+vision = false
+
 # How reasoning from earlier assistant turns is replayed. Thinking-mode APIs
 # (DeepSeek) reject the next request when a tool-calling turn omits it.
 #   "auto"            -> the field the provider streamed it in (default)
@@ -69,6 +75,12 @@ thinking = "medium"
 # -----------------------------------------------------------------------------
 
 [coding]
+# Context window advertised to the coding engine for the chat model.
+context_window = 128000
+
+# Batched progress from coding agents reaches the chat at most this often
+# (a batch always flushes immediately when an agent finishes or asks something).
+update_interval_seconds = 60
 # Passed to pi as --model. Empty = pi's own default model.
 model = ""
 # Passed to pi as --thinking: off | minimal | low | medium | high | xhigh | max

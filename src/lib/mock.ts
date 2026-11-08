@@ -187,6 +187,9 @@ function plain(input: string): string {
     .join(" ");
 }
 
+/** Data URLs for pictures staged in the browser preview. */
+const previewImages = new Map<string, string>();
+
 export const mock = {
   async appInfo() {
     return clone(info);
@@ -254,6 +257,10 @@ export const mock = {
     return hits;
   },
 
+  async readImage(_chatId: string, attachmentId: string): Promise<string> {
+    return previewImages.get(attachmentId) ?? "";
+  },
+
   async stopStream(chatId: string) {
     cancelled.add(chatId);
   },
@@ -269,7 +276,10 @@ export const mock = {
 
     if (command === "send_message") {
       const text = String(args.text ?? "").trim();
-      if (!text) throw "Message is empty";
+      const images = Array.isArray(args.images)
+        ? (args.images as { dataUrl: string; width: number; height: number }[])
+        : [];
+      if (!text && images.length === 0) throw "Message is empty";
       chat = chatId ? chats[chatId] : undefined;
       if (!chat) {
         const freshId = id("c");
@@ -288,7 +298,23 @@ export const mock = {
         chats[freshId] = chat;
       }
       reply = /grid|css|overflow/i.test(text) ? SHORT_REPLY : REPLY;
-      chat.messages.push(msg("user", text, Date.now()));
+      const attachments = images.map((image, index) => {
+        const attachmentId = id("img");
+        previewImages.set(attachmentId, image.dataUrl);
+        return {
+          id: attachmentId,
+          file: `${attachmentId}.png`,
+          mime: "image/png",
+          width: image.width,
+          height: image.height,
+          bytes: Math.round((image.dataUrl.length * 3) / 4),
+          kind: "user",
+          index,
+        };
+      });
+      const userMessage = msg("user", text, Date.now());
+      if (attachments.length) userMessage.attachments = attachments;
+      chat.messages.push(userMessage);
     } else if (command === "regenerate") {
       if (!chatId) throw "Chat not found";
       chat = chats[chatId];
@@ -368,9 +394,6 @@ export const mock = {
   async getSettings(): Promise<SettingsView> {
     return {
       projectsDir: "C:/Users/you/Documents/Hook",
-      piCommand: "C:/nvm4w/nodejs/pi.cmd",
-      piConfigured: false,
-      piDetected: "C:/nvm4w/nodejs/pi.cmd",
       projects: [
         {
           name: "invoice-parser",
@@ -396,11 +419,6 @@ export const mock = {
   async setProjectsDir(path: string): Promise<SettingsView> {
     const view = await mock.getSettings();
     return { ...view, projectsDir: path };
-  },
-
-  async setPiCommand(command: string | null): Promise<SettingsView> {
-    const view = await mock.getSettings();
-    return { ...view, piCommand: command, piConfigured: Boolean(command) };
   },
 
   async agentsOverview(): Promise<AgentsOverview> {

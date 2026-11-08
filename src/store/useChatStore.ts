@@ -6,6 +6,7 @@ import type {
   AgentsOverview,
   AppInfo,
   ChatMeta,
+  DraftImage,
   Message,
   SettingsView,
   StreamEvent,
@@ -22,6 +23,11 @@ interface ChatStore {
   messages: Message[];
   streams: Record<string, StreamState>;
   draft: string;
+  /** Pictures staged for the next message in the active chat. */
+  draftImages: DraftImage[];
+  addDraftImages: (images: DraftImage[]) => void;
+  removeDraftImage: (id: string) => void;
+  clearDraftImages: () => void;
   sidebarOpen: boolean;
   focusToken: number;
   searchToken: number;
@@ -50,7 +56,6 @@ interface ChatStore {
   closeSettings: () => void;
   refreshSettings: () => Promise<void>;
   chooseProjectsDir: () => Promise<void>;
-  setPiCommand: (command: string | null) => Promise<void>;
 }
 
 function textOf(error: unknown): string {
@@ -172,6 +177,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     messages: [],
     streams: {},
     draft: "",
+    draftImages: [],
     sidebarOpen: true,
     focusToken: 0,
     searchToken: 0,
@@ -235,18 +241,31 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     send: async (text) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      const images = get().draftImages;
+      if (!trimmed && images.length === 0) return;
       const { activeId } = get();
       if (activeId && get().streams[activeId]) return;
-      set({ draft: "", pendingNewChat: !activeId });
+      set({ draft: "", draftImages: [], pendingNewChat: !activeId });
       try {
-        const id = await api.sendMessage(activeId, trimmed);
+        const id = await api.sendMessage(
+          activeId,
+          trimmed,
+          images.map(({ dataUrl, width, height }) => ({ dataUrl, width, height })),
+        );
         if (!activeId) set({ activeId: id });
       } catch (error) {
-        set({ draft: trimmed, pendingNewChat: false });
+        set({ draft: trimmed, draftImages: images, pendingNewChat: false });
         toast.error(textOf(error));
       }
     },
+
+    addDraftImages: (images) =>
+      set((state) => ({ draftImages: [...state.draftImages, ...images].slice(0, 6) })),
+
+    removeDraftImage: (id) =>
+      set((state) => ({ draftImages: state.draftImages.filter((image) => image.id !== id) })),
+
+    clearDraftImages: () => set({ draftImages: [] }),
 
     stop: async () => {
       const { activeId } = get();
@@ -372,15 +391,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
         const settings = await api.setProjectsDir(picked);
         set({ settings });
         toast.success("Projects folder updated");
-      } catch (error) {
-        toast.error(textOf(error));
-      }
-    },
-
-    setPiCommand: async (command) => {
-      try {
-        const settings = await api.setPiCommand(command);
-        set({ settings });
       } catch (error) {
         toast.error(textOf(error));
       }

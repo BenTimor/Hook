@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::agent::AgentManager;
@@ -20,6 +20,8 @@ pub struct AppState {
     pub agents: Arc<AgentManager>,
     pub streams: Arc<Mutex<HashMap<String, CancelToken>>>,
     pub turns: TurnState,
+    /// Set when the endpoint rejects image parts, so later turns stop trying.
+    pub vision_off: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -90,14 +92,28 @@ pub fn search_chats(state: State<'_, Arc<AppState>>, query: String) -> Result<Ve
     state.store.search(&query)
 }
 
+/// One picture pasted, dropped or picked in the composer.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomingImage {
+    /// `data:image/png;base64,...`
+    pub data_url: String,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+}
+
 #[tauri::command]
 pub fn send_message(
     state: State<'_, Arc<AppState>>,
     chat_id: Option<String>,
     text: String,
+    images: Option<Vec<IncomingImage>>,
 ) -> Result<String, String> {
     let text = text.trim().to_string();
-    if text.is_empty() {
+    let images = images.unwrap_or_default();
+    if text.is_empty() && images.is_empty() {
         return Err("Message is empty".into());
     }
 
@@ -109,11 +125,25 @@ pub fn send_message(
         return Err("A reply is already streaming in this chat.".into());
     }
 
-    if chat.messages.is_empty() && chat.meta.title == DEFAULT_TITLE {
+    if chat.messages.is_empty() && chat.meta.title == DEFAULT_TITLE && !text.is_empty() {
         chat.meta.title = derive_title(&text);
     }
     chat.meta.updated_at = now_ms();
-    chat.messages.push(Message::new("user", &text, "complete"));
+    let mut message = Message::new("user", &text, "complete");
+    for image in images {
+        let mime = image
+            .data_url
+            .split_once(':')
+            .and_then(|(_, rest)| rest.split_once(';'))
+            .map(|(mime, _)| mime.to_string())
+            .unwrap_or_else(|| "image/png".to_string());
+        let bytes = crate::store::base64_decode(&image.data_url)?;
+        let attachment = state
+            .store
+            .save_image(&chat.meta.id, &mime, &bytes, image.width, image.height, Some("user"))?;
+        message.attachments.push(attachment);
+    }
+    chat.messages.push(message);
     state.store.save(&mut chat)?;
 
     turn::kick(state.inner().clone(), chat.meta.id.clone());
@@ -197,9 +227,6 @@ pub fn stop_stream(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(
 #[serde(rename_all = "camelCase")]
 pub struct SettingsView {
     pub projects_dir: String,
-    pub pi_command: Option<String>,
-    pub pi_configured: bool,
-    pub pi_detected: Option<String>,
     pub projects: Vec<Project>,
 }
 
@@ -208,9 +235,6 @@ fn settings_view(state: &AppState) -> SettingsView {
     let projects = state.projects.list(&projects_dir).unwrap_or_default();
     SettingsView {
         projects_dir: projects_dir.to_string_lossy().to_string(),
-        pi_command: state.settings.pi_command(),
-        pi_configured: state.settings.pi_command_configured().is_some(),
-        pi_detected: crate::settings::detect_pi().map(|p| p.to_string_lossy().to_string()),
         projects,
     }
 }
@@ -230,17 +254,12 @@ pub async fn set_projects_dir(
 }
 
 #[tauri::command]
-pub fn set_pi_command(
+pub fn read_image(
     state: State<'_, Arc<AppState>>,
-    command: Option<String>,
-) -> Result<SettingsView, String> {
-    state.settings.set_pi_command(command.as_deref())?;
-    Ok(settings_view(&state))
-}
-
-#[tauri::command]
-pub fn detect_pi_command() -> Option<String> {
-    crate::settings::detect_pi().map(|p| p.to_string_lossy().to_string())
+    chat_id: String,
+    attachment_id: String,
+) -> Result<String, String> {
+    state.store.read_image(&chat_id, &attachment_id)
 }
 
 #[tauri::command]

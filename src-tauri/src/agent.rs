@@ -10,6 +10,8 @@ use tokio::sync::mpsc;
 
 use crate::config::CodingConfig;
 use crate::projects::ProjectsStore;
+use crate::config::HarnessConfig;
+use crate::runtime::PiRuntime;
 use crate::settings::SettingsStore;
 use crate::store::{now_ms, truncate};
 
@@ -99,6 +101,13 @@ pub struct SessionSummary {
     pub preview: String,
 }
 
+/// One progress note a coding agent sent, with any pictures it attached.
+#[derive(Debug, Clone)]
+pub struct Update {
+    pub note: String,
+    pub images: Vec<std::path::PathBuf>,
+}
+
 /// Sent to the chat layer when a coding agent needs the chat agent's attention.
 #[derive(Debug, Clone)]
 pub struct Wake {
@@ -122,8 +131,14 @@ enum AgentCmd {
 struct Entry {
     info: AgentInfo,
     tx: Option<mpsc::UnboundedSender<AgentCmd>>,
-    /// PID of the spawned `cmd.exe` shim, for tree termination on quit.
+    /// PID of the spawned process, for tree termination on quit.
     pid: Option<u32>,
+    /// Progress notes waiting to be batched for the chat agent.
+    pending: Vec<Update>,
+    /// Settled / failed / asked something: deliver on the next tick.
+    wake_pending: bool,
+    /// When the last batch went to the chat, for the update interval.
+    last_flush_at: i64,
 }
 
 #[derive(Default)]
@@ -140,6 +155,8 @@ pub struct AgentManager {
     data_dir: PathBuf,
     sessions_dir: PathBuf,
     coding: CodingConfig,
+    cfg: Arc<HarnessConfig>,
+    engine: Result<PiRuntime, String>,
     settings: Arc<SettingsStore>,
     projects: Arc<ProjectsStore>,
     signal_tx: mpsc::UnboundedSender<Signal>,
@@ -148,11 +165,13 @@ pub struct AgentManager {
 impl AgentManager {
     pub fn new(
         data_dir: &Path,
-        coding: CodingConfig,
+        cfg: Arc<HarnessConfig>,
+        engine: Result<PiRuntime, String>,
         settings: Arc<SettingsStore>,
         projects: Arc<ProjectsStore>,
         signal_tx: mpsc::UnboundedSender<Signal>,
     ) -> Self {
+        let coding = cfg.coding.clone();
         let sessions_dir = data_dir.join("agent-sessions");
         let _ = std::fs::create_dir_all(&sessions_dir);
 
@@ -172,6 +191,9 @@ impl AgentManager {
                             info,
                             tx: None,
                             pid: None,
+                            pending: Vec::new(),
+                            wake_pending: false,
+                            last_flush_at: now_ms(),
                         },
                     );
                 }
@@ -183,10 +205,133 @@ impl AgentManager {
             data_dir: data_dir.to_path_buf(),
             sessions_dir,
             coding,
+            cfg,
+            engine,
             settings,
             projects,
             signal_tx,
         }
+    }
+
+    /// Folder the guard writes `u-*.json` progress files into.
+    pub fn updates_dir(&self, agent_id: &str) -> PathBuf {
+        self.data_dir.join("updates").join(agent_id)
+    }
+
+    /// Collect whatever the agents have written since the last tick.
+    pub fn harvest(&self) {
+        let ids: Vec<String> = lock(&self.inner)
+            .agents
+            .values()
+            .filter(|e| e.tx.is_some() || !e.pending.is_empty())
+            .map(|e| e.info.id.clone())
+            .collect();
+
+        for id in ids {
+            let dir = self.updates_dir(&id);
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            let mut files: Vec<PathBuf> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .map(|n| n.to_string_lossy().starts_with("u-"))
+                        .unwrap_or(false)
+                        && p.extension().and_then(|e| e.to_str()) == Some("json")
+                })
+                .collect();
+            if files.is_empty() {
+                continue;
+            }
+            files.sort();
+
+            let mut harvested: Vec<Update> = Vec::new();
+            for file in files {
+                let parsed = std::fs::read_to_string(&file)
+                    .ok()
+                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+                if let Some(value) = parsed {
+                    let note = value
+                        .get("note")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+                    let images: Vec<PathBuf> = value
+                        .get("images")
+                        .and_then(|i| i.as_array())
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|i| i.as_str())
+                                .map(|path| dir.join("files").join(path))
+                                .filter(|path| path.is_file())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !note.is_empty() || !images.is_empty() {
+                        harvested.push(Update { note, images });
+                    }
+                }
+                let _ = std::fs::remove_file(&file);
+            }
+
+            if harvested.is_empty() {
+                continue;
+            }
+            let mut inner = lock(&self.inner);
+            if let Some(entry) = inner.agents.get_mut(&id) {
+                entry.pending.extend(harvested);
+            }
+        }
+    }
+
+    /// Hand progress to the chat: every `interval`, or right away when the
+    /// agent stopped working or needs an answer.
+    pub fn flush_due(&self, interval: std::time::Duration) {
+        let now = now_ms();
+        let interval_ms = interval.as_millis() as i64;
+        let due: Vec<String> = {
+            let inner = lock(&self.inner);
+            inner
+                .agents
+                .values()
+                .filter(|entry| {
+                    if entry.wake_pending {
+                        return true;
+                    }
+                    !entry.pending.is_empty()
+                        && (!entry.info.is_live() || now - entry.last_flush_at >= interval_ms)
+                })
+                .map(|entry| entry.info.id.clone())
+                .collect()
+        };
+
+        for id in due {
+            {
+                let mut inner = lock(&self.inner);
+                let Some(entry) = inner.agents.get_mut(&id) else {
+                    continue;
+                };
+                entry.wake_pending = false;
+                entry.last_flush_at = now;
+            }
+            let _ = self
+                .signal_tx
+                .send(Signal::Wake(Wake { agent_id: id.clone() }));
+        }
+    }
+
+    /// Drain the notes queued for one agent (called when a wake is delivered).
+    pub fn take_updates(&self, agent_id: &str) -> Vec<Update> {
+        let mut inner = lock(&self.inner);
+        inner
+            .agents
+            .get_mut(agent_id)
+            .map(|entry| std::mem::take(&mut entry.pending))
+            .unwrap_or_default()
     }
 
     pub fn get(&self, agent_id: &str) -> Option<AgentInfo> {
@@ -258,9 +403,10 @@ impl AgentManager {
             ));
         }
 
-        let pi = self.settings.pi_command().ok_or_else(|| {
-            "pi was not found on this machine. Set its path in Hook's settings.".to_string()
-        })?;
+        let engine = self.engine.clone().map_err(|e| e)?;
+        // Written on every start so a rebuilt app always drives the engine
+        // with the provider compiled into it.
+        crate::runtime::write_agent_home(&engine, &self.cfg)?;
         let guard = crate::guard::ensure(&self.data_dir)?;
 
         let session_id = resume_session
@@ -278,21 +424,29 @@ impl AgentManager {
             &session_id,
             &title,
             &guard,
-            &self.coding,
+            &crate::runtime::model_ref(&self.cfg),
+            self.coding.thinking().or_else(|| self.cfg.model.thinking_level()),
         );
 
-        let mut command = build_command(&pi, &args);
+        // Where the agent's guard writes progress notes for Hook to collect.
+        let updates_dir = self.updates_dir(&id);
+        let _ = std::fs::create_dir_all(&updates_dir);
+
+        let mut command = build_command(&engine, &args);
         command
             .current_dir(&project_path)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
+            // The engine's own config directory: Hook's provider, nobody else's.
+            .env("PI_CODING_AGENT_DIR", &engine.agent_home)
+            .env("HOOK_UPDATES_DIR", &updates_dir)
             .env("PI_BASH_MAX_TIMEOUT", self.coding.bash_max_timeout.to_string())
             .env("PI_BASH_MIN_TIMEOUT", self.coding.bash_min_timeout.to_string());
 
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("Could not start pi at {pi}: {e}"))?;
+        let mut child = command.spawn().map_err(|e| {
+            format!("Could not start the coding engine ({}): {e}", engine.describe())
+        })?;
 
         let pid = child.id();
         let stdin = child.stdin.take().ok_or("pi did not open stdin")?;
@@ -327,6 +481,9 @@ impl AgentManager {
                     info: info.clone(),
                     tx: Some(tx.clone()),
                     pid,
+                    pending: Vec::new(),
+                    wake_pending: false,
+                    last_flush_at: now_ms(),
                 },
             );
             persist(&self.data_dir, &inner);
@@ -722,7 +879,8 @@ pub fn agent_args(
     session_id: &str,
     title: &str,
     guard: &Path,
-    coding: &CodingConfig,
+    model: &str,
+    thinking: Option<&str>,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "--mode".into(),
@@ -741,11 +899,11 @@ pub fn agent_args(
         "--no-mcp".into(),
         "-na".into(),
     ];
-    if let Some(model) = coding.model() {
+    if !model.trim().is_empty() {
         args.push("--model".into());
         args.push(model.to_string());
     }
-    if let Some(thinking) = coding.thinking() {
+    if let Some(thinking) = thinking {
         args.push("--thinking".into());
         args.push(thinking.to_string());
     }
@@ -774,17 +932,29 @@ pub fn kill_tree(pid: u32) {
     }
 }
 
-fn build_command(pi: &str, args: &[String]) -> Command {
-    if cfg!(target_os = "windows") && !pi.to_ascii_lowercase().ends_with(".exe") {
-        // npm shims are .cmd batch files; CreateProcess cannot launch them directly.
+fn build_command(engine: &PiRuntime, args: &[String]) -> Command {
+    let program = engine.program.to_string_lossy().to_string();
+    let mut command = if engine.cli.is_none()
+        && cfg!(target_os = "windows")
+        && !program.to_ascii_lowercase().ends_with(".exe")
+    {
+        // A developer's PATH `pi` is an npm .cmd shim; CreateProcess cannot
+        // launch batch files directly. (The bundled runtime never needs this.)
         let mut command = Command::new("cmd");
-        command.arg("/C").arg(pi);
-        command.args(args);
+        command.arg("/C").arg(&program);
         command
     } else {
-        let mut command = Command::new(pi);
-        command.args(args);
-        command
+        Command::new(&engine.program)
+    };
+    command.args(engine.prefix_args());
+    command.args(args);
+    command
+}
+
+/// Queue a wake; the 1 s ticker delivers it together with any pending progress.
+fn mark_wake(inner: &Arc<Mutex<Inner>>, agent_id: &str) {
+    if let Some(entry) = lock(inner).agents.get_mut(agent_id) {
+        entry.wake_pending = true;
     }
 }
 
@@ -834,7 +1004,8 @@ async fn drive(
                         persist(&data_dir, &lock(&inner));
                         match wake {
                             Some(_) => {
-                                let _ = signal_tx.send(Signal::Wake(Wake { agent_id: agent_id.clone() }));
+                                mark_wake(&inner, &agent_id);
+                                let _ = signal_tx.send(Signal::Changed);
                             }
                             None => {}
                         }
@@ -890,7 +1061,8 @@ async fn drive(
                                 info.error = Some("Nobody answered the agent's question in time.".into());
                             });
                             persist(&data_dir, &lock(&inner));
-                            let _ = signal_tx.send(Signal::Wake(Wake { agent_id: agent_id.clone() }));
+                            mark_wake(&inner, &agent_id);
+                            let _ = signal_tx.send(Signal::Changed);
                             break;
                         }
                     }
@@ -938,8 +1110,9 @@ async fn drive(
         }
     }
     persist(&data_dir, &lock(&inner));
-    if let Some(wake) = wake {
-        let _ = signal_tx.send(Signal::Wake(wake));
+    if wake.is_some() {
+        mark_wake(&inner, &agent_id);
+        let _ = signal_tx.send(Signal::Changed);
     }
     let _ = signal_tx.send(Signal::Changed);
 }
@@ -1069,13 +1242,41 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
 mod tests {
     use super::*;
 
+    fn test_engine(base: &Path) -> Result<PiRuntime, String> {
+        Ok(PiRuntime {
+            program: base.join("fake-pi.cmd"),
+            cli: None,
+            agent_home: base.join("agent-home"),
+        })
+    }
+
     fn manager() -> AgentManager {
         let base = std::env::temp_dir().join(format!("hook-agents-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let settings = Arc::new(SettingsStore::new(&base));
         let projects = Arc::new(ProjectsStore::new(&base));
         let (tx, _rx) = mpsc::unbounded_channel();
-        AgentManager::new(&base, CodingConfig::default(), settings, projects, tx)
+        AgentManager::new(
+            &base,
+            Arc::new(test_config()),
+            test_engine(&base),
+            settings,
+            projects,
+            tx,
+        )
+    }
+
+    fn test_config() -> crate::config::HarnessConfig {
+        toml::from_str(
+            r#"
+[provider]
+base_url = "https://example.invalid"
+api_key = "test"
+[model]
+name = "test-model"
+"#,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1131,6 +1332,9 @@ mod tests {
                 info,
                 tx: None,
                 pid: None,
+                pending: Vec::new(),
+                wake_pending: false,
+                last_flush_at: now_ms(),
             },
         );
         drop(inner);
@@ -1172,6 +1376,93 @@ mod tests {
 
 
     #[tokio::test]
+    async fn progress_notes_are_batched_not_forwarded_one_by_one() {
+        use std::time::Duration as StdDuration;
+
+        let base = std::env::temp_dir().join(format!("hook-agent-batch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("fake-pi.mjs"), include_str!("../tests/fixtures/fake-pi.mjs")).unwrap();
+        std::fs::write(
+            base.join("fake-pi.cmd"),
+            "@echo off
+node \"%~dp0fake-pi.mjs\" %*
+",
+        )
+        .unwrap();
+
+        let settings = Arc::new(SettingsStore::new(&base));
+        let projects = Arc::new(ProjectsStore::new(&base));
+        let root = settings
+            .set_projects_dir(&base.join("projects").to_string_lossy())
+            .unwrap();
+        projects.create(&root, "demo", "").unwrap();
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mgr = AgentManager::new(
+            &base,
+            Arc::new(test_config()),
+            test_engine(&base),
+            settings,
+            projects,
+            tx,
+        );
+        let info = mgr.start("chat-1", "demo", "build it", None, None).unwrap();
+
+        // The agent writes two notes and a picture into its mailbox.
+        let dir = mgr.updates_dir(&info.id);
+        std::fs::create_dir_all(dir.join("files")).unwrap();
+        std::fs::write(dir.join("files").join("shot.png"), b"png").unwrap();
+        std::fs::write(
+            dir.join("u-1.json"),
+            serde_json::json!({"note": "first", "images": ["shot.png"]}).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("u-2.json"),
+            serde_json::json!({"note": "second", "images": []}).to_string(),
+        )
+        .unwrap();
+
+        // Not due yet: nothing is delivered mid-interval.
+        mgr.harvest();
+        mgr.flush_due(StdDuration::from_secs(60));
+        assert_eq!(mgr.take_updates(&info.id).len(), 2, "harvest collects both notes");
+
+        // Re-queue them and let the interval expire.
+        std::fs::write(
+            dir.join("u-3.json"),
+            serde_json::json!({"note": "third", "images": []}).to_string(),
+        )
+        .unwrap();
+        mgr.harvest();
+        mgr.flush_due(StdDuration::ZERO);
+
+        let mut woke = false;
+        let deadline = tokio::time::Instant::now() + StdDuration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(StdDuration::from_millis(200), rx.recv()).await {
+                Ok(Some(Signal::Wake(wake))) if wake.agent_id == info.id => {
+                    woke = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(woke, "a due batch should wake the chat");
+        let delivered = mgr.take_updates(&info.id);
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].note, "third");
+        assert!(delivered[0].images.is_empty());
+
+        // The drained mailbox files are gone, so nothing is delivered twice.
+        mgr.harvest();
+        assert!(mgr.take_updates(&info.id).is_empty());
+
+        mgr.stop(&info.id).ok();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
     async fn quitting_kills_live_agents() {
         let base = std::env::temp_dir().join(format!("hook-agent-quit-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
@@ -1182,7 +1473,6 @@ node \"%~dp0fake-pi.mjs\" %*
 ").unwrap();
 
         let settings = Arc::new(SettingsStore::new(&base));
-        settings.set_pi_command(Some(&shim.to_string_lossy())).unwrap();
         let projects = Arc::new(ProjectsStore::new(&base));
         let root = settings
             .set_projects_dir(&base.join("projects").to_string_lossy())
@@ -1190,7 +1480,14 @@ node \"%~dp0fake-pi.mjs\" %*
         projects.create(&root, "demo", "").unwrap();
 
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mgr = AgentManager::new(&base, CodingConfig::default(), settings, projects, tx);
+        let mgr = AgentManager::new(
+            &base,
+            Arc::new(test_config()),
+            test_engine(&base),
+            settings,
+            projects,
+            tx,
+        );
         let info = mgr.start("chat-1", "demo", "do a thing", None, None).unwrap();
         assert!(mgr.get(&info.id).unwrap().is_live());
 
@@ -1228,9 +1525,6 @@ node \"%~dp0fake-pi.mjs\" %*
         .unwrap();
 
         let settings = Arc::new(SettingsStore::new(&base));
-        settings
-            .set_pi_command(Some(&shim.to_string_lossy()))
-            .unwrap();
         let projects = Arc::new(ProjectsStore::new(&base));
         // Keep the test inside its own temp tree.
         let root = settings
@@ -1239,7 +1533,14 @@ node \"%~dp0fake-pi.mjs\" %*
         projects.create(&root, "demo", "test project").unwrap();
 
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let mgr = AgentManager::new(&base, CodingConfig::default(), settings, projects, tx);
+        let mgr = AgentManager::new(
+            &base,
+            Arc::new(test_config()),
+            test_engine(&base),
+            settings,
+            projects,
+            tx,
+        );
 
         let info = mgr
             .start("chat-1", "demo", "Add the login page", Some("login"), None)
@@ -1247,10 +1548,13 @@ node \"%~dp0fake-pi.mjs\" %*
         assert_eq!(info.state, STATE_STARTING);
         assert_eq!(mgr.working_count(), 1);
 
-        // Wait for the settle signal, then check the recorded state.
+        // Wait for the settle signal, then check the recorded state. In the
+        // app a 1 s ticker does the harvesting; here the test plays that role.
         let mut woke = false;
         let deadline = tokio::time::Instant::now() + StdDuration::from_secs(10);
         while tokio::time::Instant::now() < deadline {
+            mgr.harvest();
+            mgr.flush_due(StdDuration::ZERO);
             match tokio::time::timeout(StdDuration::from_millis(300), rx.recv()).await {
                 Ok(Some(Signal::Wake(wake))) => {
                     if wake.agent_id == info.id {
@@ -1303,7 +1607,14 @@ node \"%~dp0fake-pi.mjs\" %*
         let settings = Arc::new(SettingsStore::new(&base));
         let projects = Arc::new(ProjectsStore::new(&base));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mgr = AgentManager::new(&base, CodingConfig::default(), settings, projects, tx);
+        let mgr = AgentManager::new(
+            &base,
+            Arc::new(test_config()),
+            test_engine(&base),
+            settings,
+            projects,
+            tx,
+        );
         let info = mgr.get("ag_x").unwrap();
         assert_eq!(info.state, STATE_INTERRUPTED);
         assert!(info.error.is_some());

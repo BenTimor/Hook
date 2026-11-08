@@ -44,6 +44,12 @@ pub struct CodingConfig {
     /// How many coding agents may run at once.
     #[serde(default = "default_max_agents")]
     pub max_concurrent: usize,
+    /// Context window advertised to the engine for the chat model.
+    #[serde(default = "default_context_window")]
+    pub context_window: u64,
+    /// How often batched coding-agent progress is handed to the chat agent.
+    #[serde(default = "default_update_interval")]
+    pub update_interval_seconds: u64,
     /// Hard cap (seconds) for a single bash call inside a coding agent.
     #[serde(default = "default_bash_max")]
     pub bash_max_timeout: u64,
@@ -54,6 +60,14 @@ pub struct CodingConfig {
 
 fn default_max_agents() -> usize {
     3
+}
+
+fn default_context_window() -> u64 {
+    128_000
+}
+
+fn default_update_interval() -> u64 {
+    60
 }
 
 fn default_bash_max() -> u64 {
@@ -91,6 +105,12 @@ pub struct ProviderConfig {
     /// rejects the `tools` field.
     #[serde(default = "default_true")]
     pub tools: bool,
+    /// The model can see images. When on, attached pictures are sent as image
+    /// parts (and coding-agent screenshots are visible to the chat agent);
+    /// when off they are described in text instead. If the endpoint turns out
+    /// to reject images anyway, Hook retries the turn without them.
+    #[serde(default)]
+    pub vision: bool,
     /// How assistant reasoning is echoed back in the conversation history.
     ///   "auto" (default) - the same field the provider streamed it in
     ///                     ("reasoning_content", or "reasoning"), which is what

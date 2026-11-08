@@ -436,6 +436,7 @@ mod tests {
                 stream_usage: true,
                 tools: true,
                 reasoning_echo: None,
+                vision: false,
                 headers: Default::default(),
                 extra: Default::default(),
             },

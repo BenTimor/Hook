@@ -9,7 +9,7 @@ use crate::agent::AgentInfo;
 use crate::commands::AppState;
 use crate::config::{self, ReasoningEcho};
 use crate::provider::{self, CancelToken, Chunk, Outcome};
-use crate::store::{now_ms, Chat, ChatMeta, Message, ToolCallRecord};
+use crate::store::{now_ms, Attachment, Chat, ChatMeta, Message, ToolCallRecord};
 use crate::tools::{self, ToolEnv};
 
 /// Instructions for the chat model. The user never sees any of this; it only
@@ -29,10 +29,24 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - When you are woken, tell the user what actually happened in plain language: what changed, whether it worked, what is left. Never mention agent ids, session ids, tool names, or raw logs.
 - If a coding agent asks a question, answer it yourself when the user-s instructions already determine the answer; otherwise ask the user, then answer the agent.
 
+## Progress
+- While an agent works you get batched progress notes, sometimes with screenshots: at most one batch a minute, plus one when it finishes, fails, or asks something.
+- Turn a batch into a short update in your own words: what changed, what is next, how it looks. Two or three sentences. Never paste the notes, never mention batches, agent ids, tools, or files.
+- Pictures that came with the batch are shown to the user with your reply. Point at them naturally when it helps (here is the menu as it stands); do not describe every detail.
+- Only say what the notes actually say. If nothing came in, say you do not know yet rather than guessing.
+- Once an agent has finished, give the outcome: what works, what does not, what is left. That is the last update for that job.
+
 ## Style
 - Be concise and concrete. Markdown is fine.
 - No preamble, no restating the question, no filler.
-- The user never sees the coding agents directly; everything they know comes from your messages.";
+- The user never sees the coding agents directly; everything they know comes from your messages.
+- The user may attach pictures to their own messages. Treat them as part of the question.";
+
+/// Upper bound on pictures carried by one progress batch.
+const MAX_BATCH_IMAGES: usize = 4;
+
+/// Upper bound on pictures sent in one request.
+const MAX_IMAGES_PER_REQUEST: usize = 6;
 
 /// One assistant reply may need a few tool round-trips. Beyond this the turn is
 /// stopped with an honest error instead of looping forever.
@@ -169,16 +183,39 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             },
         );
 
-        // Reasoning is required on tool turns when this build asks for
-        // thinking, or when the conversation already carries reasoning from
-        // the provider (regardless of what the config says today).
-        let thinking_on = cfg.model.thinking_level().is_some()
-            || chat.messages.iter().any(|m| m.reasoning_field.is_some());
+        // Thinking-mode APIs require every assistant turn to carry its
+        // reasoning back as soon as tools are offered; an empty string is
+        // accepted when the model produced none. Outside that mode there is
+        // nothing to echo.
+        let require_reasoning = (cfg.model.thinking_level().is_some()
+            || chat.messages.iter().any(|m| m.reasoning_field.is_some()))
+            && cfg.provider.tools;
+        // Pictures only go to models that can see them, and only until an
+        // endpoint has told us it cannot after all.
+        let vision = cfg.provider.vision
+            && !state
+                .vision_off
+                .load(std::sync::atomic::Ordering::Relaxed);
+        let image_budget = std::sync::Mutex::new(MAX_IMAGES_PER_REQUEST);
+        let read_image = |attachment: &Attachment| -> Option<String> {
+            if !vision {
+                return None;
+            }
+            {
+                let mut budget = image_budget.lock().unwrap_or_else(|e| e.into_inner());
+                if *budget == 0 {
+                    return None;
+                }
+                *budget -= 1;
+            }
+            state.store.read_image(&chat_id, &attachment.id).ok()
+        };
         let mut history = build_history(
             &chat,
             &assistant_id,
             &cfg.provider.reasoning_echo(),
-            thinking_on,
+            require_reasoning,
+            vision.then_some(&read_image),
         );
         history.insert(
             0,
@@ -187,6 +224,25 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 "content": system_message(&cfg, &chat, &assistant_id),
             }),
         );
+        // Pictures that arrived with this wake: they belong on the reply the
+        // user reads, not on the hidden note that prompted it.
+        let batch_images: Vec<Attachment> = chat
+            .messages
+            .iter()
+            .skip(
+                chat.messages
+                    .iter()
+                    .rposition(|m| {
+                        m.role == "assistant" && m.id != assistant_id && m.status == "complete"
+                    })
+                    .map(|i| i + 1)
+                    .unwrap_or(0),
+            )
+            .filter(|m| m.role == "system" && !m.attachments.is_empty())
+            .flat_map(|m| m.attachments.clone())
+            .take(MAX_BATCH_IMAGES)
+            .collect();
+
         let mut content = String::new();
         let mut reasoning = String::new();
         let mut reasoning_field: Option<String> = None;
@@ -219,6 +275,10 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         match outcome {
             Ok(Outcome::Completed(completion)) => {
                 reasoning_field = completion.reasoning_field.clone();
+                // Non-streamed responses never pass through the chunk path.
+                if reasoning.is_empty() && !completion.reasoning.is_empty() {
+                    reasoning = completion.reasoning.clone();
+                }
                 let content = if completion.text.is_empty() {
                     content
                 } else {
@@ -288,6 +348,9 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                         entry.reasoning_field = reasoning_field.clone();
                 entry.status = "complete".into();
                 entry.usage = completion.usage;
+                if !batch_images.is_empty() {
+                    entry.attachments = batch_images.clone();
+                }
                 chat.meta.updated_at = now_ms();
                 let _ = state.store.save(&mut chat);
                 emit(
@@ -319,6 +382,19 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 break;
             }
             Err(err) => {
+                if vision && rounds <= MAX_ROUNDS && rejects_images(&err) {
+                    // The build promised a vision model and the endpoint
+                    // disagrees. Drop the images, remember it, and try again.
+                    eprintln!("hook: endpoint rejected image input, retrying without images — {err}");
+                    state
+                        .vision_off
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    chat.messages.retain(|m| m.id != assistant_id);
+                    chat.meta.updated_at = now_ms();
+                    let _ = state.store.save(&mut chat);
+                    rounds -= 1;
+                    continue;
+                }
                 let entry = &mut chat.messages[index];
                 entry.content = content;
                 entry.reasoning = non_empty(reasoning);
@@ -422,7 +498,31 @@ pub fn on_agent_event(state: Arc<AppState>, info: AgentInfo) {
         return;
     };
 
-    let mut note = Message::hidden("system", &tools::agent_event_note(&info));
+    let mut text = tools::agent_event_note(&info);
+    let mut attachments = Vec::new();
+
+    // Whatever the agent reported since the last batch rides along with this
+    // wake, pictures included — so the chat agent can talk about what it sees.
+    let updates = state.agents.take_updates(&info.id);
+    if !updates.is_empty() {
+        text.push_str("\n");
+        text.push_str(&tools::progress_block(&updates));
+        for path in updates.iter().flat_map(|u| u.images.iter()) {
+            if attachments.len() >= MAX_BATCH_IMAGES {
+                break;
+            }
+            match state
+                .store
+                .adopt_image(&info.chat_id, path, Some("screenshot"))
+            {
+                Ok(attachment) => attachments.push(attachment),
+                Err(error) => eprintln!("hook: skipping progress picture: {error}"),
+            }
+        }
+    }
+
+    let mut note = Message::hidden("system", &text);
+    note.attachments = attachments;
     note.created_at = now_ms();
     chat.messages.push(note);
     chat.meta.updated_at = now_ms();
@@ -435,7 +535,8 @@ fn build_history(
     chat: &Chat,
     exclude_id: &str,
     echo: &ReasoningEcho,
-    thinking_on: bool,
+    require_reasoning: bool,
+    images: Option<&dyn Fn(&Attachment) -> Option<String>>,
 ) -> Vec<serde_json::Value> {
     // Tool results are only valid directly after the assistant message that
     // requested them; drop any orphan (e.g. its parent errored out).
@@ -460,10 +561,8 @@ fn build_history(
                     .unwrap_or(false)
         })
         .filter_map(|m| match m.role.as_str() {
-            "user" => (!m.content.trim().is_empty()).then(|| {
-                json!({ "role": "user", "content": m.content })
-            }),
-            "assistant" => assistant_history_entry(m, echo, thinking_on),
+            "user" => user_history_entry(m, images),
+            "assistant" => assistant_history_entry(m, echo, require_reasoning),
             "tool" => m.tool_call_id.as_ref().map(|id| {
                 json!({ "role": "tool", "tool_call_id": id, "content": m.content })
             }),
@@ -472,13 +571,66 @@ fn build_history(
         .collect()
 }
 
+/// A user turn: plain text, or text plus the pictures they attached.
+///
+/// Pictures only travel when the model can see them; otherwise the text gains a
+/// short note so the model still knows something was attached.
+fn user_history_entry(
+    m: &Message,
+    images: Option<&dyn Fn(&Attachment) -> Option<String>>,
+) -> Option<serde_json::Value> {
+    let mut text = m.content.clone();
+    if text.trim().is_empty() && m.attachments.is_empty() {
+        return None;
+    }
+
+    if let Some(read) = images {
+        let parts: Vec<serde_json::Value> = m
+            .attachments
+            .iter()
+            .filter_map(read)
+            .map(|url| json!({ "type": "image_url", "image_url": { "url": url } }))
+            .collect();
+        if !parts.is_empty() {
+            if text.trim().is_empty() {
+                text = "What do you make of this?".into();
+            }
+            let mut content = vec![json!({ "type": "text", "text": text })];
+            content.extend(parts);
+            return Some(json!({ "role": "user", "content": content }));
+        }
+    }
+
+    for attachment in &m.attachments {
+        let size = if attachment.width > 0 {
+            format!("{}x{} ", attachment.width, attachment.height)
+        } else {
+            String::new()
+        };
+        let mime = attachment.mime.trim_start_matches("image/");
+        text.push_str(&format!("\n[attached image: {size}{mime}]"));
+    }
+
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(json!({ "role": "user", "content": text }))
+}
+
+/// Did the endpoint complain about the pictures rather than the request?
+fn rejects_images(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    (lower.contains("400") || lower.contains("415") || lower.contains("invalid_request"))
+        && (lower.contains("image") || lower.contains("vision") || lower.contains("modal"))
+}
+
 /// One assistant message as the provider expects to see it again. Thinking
 /// models (DeepSeek among them) reject the follow-up request unless the
 /// reasoning that produced the turn is replayed in the same field.
 fn assistant_history_entry(
     m: &Message,
     echo: &ReasoningEcho,
-    thinking_on: bool,
+    require_reasoning: bool,
 ) -> Option<serde_json::Value> {
     let empty_text = m.content.trim().is_empty();
     if empty_text && m.tool_calls.is_none() {
@@ -503,10 +655,10 @@ fn assistant_history_entry(
             Some(reasoning) => {
                 object.insert(field, json!(reasoning));
             }
-            // Thinking-mode providers reject the *next* request when an
-            // assistant turn with tool calls omits this field, even when the
-            // model produced no reasoning. An empty string satisfies them.
-            None if m.tool_calls.is_some() && thinking_on => {
+            // DeepSeek rejects the whole request, tools and all, unless every
+            // assistant turn echoes this field — including turns where the
+            // model produced no reasoning. An empty string satisfies it.
+            None if require_reasoning => {
                 object.insert(field, json!(""));
             }
             None => {}
@@ -558,7 +710,7 @@ mod tests {
         // Real order after a wake: the note lands after the last reply.
         let chat = chat_with(vec![user, assistant, tool, note]);
         let notes = system_notes(&chat, "none");
-        let history = build_history(&chat, "none", &ReasoningEcho::Auto, true);
+        let history = build_history(&chat, "none", &ReasoningEcho::Auto, true, None);
 
         // The agent note is folded into the single leading system message.
         assert_eq!(notes.len(), 1);
@@ -595,7 +747,7 @@ mod tests {
         let user = Message::new("user", "do it", "complete");
         let chat = chat_with(vec![user, reply]);
 
-        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
         assert_eq!(
             history[1]["reasoning_content"],
             "I compared the two files first."
@@ -605,15 +757,15 @@ mod tests {
         let mut legacy = Message::new("assistant", "Done.", "complete");
         legacy.reasoning = Some("legacy thoughts".into());
         let chat = chat_with(vec![Message::new("user", "hi", "complete"), legacy]);
-        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
         assert_eq!(history[1]["reasoning_content"], "legacy thoughts");
 
         // "off" drops it entirely.
-        let history = build_history(&chat, "x", &ReasoningEcho::Off, true);
+        let history = build_history(&chat, "x", &ReasoningEcho::Off, true, None);
         assert!(history[1].get("reasoning_content").is_none());
 
         // An explicit field name wins.
-        let history = build_history(&chat, "x", &ReasoningEcho::Fixed("reasoning".into()), true);
+        let history = build_history(&chat, "x", &ReasoningEcho::Fixed("reasoning".into()), true, None);
         assert_eq!(history[1]["reasoning"], "legacy thoughts");
     }
 
@@ -635,12 +787,92 @@ mod tests {
             result,
         ]);
 
-        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
         assert_eq!(history[1]["reasoning_content"], "");
 
         // With thinking off there is nothing to satisfy, so nothing is added.
-        let history = build_history(&chat, "x", &ReasoningEcho::Auto, false);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, false, None);
         assert!(history[1].get("reasoning_content").is_none());
+    }
+
+    fn picture() -> Attachment {
+        Attachment {
+            id: "img_1".into(),
+            file: "img_1.png".into(),
+            mime: "image/png".into(),
+            width: 1200,
+            height: 800,
+            bytes: 32,
+            kind: Some("user".into()),
+        }
+    }
+
+    #[test]
+    fn user_pictures_become_parts_only_for_models_that_can_see() {
+        let mut user = Message::new("user", "look at this", "complete");
+        user.attachments.push(picture());
+        let chat = chat_with(vec![user]);
+
+        let read = |attachment: &Attachment| {
+            Some(format!("data:{};base64,AAAA", attachment.mime))
+        };
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, Some(&read));
+        assert_eq!(history[0]["content"][0]["type"], "text");
+        assert_eq!(history[0]["content"][0]["text"], "look at this");
+        assert_eq!(history[0]["content"][1]["type"], "image_url");
+        assert_eq!(
+            history[0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AAAA"
+        );
+
+        // A text-only model still learns that something was attached.
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        let text = history[0]["content"].as_str().unwrap();
+        assert!(text.contains("[attached image: 1200x800 png]"));
+    }
+
+    #[test]
+    fn a_picture_without_text_still_reaches_the_model() {
+        let mut user = Message::new("user", "", "complete");
+        user.attachments.push(picture());
+        let chat = chat_with(vec![user]);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        assert!(history[0]["content"].as_str().unwrap().contains("attached image"));
+    }
+
+    #[test]
+    fn a_wake_turn_echoes_reasoning_on_the_trailing_reply() {
+        // This is the shape that 400s on DeepSeek: an agent report arrives, so
+        // the request ends with the last assistant reply plus a system note.
+        let mut call = Message::new("assistant", "Setting it up.", "complete");
+        call.tool_calls = Some(vec![ToolCallRecord {
+            id: "call_1".into(),
+            name: "start_coding_agent".into(),
+            arguments: "{}".into(),
+        }]);
+        call.hidden = true;
+        let mut result = Message::new("tool", "{\"agent_id\":\"ag_1\"}", "complete");
+        result.tool_call_id = Some("call_1".into());
+        let reply = Message::new("assistant", "The agent is building it.", "complete");
+        let note = Message::hidden("system", "[coding agent update] state: idle");
+
+        let chat = chat_with(vec![
+            Message::new("user", "build it", "complete"),
+            call,
+            result,
+            reply,
+            note,
+        ]);
+
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        // Every assistant turn carries the field, empty when nothing streamed.
+        assert_eq!(history[1]["reasoning_content"], "");
+        assert_eq!(history[3]["reasoning_content"], "");
+        assert_eq!(history[3]["content"], "The agent is building it.");
+
+        // Without thinking there is nothing to satisfy.
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, false, None);
+        assert!(history[3].get("reasoning_content").is_none());
     }
 
     #[test]
@@ -663,7 +895,7 @@ mod tests {
             note,
         ]);
 
-        let history = build_history(&chat, "placeholder", &ReasoningEcho::Auto, true);
+        let history = build_history(&chat, "placeholder", &ReasoningEcho::Auto, true, None);
         assert_eq!(history.len(), 3);
         assert_eq!(history[1]["reasoning_content"], "");
 
@@ -686,7 +918,7 @@ mod tests {
         orphan.tool_call_id = Some("call_gone".into());
         let user = Message::new("user", "hi", "complete");
         let chat = chat_with(vec![user, orphan]);
-        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["role"], "user");
     }
@@ -696,7 +928,7 @@ mod tests {
         let user = Message::new("user", "hi", "complete");
         let placeholder = Message::new("assistant", "", "streaming");
         let chat = chat_with(vec![user, placeholder]);
-        let history = build_history(&chat, "not-the-placeholder", &ReasoningEcho::Auto, true);
+        let history = build_history(&chat, "not-the-placeholder", &ReasoningEcho::Auto, true, None);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["role"], "user");
     }
@@ -707,7 +939,7 @@ mod tests {
         bad.error = Some("boom".into());
         let user = Message::new("user", "hi", "complete");
         let chat = chat_with(vec![user, bad]);
-        assert_eq!(build_history(&chat, "x", &ReasoningEcho::Auto, true).len(), 1);
+        assert_eq!(build_history(&chat, "x", &ReasoningEcho::Auto, true, None).len(), 1);
     }
 
     #[test]

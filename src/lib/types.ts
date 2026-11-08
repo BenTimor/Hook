@@ -12,6 +12,25 @@ export interface ToolCall {
   arguments: string;
 }
 
+export interface Attachment {
+  id: string;
+  file: string;
+  mime: string;
+  width: number;
+  height: number;
+  bytes: number;
+  /** "user" or "screenshot" — purely cosmetic in the UI. */
+  kind?: string;
+}
+
+/** A picture the user has staged in the composer, before sending. */
+export interface DraftImage {
+  id: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 export interface Message {
   id: string;
   role: Role;
@@ -25,6 +44,7 @@ export interface Message {
   toolCallId?: string;
   /** Internal bookkeeping: tool traffic and agent events. Never rendered. */
   hidden?: boolean;
+  attachments?: Attachment[];
 }
 
 export interface ChatMeta {
@@ -63,9 +83,6 @@ export interface Project {
 
 export interface SettingsView {
   projectsDir: string;
-  piCommand: string | null;
-  piConfigured: boolean;
-  piDetected: string | null;
   projects: Project[];
 }
 

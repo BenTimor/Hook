@@ -1,6 +1,13 @@
 # Local mock provider — no API key needed.
 # Usage: copy over harness.config.toml, then run `pnpm mock` and `pnpm app`.
 [provider]
+tools = true
+
+# Does the model accept images? When true, pictures you attach (and screenshots
+# the coding agents produce) are sent as image parts. When false they are kept
+# in the chat and described in text instead. If the endpoint rejects images
+# anyway, Hook retries that turn without them.
+vision = false
 base_url = "http://127.0.0.1:8787/v1"
 path = "/chat/completions"
 api_key = "local-dev-key"

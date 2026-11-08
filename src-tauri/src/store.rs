@@ -61,6 +61,32 @@ pub struct Message {
     /// Internal bookkeeping (agent events, tool traffic) the user never sees.
     #[serde(default, skip_serializing_if = "is_false")]
     pub hidden: bool,
+    /// Pictures that belong to this message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+}
+
+/// One picture attached to a message. Bytes live on disk; the chat file only
+/// keeps the reference, so a conversation with screenshots stays small and
+/// readable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    pub id: String,
+    /// File name inside `<data>/images/<chat id>/`.
+    pub file: String,
+    pub mime: String,
+    /// Display hints for the UI (and for the text placeholder when the model
+    /// cannot see images).
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    #[serde(default)]
+    pub bytes: u64,
+    /// What the picture is, when known: "screenshot", "user", ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -82,6 +108,7 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             hidden: false,
+            attachments: Vec::new(),
         }
     }
 
@@ -185,6 +212,7 @@ impl Store {
     pub fn new(root: PathBuf) -> Result<Self, String> {
         fs::create_dir_all(root.join("chats")).map_err(|e| format!("create data dir: {e}"))?;
         fs::create_dir_all(root.join("trash")).map_err(|e| format!("create trash dir: {e}"))?;
+        fs::create_dir_all(root.join("images")).map_err(|e| format!("create images dir: {e}"))?;
         Ok(Self {
             root,
             cache: Mutex::new(None),
@@ -254,6 +282,97 @@ impl Store {
             sort_metas(metas);
         }
         Ok(())
+    }
+
+    /// Folder holding the pictures of one chat.
+    pub fn image_dir(&self, chat_id: &str) -> PathBuf {
+        self.root.join("images").join(chat_id)
+    }
+
+    /// Store encoded bytes as a picture that belongs to `chat_id`.
+    pub fn save_image(
+        &self,
+        chat_id: &str,
+        mime: &str,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        kind: Option<&str>,
+    ) -> Result<Attachment, String> {
+        if !is_safe_id(chat_id) {
+            return Err("Invalid chat id".into());
+        }
+        if data.is_empty() {
+            return Err("The image is empty.".into());
+        }
+        if data.len() > MAX_IMAGE_BYTES {
+            return Err(format!(
+                "That image is {:.1} MB; the limit is {} MB.",
+                data.len() as f64 / 1_048_576.0,
+                MAX_IMAGE_BYTES / 1_048_576
+            ));
+        }
+        let ext = extension_for(mime)?;
+        let dir = self.image_dir(chat_id);
+        fs::create_dir_all(&dir).map_err(|e| format!("create image dir: {e}"))?;
+
+        let id = format!("img_{}", uuid::Uuid::new_v4().simple());
+        let file = format!("{id}.{ext}");
+        write_atomic(&dir.join(&file), data)?;
+
+        Ok(Attachment {
+            id,
+            file,
+            mime: mime.to_string(),
+            width,
+            height,
+            bytes: data.len() as u64,
+            kind: kind.map(str::to_string),
+        })
+    }
+
+    /// Copy a picture from somewhere on disk (a coding agent's screenshot) into
+    /// the chat that should show it.
+    pub fn adopt_image(
+        &self,
+        chat_id: &str,
+        source: &Path,
+        kind: Option<&str>,
+    ) -> Result<Attachment, String> {
+        let meta = fs::metadata(source).map_err(|e| format!("{}: {e}", source.display()))?;
+        if !meta.is_file() {
+            return Err(format!("{} is not a file", source.display()));
+        }
+        if meta.len() as usize > MAX_IMAGE_BYTES {
+            return Err(format!(
+                "{} is {:.1} MB; the limit is {} MB.",
+                source.display(),
+                meta.len() as f64 / 1_048_576.0,
+                MAX_IMAGE_BYTES / 1_048_576
+            ));
+        }
+        let mime = mime_for_path(source)?;
+        let data = fs::read(source).map_err(|e| format!("{}: {e}", source.display()))?;
+        let (width, height) = image_size(&data).unwrap_or((0, 0));
+        self.save_image(chat_id, mime, &data, width, height, kind)
+    }
+
+    /// Read a stored picture back as a data URL for the UI.
+    pub fn read_image(&self, chat_id: &str, attachment_id: &str) -> Result<String, String> {
+        if !is_safe_id(chat_id) {
+            return Err("Invalid chat id".into());
+        }
+        let dir = self.image_dir(chat_id);
+        let prefix = format!("{attachment_id}.");
+        let entry = fs::read_dir(&dir)
+            .map_err(|_| "Image not found".to_string())?
+            .flatten()
+            .find(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+            .ok_or_else(|| "Image not found".to_string())?;
+        let path = entry.path();
+        let bytes = fs::read(&path).map_err(|_| "Image not found".to_string())?;
+        let mime = mime_for_path(&path).unwrap_or("image/png");
+        Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
     }
 
     pub fn rename(&self, id: &str, title: &str) -> Result<ChatMeta, String> {
@@ -354,6 +473,136 @@ fn is_safe_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Hard cap for one picture. Bigger than any screenshot or phone photo needs
+/// to be after the UI has downscaled it.
+const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+
+fn extension_for(mime: &str) -> Result<&'static str, String> {
+    match mime {
+        "image/png" => Ok("png"),
+        "image/jpeg" | "image/jpg" => Ok("jpg"),
+        "image/webp" => Ok("webp"),
+        "image/gif" => Ok("gif"),
+        other => Err(format!("Unsupported image type: {other}")),
+    }
+}
+
+fn mime_for_path(path: &Path) -> Result<&'static str, String> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => Ok("image/png"),
+        Some("jpg") | Some("jpeg") => Ok("image/jpeg"),
+        Some("webp") => Ok("image/webp"),
+        Some("gif") => Ok("image/gif"),
+        other => Err(format!("Unsupported image type: {}", other.unwrap_or("?"))),
+    }
+}
+
+/// Width and height straight from the file header. No decoder needed: only the
+/// three formats Hook accepts, and only for a display hint.
+pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() > 24 && bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+        let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+        return Some((width, height));
+    }
+    if bytes.len() > 10 && bytes.starts_with(b"GIF8") {
+        let width = u16::from_le_bytes(bytes[6..8].try_into().ok()?) as u32;
+        let height = u16::from_le_bytes(bytes[8..10].try_into().ok()?) as u32;
+        return Some((width, height));
+    }
+    if bytes.len() > 4 && bytes[0] == 0xFF && bytes[1] == 0xD8 {
+        // JPEG: walk the segment markers until a start-of-frame.
+        let mut i = 2;
+        while i + 9 < bytes.len() {
+            if bytes[i] != 0xFF {
+                i += 1;
+                continue;
+            }
+            let marker = bytes[i + 1];
+            if (0xC0..=0xCF).contains(&marker) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
+                let height = u16::from_be_bytes(bytes[i + 5..i + 7].try_into().ok()?) as u32;
+                let width = u16::from_be_bytes(bytes[i + 7..i + 9].try_into().ok()?) as u32;
+                return Some((width, height));
+            }
+            let len = u16::from_be_bytes(bytes[i + 2..i + 4].try_into().ok()?) as usize;
+            if len < 2 {
+                return None;
+            }
+            i += 2 + len;
+        }
+        return None;
+    }
+    if bytes.len() > 30 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        if &bytes[12..16] == b"VP8X" {
+            let width = 1 + u32::from_le_bytes([bytes[24], bytes[25], bytes[26], 0]);
+            let height = 1 + u32::from_le_bytes([bytes[27], bytes[28], bytes[29], 0]);
+            return Some((width, height));
+        }
+    }
+    None
+}
+
+/// Minimal base64 encoder: no newline wrapping, standard alphabet.
+pub fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(triple >> 18) as usize & 63] as char);
+        out.push(TABLE[(triple >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(triple >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[triple as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Minimal base64 decoder that tolerates data URLs and whitespace.
+pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    let raw = input
+        .rsplit(',')
+        .next()
+        .unwrap_or(input)
+        .chars()
+        .filter(|c| !c.is_whitespace());
+    let mut out = Vec::new();
+    let mut buffer: u32 = 0;
+    let mut bits = 0;
+    for ch in raw {
+        let value = match ch {
+            'A'..='Z' => ch as u32 - 'A' as u32,
+            'a'..='z' => ch as u32 - 'a' as u32 + 26,
+            '0'..='9' => ch as u32 - '0' as u32 + 52,
+            '+' => 62,
+            '/' => 63,
+            '=' => break,
+            _ => return Err("Invalid base64 image data".into()),
+        };
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, bytes).map_err(|e| format!("write: {e}"))?;
@@ -432,4 +681,67 @@ fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
         i += 1;
     }
     i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 1x1 pixel PNG.
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    #[test]
+    fn base64_round_trips() {
+        assert_eq!(base64_encode(b"a"), "YQ==");
+        assert_eq!(base64_encode(b"ab"), "YWI=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+        assert_eq!(base64_decode("YWJj").unwrap(), b"abc");
+        assert_eq!(base64_decode("data:image/png;base64,YWI=").unwrap(), b"ab");
+        assert!(base64_decode("!!!").is_err());
+        assert_eq!(base64_decode(&base64_encode(PNG)).unwrap(), PNG);
+    }
+
+    #[test]
+    fn image_size_reads_the_header() {
+        assert_eq!(image_size(PNG), Some((1, 1)));
+        assert_eq!(image_size(b"not an image"), None);
+    }
+
+    #[test]
+    fn images_are_stored_and_read_back() {
+        let root = std::env::temp_dir().join(format!("hook-img-{}", uuid::Uuid::new_v4()));
+        let store = Store::new(root.clone()).unwrap();
+        let mut chat = Chat::new();
+        let id = chat.meta.id.clone();
+
+        let attachment = store
+            .save_image(&id, "image/png", PNG, 1, 1, Some("user"))
+            .unwrap();
+        assert!(attachment.file.ends_with(".png"));
+        assert_eq!(attachment.bytes as usize, PNG.len());
+
+        let data_url = store.read_image(&id, &attachment.id).unwrap();
+        assert!(data_url.starts_with("data:image/png;base64,"));
+
+        chat.messages.push(Message::new("user", "look", "complete"));
+        chat.messages[0].attachments.push(attachment.clone());
+        store.save(&mut chat).unwrap();
+
+        let reloaded = store.load(&id).unwrap();
+        assert_eq!(reloaded.messages[0].attachments.len(), 1);
+        assert_eq!(reloaded.messages[0].attachments[0].id, attachment.id);
+
+        // Unknown ids and refused inputs never guess.
+        assert!(store.read_image(&id, "img_nope").is_err());
+        assert!(store.save_image("../escape", "image/png", PNG, 1, 1, None).is_err());
+        assert!(store.save_image(&id, "image/tiff", PNG, 1, 1, None).is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

@@ -1,21 +1,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
 /// Runtime preferences that are *not* part of the compiled-in harness config.
-/// Today that is only where projects live and which `pi` binary to drive.
+/// Only one remains: where the user's projects live.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    /// Absolute path to the folder that holds every project.
+    /// Absolute path to the folder that holds every project. A stale
+    /// `pi_command` in an existing settings.json is ignored on load.
     #[serde(default)]
     pub projects_dir: Option<String>,
-    /// Absolute path (or PATH command) for the pi CLI. Discovered when unset.
-    #[serde(default)]
-    pub pi_command: Option<String>,
 }
 
 pub struct SettingsStore {
@@ -90,32 +87,6 @@ impl SettingsStore {
         Ok(canonical)
     }
 
-    /// Configured command, or the discovered one.
-    pub fn pi_command(&self) -> Option<String> {
-        lock(&self.data)
-            .pi_command
-            .clone()
-            .or_else(|| detect_pi().map(|p| p.to_string_lossy().to_string()))
-    }
-
-    pub fn pi_command_configured(&self) -> Option<String> {
-        lock(&self.data).pi_command.clone()
-    }
-
-    pub fn set_pi_command(&self, raw: Option<&str>) -> Result<(), String> {
-        let value = raw
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(str::to_string);
-        if let Some(v) = &value {
-            if !Path::new(v).exists() {
-                return Err(format!("Nothing found at {v}"));
-            }
-        }
-        let mut data = lock(&self.data);
-        data.pi_command = value;
-        self.save_locked(&data)
-    }
 }
 
 fn resolve_dir(path: &Path) -> Option<PathBuf> {
@@ -123,34 +94,6 @@ fn resolve_dir(path: &Path) -> Option<PathBuf> {
         .ok()
         .filter(|p| p.is_dir())
         .map(crate::store::strip_verbatim)
-}
-
-/// Best-effort discovery of the pi CLI. On Windows the npm shim is a `.cmd`,
-/// which is what we want because the agent runtime launches it through cmd.exe.
-pub fn detect_pi() -> Option<PathBuf> {
-    if cfg!(target_os = "windows") {
-        for probe in ["pi.cmd", "pi.exe"] {
-            if let Ok(out) = Command::new("where").arg(probe).output() {
-                for line in String::from_utf8_lossy(&out.stdout).lines() {
-                    let candidate = PathBuf::from(line.trim());
-                    if candidate.is_file() {
-                        return Some(candidate);
-                    }
-                }
-            }
-        }
-    }
-    let lookup = Command::new("sh").arg("-c").arg("command -v pi").output();
-    if let Ok(out) = lookup {
-        let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !line.is_empty() {
-            let candidate = PathBuf::from(line);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]

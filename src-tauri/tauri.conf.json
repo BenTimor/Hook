@@ -35,7 +35,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "copyright": "Hook",
     "category": "Productivity",
     "shortDescription": "A local AI chat harness",
@@ -51,6 +53,9 @@
         "installMode": "currentUser",
         "compression": "lzma"
       }
+    },
+    "resources": {
+      "resources/pi-runtime/**/*": "pi-runtime/"
     }
   }
 }

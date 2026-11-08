@@ -312,6 +312,32 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
 
 /// A compact note appended to the chat history when a coding agent needs
 /// attention. Hidden from the user; the chat agent turns it into prose.
+/// The progress notes a coding agent sent since the last batch, oldest first.
+pub fn progress_block(updates: &[crate::agent::Update]) -> String {
+    let mut block = String::from("progress:\n");
+    let mut pictures = 0usize;
+    for update in updates {
+        if update.note.is_empty() {
+            continue;
+        }
+        for line in update.note.lines().take(6) {
+            let line = line.trim();
+            if !line.is_empty() {
+                block.push_str("- ");
+                block.push_str(&truncate(line, 300));
+                block.push('\n');
+            }
+        }
+        pictures += update.images.len();
+    }
+    if pictures > 0 {
+        block.push_str(&format!(
+            "pictures: {pictures} attached to this update; they are shown to the user with your reply.\n"
+        ));
+    }
+    block
+}
+
 pub fn agent_event_note(info: &crate::agent::AgentInfo) -> String {
     let mut note = String::from("[coding agent update]\n");
     note.push_str(&format!("agent_id: {}\n", info.id));
@@ -384,7 +410,12 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let agents = AgentManager::new(
             &base,
-            Default::default(),
+            std::sync::Arc::new(crate::config::get().expect("config").clone()),
+            Ok(crate::runtime::PiRuntime {
+                program: std::path::PathBuf::from("pi"),
+                cli: None,
+                agent_home: base.join("agent-home"),
+            }),
             std::sync::Arc::new(SettingsStore::new(&base)),
             std::sync::Arc::new(ProjectsStore::new(&base)),
             tx,
@@ -408,7 +439,12 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let agents = AgentManager::new(
             &base,
-            Default::default(),
+            std::sync::Arc::new(crate::config::get().expect("config").clone()),
+            Ok(crate::runtime::PiRuntime {
+                program: std::path::PathBuf::from("pi"),
+                cli: None,
+                agent_home: base.join("agent-home"),
+            }),
             std::sync::Arc::new(SettingsStore::new(&base)),
             std::sync::Arc::new(ProjectsStore::new(&base)),
             tx,

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, FolderOpen, GitBranch, X } from "lucide-react";
+import { useEffect } from "react";
+import { FolderOpen, GitBranch, X } from "lucide-react";
 
 import { api } from "../lib/bridge";
 import { useChatStore } from "../store/useChatStore";
@@ -9,14 +9,6 @@ export function SettingsSheet() {
   const close = useChatStore((s) => s.closeSettings);
   const settings = useChatStore((s) => s.settings);
   const chooseProjectsDir = useChatStore((s) => s.chooseProjectsDir);
-  const setPiCommand = useChatStore((s) => s.setPiCommand);
-
-  const [piDraft, setPiDraft] = useState("");
-  const [savingPi, setSavingPi] = useState(false);
-
-  useEffect(() => {
-    if (settings) setPiDraft(settings.piCommand ?? "");
-  }, [settings]);
 
   useEffect(() => {
     if (!open) return;
@@ -31,14 +23,6 @@ export function SettingsSheet() {
   }, [open, close]);
 
   if (!open) return null;
-
-  const piReady = Boolean(settings?.piCommand);
-
-  const savePi = async () => {
-    setSavingPi(true);
-    await setPiCommand(piDraft.trim() || null);
-    setSavingPi(false);
-  };
 
   return (
     <div className="sheet-backdrop" onMouseDown={close}>
@@ -107,51 +91,6 @@ export function SettingsSheet() {
                 No projects yet. Ask for something and the chat agent will create one.
               </p>
             )}
-          </section>
-
-          <section className="sheet-section">
-            <div className="sheet-label">
-              <span>Coding agent</span>
-              <span className={`status ${piReady ? "ok" : "bad"}`}>
-                {piReady ? (
-                  <>
-                    <Check strokeWidth={2.6} /> Ready
-                  </>
-                ) : (
-                  "Not found"
-                )}
-              </span>
-            </div>
-            <p className="sheet-help">
-              Coding agents run pi inside a project folder, isolated from your own pi
-              setup. Point Hook at the pi executable if it is not on PATH.
-            </p>
-            <div className="path-row">
-              <input
-                className="text-input"
-                value={piDraft}
-                spellCheck={false}
-                placeholder="C:\path\to\pi.cmd"
-                onChange={(event) => setPiDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void savePi();
-                }}
-              />
-              <button className="btn" disabled={savingPi} onClick={() => void savePi()}>
-                Save
-              </button>
-              {settings?.piDetected && settings.piDetected !== piDraft && (
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    setPiDraft(settings.piDetected ?? "");
-                    void setPiCommand(settings.piDetected ?? null);
-                  }}
-                >
-                  Use detected
-                </button>
-              )}
-            </div>
           </section>
 
           <p className="sheet-foot">

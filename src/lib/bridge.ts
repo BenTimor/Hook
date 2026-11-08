@@ -114,10 +114,19 @@ export const api = {
       ? invoke<SearchHit[]>("search_chats", { query })
       : mock.searchChats(query),
 
-  sendMessage: (chatId: string | null, text: string): Promise<string> =>
+  sendMessage: (
+    chatId: string | null,
+    text: string,
+    images: { dataUrl: string; width: number; height: number }[] = [],
+  ): Promise<string> =>
     isTauri()
-      ? invoke<string>("send_message", { chatId, text })
-      : streamMock("send_message", { chatId, text }),
+      ? invoke<string>("send_message", { chatId, text, images })
+      : streamMock("send_message", { chatId, text, images }),
+
+  readImage: (chatId: string, attachmentId: string): Promise<string> =>
+    isTauri()
+      ? invoke<string>("read_image", { chatId, attachmentId })
+      : mock.readImage(chatId, attachmentId),
 
   regenerate: (chatId: string): Promise<void> =>
     isTauri()
@@ -141,11 +150,6 @@ export const api = {
     isTauri()
       ? invoke<SettingsView>("set_projects_dir", { path })
       : mock.setProjectsDir(path),
-
-  setPiCommand: (command: string | null): Promise<SettingsView> =>
-    isTauri()
-      ? invoke<SettingsView>("set_pi_command", { command })
-      : mock.setPiCommand(command),
 
   openPath: (path: string): Promise<void> =>
     isTauri() ? invoke<void>("open_path", { path }) : Promise.resolve(),

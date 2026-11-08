@@ -4,6 +4,7 @@ import { AlertCircle, Check, Copy, Pencil, RefreshCw } from "lucide-react";
 import type { Message } from "../lib/types";
 import { copyText } from "../lib/utils";
 import { Markdown } from "./Markdown";
+import { MessageImages } from "./MessageImages";
 
 interface Props {
   message: Message;
@@ -105,7 +106,8 @@ export function MessageItem({
 
     return (
       <div className="msg" data-role="user">
-        <div className="bubble">{message.content}</div>
+        <MessageImages message={message} />
+        {message.content.trim() && <div className="bubble">{message.content}</div>}
         <div className="msg-actions">
           <button className="mini-btn" onClick={() => void copy()}>
             {copied ? <Check strokeWidth={2.2} /> : <Copy strokeWidth={1.9} />}
@@ -133,6 +135,8 @@ export function MessageItem({
       ) : (
         <Markdown content={body} streaming={streaming} />
       )}
+
+      <MessageImages message={message} />
 
       {message.status === "error" && message.error && (
         <div className="msg-error">

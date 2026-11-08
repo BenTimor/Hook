@@ -27,7 +27,18 @@ mod tests {
         assert!(GUARD_SOURCE.contains("event.toolName !== \"bash\""));
         assert!(GUARD_SOURCE.contains("block: true"));
         assert!(GUARD_SOURCE.contains("PI_BASH_MAX_TIMEOUT"));
-        assert!(!GUARD_SOURCE.contains("import "), "guard must be dependency-free");
+        // Node built-ins only: the guard is copied into the user's data folder,
+        // where package imports could never resolve.
+        for line in GUARD_SOURCE
+            .lines()
+            .filter(|line| line.trim_start().starts_with("import "))
+        {
+            assert!(
+                line.contains("from \"node:"),
+                "guard may only import Node built-ins: {line}"
+            );
+        }
+        assert!(GUARD_SOURCE.contains("report_progress"));
     }
 
     #[test]

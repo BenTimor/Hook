@@ -95,14 +95,19 @@ Restore your real config afterwards (`cp harness.config.example.toml harness.con
 ## Build
 
 ```bash
-pnpm app:build     # NSIS installer + Hook.exe in src-tauri/target/release/
-pnpm app:portable  # just the standalone Hook.exe (portable)
+pnpm engine        # fetch the coding engine into src-tauri/resources/pi-runtime
+pnpm app:build     # NSIS installer (runs `pnpm engine` first)
+pnpm app:portable  # portable folder, zipped (runs `pnpm engine` first)
 ```
 
 Outputs:
 
-- `release/Hook-0.1.0-setup.exe` — installer (also in `src-tauri/target/release/bundle/nsis/`)
-- `release/Hook-0.1.0-portable.exe` — standalone, no install (also in `src-tauri/target/release/`)
+- `release/Hook-0.1.0-setup.exe` — installer, ~28 MB (also in `src-tauri/target/release/bundle/nsis/`)
+- `release/Hook-0.1.0-portable.zip` — `Hook.exe` + `resources\pi-runtime`, no install
+
+The engine (Node + pi) is ~104 MB of binaries and is not in git; `pnpm engine`
+copies it from the pi package on this machine. `scripts/fetch-pi-runtime.mjs`
+also proves the copy can load Hook's guard before anything gets packaged.
 
 ## Where the data lives
 
@@ -110,10 +115,14 @@ Outputs:
 %APPDATA%\app.hook.chat\
   chats\<id>.json          one readable JSON file per conversation
   trash\                   undoable deletions
-  settings.json            projects folder, pi path
+  images\<chat id>\        pictures attached to messages (bytes on disk)
+  settings.json            projects folder
   projects.json            the notes the chat agent keeps about projects
   agents.json              coding-agent runs and their states
-  agent-sessions\          pi session files (resumable)
+  agent-sessions\          coding-engine session files (resumable)
+  agent-home\              the engine's own config: models.json (this build's
+                           endpoint + key + model), settings.json, sessions
+  updates\<agent id>\      progress notes the agents wrote, collected each second
   hook-guard.mjs           the guard loaded into every coding agent
 ```
 
@@ -133,17 +142,36 @@ conversation while you keep chatting.
   `list_agents`, `agent_status`, `steer_agent`, `answer_agent`, `stop_agent` and
   `list_coding_sessions`. All code reading and editing happens inside a coding
   agent.
+- **Hook ships its own engine.** The installer carries a Node runtime and the
+  pi coding agent's bundle as app resources; agents run on that copy. Nothing is
+  installed on the machine, nothing is looked up on `PATH`, and there is no
+  setting for it anywhere in the UI.
 - **Coding agents are pi subprocesses**, driven over `--mode rpc` with the
   project folder as their working directory:
 
   ```
-  pi --mode rpc --session-dir <appdata>/agent-sessions --session-id <id>
-     --name "<title>" -ne -e hook-guard.mjs -ns -np --no-mcp -na
+  <resources>/node.exe <resources>/pi/dist/bundle/cli.js --mode rpc
+     --session-dir <appdata>/agent-sessions --session-id <id> --name "<title>"
+     -ne -e hook-guard.mjs -ns -np --no-mcp -na --model hook/<model>
   ```
 
-  Those flags keep them isolated: your own extensions, skills, prompt templates,
-  MCP servers and project-local pi config are ignored, so an agent behaves the
-  same on any machine that has pi. Your pi auth and model selection still apply.
+  `PI_CODING_AGENT_DIR` points at `%APPDATA%\app.hook.chat\agent-home`, whose
+  `models.json` is rewritten from `harness.config.toml` on every launch. So an
+  agent uses exactly the chat agent's endpoint, key, model and thinking level,
+  and never touches your own `~/.pi` — different extensions, skills, MCP servers
+  and logins on your machine cannot change what it does.
+- **Progress updates.** Agents get one extra tool, `report_progress(note, images?)`,
+  and a guideline to use it every couple of minutes and at the end. It writes to
+  a mailbox Hook watches; Hook batches whatever arrived and hands the chat agent
+  one note per minute (immediately when the agent finishes, fails or asks
+  something). Pictures are attached to the message the chat agent writes back,
+  so updates read like "here is the menu as it stands" with the screenshot right
+  there. How an agent produces those pictures is up to it — a headless browser,
+  the project's own test harness, an engine's screenshot API.
+- **Pictures from you.** Paste, drag or pick an image in the composer. Bytes are
+  downscaled and stored on disk, not in the chat JSON. If `[provider] vision` is
+  on, they reach the model as image parts; if not (or if the endpoint rejects
+  them) they stay visible to you and are described in text.
 - **The guard is the only policy they inherit.** Every `bash` call must carry a
   `timeout` in seconds (1–3600 by default). Missing, oversized or non-numeric
   timeouts are blocked with an explanation, and the model re-issues the call.
@@ -162,9 +190,9 @@ conversation while you keep chatting.
 Agents are children of Hook: closing the window kills their process trees and
 marks the run `interrupted`, so nothing keeps running behind your back.
 
-The Settings sheet (gear in the sidebar footer) holds exactly two things: the
-projects folder and the pi executable. Provider and model settings stay compiled
-into the build.
+The Settings sheet (gear in the sidebar footer) holds one thing: the projects
+folder. Provider and model settings — and everything about the coding engine —
+stay compiled into the build.
 
 ## Keyboard
 
@@ -173,6 +201,7 @@ into the build.
 | `Ctrl/⌘ + N` | New chat |
 | `Ctrl/⌘ + K` | Search chats |
 | `Ctrl/⌘ + B` | Toggle sidebar |
+| `Ctrl/⌘ + V` | Paste an image into the composer |
 | `Enter` | Send |
 | `Shift + Enter` | New line |
 | `Esc` | Stop generating |
@@ -187,9 +216,10 @@ src-tauri/src/
   store.rs      atomic JSON persistence, pin/delete/restore/search
   turn.rs       the assistant turn: model → tools → tools → answer, plus wakes
   tools.rs      the tool schemas and their implementations
-  agent.rs      pi RPC supervisor: spawn, state machine, steer/answer/stop
+  agent.rs      engine RPC supervisor: spawn, states, progress batching, wakes
+  runtime.rs    locate the bundled engine, write its models.json
   guard.rs      the guard extension, materialized from the binary
-  settings.rs   projects folder + pi discovery
+  settings.rs   projects folder
   projects.rs   folder scanning, descriptions, path containment
   commands.rs   the IPC surface
 src/
@@ -221,8 +251,10 @@ cargo test                      # unit tests + two zero-cost integration checks
 cargo test --lib -- --ignored   # live tests against `pnpm mock`
 ```
 
-`cargo test` covers SSE framing, UTF-8 splits, path containment, the project and
-agent stores, the chat-agent tool loop, the guard policy (a Node harness feeds it
-bad `bash` calls), the pi RPC handshake (spawns the real pi, asks `get_state`,
-never calls a model) and a full agent lifecycle against a fake pi that speaks the
-RPC protocol. Tests skip themselves when `pi` or `node` is missing.
+`cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
+shapes thinking-mode APIs reject), image parts and the base64/header helpers,
+path containment, the project and agent stores, progress batching, the chat-agent
+tool loop, the guard policy (a Node harness feeds it bad `bash` calls), the RPC
+handshake (spawns the real engine, asks `get_state`, never calls a model) and a
+full agent lifecycle against a fake one that speaks the protocol. Tests skip
+themselves when the engine or `node` is missing.
