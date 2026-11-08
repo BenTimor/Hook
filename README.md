@@ -33,6 +33,8 @@ path = "/chat/completions"
 api_key  = "sk-...-your-key"             # hard-coded into the build
 reasoning_param = "reasoning_effort"     # or "reasoning", or "none"
 stream_usage = true
+tools = true                             # offer the agent tools to the model
+reasoning_echo = "auto"                  # replay reasoning on tool turns
 
 [model]
 name = "gpt-5.1"
@@ -41,6 +43,12 @@ thinking = "medium"                      # off | minimal | low | medium | high
 
 `thinking` is sent to the provider using `reasoning_param` (mapped to
 `reasoning_effort` for OpenAI-style APIs). It is never shown in the UI.
+
+Thinking-mode APIs (DeepSeek among them) reject the follow-up request unless the
+assistant's `reasoning_content` is replayed on tool-calling turns — an empty
+string counts. Hook records the field each answer was streamed in and sends it
+back automatically (`reasoning_echo = "auto"`); set it to `"off"` or to an
+explicit field name if your provider wants something else.
 
 Coding agents and the chat agent's instructions have their own optional
 sections:

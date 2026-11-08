@@ -49,6 +49,9 @@ pub enum Chunk {
 /// One finished assistant response, tool calls included.
 pub struct Completion {
     pub text: String,
+    pub reasoning: String,
+    /// Field the reasoning streamed in, so it can be replayed verbatim.
+    pub reasoning_field: Option<String>,
     pub tool_calls: Vec<ToolCallRecord>,
     pub usage: Option<Usage>,
 }
@@ -199,8 +202,26 @@ where
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let reasoning_field = if value
+            .pointer("/choices/0/message/reasoning_content")
+            .and_then(|c| c.as_str())
+            .map(|c| !c.is_empty())
+            .unwrap_or(false)
+        {
+            Some("reasoning_content".to_string())
+        } else {
+            None
+        };
+        let reasoning = value
+            .pointer("/choices/0/message/reasoning_content")
+            .or_else(|| value.pointer("/choices/0/message/reasoning"))
+            .and_then(|c| c.as_str())
+            .unwrap_or_default()
+            .to_string();
         return Ok(Outcome::Completed(Completion {
             text: content.to_string(),
+            reasoning,
+            reasoning_field,
             tool_calls,
             usage,
         }));
@@ -210,6 +231,8 @@ where
     let mut buffer: Vec<u8> = Vec::new();
     let mut usage: Option<Usage> = None;
     let mut text = String::new();
+    let mut reasoning = String::new();
+    let mut reasoning_field: Option<String> = None;
     let mut tool_calls = ToolCallAccumulator::default();
 
     'outer: loop {
@@ -258,18 +281,23 @@ where
                         tool_calls.push(call);
                     }
                 }
+                // A single delta may carry visible text and reasoning at once,
+                // so both are read independently.
                 if let Some(part) = delta.get("content").and_then(|c| c.as_str()) {
                     if !part.is_empty() {
                         text.push_str(part);
                         on_chunk(Chunk::Text(part.to_string()));
                     }
-                } else if let Some(reasoning) = delta
+                }
+                let reasoning_part = delta
                     .get("reasoning_content")
-                    .or_else(|| delta.get("reasoning"))
-                    .and_then(|c| c.as_str())
-                {
-                    if !reasoning.is_empty() {
-                        on_chunk(Chunk::Reasoning(reasoning.to_string()));
+                    .map(|value| ("reasoning_content", value))
+                    .or_else(|| delta.get("reasoning").map(|value| ("reasoning", value)));
+                if let Some((field, value)) = reasoning_part {
+                    if let Some(piece) = value.as_str().filter(|piece| !piece.is_empty()) {
+                        reasoning_field.get_or_insert_with(|| field.to_string());
+                        reasoning.push_str(piece);
+                        on_chunk(Chunk::Reasoning(piece.to_string()));
                     }
                 }
             }
@@ -282,6 +310,8 @@ where
 
     Ok(Outcome::Completed(Completion {
         text,
+        reasoning,
+        reasoning_field,
         tool_calls: tool_calls.finish(),
         usage,
     }))
@@ -405,6 +435,7 @@ mod tests {
                 reasoning_param: None,
                 stream_usage: true,
                 tools: true,
+                reasoning_echo: None,
                 headers: Default::default(),
                 extra: Default::default(),
             },

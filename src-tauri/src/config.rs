@@ -91,6 +91,14 @@ pub struct ProviderConfig {
     /// rejects the `tools` field.
     #[serde(default = "default_true")]
     pub tools: bool,
+    /// How assistant reasoning is echoed back in the conversation history.
+    ///   "auto" (default) - the same field the provider streamed it in
+    ///                     ("reasoning_content", or "reasoning"), which is what
+    ///                     thinking-mode APIs such as DeepSeek require
+    ///   "off"            - never send reasoning back
+    ///   "<field>"        - always echo it under this field name
+    #[serde(default)]
+    pub reasoning_echo: Option<String>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
     #[serde(default)]
@@ -158,6 +166,44 @@ impl ProviderConfig {
 
     pub fn reasoning_param(&self) -> &str {
         self.reasoning_param.as_deref().unwrap_or("reasoning_effort")
+    }
+}
+
+/// How reasoning from previous assistant turns is replayed to the provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReasoningEcho {
+    Off,
+    /// Use the field this message was streamed in, falling back to
+    /// `reasoning_content` for messages stored before the field was recorded.
+    Auto,
+    Fixed(String),
+}
+
+impl ProviderConfig {
+    pub fn reasoning_echo(&self) -> ReasoningEcho {
+        match self.reasoning_echo.as_deref().map(str::trim) {
+            Some("off") | Some("false") | Some("none") => ReasoningEcho::Off,
+            Some(other) if !other.is_empty() && other != "auto" => {
+                ReasoningEcho::Fixed(other.to_string())
+            }
+            _ => ReasoningEcho::Auto,
+        }
+    }
+}
+
+impl ReasoningEcho {
+    /// Field name to use for one assistant message, if any.
+    pub fn field_for(&self, recorded: Option<&str>) -> Option<String> {
+        match self {
+            ReasoningEcho::Off => None,
+            ReasoningEcho::Fixed(name) => Some(name.clone()),
+            ReasoningEcho::Auto => Some(
+                recorded
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("reasoning_content")
+                    .to_string(),
+            ),
+        }
     }
 }
 

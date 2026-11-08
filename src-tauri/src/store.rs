@@ -41,6 +41,10 @@ pub struct Message {
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// Field the reasoning was streamed in (`reasoning_content` / `reasoning`).
+    /// Thinking-mode providers require it back in the same field on replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_field: Option<String>,
     pub created_at: i64,
     /// complete | streaming | error | aborted
     pub status: String,
@@ -70,6 +74,7 @@ impl Message {
             role: role.to_string(),
             content: content.to_string(),
             reasoning: None,
+            reasoning_field: None,
             created_at: now_ms(),
             status: status.to_string(),
             error: None,

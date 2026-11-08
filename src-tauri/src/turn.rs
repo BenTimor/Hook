@@ -7,7 +7,7 @@ use tauri::Emitter;
 
 use crate::agent::AgentInfo;
 use crate::commands::AppState;
-use crate::config;
+use crate::config::{self, ReasoningEcho};
 use crate::provider::{self, CancelToken, Chunk, Outcome};
 use crate::store::{now_ms, Chat, ChatMeta, Message, ToolCallRecord};
 use crate::tools::{self, ToolEnv};
@@ -169,7 +169,17 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             },
         );
 
-        let mut history = build_history(&chat, &assistant_id);
+        // Reasoning is required on tool turns when this build asks for
+        // thinking, or when the conversation already carries reasoning from
+        // the provider (regardless of what the config says today).
+        let thinking_on = cfg.model.thinking_level().is_some()
+            || chat.messages.iter().any(|m| m.reasoning_field.is_some());
+        let mut history = build_history(
+            &chat,
+            &assistant_id,
+            &cfg.provider.reasoning_echo(),
+            thinking_on,
+        );
         history.insert(
             0,
             json!({
@@ -179,6 +189,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         );
         let mut content = String::new();
         let mut reasoning = String::new();
+        let mut reasoning_field: Option<String> = None;
 
         let outcome = provider::stream_chat(
             &cfg,
@@ -207,6 +218,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
 
         match outcome {
             Ok(Outcome::Completed(completion)) => {
+                reasoning_field = completion.reasoning_field.clone();
                 let content = if completion.text.is_empty() {
                     content
                 } else {
@@ -221,6 +233,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                         let entry = &mut chat.messages[index];
                         entry.content = content;
                         entry.reasoning = non_empty(reasoning);
+                        entry.reasoning_field = reasoning_field.clone();
                         entry.status = "error".into();
                         entry.error = Some(message.clone());
                         entry.tool_calls = Some(calls);
@@ -241,6 +254,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     let entry = &mut chat.messages[index];
                     entry.content = content;
                     entry.reasoning = non_empty(reasoning);
+                        entry.reasoning_field = reasoning_field.clone();
                     entry.status = "complete".into();
                     entry.tool_calls = Some(calls.clone());
                     // A tool-call-only assistant turn carries no visible text.
@@ -271,6 +285,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 let entry = &mut chat.messages[index];
                 entry.content = content;
                 entry.reasoning = non_empty(reasoning);
+                        entry.reasoning_field = reasoning_field.clone();
                 entry.status = "complete".into();
                 entry.usage = completion.usage;
                 chat.meta.updated_at = now_ms();
@@ -289,6 +304,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 let entry = &mut chat.messages[index];
                 entry.content = content;
                 entry.reasoning = non_empty(reasoning);
+                        entry.reasoning_field = reasoning_field.clone();
                 entry.status = "aborted".into();
                 chat.meta.updated_at = now_ms();
                 let _ = state.store.save(&mut chat);
@@ -306,6 +322,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 let entry = &mut chat.messages[index];
                 entry.content = content;
                 entry.reasoning = non_empty(reasoning);
+                        entry.reasoning_field = reasoning_field.clone();
                 entry.status = "error".into();
                 entry.error = Some(err.clone());
                 chat.meta.updated_at = now_ms();
@@ -354,10 +371,9 @@ fn system_message(cfg: &config::HarnessConfig, chat: &Chat, exclude_id: &str) ->
 /// chat agent has spoken about an event it drops out of the prompt, so old
 /// events can never be reported twice.
 fn system_notes(chat: &Chat, exclude_id: &str) -> Vec<String> {
-    let last_reply = chat
-        .messages
-        .iter()
-        .rposition(|m| m.role == "assistant" && m.id != exclude_id);
+    let last_reply = chat.messages.iter().rposition(|m| {
+        m.role == "assistant" && m.id != exclude_id && m.status == "complete"
+    });
     let start = last_reply.map(|i| i + 1).unwrap_or(0);
     chat.messages
         .iter()
@@ -415,7 +431,12 @@ pub fn on_agent_event(state: Arc<AppState>, info: AgentInfo) {
     kick(state, info.chat_id.clone());
 }
 
-fn build_history(chat: &Chat, exclude_id: &str) -> Vec<serde_json::Value> {
+fn build_history(
+    chat: &Chat,
+    exclude_id: &str,
+    echo: &ReasoningEcho,
+    thinking_on: bool,
+) -> Vec<serde_json::Value> {
     // Tool results are only valid directly after the assistant message that
     // requested them; drop any orphan (e.g. its parent errored out).
     let live_calls: std::collections::HashSet<&str> = chat
@@ -442,26 +463,56 @@ fn build_history(chat: &Chat, exclude_id: &str) -> Vec<serde_json::Value> {
             "user" => (!m.content.trim().is_empty()).then(|| {
                 json!({ "role": "user", "content": m.content })
             }),
-            "assistant" => match (&m.tool_calls, m.content.trim().is_empty()) {
-                (Some(calls), true) => Some(json!({
-                    "role": "assistant",
-                    "content": serde_json::Value::Null,
-                    "tool_calls": tool_calls_json(calls),
-                })),
-                (Some(calls), false) => Some(json!({
-                    "role": "assistant",
-                    "content": m.content,
-                    "tool_calls": tool_calls_json(calls),
-                })),
-                (None, false) => Some(json!({ "role": "assistant", "content": m.content })),
-                (None, true) => None,
-            },
+            "assistant" => assistant_history_entry(m, echo, thinking_on),
             "tool" => m.tool_call_id.as_ref().map(|id| {
                 json!({ "role": "tool", "tool_call_id": id, "content": m.content })
             }),
             _ => None,
         })
         .collect()
+}
+
+/// One assistant message as the provider expects to see it again. Thinking
+/// models (DeepSeek among them) reject the follow-up request unless the
+/// reasoning that produced the turn is replayed in the same field.
+fn assistant_history_entry(
+    m: &Message,
+    echo: &ReasoningEcho,
+    thinking_on: bool,
+) -> Option<serde_json::Value> {
+    let empty_text = m.content.trim().is_empty();
+    if empty_text && m.tool_calls.is_none() {
+        return None;
+    }
+
+    let mut object = serde_json::Map::new();
+    object.insert("role".into(), json!("assistant"));
+    object.insert(
+        "content".into(),
+        if empty_text {
+            serde_json::Value::Null
+        } else {
+            json!(m.content)
+        },
+    );
+    if let Some(calls) = &m.tool_calls {
+        object.insert("tool_calls".into(), tool_calls_json(calls));
+    }
+    if let Some(field) = echo.field_for(m.reasoning_field.as_deref()) {
+        match m.reasoning.as_deref().filter(|text| !text.trim().is_empty()) {
+            Some(reasoning) => {
+                object.insert(field, json!(reasoning));
+            }
+            // Thinking-mode providers reject the *next* request when an
+            // assistant turn with tool calls omits this field, even when the
+            // model produced no reasoning. An empty string satisfies them.
+            None if m.tool_calls.is_some() && thinking_on => {
+                object.insert(field, json!(""));
+            }
+            None => {}
+        }
+    }
+    Some(serde_json::Value::Object(object))
 }
 
 fn tool_calls_json(calls: &[ToolCallRecord]) -> serde_json::Value {
@@ -507,7 +558,7 @@ mod tests {
         // Real order after a wake: the note lands after the last reply.
         let chat = chat_with(vec![user, assistant, tool, note]);
         let notes = system_notes(&chat, "none");
-        let history = build_history(&chat, "none");
+        let history = build_history(&chat, "none", &ReasoningEcho::Auto, true);
 
         // The agent note is folded into the single leading system message.
         assert_eq!(notes.len(), 1);
@@ -537,12 +588,105 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_is_replayed_in_the_field_the_provider_used() {
+        let mut reply = Message::new("assistant", "All done.", "complete");
+        reply.reasoning = Some("I compared the two files first.".into());
+        reply.reasoning_field = Some("reasoning_content".into());
+        let user = Message::new("user", "do it", "complete");
+        let chat = chat_with(vec![user, reply]);
+
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true);
+        assert_eq!(
+            history[1]["reasoning_content"],
+            "I compared the two files first."
+        );
+
+        // A legacy message with no recorded field still replays correctly.
+        let mut legacy = Message::new("assistant", "Done.", "complete");
+        legacy.reasoning = Some("legacy thoughts".into());
+        let chat = chat_with(vec![Message::new("user", "hi", "complete"), legacy]);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true);
+        assert_eq!(history[1]["reasoning_content"], "legacy thoughts");
+
+        // "off" drops it entirely.
+        let history = build_history(&chat, "x", &ReasoningEcho::Off, true);
+        assert!(history[1].get("reasoning_content").is_none());
+
+        // An explicit field name wins.
+        let history = build_history(&chat, "x", &ReasoningEcho::Fixed("reasoning".into()), true);
+        assert_eq!(history[1]["reasoning"], "legacy thoughts");
+    }
+
+    #[test]
+    fn tool_turns_without_reasoning_still_carry_the_field() {
+        // The exact DeepSeek failure mode: a tool call with no reasoning text.
+        let mut call = Message::new("assistant", "", "complete");
+        call.tool_calls = Some(vec![ToolCallRecord {
+            id: "call_1".into(),
+            name: "list_projects".into(),
+            arguments: "{}".into(),
+        }]);
+        call.hidden = true;
+        let mut result = Message::new("tool", "{\"projects\":[]}", "complete");
+        result.tool_call_id = Some("call_1".into());
+        let chat = chat_with(vec![
+            Message::new("user", "hi", "complete"),
+            call,
+            result,
+        ]);
+
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true);
+        assert_eq!(history[1]["reasoning_content"], "");
+
+        // With thinking off there is nothing to satisfy, so nothing is added.
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, false);
+        assert!(history[1].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn a_wake_turn_has_the_shape_thinking_providers_require() {
+        // [system note + instructions] user, assistant(tool_calls), tool
+        let mut call = Message::new("assistant", "", "complete");
+        call.tool_calls = Some(vec![ToolCallRecord {
+            id: "call_1".into(),
+            name: "start_coding_agent".into(),
+            arguments: "{}".into(),
+        }]);
+        call.hidden = true;
+        let mut result = Message::new("tool", "{\"agent_id\":\"ag_1\"}", "complete");
+        result.tool_call_id = Some("call_1".into());
+        let note = Message::hidden("system", "[coding agent update] state: idle");
+        let chat = chat_with(vec![
+            Message::new("user", "build it", "complete"),
+            call,
+            result,
+            note,
+        ]);
+
+        let history = build_history(&chat, "placeholder", &ReasoningEcho::Auto, true);
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[1]["reasoning_content"], "");
+
+        let notes = system_notes(&chat, "placeholder");
+        assert_eq!(notes.len(), 1);
+    }
+
+    #[test]
+    fn a_failed_reply_does_not_consume_the_pending_note() {
+        let note = Message::hidden("system", "[coding agent update] done");
+        let mut failed = Message::new("assistant", "", "error");
+        failed.error = Some("400".into());
+        let chat = chat_with(vec![Message::new("user", "hi", "complete"), note, failed]);
+        assert_eq!(system_notes(&chat, "x").len(), 1);
+    }
+
+    #[test]
     fn orphan_tool_results_are_dropped() {
         let mut orphan = Message::new("tool", "{\"projects\":[]}", "complete");
         orphan.tool_call_id = Some("call_gone".into());
         let user = Message::new("user", "hi", "complete");
         let chat = chat_with(vec![user, orphan]);
-        let history = build_history(&chat, "x");
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["role"], "user");
     }
@@ -552,7 +696,7 @@ mod tests {
         let user = Message::new("user", "hi", "complete");
         let placeholder = Message::new("assistant", "", "streaming");
         let chat = chat_with(vec![user, placeholder]);
-        let history = build_history(&chat, "not-the-placeholder");
+        let history = build_history(&chat, "not-the-placeholder", &ReasoningEcho::Auto, true);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["role"], "user");
     }
@@ -563,7 +707,7 @@ mod tests {
         bad.error = Some("boom".into());
         let user = Message::new("user", "hi", "complete");
         let chat = chat_with(vec![user, bad]);
-        assert_eq!(build_history(&chat, "x").len(), 1);
+        assert_eq!(build_history(&chat, "x", &ReasoningEcho::Auto, true).len(), 1);
     }
 
     #[test]

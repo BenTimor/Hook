@@ -61,6 +61,10 @@ const server = http.createServer((req, res) => {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const userText = typeof lastUser?.content === "string" ? lastUser.content : "";
 
+    const echoedReasoning = messages.filter(
+      (m) => typeof m.reasoning_content === "string" && m.reasoning_content.length > 0,
+    ).length;
+
     console.log(
       "request:",
       payload.model,
@@ -72,6 +76,8 @@ const server = http.createServer((req, res) => {
       toolResults.length,
       "effort:",
       payload.reasoning_effort,
+      "echoedReasoning:",
+      echoedReasoning,
     );
 
     res.writeHead(200, {
@@ -173,6 +179,12 @@ const server = http.createServer((req, res) => {
       } catch {
         reply = "The tool returned something I could not read.";
       }
+    }
+
+    // Thinking-mode shape: reasoning deltas arrive before the visible text.
+    if (payload.reasoning_effort) {
+      write({ choices: [{ index: 0, delta: { reasoning_content: "Weighing the options. " } }] });
+      write({ choices: [{ index: 0, delta: { reasoning_content: "Picking the simplest one." } }] });
     }
 
     const tokens = reply.match(/\s+|\S+/g) ?? [];

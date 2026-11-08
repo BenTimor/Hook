@@ -25,6 +25,16 @@ reasoning_param = "reasoning_effort"
 # Turn off if your server rejects unknown request fields.
 stream_usage = true
 
+# Offer the agent tools (projects + coding agents) to the chat model.
+tools = true
+
+# How reasoning from earlier assistant turns is replayed. Thinking-mode APIs
+# (DeepSeek) reject the next request when a tool-calling turn omits it.
+#   "auto"            -> the field the provider streamed it in (default)
+#   "off"             -> never replay reasoning
+#   "reasoning_content" -> always use this field name
+reasoning_echo = "auto"
+
 # Extra headers, e.g. OpenRouter's attribution headers.
 [provider.headers]
 
