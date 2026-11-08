@@ -47,6 +47,11 @@ pub struct CodingConfig {
     /// Context window advertised to the engine for the chat model.
     #[serde(default = "default_context_window")]
     pub context_window: u64,
+    /// How many output tokens one agent turn may use. Thinking models spend
+    /// part of this budget on reasoning before they write anything, so a small
+    /// cap makes them think until they are cut off and stop with nothing done.
+    #[serde(default = "default_max_output")]
+    pub max_output_tokens: u64,
     /// How often batched coding-agent progress is handed to the chat agent.
     #[serde(default = "default_update_interval")]
     pub update_interval_seconds: u64,
@@ -68,6 +73,10 @@ fn default_context_window() -> u64 {
 
 fn default_update_interval() -> u64 {
     60
+}
+
+fn default_max_output() -> u64 {
+    32_768
 }
 
 fn default_bash_max() -> u64 {

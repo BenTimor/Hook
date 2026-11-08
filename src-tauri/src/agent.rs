@@ -139,6 +139,8 @@ struct Entry {
     wake_pending: bool,
     /// When the last batch went to the chat, for the update interval.
     last_flush_at: i64,
+    /// The last assistant turn was cut off at the output limit.
+    truncated: bool,
 }
 
 #[derive(Default)]
@@ -194,6 +196,7 @@ impl AgentManager {
                             pending: Vec::new(),
                             wake_pending: false,
                             last_flush_at: now_ms(),
+                            truncated: false,
                         },
                     );
                 }
@@ -507,6 +510,7 @@ impl AgentManager {
                     pending: Vec::new(),
                     wake_pending: false,
                     last_flush_at: now_ms(),
+                    truncated: false,
                 },
             );
             persist(&self.data_dir, &inner);
@@ -1191,6 +1195,11 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                             info.updated_at = now_ms();
                         }
                         if let Some(stop) = message.get("stopReason").and_then(|s| s.as_str()) {
+                            if stop == "length" {
+                                // The model ran out of room mid-thought: it
+                                // stopped without writing or calling a tool.
+                                entry.truncated = true;
+                            }
                             if stop == "error" || stop == "aborted" {
                                 if let Some(err) = message.get("errorMessage").and_then(|e| e.as_str()) {
                                     info.error = Some(truncate(err, 500));
@@ -1252,6 +1261,15 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                 info.state = STATE_IDLE.to_string();
                 info.finished_at = Some(now_ms());
                 info.updated_at = now_ms();
+                if entry.truncated {
+                    // Report it: otherwise the run looks like it simply stopped
+                    // without doing anything.
+                    entry.truncated = false;
+                    entry.pending.push(Update {
+                        note: "The run hit its output limit while still thinking, so it stopped without finishing. Nothing was broken; it needs another go, or a bigger `max_output_tokens`.".into(),
+                        images: Vec::new(),
+                    });
+                }
                 wake = true;
             }
             _ => {}
@@ -1358,6 +1376,7 @@ name = "test-model"
                 pending: Vec::new(),
                 wake_pending: false,
                 last_flush_at: now_ms(),
+                truncated: false,
             },
         );
         drop(inner);
@@ -1397,6 +1416,59 @@ name = "test-model"
         assert_eq!(lock(&mgr.inner).agents["ag_1"].info.state, STATE_IDLE);
     }
 
+
+    #[test]
+    fn a_truncated_turn_is_reported_not_left_looking_idle() {
+        // A thinking model that spends its whole output budget reasoning ends
+        // the turn with stopReason "length" and nothing done. Without a note it
+        // looks like the agent quietly gave up.
+        let mgr = manager();
+        {
+            let mut inner = lock(&mgr.inner);
+            inner.agents.insert(
+                "ag_1".into(),
+                Entry {
+                    info: AgentInfo {
+                        id: "ag_1".into(),
+                        chat_id: "c1".into(),
+                        project: "p".into(),
+                        project_path: "C:/p".into(),
+                        title: "t".into(),
+                        task: "do it".into(),
+                        session_id: "s1".into(),
+                        state: STATE_STARTING.into(),
+                        created_at: 0,
+                        updated_at: 0,
+                        finished_at: None,
+                        steps: 0,
+                        last_step: None,
+                        last_message: None,
+                        error: None,
+                        question: None,
+                    },
+                    tx: None,
+                    pid: None,
+                    pending: Vec::new(),
+                    wake_pending: false,
+                    last_flush_at: now_ms(),
+                    truncated: false,
+                },
+            );
+        }
+
+        let cut = serde_json::json!({
+            "type": "message_end",
+            "message": { "role": "assistant", "content": [{ "type": "thinking", "thinking": "hmm" }], "stopReason": "length" }
+        });
+        apply_record(&mgr.inner, "ag_1", &cut);
+
+        let settled = serde_json::json!({"type":"agent_settled","aborted":false});
+        assert!(apply_record(&mgr.inner, "ag_1", &settled).is_some());
+
+        let notes = mgr.take_updates("ag_1");
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].note.contains("output limit"));
+    }
 
     #[tokio::test]
     async fn progress_notes_are_batched_not_forwarded_one_by_one() {

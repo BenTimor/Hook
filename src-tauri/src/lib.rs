@@ -53,7 +53,15 @@ pub fn run() {
                     .map_err(|e| std::io::Error::other(e))?
                     .clone(),
             );
-            let engine = runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir);
+            // Written at startup as well as before each run, so the engine's
+            // config on disk always matches this build.
+            let engine = runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir)
+                .map(|engine| {
+                    if let Err(error) = runtime::write_agent_home(&engine, &cfg) {
+                        eprintln!("hook: {error}");
+                    }
+                    engine
+                });
 
             let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
             let agents = Arc::new(AgentManager::new(

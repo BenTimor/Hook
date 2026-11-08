@@ -173,6 +173,9 @@ conversation while you keep chatting.
   is the menu as it stands" with the screenshot right there. How an agent
   produces them is up to it: a headless browser, the project's own harness, an
   engine's screenshot API.
+- **Output budget.** `[coding] max_output_tokens` (32k) is the per-turn ceiling.
+  Raise it for long autonomous runs; lower it to cap cost. The chat agent's own
+  `[model] max_tokens` is separate.
 - **Pictures from you.** Paste, drag or pick an image in the composer. Bytes are
   downscaled and stored on disk, not in the chat JSON. If `[provider] vision` is
   on, they reach the model as image parts; if not (or if the endpoint rejects

@@ -78,6 +78,12 @@ thinking = "medium"
 # Context window advertised to the coding engine for the chat model.
 context_window = 128000
 
+# Output budget for one coding-agent turn. Thinking models spend part of it on
+# reasoning before writing anything, so a small cap makes them think until they
+# are cut off and stop with nothing done (the run then reports "hit its output
+# limit"). Keep this generous if you run with a high thinking level.
+max_output_tokens = 32768
+
 # Upper bound on how often coding-agent progress reaches the chat. Agents only
 # report when something is worth reading, and the chat agent may answer a batch
 # with silence; a batch flushes immediately when an agent finishes or asks.

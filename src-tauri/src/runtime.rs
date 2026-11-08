@@ -153,7 +153,7 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig) -> Result<(), Strin
         "reasoning": cfg.model.thinking_level().is_some(),
         "input": if cfg.provider.vision { serde_json::json!(["text", "image"]) } else { serde_json::json!(["text"]) },
         "contextWindow": cfg.coding.context_window,
-        "maxTokens": cfg.model.max_tokens.unwrap_or(8192),
+        "maxTokens": cfg.coding.max_output_tokens.max(1024),
         "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
     });
     if let Some(obj) = entry.as_object_mut() {
