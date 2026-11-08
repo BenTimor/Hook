@@ -1,0 +1,16 @@
+# Local mock provider — no API key needed.
+# Usage: copy over harness.config.toml, then run `pnpm mock` and `pnpm app`.
+[provider]
+base_url = "http://127.0.0.1:8787/v1"
+path = "/chat/completions"
+api_key = "local-dev-key"
+reasoning_param = "reasoning_effort"
+stream_usage = true
+
+[provider.headers]
+
+[provider.extra]
+
+[model]
+name = "hook-mock-1"
+thinking = "medium"

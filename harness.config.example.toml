@@ -1,0 +1,42 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Hook — build-time harness configuration
+#
+#  Copy this file to `harness.config.toml` and fill in your provider details.
+#  It is compiled directly into the binary with `include_str!`, so changing any
+#  value here requires a rebuild (`pnpm app:build`). There is no runtime settings
+#  screen by design.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[provider]
+# Any OpenAI-compatible endpoint. `path` is appended to `base_url`.
+base_url = "https://api.openai.com/v1"
+path = "/chat/completions"
+
+# Hard-coded into the build. Treat it as extractable by anyone holding the binary.
+api_key = "sk-REPLACE-ME"
+
+# Body field used to carry the thinking level.
+#   "reasoning_effort"  → OpenAI / most gateways   (default)
+#   "reasoning"         → some third-party servers
+#   "none"              → send nothing
+reasoning_param = "reasoning_effort"
+
+# Ask OpenAI-compatible servers to include token usage in the stream.
+# Turn off if your server rejects unknown request fields.
+stream_usage = true
+
+# Extra headers, e.g. OpenRouter's attribution headers.
+[provider.headers]
+
+# Extra JSON merged into the request body, for provider-specific knobs.
+[provider.extra]
+
+[model]
+name = "gpt-5.1"
+
+# off | minimal | low | medium | high
+thinking = "medium"
+
+# Optional sampling controls. Omit to leave the provider defaults alone.
+# temperature = 0.7
+# max_tokens = 4096

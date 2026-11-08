@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-portable/
+release/
+.tmp/
+*.local
+.DS_Store
+src-tauri/target/
+src-tauri/gen/
+
+# Build-time secrets — never committed
+harness.config.toml
