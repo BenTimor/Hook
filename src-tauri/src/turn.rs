@@ -55,9 +55,6 @@ const STATUS_CONSUMED: &str = "consumed";
 /// Upper bound on pictures carried by one progress batch.
 const MAX_BATCH_IMAGES: usize = 4;
 
-/// Upper bound on pictures sent in one request.
-const MAX_IMAGES_PER_REQUEST: usize = 6;
-
 /// One assistant reply may need a few tool round-trips. Beyond this the turn is
 /// stopped with an honest error instead of looping forever.
 const MAX_ROUNDS: usize = 6;
@@ -223,17 +220,16 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             && !state
                 .vision_off
                 .load(std::sync::atomic::Ordering::Relaxed);
-        let image_budget = std::sync::Mutex::new(MAX_IMAGES_PER_REQUEST);
+        // Which pictures the model gets to see: the newest ones, so a long
+        // conversation keeps its recent context instead of its oldest.
+        let send_images = if vision {
+            newest_image_ids(&chat, &assistant_id, cfg.provider.max_images)
+        } else {
+            HashSet::new()
+        };
         let read_image = |attachment: &Attachment| -> Option<String> {
-            if !vision {
+            if !send_images.contains(&attachment.id) {
                 return None;
-            }
-            {
-                let mut budget = image_budget.lock().unwrap_or_else(|e| e.into_inner());
-                if *budget == 0 {
-                    return None;
-                }
-                *budget -= 1;
             }
             state.store.read_image(&chat_id, &attachment.id).ok()
         };
@@ -642,6 +638,43 @@ fn build_history(
 ///
 /// Pictures only travel when the model can see them; otherwise the text gains a
 /// short note so the model still knows something was attached.
+/// The pictures that will actually be sent: the newest `limit` attachments in
+/// the conversation. Everything older becomes a text note, so a chat with fifty
+/// screenshots still fits whatever image budget the provider has.
+fn newest_image_ids(chat: &Chat, exclude_id: &str, limit: usize) -> HashSet<String> {
+    let mut keep = HashSet::new();
+    if limit == 0 {
+        return keep;
+    }
+    for message in chat.messages.iter().rev() {
+        if message.id == exclude_id || message.status == "error" {
+            continue;
+        }
+        for attachment in message.attachments.iter().rev() {
+            if keep.len() >= limit {
+                return keep;
+            }
+            keep.insert(attachment.id.clone());
+        }
+    }
+    keep
+}
+
+fn size_note(attachment: &Attachment) -> String {
+    let size = if attachment.width > 0 {
+        format!("{}x{} ", attachment.width, attachment.height)
+    } else {
+        String::new()
+    };
+    format!("{size}{}", attachment.mime.trim_start_matches("image/"))
+}
+
+/// A picture the model cannot see, kept in the text so the conversation still
+/// makes sense.
+fn omitted_note(attachment: &Attachment) -> String {
+    format!("[older image omitted: {}]", size_note(attachment))
+}
+
 fn user_history_entry(
     m: &Message,
     images: Option<&dyn Fn(&Attachment) -> Option<String>>,
@@ -651,37 +684,47 @@ fn user_history_entry(
         return None;
     }
 
-    if let Some(read) = images {
-        let parts: Vec<serde_json::Value> = m
-            .attachments
-            .iter()
-            .filter_map(read)
-            .map(|url| json!({ "type": "image_url", "image_url": { "url": url } }))
-            .collect();
-        if !parts.is_empty() {
-            if text.trim().is_empty() {
-                text = "What do you make of this?".into();
+    let mut image_parts = Vec::new();
+    let mut notes = Vec::new();
+    match images {
+        Some(read) => {
+            for attachment in &m.attachments {
+                match read(attachment) {
+                    Some(url) => image_parts
+                        .push(json!({ "type": "image_url", "image_url": { "url": url } })),
+                    None => notes.push(omitted_note(attachment)),
+                }
             }
-            let mut content = vec![json!({ "type": "text", "text": text })];
-            content.extend(parts);
-            return Some(json!({ "role": "user", "content": content }));
         }
+        // Vision is off: every picture is described instead of sent.
+        None => notes.extend(
+            m.attachments
+                .iter()
+                .map(|a| format!("[attached image: {}]", size_note(a))),
+        ),
     }
 
-    for attachment in &m.attachments {
-        let size = if attachment.width > 0 {
-            format!("{}x{} ", attachment.width, attachment.height)
+    if image_parts.is_empty() {
+        for note in notes {
+            text.push('\n');
+            text.push_str(&note);
+        }
+        return if text.trim().is_empty() {
+            None
         } else {
-            String::new()
+            Some(json!({ "role": "user", "content": text }))
         };
-        let mime = attachment.mime.trim_start_matches("image/");
-        text.push_str(&format!("\n[attached image: {size}{mime}]"));
     }
 
     if text.trim().is_empty() {
-        return None;
+        text = "What do you make of this?".into();
     }
-    Some(json!({ "role": "user", "content": text }))
+    let mut content = vec![json!({ "type": "text", "text": text })];
+    content.extend(image_parts);
+    if !notes.is_empty() {
+        content.push(json!({ "type": "text", "text": notes.join("\n") }));
+    }
+    Some(json!({ "role": "user", "content": content }))
 }
 
 /// Did the endpoint complain about the pictures rather than the request?
@@ -896,6 +939,92 @@ mod tests {
         let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
         let text = history[0]["content"].as_str().unwrap();
         assert!(text.contains("[attached image: 1200x800 png]"));
+    }
+
+    fn picture_named(id: &str) -> Attachment {
+        let mut a = picture();
+        a.id = id.to_string();
+        a.file = format!("{id}.png");
+        a
+    }
+
+    #[test]
+    fn only_the_newest_pictures_are_sent() {
+        let mut old = Message::new("user", "first", "complete");
+        old.attachments.push(picture_named("img_old"));
+        let mut middle = Message::new("user", "second", "complete");
+        middle.attachments.push(picture_named("img_mid"));
+        let mut newest = Message::new("user", "third", "complete");
+        newest.attachments.push(picture_named("img_new"));
+        let chat = chat_with(vec![old, middle, newest]);
+
+        let keep = newest_image_ids(&chat, "x", 2);
+        assert_eq!(keep.len(), 2);
+        assert!(keep.contains("img_new"), "the newest picture must win");
+        assert!(keep.contains("img_mid"));
+        assert!(!keep.contains("img_old"), "the oldest picture becomes a note");
+
+        // The budget is zero-safe.
+        assert!(newest_image_ids(&chat, "x", 0).is_empty());
+        // Everything fits, nothing is dropped.
+        assert_eq!(newest_image_ids(&chat, "x", 9).len(), 3);
+    }
+
+    #[test]
+    fn pictures_over_the_budget_become_a_placeholder_not_a_silent_drop() {
+        let mut old = Message::new("user", "older", "complete");
+        old.attachments.push(picture_named("img_old"));
+        let mut newest = Message::new("user", "newer", "complete");
+        newest.attachments.push(picture_named("img_new"));
+        let chat = chat_with(vec![old, newest]);
+
+        let keep = newest_image_ids(&chat, "x", 1);
+        let read = |attachment: &Attachment| {
+            keep.contains(&attachment.id)
+                .then(|| format!("data:{};base64,AAAA", attachment.mime))
+        };
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, Some(&read));
+
+        // The old message keeps its text and says what happened to the picture.
+        assert_eq!(history[0]["role"], "user");
+        let text = history[0]["content"].as_str().expect("plain text for a dropped picture");
+        assert!(text.contains("older"));
+        assert!(text.contains("[older image omitted: 1200x800 png]"));
+
+        // The new one still carries the actual image.
+        assert_eq!(history[1]["content"][1]["type"], "image_url");
+        assert!(history[1]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["type"] != "text" || !p["text"].as_str().unwrap().contains("omitted")));
+    }
+
+    #[test]
+    fn a_message_with_mixed_pictures_keeps_the_newest_and_notes_the_rest() {
+        let mut user = Message::new("user", "three shots", "complete");
+        for id in ["img_a", "img_b", "img_c"] {
+            user.attachments.push(picture_named(id));
+        }
+        let chat = chat_with(vec![user]);
+        // Budget of two: the third attachment in the message is the newest, so
+        // the first one drops.
+        let keep = newest_image_ids(&chat, "x", 2);
+        assert!(keep.contains("img_c"));
+        assert!(keep.contains("img_b"));
+        assert!(!keep.contains("img_a"));
+
+        let read = |attachment: &Attachment| {
+            keep.contains(&attachment.id)
+                .then(|| format!("data:{};base64,AAAA", attachment.mime))
+        };
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, Some(&read));
+        let parts = history[0]["content"].as_array().unwrap();
+        let images = parts.iter().filter(|p| p["type"] == "image_url").count();
+        assert_eq!(images, 2);
+        let last = parts.last().unwrap();
+        assert_eq!(last["type"], "text");
+        assert!(last["text"].as_str().unwrap().contains("older image omitted"));
     }
 
     #[test]

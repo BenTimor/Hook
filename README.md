@@ -196,6 +196,11 @@ conversation while you keep chatting.
   model list, your pictures stay visible to you and are described in text. A
   card that promises more than the endpoint delivers costs that turn one retry
   without pictures, and Hook stops trying.
+- **Image budget.** `[provider] max_images` (3) caps how many pictures reach the
+  model in one request. The newest ones win: a fourth screenshot pushes out the
+  oldest, which stays visible in the chat but is sent as
+  `[older image omitted: 1280x800 png]` instead of pixels. A message can carry
+  several pictures, so the budget is applied per attachment, not per message.
 - **Looking at a picture.** Click any attachment — yours or an agent's
   screenshot — to open it large. From there: **Open** hands the file to your own
   image viewer (staged in `%TEMP%\hook-images`), **Save as…** writes a copy

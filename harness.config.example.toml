@@ -33,6 +33,11 @@ tools = true
 # parts only if it says yes. If the endpoint rejects them anyway, that turn is
 # retried without pictures.
 
+# How many pictures from a conversation go into one request. Newer pictures win;
+# older ones stay in the chat but reach the model as "[older image omitted]".
+# Providers differ on their image limit, so this stays conservative.
+max_images = 3
+
 # How reasoning from earlier assistant turns is replayed. Thinking-mode APIs
 # (DeepSeek) reject the next request when a tool-calling turn omits it.
 #   "auto"            -> the field the provider streamed it in (default)

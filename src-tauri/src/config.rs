@@ -75,6 +75,10 @@ fn default_context_window() -> u64 {
     1_048_576
 }
 
+fn default_max_images() -> usize {
+    3
+}
+
 fn default_update_interval() -> u64 {
     60
 }
@@ -118,6 +122,12 @@ pub struct ProviderConfig {
     /// rejects the `tools` field.
     #[serde(default = "default_true")]
     pub tools: bool,
+    /// How many pictures from the conversation go into one request. The newest
+    /// ones win; older pictures stay in the chat but reach the model as a text
+    /// note instead of image parts. Providers differ on how many they accept,
+    /// so this stays conservative unless the endpoint says otherwise.
+    #[serde(default = "default_max_images")]
+    pub max_images: usize,
     /// How assistant reasoning is echoed back in the conversation history.
     ///   "auto" (default) - the same field the provider streamed it in
     ///                     ("reasoning_content", or "reasoning"), which is what

@@ -545,6 +545,7 @@ mod tests {
                 reasoning_param: None,
                 stream_usage: true,
                 tools: true,
+                max_images: 3,
                 reasoning_echo: None,
                 headers: Default::default(),
                 extra: Default::default(),
