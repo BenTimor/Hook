@@ -421,6 +421,116 @@ fn truncate_for_error(raw: &str) -> String {
     crate::store::truncate(&clean, 320)
 }
 
+/// What the endpoint says the model can do, read from `GET /models` at
+/// startup. Capabilities are a property of the model, not of a build flag:
+/// the config carries none.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Capabilities {
+    /// The endpoint answered and our model was in the list.
+    pub known: bool,
+    /// The model accepts image parts.
+    pub vision: bool,
+}
+
+/// Ask the provider what our model can do. Never fails: a provider without a
+/// usable `/models` simply reports nothing, and pictures are then described in
+/// text instead of being sent as image parts.
+pub async fn fetch_capabilities(cfg: &HarnessConfig) -> Capabilities {
+    let Ok(client) = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(6))
+        .timeout(Duration::from_secs(12))
+        .build()
+    else {
+        return Capabilities::default();
+    };
+    let mut request = client
+        .get(cfg.provider.models_endpoint())
+        .header(reqwest::header::ACCEPT, "application/json")
+        .bearer_auth(&cfg.provider.api_key);
+    for (name, value) in &cfg.provider.headers {
+        request = request.header(name, value);
+    }
+    let Ok(response) = request.send().await else {
+        return Capabilities::default();
+    };
+    if !response.status().is_success() {
+        return Capabilities::default();
+    }
+    let Ok(body) = response.json::<serde_json::Value>().await else {
+        return Capabilities::default();
+    };
+    match find_model(&body, &cfg.model.name) {
+        Some(card) => Capabilities {
+            known: true,
+            vision: supports_vision(card),
+        },
+        None => Capabilities::default(),
+    }
+}
+
+/// The model's card from a `/models` listing. Most providers use `data`;
+/// a few use `models`.
+fn find_model<'a>(body: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+    let list = body.get("data").or_else(|| body.get("models"))?.as_array()?;
+    let matches = |v: &&serde_json::Value| {
+        v.get("id")
+            .and_then(|id| id.as_str())
+            .map(|id| id.eq_ignore_ascii_case(name))
+            .unwrap_or(false)
+    };
+    if let Some(card) = list.iter().find(matches) {
+        return Some(card);
+    }
+    // One model listed and none of them named like ours: it is still the only
+    // thing the endpoint serves.
+    if list.len() == 1 {
+        return list.first();
+    }
+    None
+}
+
+fn lists_image(value: &serde_json::Value) -> bool {
+    value
+        .as_array()
+        .map(|items| {
+            items.iter().any(|m| {
+                m.as_str()
+                    .map(|s| s.eq_ignore_ascii_case("image"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn is_true(value: &serde_json::Value) -> bool {
+    value.as_bool().unwrap_or(false)
+}
+
+/// Best effort across the shapes providers actually use:
+/// - `input_modalities: ["text", "image"]` (DeepSeek, newer OpenAI-compatible)
+/// - `architecture.input_modalities` / `architecture.modality` (OpenRouter)
+/// - `modalities.input` (some gateways)
+/// - `capabilities.vision`, `vision`, `supports_vision` boolean flags
+pub fn supports_vision(card: &serde_json::Value) -> bool {
+    if lists_image(&card["input_modalities"])
+        || lists_image(&card["architecture"]["input_modalities"])
+        || lists_image(&card["modalities"]["input"])
+    {
+        return true;
+    }
+    if card["architecture"]["modality"]
+        .as_str()
+        .map(|m| m.to_ascii_lowercase().contains("image"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    is_true(&card["capabilities"]["vision"])
+        || is_true(&card["capabilities"]["image_input"])
+        || is_true(&card["vision"])
+        || is_true(&card["supports_vision"])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,7 +546,6 @@ mod tests {
                 stream_usage: true,
                 tools: true,
                 reasoning_echo: None,
-                vision: false,
                 headers: Default::default(),
                 extra: Default::default(),
             },
@@ -453,6 +562,59 @@ mod tests {
 
     fn messages() -> Vec<serde_json::Value> {
         vec![serde_json::json!({ "role": "user", "content": "hello" })]
+    }
+
+    #[test]
+    fn vision_comes_from_the_model_card() {
+        assert!(supports_vision(&serde_json::json!({
+            "id": "deepseek-flash",
+            "input_modalities": ["text", "image"],
+        })));
+        assert!(supports_vision(&serde_json::json!({
+            "id": "x",
+            "architecture": {"input_modalities": ["image", "text"]},
+        })));
+        assert!(supports_vision(&serde_json::json!({
+            "id": "x",
+            "architecture": {"modality": "text+image->text"},
+        })));
+        assert!(supports_vision(&serde_json::json!({
+            "id": "x",
+            "capabilities": {"vision": true},
+        })));
+        assert!(!supports_vision(&serde_json::json!({
+            "id": "x",
+            "input_modalities": ["text"],
+        })));
+        assert!(!supports_vision(&serde_json::json!({"id": "x"})));
+    }
+
+    #[test]
+    fn the_card_is_matched_by_name_even_with_different_case() {
+        let body = serde_json::json!({
+            "data": [
+                {"id": "other-model", "input_modalities": ["text"]},
+                {"id": "DeepSeek-Flash", "input_modalities": ["text", "image"]},
+            ]
+        });
+        let card = find_model(&body, "deepseek-flash").expect("card");
+        assert!(supports_vision(card));
+        assert!(find_model(&body, "missing").is_none());
+    }
+
+    #[test]
+    fn the_models_url_is_the_chat_url_without_its_path() {
+        let mut cfg = mock_config();
+        assert_eq!(
+            cfg.provider.models_endpoint(),
+            "http://127.0.0.1:8787/v1/models"
+        );
+        cfg.provider.base_url = "https://api.deepseek.com".into();
+        cfg.provider.path = None;
+        assert_eq!(
+            cfg.provider.models_endpoint(),
+            "https://api.deepseek.com/models"
+        );
     }
 
     #[test]

@@ -152,7 +152,7 @@ fn output_budget(cfg: &HarnessConfig) -> u64 {
     }
 }
 
-pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig) -> Result<(), String> {
+pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Result<(), String> {
     fs::create_dir_all(&rt.agent_home)
         .map_err(|e| format!("Could not create {}: {e}", rt.agent_home.display()))?;
     let base = base_url_for_pi(&cfg.provider.endpoint());
@@ -162,7 +162,7 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig) -> Result<(), Strin
         "id": model,
         "name": model,
         "reasoning": cfg.model.thinking_level().is_some(),
-        "input": if cfg.provider.vision { serde_json::json!(["text", "image"]) } else { serde_json::json!(["text"]) },
+        "input": if vision { serde_json::json!(["text", "image"]) } else { serde_json::json!(["text"]) },
         "contextWindow": cfg.coding.context_window,
         "maxTokens": output_budget(cfg),
         "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },

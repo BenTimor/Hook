@@ -493,6 +493,7 @@ mod tests {
         let agents = AgentManager::new(
             &base,
             std::sync::Arc::new(crate::config::get().expect("config").clone()),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             Ok(crate::runtime::PiRuntime {
                 program: std::path::PathBuf::from("pi"),
                 cli: None,
@@ -522,6 +523,7 @@ mod tests {
         let agents = AgentManager::new(
             &base,
             std::sync::Arc::new(crate::config::get().expect("config").clone()),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             Ok(crate::runtime::PiRuntime {
                 program: std::path::PathBuf::from("pi"),
                 cli: None,

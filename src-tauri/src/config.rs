@@ -118,12 +118,6 @@ pub struct ProviderConfig {
     /// rejects the `tools` field.
     #[serde(default = "default_true")]
     pub tools: bool,
-    /// The model can see images. When on, attached pictures are sent as image
-    /// parts (and coding-agent screenshots are visible to the chat agent);
-    /// when off they are described in text instead. If the endpoint turns out
-    /// to reject images anyway, Hook retries the turn without them.
-    #[serde(default)]
-    pub vision: bool,
     /// How assistant reasoning is echoed back in the conversation history.
     ///   "auto" (default) - the same field the provider streamed it in
     ///                     ("reasoning_content", or "reasoning"), which is what
@@ -181,6 +175,18 @@ impl ProviderConfig {
             format!("/{raw_path}")
         };
         format!("{base}{path}")
+    }
+
+    /// Where the model list lives. Derived from the chat endpoint by cutting the
+    /// chat path off, so a provider that mounts its API under a prefix
+    /// (`/v1`, `/openai`) gets the right `…/models` URL without extra config.
+    pub fn models_endpoint(&self) -> String {
+        let endpoint = self.endpoint();
+        let root = endpoint
+            .strip_suffix("/chat/completions")
+            .or_else(|| endpoint.strip_suffix("/completions"))
+            .unwrap_or_else(|| self.base_url.trim_end_matches('/'));
+        format!("{}/models", root.trim_end_matches('/'))
     }
 
     /// Host only — the UI never needs the full URL or the key.

@@ -187,9 +187,15 @@ conversation while you keep chatting.
   reasoning and stop with nothing written. The chat agent's own
   `[model] max_tokens` is separate.
 - **Pictures from you.** Paste, drag or pick an image in the composer. Bytes are
-  downscaled and stored on disk, not in the chat JSON. If `[provider] vision` is
-  on, they reach the model as image parts; if not (or if the endpoint rejects
-  them) they stay visible to you and are described in text.
+  downscaled and stored on disk, not in the chat JSON.
+- **Vision is a capability, not a setting.** At startup Hook asks the provider
+  what the model does (`GET /models`, right next to the chat endpoint) and reads
+  `input_modalities`, OpenRouter's `architecture`, or a `vision` flag. If the
+  card says images, pictures reach the model as image parts and the engine is
+  told the same before any agent starts; if it does not, or the provider has no
+  model list, your pictures stay visible to you and are described in text. A
+  card that promises more than the endpoint delivers costs that turn one retry
+  without pictures, and Hook stops trying.
 - **Looking at a picture.** Click any attachment — yours or an agent's
   screenshot — to open it large. From there: **Open** hands the file to your own
   image viewer (staged in `%TEMP%\hook-images`), **Save as…** writes a copy

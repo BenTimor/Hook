@@ -20,7 +20,10 @@ pub struct AppState {
     pub agents: Arc<AgentManager>,
     pub streams: Arc<Mutex<HashMap<String, CancelToken>>>,
     pub turns: TurnState,
-    /// Set when the endpoint rejects image parts, so later turns stop trying.
+    /// Whether the model can see images, taken from its `/models` card.
+    pub vision: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when the endpoint rejects image parts anyway, so later turns stop
+    /// trying. A card can promise more than the endpoint delivers.
     pub vision_off: Arc<std::sync::atomic::AtomicBool>,
 }
 

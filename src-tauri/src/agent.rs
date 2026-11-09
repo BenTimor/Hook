@@ -161,6 +161,9 @@ pub struct AgentManager {
     sessions_dir: PathBuf,
     coding: CodingConfig,
     cfg: Arc<HarnessConfig>,
+    /// Whether the model card says images are supported. Read when writing
+    /// `models.json`, so the engine advertises what the model can actually do.
+    vision: Arc<std::sync::atomic::AtomicBool>,
     engine: Result<PiRuntime, String>,
     settings: Arc<SettingsStore>,
     projects: Arc<ProjectsStore>,
@@ -171,6 +174,7 @@ impl AgentManager {
     pub fn new(
         data_dir: &Path,
         cfg: Arc<HarnessConfig>,
+        vision: Arc<std::sync::atomic::AtomicBool>,
         engine: Result<PiRuntime, String>,
         settings: Arc<SettingsStore>,
         projects: Arc<ProjectsStore>,
@@ -213,6 +217,7 @@ impl AgentManager {
             sessions_dir,
             coding,
             cfg,
+            vision,
             engine,
             settings,
             projects,
@@ -429,7 +434,11 @@ impl AgentManager {
         let engine = self.engine.clone().map_err(|e| e)?;
         // Written on every start so a rebuilt app always drives the engine
         // with the provider compiled into it.
-        crate::runtime::write_agent_home(&engine, &self.cfg)?;
+        crate::runtime::write_agent_home(
+            &engine,
+            &self.cfg,
+            self.vision.load(std::sync::atomic::Ordering::Relaxed),
+        )?;
         let guard = crate::guard::ensure(&self.data_dir)?;
 
         let session_id = resume_session
@@ -1311,6 +1320,7 @@ mod tests {
         AgentManager::new(
             &base,
             Arc::new(test_config()),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
             test_engine(&base),
             settings,
             projects,
@@ -1509,6 +1519,7 @@ node \"%~dp0fake-pi.mjs\" %*
         let mgr = AgentManager::new(
             &base,
             Arc::new(test_config()),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
             test_engine(&base),
             settings,
             projects,
@@ -1602,6 +1613,7 @@ node \"%~dp0fake-pi.mjs\" %*
         let mgr = AgentManager::new(
             &base,
             Arc::new(test_config()),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
             test_engine(&base),
             settings,
             projects,
@@ -1655,6 +1667,7 @@ node \"%~dp0fake-pi.mjs\" %*
         let mgr = AgentManager::new(
             &base,
             Arc::new(test_config()),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
             test_engine(&base),
             settings,
             projects,
@@ -1729,6 +1742,7 @@ node \"%~dp0fake-pi.mjs\" %*
         let mgr = AgentManager::new(
             &base,
             Arc::new(test_config()),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
             test_engine(&base),
             settings,
             projects,

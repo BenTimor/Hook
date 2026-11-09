@@ -11,6 +11,7 @@ mod tools;
 mod turn;
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
@@ -55,18 +56,26 @@ pub fn run() {
             );
             // Written at startup as well as before each run, so the engine's
             // config on disk always matches this build.
+            // Capabilities come from the model card, not from the build: the
+            // endpoint says what the model can do, and a provider that cannot
+            // answer simply reports nothing.
+            let vision = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let engine = runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir)
                 .map(|engine| {
-                    if let Err(error) = runtime::write_agent_home(&engine, &cfg) {
+                    if let Err(error) =
+                        runtime::write_agent_home(&engine, &cfg, vision.load(Ordering::Relaxed))
+                    {
                         eprintln!("hook: {error}");
                     }
                     engine
                 });
+            let probe_engine = engine.as_ref().ok().cloned();
 
             let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
             let agents = Arc::new(AgentManager::new(
                 &data_dir,
                 cfg.clone(),
+                vision.clone(),
                 engine,
                 settings.clone(),
                 projects.clone(),
@@ -81,9 +90,37 @@ pub fn run() {
                 agents,
                 streams: Arc::new(Mutex::new(HashMap::new())),
                 turns: turn::TurnState::default(),
+                vision: vision.clone(),
                 vision_off: Arc::new(Default::default()),
             });
             app.manage(state.clone());
+
+            // One request tells us what the model can see. If the card says
+            // images, the chat may send them and the engine is told so before
+            // any agent starts.
+            {
+                let cfg = cfg.clone();
+                let vision = vision.clone();
+                tauri::async_runtime::spawn(async move {
+                    let caps = provider::fetch_capabilities(&cfg).await;
+                    if !caps.known {
+                        eprintln!("hook: no model card at the provider; capabilities unknown");
+                        return;
+                    }
+                    eprintln!(
+                        "hook: model {} capabilities from /models: vision={}",
+                        cfg.model.name, caps.vision
+                    );
+                    if caps.vision {
+                        vision.store(true, Ordering::Relaxed);
+                        if let Some(engine) = probe_engine {
+                            if let Err(error) = runtime::write_agent_home(&engine, &cfg, true) {
+                                eprintln!("hook: {error}");
+                            }
+                        }
+                    }
+                });
+            }
 
             // One supervisor drains every agent signal: keeps the UI indicator
             // honest and wakes the owning chat when an agent needs attention.

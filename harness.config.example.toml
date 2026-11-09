@@ -28,11 +28,10 @@ stream_usage = true
 # Offer the agent tools (projects + coding agents) to the chat model.
 tools = true
 
-# Does the model accept images? When true, pictures you attach (and screenshots
-# the coding agents produce) are sent as image parts. When false they are kept
-# in the chat and described in text instead. If the endpoint rejects images
-# anyway, Hook retries that turn without them.
-vision = false
+# Whether the model can see images is not a build decision: Hook asks the
+# provider (`GET /models`) what the model supports and sends pictures as image
+# parts only if it says yes. If the endpoint rejects them anyway, that turn is
+# retried without pictures.
 
 # How reasoning from earlier assistant turns is replayed. Thinking-mode APIs
 # (DeepSeek) reject the next request when a tool-calling turn omits it.

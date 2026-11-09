@@ -217,7 +217,9 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             && cfg.provider.tools;
         // Pictures only go to models that can see them, and only until an
         // endpoint has told us it cannot after all.
-        let vision = cfg.provider.vision
+        let vision = state
+            .vision
+            .load(std::sync::atomic::Ordering::Relaxed)
             && !state
                 .vision_off
                 .load(std::sync::atomic::Ordering::Relaxed);
@@ -435,7 +437,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             }
             Err(err) => {
                 if vision && rounds <= MAX_ROUNDS && rejects_images(&err) {
-                    // The build promised a vision model and the endpoint
+                    // The model card promised vision and the endpoint
                     // disagrees. Drop the images, remember it, and try again.
                     eprintln!("hook: endpoint rejected image input, retrying without images — {err}");
                     state
