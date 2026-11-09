@@ -128,6 +128,20 @@ export const api = {
       ? invoke<string>("read_image", { chatId, attachmentId })
       : mock.readImage(chatId, attachmentId),
 
+  openImage: (chatId: string, attachmentId: string): Promise<void> =>
+    isTauri()
+      ? invoke<void>("open_image", { chatId, attachmentId })
+      : Promise.resolve(),
+
+  saveImageAs: (
+    chatId: string,
+    attachmentId: string,
+    suggestedName: string,
+  ): Promise<boolean> =>
+    isTauri()
+      ? invoke<boolean>("save_image_as", { chatId, attachmentId, suggestedName })
+      : Promise.resolve(false),
+
   regenerate: (chatId: string): Promise<void> =>
     isTauri()
       ? invoke<void>("regenerate", { chatId })

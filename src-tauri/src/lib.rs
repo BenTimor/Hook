@@ -140,6 +140,8 @@ pub fn run() {
             commands::get_settings,
             commands::set_projects_dir,
             commands::read_image,
+            commands::open_image,
+            commands::save_image_as,
             commands::open_path,
             commands::agents_overview,
         ])

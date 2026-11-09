@@ -262,6 +262,108 @@ pub fn read_image(
     state.store.read_image(&chat_id, &attachment_id)
 }
 
+/// Hand a stored picture to whatever the OS opens images with. The copy in
+/// `%TEMP%` keeps the viewer working even if the chat is deleted afterwards, and
+/// gives it a sensible file name.
+#[tauri::command]
+pub async fn open_image(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+    chat_id: String,
+    attachment_id: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let source = state.store.image_file(&chat_id, &attachment_id)?;
+    let dir = std::env::temp_dir().join("hook-images");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let name = source
+        .file_name()
+        .map(|n| n.to_owned())
+        .ok_or_else(|| "Image not found".to_string())?;
+    let target = dir.join(&name);
+    std::fs::copy(&source, &target).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(target.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// "Save as…": native save dialog, defaulting to the picture's own name and
+/// format. Returns false when the dialog was dismissed.
+#[tauri::command]
+pub async fn save_image_as(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+    chat_id: String,
+    attachment_id: String,
+    suggested_name: String,
+) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let source = state.store.image_file(&chat_id, &attachment_id)?;
+    let extension = source
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| "png".into());
+
+    let fallback = format!("hook-image.{extension}");
+    let name = {
+        let trimmed = suggested_name.trim();
+        if trimmed.is_empty() {
+            fallback
+        } else {
+            let stem = trimmed.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-");
+            if stem.to_lowercase().ends_with(&format!(".{extension}")) {
+                stem
+            } else {
+                format!("{stem}.{extension}")
+            }
+        }
+    };
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&name)
+        .add_filter(extension.to_uppercase(), &[extension.as_str()])
+        .save_file(move |chosen| {
+            let _ = tx.send(chosen);
+        });
+
+    let Some(chosen) = rx.await.map_err(|e| e.to_string())? else {
+        return Ok(false);
+    };
+    let target = chosen.into_path().map_err(|e| e.to_string())?;
+    copy_image(&source, &target)?;
+    Ok(true)
+}
+
+fn copy_image(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    std::fs::copy(source, target)
+        .map(|_| ())
+        .map_err(|e| format!("Couldn't save the picture: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_image;
+
+    #[test]
+    fn saving_copies_the_picture_byte_for_byte() {
+        let dir = std::env::temp_dir().join(format!("hook-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.png");
+        std::fs::write(&source, b"not really a png").unwrap();
+        let target = dir.join("chosen by the user.png");
+
+        copy_image(&source, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"not really a png");
+        assert!(copy_image(&dir.join("missing.png"), &target).is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| e.to_string())

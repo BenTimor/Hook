@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/bridge";
+import { Lightbox } from "./Lightbox";
 import { useChatStore } from "../store/useChatStore";
 import type { Message } from "../lib/types";
 
@@ -14,6 +15,7 @@ export function MessageImages({ message }: { message: Message }) {
   const chatId = useChatStore((s) => s.activeId);
   const attachments = message.attachments ?? [];
   const [urls, setUrls] = useState<Record<string, string>>({});
+  const [open, setOpen] = useState<number | null>(null);
 
   useEffect(() => {
     if (attachments.length === 0) return;
@@ -40,28 +42,44 @@ export function MessageImages({ message }: { message: Message }) {
   if (attachments.length === 0) return null;
 
   return (
-    <div className="msg-images" data-count={Math.min(attachments.length, 2)}>
-      {attachments.map((attachment) => {
-        const url = urls[attachment.id];
-        const tall = attachment.height > attachment.width * 2;
-        return (
-          <a
-            className="msg-image"
-            data-tall={tall || undefined}
-            key={attachment.id}
-            href={url || undefined}
-            target="_blank"
-            rel="noreferrer"
-            title={attachment.width ? `${attachment.width}×${attachment.height}` : "Image"}
-          >
-            {url ? (
-              <img src={url} alt="" loading="lazy" />
-            ) : (
-              <span className="msg-image-placeholder" />
-            )}
-          </a>
-        );
-      })}
-    </div>
+    <>
+      <div className="msg-images" data-count={Math.min(attachments.length, 2)}>
+        {attachments.map((attachment, index) => {
+          const url = urls[attachment.id];
+          const tall = attachment.height > attachment.width * 2;
+          return (
+            <button
+              className="msg-image"
+              data-tall={tall || undefined}
+              key={attachment.id}
+              type="button"
+              disabled={!url}
+              title={
+                attachment.width
+                  ? `${attachment.width}×${attachment.height} — click to enlarge`
+                  : "Click to enlarge"
+              }
+              onClick={() => setOpen(index)}
+            >
+              {url ? (
+                <img src={url} alt="" loading="lazy" draggable={false} />
+              ) : (
+                <span className="msg-image-placeholder" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {open !== null && (
+        <Lightbox
+          chatId={chatId}
+          attachments={attachments}
+          urls={urls}
+          startIndex={open}
+          onClose={() => setOpen(null)}
+        />
+      )}
+    </>
   );
 }

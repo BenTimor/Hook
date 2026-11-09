@@ -180,6 +180,13 @@ conversation while you keep chatting.
   downscaled and stored on disk, not in the chat JSON. If `[provider] vision` is
   on, they reach the model as image parts; if not (or if the endpoint rejects
   them) they stay visible to you and are described in text.
+- **Looking at a picture.** Click any attachment — yours or an agent's
+  screenshot — to open it large. From there: **Open** hands the file to your own
+  image viewer (staged in `%TEMP%\hook-images`), **Save as…** writes a copy
+  wherever you choose through the native dialog, **Full screen** (or a double
+  click) fills the window. Esc closes, ← → step through the pictures in a
+  message. Full-page captures scroll at readable width instead of shrinking to a
+  sliver.
 - **The guard is the only policy they inherit.** Every `bash` call must carry a
   `timeout` in seconds (1–3600 by default). Missing, oversized or non-numeric
   timeouts are blocked with an explanation, and the model re-issues the call.

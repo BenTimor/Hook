@@ -367,9 +367,11 @@ impl Store {
     }
 
     /// Read a stored picture back as a data URL for the UI.
-    pub fn read_image(&self, chat_id: &str, attachment_id: &str) -> Result<String, String> {
-        if !is_safe_id(chat_id) {
-            return Err("Invalid chat id".into());
+    /// The file behind an attachment, so it can be read, copied or handed to
+    /// the OS.
+    pub fn image_file(&self, chat_id: &str, attachment_id: &str) -> Result<PathBuf, String> {
+        if !is_safe_id(chat_id) || !is_safe_id(attachment_id) {
+            return Err("Invalid image id".into());
         }
         let dir = self.image_dir(chat_id);
         let prefix = format!("{attachment_id}.");
@@ -378,7 +380,11 @@ impl Store {
             .flatten()
             .find(|e| e.file_name().to_string_lossy().starts_with(&prefix))
             .ok_or_else(|| "Image not found".to_string())?;
-        let path = entry.path();
+        Ok(entry.path())
+    }
+
+    pub fn read_image(&self, chat_id: &str, attachment_id: &str) -> Result<String, String> {
+        let path = self.image_file(chat_id, attachment_id)?;
         let bytes = fs::read(&path).map_err(|_| "Image not found".to_string())?;
         let mime = mime_for_path(&path).unwrap_or("image/png");
         Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
