@@ -147,7 +147,7 @@ fn which_pi() -> Option<PathBuf> {
 /// thinking model burn the budget on reasoning and stop with nothing written.
 fn output_budget(cfg: &HarnessConfig) -> u64 {
     match cfg.coding.max_output_tokens {
-        0 => 1_000_000,
+        0 => 393_216,
         n => n.max(1024),
     }
 }

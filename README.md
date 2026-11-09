@@ -177,11 +177,14 @@ conversation while you keep chatting.
   is the menu as it stands" with the screenshot right there. How an agent
   produces them is up to it: a headless browser, the project's own harness, an
   engine's screenshot API.
-- **Output budget.** `[coding] max_output_tokens` defaults to 1,000,000, which
-  is "no cap": pi clamps it to whatever room is left in `context_window`
-  (`window - prompt - 4096`), so the context itself is the only real limit.
-  Lower it to cap cost. A tight cap is what makes a thinking model burn the
-  budget on reasoning and stop with nothing written. The chat agent's own
+- **Context and output budget.** `[coding] context_window` (1,048,576) and
+  `max_output_tokens` (393,216) are what `models.json` advertises to pi; both
+  should match the model (check `GET /models`: `context_window` and
+  `max_output_tokens`). The provider rejects a larger `max_tokens` outright, so
+  this is the one ceiling to keep honest. pi clamps the output number to
+  whatever room is left in the window (`window - prompt - 4096`). Lower it to
+  cap cost: a tight cap is what makes a thinking model burn the budget on
+  reasoning and stop with nothing written. The chat agent's own
   `[model] max_tokens` is separate.
 - **Pictures from you.** Paste, drag or pick an image in the composer. Bytes are
   downscaled and stored on disk, not in the chat JSON. If `[provider] vision` is

@@ -76,14 +76,16 @@ thinking = "medium"
 
 [coding]
 # Context window advertised to the coding engine for the chat model.
-context_window = 128000
+# deepseek-flash is 1,048,576; check GET /models for the model you use.
+context_window = 1048576
 
 # Output budget for one coding-agent turn. Thinking models spend part of it on
 # reasoning before writing anything, so a small cap makes them think until they
 # are cut off and stop with nothing done (the run then reports "hit its output
-# limit"). pi clamps this to whatever room is left in the context window, so a
-# huge number simply means "think as long as you need"; 0 means the same thing.
-max_output_tokens = 1000000
+# limit"). This is also an API limit - the provider rejects more than the
+# model's own maximum (393,216 for deepseek-flash). pi clamps it to whatever
+# room is left in the context window; 0 means "use the model maximum".
+max_output_tokens = 393216
 
 # Upper bound on how often coding-agent progress reaches the chat. Agents only
 # report when something is worth reading, and the chat agent may answer a batch
