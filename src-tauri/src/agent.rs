@@ -139,6 +139,9 @@ struct Entry {
     wake_pending: bool,
     /// When the last batch went to the chat, for the update interval.
     last_flush_at: i64,
+    /// True once the chat has actually received a note from this run. A settle
+    /// that finds this false must not be swallowed: nobody has heard anything.
+    delivered: bool,
     /// The last assistant turn was cut off at the output limit.
     truncated: bool,
 }
@@ -196,6 +199,7 @@ impl AgentManager {
                             pending: Vec::new(),
                             wake_pending: false,
                             last_flush_at: now_ms(),
+                            delivered: false,
                             truncated: false,
                         },
                     );
@@ -333,7 +337,7 @@ impl AgentManager {
         lock(&self.inner)
             .agents
             .get(agent_id)
-            .map(|entry| entry.last_flush_at > entry.info.created_at)
+            .map(|entry| entry.delivered)
             .unwrap_or(false)
     }
 
@@ -343,7 +347,13 @@ impl AgentManager {
         inner
             .agents
             .get_mut(agent_id)
-            .map(|entry| std::mem::take(&mut entry.pending))
+            .map(|entry| {
+                let updates = std::mem::take(&mut entry.pending);
+                if !updates.is_empty() {
+                    entry.delivered = true;
+                }
+                updates
+            })
             .unwrap_or_default()
     }
 
@@ -510,6 +520,7 @@ impl AgentManager {
                     pending: Vec::new(),
                     wake_pending: false,
                     last_flush_at: now_ms(),
+                    delivered: false,
                     truncated: false,
                 },
             );
@@ -1266,7 +1277,7 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                     // without doing anything.
                     entry.truncated = false;
                     entry.pending.push(Update {
-                        note: "The run hit its output limit while still thinking, so it stopped without finishing. Nothing was broken; it needs another go, or a bigger `max_output_tokens`.".into(),
+                        note: "The run ran out of room while thinking and stopped before finishing anything. Nothing is broken - the work can be picked up from where it stopped.".into(),
                         images: Vec::new(),
                     });
                 }
@@ -1376,6 +1387,7 @@ name = "test-model"
                 pending: Vec::new(),
                 wake_pending: false,
                 last_flush_at: now_ms(),
+                delivered: false,
                 truncated: false,
             },
         );
@@ -1451,6 +1463,7 @@ name = "test-model"
                     pending: Vec::new(),
                     wake_pending: false,
                     last_flush_at: now_ms(),
+                    delivered: false,
                     truncated: false,
                 },
             );
@@ -1467,7 +1480,7 @@ name = "test-model"
 
         let notes = mgr.take_updates("ag_1");
         assert_eq!(notes.len(), 1);
-        assert!(notes[0].note.contains("output limit"));
+        assert!(notes[0].note.contains("ran out of room"));
     }
 
     #[tokio::test]
@@ -1519,6 +1532,11 @@ node \"%~dp0fake-pi.mjs\" %*
         .unwrap();
 
         assert!(!mgr.delivered_progress(&info.id), "a fresh run has reported nothing");
+        assert!(mgr.take_updates(&info.id).is_empty(), "nothing is queued yet");
+        assert!(
+            !mgr.delivered_progress(&info.id),
+            "draining an empty mailbox must not count as having told the user"
+        );
 
         // Not due yet: nothing is delivered mid-interval.
         mgr.harvest();
@@ -1546,14 +1564,14 @@ node \"%~dp0fake-pi.mjs\" %*
             }
         }
         assert!(woke, "a due batch should wake the chat");
-        assert!(
-            mgr.delivered_progress(&info.id),
-            "after a batch the run has something to compare a settle against"
-        );
         let delivered = mgr.take_updates(&info.id);
         assert_eq!(delivered.len(), 1);
         assert_eq!(delivered[0].note, "third");
         assert!(delivered[0].images.is_empty());
+        assert!(
+            mgr.delivered_progress(&info.id),
+            "a batch actually handed over is what a settle compares against"
+        );
 
         // The drained mailbox files are gone, so nothing is delivered twice.
         mgr.harvest();

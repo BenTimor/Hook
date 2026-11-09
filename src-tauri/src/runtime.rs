@@ -141,6 +141,17 @@ fn which_pi() -> Option<PathBuf> {
 ///
 /// Pi reads this once per launch; rewriting it on every start means a rebuilt
 /// app always drives the engine with the config compiled into it.
+/// The per-turn output ceiling advertised to pi. pi clamps it to whatever room
+/// is left in the context window (`contextWindow - prompt - 4096`), so a very
+/// large number simply means "think as long as you need"; a small one makes a
+/// thinking model burn the budget on reasoning and stop with nothing written.
+fn output_budget(cfg: &HarnessConfig) -> u64 {
+    match cfg.coding.max_output_tokens {
+        0 => 1_000_000,
+        n => n.max(1024),
+    }
+}
+
 pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig) -> Result<(), String> {
     fs::create_dir_all(&rt.agent_home)
         .map_err(|e| format!("Could not create {}: {e}", rt.agent_home.display()))?;
@@ -153,7 +164,7 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig) -> Result<(), Strin
         "reasoning": cfg.model.thinking_level().is_some(),
         "input": if cfg.provider.vision { serde_json::json!(["text", "image"]) } else { serde_json::json!(["text"]) },
         "contextWindow": cfg.coding.context_window,
-        "maxTokens": cfg.coding.max_output_tokens.max(1024),
+        "maxTokens": output_budget(cfg),
         "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
     });
     if let Some(obj) = entry.as_object_mut() {

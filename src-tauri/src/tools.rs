@@ -151,7 +151,7 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "no_update",
-                "description": "Say nothing to the user for this progress batch. Use this when the note contains nothing worth interrupting them for: routine steps, 'still working', no new picture, no milestone.",
+                "description": "Say nothing to the user for this progress batch. Use this when there is nothing worth interrupting them for: routine steps, 'still working', 'building now', 'I'll report back', a run that merely settled, no new picture, no milestone.",
                 "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
             }
         }
@@ -349,12 +349,22 @@ pub fn progress_block(updates: &[crate::agent::Update]) -> String {
     block
 }
 
-pub fn agent_event_note(info: &crate::agent::AgentInfo) -> String {
+pub fn agent_event_note(info: &crate::agent::AgentInfo, quiet: bool) -> String {
     let mut note = String::from("[coding agent update]\n");
     note.push_str(&format!("agent_id: {}\n", info.id));
     note.push_str(&format!("project: {}\n", info.project));
     note.push_str(&format!("state: {}\n", info.state));
-    note.push_str(&format!("task: {}\n", truncate(&info.task, 400)));
+    note.push_str(&format!("outcome: {}\n", outcome_line(info)));
+    if quiet {
+        // Everything this run produced has already been said. Lead with that,
+        // and say nothing that invites a retelling: no last_message, no step.
+        note.push_str("new_since_last_update: none\n");
+        note.push_str(
+            "You already sent at least one update about this run. If your messages already said how it ended, call no_update and say nothing. If they did not, say in one sentence how it ended - no repeating of earlier detail, no re-describing the work.\n",
+        );
+        return note;
+    }
+    note.push_str(&format!("task: {}\n", truncate(&info.task, 240)));
     note.push_str(&format!("steps: {}\n", info.steps));
     if let Some(step) = &info.last_step {
         note.push_str(&format!("last_step: {step}\n"));
@@ -378,14 +388,75 @@ pub fn agent_event_note(info: &crate::agent::AgentInfo) -> String {
         note.push('\n');
     }
     note.push_str(
-        "Write a short update for the user about what happened. Do not mention agent ids, sessions or tooling.\n",
+        "Decide whether the user needs to hear this. If it is news - something new happened, a problem, a picture, work finishing - tell them. If the run merely settled and nothing is new, call no_update and say nothing. Do not mention agent ids, sessions or tooling.\n",
     );
     note
+}
+
+/// One plain sentence the wake note leads with, so the chat agent does not have
+/// to decode a state name - or invent one.
+fn outcome_line(info: &crate::agent::AgentInfo) -> &'static str {
+    use crate::agent::{
+        STATE_DONE, STATE_FAILED, STATE_IDLE, STATE_INTERRUPTED, STATE_NEEDS_INPUT, STATE_STOPPED,
+    };
+    if info.error.is_some() || info.state == STATE_FAILED {
+        "stopped with an error"
+    } else if info.question.is_some() || info.state == STATE_NEEDS_INPUT {
+        "waiting for an answer before it can continue"
+    } else if info.state == STATE_STOPPED {
+        "stopped because it was told to"
+    } else if info.state == STATE_INTERRUPTED {
+        "interrupted"
+    } else if info.state == STATE_DONE {
+        "finished the task"
+    } else if info.state == STATE_IDLE {
+        "finished its run"
+    } else {
+        "still running"
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_agent() -> crate::agent::AgentInfo {
+        crate::agent::AgentInfo {
+            id: "ag_1".into(),
+            chat_id: "c1".into(),
+            project: "demo".into(),
+            project_path: "C:/tmp/demo".into(),
+            title: "t".into(),
+            task: "build the site".into(),
+            session_id: "s1".into(),
+            state: crate::agent::STATE_RUNNING.into(),
+            created_at: 0,
+            updated_at: 0,
+            finished_at: None,
+            steps: 9,
+            last_step: Some("bash: ls".into()),
+            last_message: Some("A long final report about the whole build.".into()),
+            error: None,
+            question: None,
+        }
+    }
+
+    #[test]
+    fn a_settle_with_nothing_new_hides_the_report_and_asks_for_silence() {
+        let mut info = sample_agent();
+        info.state = crate::agent::STATE_IDLE.into();
+
+        let quiet = agent_event_note(&info, true);
+        assert!(quiet.contains("new_since_last_update: none"));
+        assert!(quiet.contains("outcome: finished its run"));
+        assert!(!quiet.contains("A long final report"));
+        assert!(!quiet.contains("last_step"));
+        assert!(quiet.contains("no_update"));
+
+        let loud = agent_event_note(&info, false);
+        assert!(!loud.contains("new_since_last_update: none"));
+        assert!(loud.contains("A long final report"));
+    }
 
     #[test]
     fn schemas_cover_every_implemented_tool() {

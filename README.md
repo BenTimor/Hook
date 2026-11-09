@@ -168,13 +168,20 @@ conversation while you keep chatting.
   immediately on finish/fail/question) and hands the chat agent a note. The chat
   agent may answer `no_update`, which drops the message entirely — a batch that
   says nothing worth reading produces nothing in the chat. A quiet job can go
-  from start to finish with a single update, or none until the result. Pictures
+  from start to finish with a single update, or none until the result.
+  A settle that follows an update the chat agent already spoke about is not
+  news either: that wake carries only `new_since_last_update: none` and no
+  copy of the run's final report, so the chat agent cannot repeat itself. A
+  settle from a run nobody ever heard about is always reported. Pictures
   travel with the message the chat agent writes, so an update reads like "here
   is the menu as it stands" with the screenshot right there. How an agent
   produces them is up to it: a headless browser, the project's own harness, an
   engine's screenshot API.
-- **Output budget.** `[coding] max_output_tokens` (32k) is the per-turn ceiling.
-  Raise it for long autonomous runs; lower it to cap cost. The chat agent's own
+- **Output budget.** `[coding] max_output_tokens` defaults to 1,000,000, which
+  is "no cap": pi clamps it to whatever room is left in `context_window`
+  (`window - prompt - 4096`), so the context itself is the only real limit.
+  Lower it to cap cost. A tight cap is what makes a thinking model burn the
+  budget on reasoning and stop with nothing written. The chat agent's own
   `[model] max_tokens` is separate.
 - **Pictures from you.** Paste, drag or pick an image in the composer. Bytes are
   downscaled and stored on disk, not in the chat JSON. If `[provider] vision` is

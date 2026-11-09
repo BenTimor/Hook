@@ -50,6 +50,9 @@ pub struct CodingConfig {
     /// How many output tokens one agent turn may use. Thinking models spend
     /// part of this budget on reasoning before they write anything, so a small
     /// cap makes them think until they are cut off and stop with nothing done.
+    /// The default is effectively unlimited: pi clamps it to whatever room is
+    /// left in `context_window`, so the real limit becomes the context itself.
+    /// `0` means the same thing.
     #[serde(default = "default_max_output")]
     pub max_output_tokens: u64,
     /// How often batched coding-agent progress is handed to the chat agent.
@@ -76,7 +79,7 @@ fn default_update_interval() -> u64 {
 }
 
 fn default_max_output() -> u64 {
-    32_768
+    1_000_000
 }
 
 fn default_bash_max() -> u64 {
