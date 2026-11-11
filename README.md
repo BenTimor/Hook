@@ -7,6 +7,34 @@ no account, no provider screen. Just a fast chat window with a sidebar full of
 your own conversations — and a chat agent that can put real coding work in
 motion inside your own project folders.
 
+## Web waitlist
+
+The public landing page runs separately from the Tauri desktop app. Use Node
+22.13+ and run `pnpm install` followed by `pnpm waitlist:dev`. Open
+[http://localhost:5173](http://localhost:5173) to preview the page.
+
+To enable signup locally:
+
+1. Copy `.env.waitlist.example` to `.env.waitlist.local`.
+2. In Google Cloud, create a **Web application** OAuth client and register
+   `http://localhost:5173/api/waitlist/google/callback` as an authorized redirect URI.
+   Add your Google account as a test user if the consent screen is in testing mode.
+3. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env.waitlist.local`.
+   Generate `WAITLIST_SESSION_SECRET` with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
+4. Restart `pnpm waitlist:dev`.
+
+For deployment, run `pnpm waitlist:build` and `pnpm waitlist:start` on a Node
+host. Set `WAITLIST_ORIGIN` to the public HTTPS origin and register that origin
+plus `/api/waitlist/google/callback` in Google Cloud. Set the OAuth and session
+secrets on the host and route HTTPS traffic to the Node listener (`PORT`, default
+`5173`). Set `WAITLIST_DB_PATH` to a SQLite file on a persistent writable volume.
+The `waitlist_signups` table stores each Google subject, verified email, and first
+signup timestamp. The default local path is `waitlist-data/signups.sqlite`.
+
+Set `VITE_WAITLIST_CTA` before running dev or building to change the button copy.
+The values are `hook` (Hook Me In), `google` (Join the waitlist with Google),
+`early` (Get early access), and `first` (Be first to try Hook).
+
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Hook                    │  Chat title                  —   □   ✕      │
