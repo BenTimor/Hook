@@ -5,6 +5,7 @@ import { api } from "../lib/bridge";
 import type { SearchHit } from "../lib/types";
 import { groupChats, modKey } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
+import { isLiveAgent } from "../lib/agents";
 import { ChatRow } from "./ChatRow";
 import { HookMark } from "./HookMark";
 
@@ -12,6 +13,7 @@ export function Sidebar() {
   const chats = useChatStore((s) => s.chats);
   const activeId = useChatStore((s) => s.activeId);
   const streams = useChatStore((s) => s.streams);
+  const agents = useChatStore((s) => s.agents.agents);
   const select = useChatStore((s) => s.select);
   const newChat = useChatStore((s) => s.newChat);
   const info = useChatStore((s) => s.info);
@@ -55,6 +57,15 @@ export function Sidebar() {
   }, [query]);
 
   const groups = useMemo(() => groupChats(chats), [chats]);
+  const workingChats = useMemo(
+    () =>
+      new Set(
+        agents
+          .filter(isLiveAgent)
+          .map((agent) => agent.chatId),
+      ),
+    [agents],
+  );
 
   return (
     <aside className="sidebar" data-collapsed={!open}>
@@ -150,7 +161,7 @@ export function Sidebar() {
                   key={chat.id}
                   chat={chat}
                   active={chat.id === activeId}
-                  streaming={Boolean(streams[chat.id])}
+                  streaming={Boolean(streams[chat.id]) || workingChats.has(chat.id)}
                 />
               ))}
             </div>

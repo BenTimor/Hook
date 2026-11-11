@@ -372,19 +372,21 @@ pub fn open_path(path: String) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| e.to_string())
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentsOverview {
-    pub working: usize,
-    pub live: usize,
+#[tauri::command]
+pub fn agents_overview(state: State<'_, Arc<AppState>>) -> crate::agent::Overview {
+    state.agents.overview()
 }
 
+/// The Stop button in the task board: stop every live coding agent in this
+/// chat, kill their process trees, and hand back the fresh overview so the UI
+/// does not have to wait for the next event.
 #[tauri::command]
-pub fn agents_overview(state: State<'_, Arc<AppState>>) -> AgentsOverview {
-    AgentsOverview {
-        working: state.agents.working_count(),
-        live: state.agents.live_count(),
-    }
+pub fn stop_chat_agents(
+    state: State<'_, Arc<AppState>>,
+    chat_id: String,
+) -> Result<crate::agent::Overview, String> {
+    state.agents.stop_chat(&chat_id);
+    Ok(state.agents.overview())
 }
 
 fn derive_title(text: &str) -> String {

@@ -171,6 +171,11 @@ export const api = {
   agentsOverview: (): Promise<AgentsOverview> =>
     isTauri() ? invoke<AgentsOverview>("agents_overview") : mock.agentsOverview(),
 
+  stopChatAgents: (chatId: string): Promise<AgentsOverview> =>
+    isTauri()
+      ? invoke<AgentsOverview>("stop_chat_agents", { chatId })
+      : mock.stopChatAgents(),
+
   async pickFolder(): Promise<string | null> {
     if (!isTauri()) return null;
     const { open } = await import("@tauri-apps/plugin-dialog");

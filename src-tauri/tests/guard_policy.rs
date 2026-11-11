@@ -67,4 +67,20 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     // Allowed calls must not return a block verdict.
     assert_eq!(value["ok"].is_null(), true, "a valid timeout should pass");
     assert_eq!(value["nonBash"].is_null(), true, "other tools are untouched");
+
+    // The checklist the user watches: the tool is offered, it writes a plan
+    // Hook can harvest, and the coding agent is told the plain-language rule.
+    let plan = &value["plan"];
+    assert_eq!(plan["toolsRegistered"], true, "update_plan must be offered");
+    assert_eq!(plan["guidanceIncludesSeed"], true, "the seeded plan reaches the prompt");
+    assert_eq!(plan["guidanceExplainsPlainLanguage"], true);
+    assert_eq!(plan["resultOk"], true);
+    assert_eq!(plan["emptyPlanRejected"], true, "an empty plan must not blank the board");
+    assert_eq!(
+        plan["written"].as_array().map(|steps| steps.len()),
+        Some(2),
+        "blank steps and unknown statuses are dropped"
+    );
+    assert_eq!(plan["written"][0]["status"], "done");
+    assert_eq!(plan["written"][1]["status"], "active");
 }

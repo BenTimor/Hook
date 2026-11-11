@@ -9,7 +9,7 @@ use crate::agent::AgentInfo;
 use crate::commands::AppState;
 use crate::config::{self, ReasoningEcho};
 use crate::provider::{self, CancelToken, Chunk, Outcome};
-use crate::store::{now_ms, Attachment, Chat, ChatMeta, Message, ToolCallRecord};
+use crate::store::{now_ms, truncate, Attachment, Chat, ChatMeta, Message, ToolCallRecord};
 use crate::tools::{self, ToolEnv};
 
 /// Instructions for the chat model. The user never sees any of this; it only
@@ -24,10 +24,16 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 
 ## Coding agents
 - start_coding_agent runs pi inside a project folder with full permissions, sandboxed to that folder. Write a complete brief: the goal, the constraints, anything the user said that matters, and how to verify success.
+- Always pass a `plan`: three to six short steps in plain, everyday language, in the order they will happen. This is the checklist the user watches at the bottom of the chat while the agent works, so it must read like 'Setting things up', 'Designing the front page', 'Integrating the real service' - never file names, tool names, package names or jargon. Same language the user writes in.
 - Runs are asynchronous. After starting one you may end your turn. You will be woken with a note when it settles, fails, or asks a question.
 - agent_status shows progress, steer_agent redirects a live run, answer_agent unblocks a question it is stuck on, stop_agent kills it, and start_coding_agent with resume_session_id continues earlier work (see list_coding_sessions).
 - When you are woken and there is something to report, say what actually happened in plain language: what changed, whether it worked, what is left. Never mention agent ids, session ids, tool names, or raw logs.
 - If a coding agent asks a question, answer it yourself when the user-s instructions already determine the answer; otherwise ask the user, then answer the agent.
+
+## Steering a running agent
+- While a coding agent is working, a message from the user is guidance for that agent, not a request for you to do work. Call list_agents or agent_status, find the live agent in this chat, and pass the instruction on with steer_agent. Then reply with one short line saying what you told it to change.
+- Never start a second coding agent for work that is already in progress. If the user changes direction, steer the agent that is running; if they want it over, stop_agent ends it.
+- If the user asks how the work is going, answer from the plan and the agent-s progress, not by starting anything.
 
 ## Progress
 - A note arrives when a coding agent reported something. It is not a request to speak, and most notes are not worth a message.
@@ -45,7 +51,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - Be concise and concrete. Markdown is fine.
 - No preamble, no restating the question, no filler.
 - Never end a message with a promise about the future: no 'I'll tell you when...', 'I'll report back', 'stay tuned'. If there is something worth saying later, that is when you say it; if you have something to say now, say it now.
-- The user never sees the coding agents directly; everything they know comes from your messages.
+- The user never sees the coding agents themselves - no logs, no ids, no session browser - but they do see the plain-language checklist you put in `plan` and a Stop button. Everything else they know comes from your messages.
 - The user may attach pictures to their own messages. Treat them as part of the question.";
 
 /// A note the chat agent decided not to talk about. It drops out of the prompt
@@ -244,7 +250,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             0,
             json!({
                 "role": "system",
-                "content": system_message(&cfg, &chat, &assistant_id),
+                "content": system_message(&cfg, &chat, &assistant_id, &state, &chat_id),
             }),
         );
         // Pictures that arrived with this wake: they belong on the reply the
@@ -484,13 +490,54 @@ fn finish(state: &Arc<AppState>, chat_id: &str) {
 
 /// The single system message: Hook's instructions plus every pending agent
 /// note. Keeping it to one leading message is the most portable shape.
-fn system_message(cfg: &config::HarnessConfig, chat: &Chat, exclude_id: &str) -> String {
+fn system_message(
+    cfg: &config::HarnessConfig,
+    chat: &Chat,
+    exclude_id: &str,
+    state: &AppState,
+    chat_id: &str,
+) -> String {
     let mut text = system_prompt(cfg);
     for note in system_notes(chat, exclude_id) {
         text.push_str("\n\n");
         text.push_str(&note);
     }
+    if let Some(hint) = live_agent_hint(state, chat_id) {
+        text.push_str("\n\n");
+        text.push_str(&hint);
+    }
     text
+}
+
+/// An ephemeral line for this request only. A live coding agent means the
+/// user's message is almost certainly guidance for it, and naming the agent id
+/// here is what makes the chat agent steer instead of starting a second run.
+/// It is never stored in the chat, so it can never turn into a fake note.
+fn live_agent_hint(state: &AppState, chat_id: &str) -> Option<String> {
+    let active: Vec<AgentInfo> = state
+        .agents
+        .list()
+        .into_iter()
+        .filter(|agent| agent.chat_id == chat_id && agent.is_active())
+        .collect();
+    if active.is_empty() {
+        return None;
+    }
+    let mut hint = String::from("[steering]\nA coding agent is live in this chat right now:\n");
+    for agent in &active {
+        hint.push_str(&format!(
+            "- agent_id: {}, title: {}, state: {}",
+            agent.id, agent.title, agent.state
+        ));
+        if let Some(question) = &agent.question {
+            hint.push_str(&format!(" (waiting on: {})", truncate(&question.title, 160)));
+        }
+        hint.push('\n');
+    }
+    hint.push_str(
+        "If the agent is waiting for an answer (needs_input), use answer_agent for a reply to its question. If the user's message is guidance about that work, pass it on with steer_agent. Never start another agent for the same work, and never do the work yourself. If the message is a new, unrelated request, handle it normally.\n",
+    );
+    Some(hint)
 }
 
 /// Only notes that arrived after the last assistant reply are pending. Once the

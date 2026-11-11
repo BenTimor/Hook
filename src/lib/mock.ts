@@ -9,6 +9,7 @@ import type {
   Chat,
   ChatMeta,
   Message,
+  PlanStep,
   SearchHit,
   SettingsView,
   StreamEvent,
@@ -422,9 +423,44 @@ export const mock = {
   },
 
   async agentsOverview(): Promise<AgentsOverview> {
-    // Design-time preview of the indicator: `?agents=1` in the browser URL.
+    // Design-time preview: `?agents=1` puts a working agent (with a checklist)
+    // in the first chat, so the task board can be styled without the desktop
+    // shell. `?agents=needs_input` previews the waiting state and
+    // `?agents=done` the finished one.
     const demo = new URLSearchParams(window.location.search).get("agents");
-    const working = Number(demo ?? 0) || 0;
-    return { working, live: working };
+    if (!demo) return { working: 0, live: 0, agents: [] };
+    const now = Date.now();
+    const waiting = demo === "needs_input";
+    const finished = demo === "done";
+    const plan: PlanStep[] = [
+      { title: "Setting things up", status: "done" },
+      { title: "Designing the pricing page", status: "done" },
+      { title: "Connecting it to the real services", status: finished ? "done" : "active" },
+      { title: "Checking it on a phone", status: finished ? "done" : "pending" },
+      { title: "Polishing the details", status: finished ? "done" : "pending" },
+    ];
+    return {
+      working: finished || waiting ? 0 : 1,
+      live: finished ? 0 : 1,
+      agents: [
+        {
+          id: "ag_demo",
+          chatId: "c1",
+          title: "Build the pricing page",
+          project: "site",
+          state: finished ? "idle" : waiting ? "needs_input" : "running",
+          steps: 18,
+          createdAt: now - (finished ? 214_000 : 96_000),
+          updatedAt: now,
+          finishedAt: finished ? now - 41_000 : undefined,
+          waiting,
+          plan,
+        },
+      ],
+    };
+  },
+
+  async stopChatAgents(): Promise<AgentsOverview> {
+    return { working: 0, live: 0, agents: [] };
   },
 };

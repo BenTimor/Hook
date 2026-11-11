@@ -86,9 +86,34 @@ export interface SettingsView {
   projects: Project[];
 }
 
+export type PlanStepStatus = "pending" | "active" | "done";
+
+/** One item of the checklist the user watches while a coding agent works. */
+export interface PlanStep {
+  title: string;
+  status: PlanStepStatus;
+}
+
+/** The UI-facing shape of a coding-agent run. */
+export interface AgentSummary {
+  id: string;
+  chatId: string;
+  title: string;
+  project: string;
+  state: string;
+  steps: number;
+  plan: PlanStep[];
+  createdAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+  error?: string;
+  waiting: boolean;
+}
+
 export interface AgentsOverview {
   working: number;
   live: number;
+  agents: AgentSummary[];
 }
 
 export type StreamEvent =

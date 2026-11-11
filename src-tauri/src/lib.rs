@@ -28,13 +28,8 @@ pub fn guard_source() -> &'static str {
 }
 
 fn emit_agents(state: &AppState) {
-    let _ = state.app.emit(
-        "hook://agents",
-        serde_json::json!({
-            "working": state.agents.working_count(),
-            "live": state.agents.live_count(),
-        }),
-    );
+    // One payload feeds both the title-bar pill and the per-chat task board.
+    let _ = state.app.emit("hook://agents", state.agents.overview());
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -181,6 +176,7 @@ pub fn run() {
             commands::save_image_as,
             commands::open_path,
             commands::agents_overview,
+            commands::stop_chat_agents,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Hook")

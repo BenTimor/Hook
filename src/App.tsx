@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 
 import { isTauri, win } from "./lib/bridge";
 import { useChatStore } from "./store/useChatStore";
+import { AgentBoard } from "./components/AgentBoard";
 import { Composer } from "./components/Composer";
 import { Hero } from "./components/Hero";
 import { PaneHead } from "./components/PaneHead";
@@ -95,6 +96,7 @@ export default function App() {
             <>
               <Thread />
               <div className="composer-dock">
+                <AgentBoard />
                 <Composer />
               </div>
             </>

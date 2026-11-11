@@ -54,16 +54,23 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "start_coding_agent",
-                "description": "Launch a coding agent in a project folder. It runs pi with full permissions inside that folder and can read, edit and run code. Write a complete brief: what to achieve, constraints, and how to verify. Returns immediately - you are notified when it settles or asks a question.",
+                "description": "Launch a coding agent in a project folder. It runs pi with full permissions inside that folder and can read, edit and run code. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. Returns immediately - you are notified when it settles or asks a question.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "project": { "type": "string", "description": "Project folder name." },
                         "task": { "type": "string", "description": "Self-contained instructions for the coding agent." },
-                        "title": { "type": "string", "description": "Optional short label, e.g. 'Fix login redirect'." },
+                        "title": { "type": "string", "description": "Short, plain-language name of the work shown at the top of the checklist, e.g. 'Fix the login redirect'." },
+                        "plan": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "minItems": 2,
+                            "maxItems": 8,
+                            "description": "The steps the user will watch as a checklist. Plain, friendly language a non-technical person understands: 'Setting things up', 'Designing the front page', 'Integrating the payment service'. 3-6 steps, in order. No file names, tool names, package names, commands, or jargon. Same language the user writes in."
+                        },
                         "resume_session_id": { "type": "string", "description": "Continue an earlier session from list_coding_sessions instead of starting fresh." }
                     },
-                    "required": ["project", "task"],
+                    "required": ["project", "task", "title", "plan"],
                     "additionalProperties": false
                 }
             }
@@ -93,7 +100,7 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "steer_agent",
-                "description": "Send mid-run guidance to a running coding agent. It is delivered after its current tool calls finish. Also works on an idle agent to start a follow-up task in the same session.",
+                "description": "Send guidance to a running coding agent. Use this whenever the user sends a message while an agent is already working: pass their instruction on instead of starting another agent. Delivered after its current tool calls finish. If the agent is waiting for an answer to a question, use answer_agent instead. Also starts a follow-up task in the same session when the agent is idle.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -220,17 +227,36 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
         "start_coding_agent" => {
             let project = arg_str(args, "project")?;
             let task = arg_str(args, "task")?;
-            let title = args.get("title").and_then(|v| v.as_str());
+            let title = arg_str(args, "title")?;
             let resume = args.get("resume_session_id").and_then(|v| v.as_str());
+            let plan: Vec<String> = args
+                .get("plan")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::trim))
+                        .filter(|item| !item.is_empty())
+                        .take(crate::agent::MAX_PLAN_STEPS)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if plan.len() < 2 {
+                return Err(
+                    "Give the user at least two plain-language steps in \"plan\", e.g. [\"Setting things up\", \"Designing the page\"]".into(),
+                );
+            }
             let info = env
                 .agents
-                .start(env.chat_id, project, task, title, resume)?;
+                .start(env.chat_id, project, task, Some(title), resume, &plan)?;
             Ok(json!({
                 "agent_id": info.id,
                 "project": info.project,
                 "state": info.state,
+                "plan": info.plan,
                 "resumed_session": resume.is_some(),
-                "note": "Running in the background. You may end your turn; you will be woken when it settles, fails, or asks a question.",
+                "note": "Running in the background. The user can see the plan and stop it from the chat. You may end your turn; you will be woken when it settles, fails, or asks a question.",
             }))
         }
         "list_agents" => {
@@ -247,6 +273,7 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
                         "state": a.state,
                         "steps": a.steps,
                         "last_step": a.last_step,
+                        "plan": a.plan,
                     })
                 })
                 .collect();
@@ -269,6 +296,7 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
                 "state": info.state,
                 "steps": info.steps,
                 "last_step": info.last_step,
+                "plan": info.plan,
                 "last_message": info.last_message.as_deref().map(|m| truncate(m, 2500)),
                 "question": info.question.as_ref().map(|q| json!({
                     "method": q.method,
@@ -365,6 +393,12 @@ pub fn agent_event_note(info: &crate::agent::AgentInfo, quiet: bool) -> String {
         return note;
     }
     note.push_str(&format!("task: {}\n", truncate(&info.task, 240)));
+    if !info.plan.is_empty() {
+        note.push_str("plan:\n");
+        for step in &info.plan {
+            note.push_str(&format!("- [{}] {}\n", step.status, step.title));
+        }
+    }
     note.push_str(&format!("steps: {}\n", info.steps));
     if let Some(step) = &info.last_step {
         note.push_str(&format!("last_step: {step}\n"));
@@ -438,6 +472,7 @@ mod tests {
             last_message: Some("A long final report about the whole build.".into()),
             error: None,
             question: None,
+            plan: Vec::new(),
         }
     }
 
@@ -456,6 +491,19 @@ mod tests {
         let loud = agent_event_note(&info, false);
         assert!(!loud.contains("new_since_last_update: none"));
         assert!(loud.contains("A long final report"));
+    }
+
+    #[test]
+    fn the_wake_note_carries_the_plan_so_status_questions_can_be_answered() {
+        let mut info = sample_agent();
+        info.plan = crate::agent::plan_from_titles(&[
+            "Setting things up".into(),
+            "Designing the front page".into(),
+        ]);
+        let note = agent_event_note(&info, false);
+        assert!(note.contains("plan:"));
+        assert!(note.contains("[active] Setting things up"));
+        assert!(note.contains("[pending] Designing the front page"));
     }
 
     #[test]
@@ -481,6 +529,31 @@ mod tests {
         ] {
             assert!(names.contains(&expected), "{expected} missing");
         }
+    }
+
+    #[test]
+    fn the_chat_agent_must_pass_a_plain_language_plan() {
+        // The checklist is only as good as the schema that demands it: a
+        // missing plan would leave the board empty, technical steps would
+        // defeat the point.
+        let defs = definitions();
+        let tool = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["function"]["name"] == "start_coding_agent")
+            .expect("start_coding_agent is defined");
+        let parameters = &tool["function"]["parameters"];
+        let required = parameters["required"].as_array().unwrap();
+        assert!(required.contains(&json!("title")));
+        assert!(required.contains(&json!("plan")));
+        let plan = &parameters["properties"]["plan"];
+        assert_eq!(plan["minItems"], 2);
+        assert_eq!(plan["maxItems"], 8);
+        assert!(plan["description"]
+            .as_str()
+            .unwrap()
+            .contains("No file names"));
     }
 
     #[test]

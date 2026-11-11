@@ -150,7 +150,8 @@ also proves the copy can load Hook's guard before anything gets packaged.
   agent-sessions\          coding-engine session files (resumable)
   agent-home\              the engine's own config: models.json (this build's
                            endpoint + key + model), settings.json, sessions
-  updates\<agent id>\      progress notes the agents wrote, collected each second
+  updates\<agent id>\      progress notes and checklist updates the agents wrote,
+                           collected each second
   hook-guard.mjs           the guard loaded into every coding agent
 ```
 
@@ -188,6 +189,19 @@ conversation while you keep chatting.
   agent uses exactly the chat agent's endpoint, key, model and thinking level,
   and never touches your own `~/.pi` — different extensions, skills, MCP servers
   and logins on your machine cannot change what it does.
+- **The plan is visible, and so is the Stop button.** `start_coding_agent` takes
+  a `plan`: three to six short steps in plain language (`Setting things up`,
+  `Designing the front page`, `Hooking up the real service`), written by the
+  chat agent, never file names or jargon. That checklist sits directly above
+  the composer with the run's title: the active step shows a spinner, finished
+  steps are struck through, and the header counts elapsed time. The coding agent
+  keeps it current through `update_plan`, and a clean finish crosses off
+  whatever is left. While an agent is live, the composer says **Steer the
+  agent…**: your message is still answered by the chat agent, which passes the
+  instruction on with `steer_agent` instead of starting a second agent. **Stop**
+  kills every live agent in that chat — abort first, then the process tree —
+  without a model round-trip. A finished checklist stays for a few minutes, then
+  gets out of the way.
 - **Progress updates — only when there is news.** Agents get one extra tool,
   `report_progress(note, images?)` and are told to use it for milestones,
   decisions, problems and the final result, never as a heartbeat: "still
@@ -239,14 +253,19 @@ conversation while you keep chatting.
 - **The guard is the only policy they inherit.** Every `bash` call must carry a
   `timeout` in seconds (1–3600 by default). Missing, oversized or non-numeric
   timeouts are blocked with an explanation, and the model re-issues the call.
-  Tune it with `bash_max_timeout` / `bash_min_timeout`.
+  Tune it with `bash_max_timeout` / `bash_min_timeout`. The same guard offers
+  `report_progress` and `update_plan`, and seeds the coding agent with the
+  checklist the user is watching so the wording stays plain.
 - **They run asynchronously.** `start_coding_agent` returns immediately and you
   can keep talking. When an agent settles, fails, or asks a question, Hook
   appends a hidden note to the owning chat and wakes the chat agent, which posts
   an update in its own words. If the chat agent is mid-turn, the wake waits.
-- **You never see the agents.** A quiet pill in the title bar says that a coding
-  agent is working — no list, no log, no session browser. Everything you learn
-  comes from the chat agent.
+- **You see the work, not the machinery.** A title-bar pill says an agent is
+  working (or waiting for an answer), the chat's task board shows the plan and
+  time spent, and every chat with a live agent gets a green dot in the sidebar.
+  There is no log, no tool feed and no session browser: the raw run stays
+  between Hook and the chat agent, and everything you read in the conversation
+  is written by the chat agent.
 - **Sessions are resumable.** They live in
   `%APPDATA%\app.hook.chat\agent-sessions\`. A finished agent — or one that
   was cut off when Hook closed — can be continued by session id.
@@ -280,7 +299,8 @@ src-tauri/src/
   store.rs      atomic JSON persistence, pin/delete/restore/search
   turn.rs       the assistant turn: model → tools → tools → answer, plus wakes
   tools.rs      the tool schemas and their implementations
-  agent.rs      engine RPC supervisor: spawn, states, progress batching, wakes
+  agent.rs      engine RPC supervisor: spawn, states, plans, progress batching,
+                wakes, stop-chat
   runtime.rs    locate the bundled engine, write its models.json
   guard.rs      the guard extension, materialized from the binary
   settings.rs   projects folder
@@ -289,7 +309,8 @@ src-tauri/src/
 src/
   lib/bridge.ts  typed invoke wrappers + app-wide event bus
   store/         zustand: chats, per-chat streams, agents, settings
-  components/    Sidebar, Thread, Composer, SettingsSheet, AgentPill…
+  components/    Sidebar, Thread, Composer, AgentBoard, SettingsSheet,
+                 AgentPill…
   styles/        design tokens, glass surfaces, prose styles
 ```
 
@@ -318,10 +339,10 @@ cargo test --lib -- --ignored   # live tests against `pnpm mock`
 `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
 shapes thinking-mode APIs reject), image parts and the base64/header helpers,
 path containment, the project and agent stores, progress batching, the chat-agent
-tool loop, the guard policy (a Node harness feeds it bad `bash` calls), the RPC
-handshake (spawns the real engine, asks `get_state`, never calls a model) and a
-full agent lifecycle against a fake one that speaks the protocol. Tests skip
-themselves when the engine or `node` is missing.
+tool loop, the guard policy (a Node harness feeds it bad `bash` calls and the
+checklist tool), the RPC handshake (spawns the real engine, asks `get_state`,
+never calls a model) and a full agent lifecycle against a fake one that speaks
+the protocol. Tests skip themselves when the engine or `node` is missing.
 
 ## A note on packaged builds
 

@@ -39,6 +39,10 @@ mod tests {
             );
         }
         assert!(GUARD_SOURCE.contains("report_progress"));
+        // The user's checklist: the tool and the plain-language rule live here.
+        assert!(GUARD_SOURCE.contains("update_plan"));
+        assert!(GUARD_SOURCE.contains("no file names"));
+        assert!(GUARD_SOURCE.contains("plan.json"));
         // The guidance must forbid heartbeat updates, not encourage them.
         assert!(GUARD_SOURCE.contains("still working"));
         assert!(GUARD_SOURCE.contains("Long stretches of silence"));

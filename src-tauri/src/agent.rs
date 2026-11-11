@@ -32,6 +32,30 @@ pub const STATE_FAILED: &str = "failed";
 pub const STATE_STOPPED: &str = "stopped";
 pub const STATE_INTERRUPTED: &str = "interrupted";
 
+/// Checklist states the user sees at the bottom of the chat.
+pub const STEP_PENDING: &str = "pending";
+pub const STEP_ACTIVE: &str = "active";
+pub const STEP_DONE: &str = "done";
+
+/// A run may grow its checklist, but not without bound.
+pub const MAX_PLAN_STEPS: usize = 12;
+const MAX_STEP_TITLE: usize = 90;
+
+/// One item of the plan the user watches while the coding agent works. The
+/// chat agent writes the wording (plain, non-technical); the coding agent only
+/// moves each step between `pending`, `active` and `done`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanStep {
+    pub title: String,
+    #[serde(default = "pending_step")]
+    pub status: String,
+}
+
+fn pending_step() -> String {
+    STEP_PENDING.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentQuestion {
@@ -70,6 +94,9 @@ pub struct AgentInfo {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question: Option<AgentQuestion>,
+    /// The user-facing checklist for this run, in display order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan: Vec<PlanStep>,
 }
 
 impl AgentInfo {
@@ -77,6 +104,15 @@ impl AgentInfo {
         matches!(
             self.state.as_str(),
             STATE_STARTING | STATE_RUNNING | STATE_NEEDS_INPUT | STATE_IDLE
+        )
+    }
+
+    /// Working or blocked on a question: still the user's current task, as
+    /// opposed to an idle process kept warm for a cheap follow-up.
+    pub fn is_active(&self) -> bool {
+        matches!(
+            self.state.as_str(),
+            STATE_STARTING | STATE_RUNNING | STATE_NEEDS_INPUT
         )
     }
 
@@ -90,6 +126,37 @@ impl AgentInfo {
 struct AgentsFile {
     #[serde(default)]
     agents: Vec<AgentInfo>,
+}
+
+/// What the UI needs to draw the working panel. Deliberately smaller than
+/// `AgentInfo`: the brief and the run's last message stay between Hook and the
+/// chat agent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSummary {
+    pub id: String,
+    pub chat_id: String,
+    pub title: String,
+    pub project: String,
+    pub state: String,
+    pub steps: u32,
+    pub plan: Vec<PlanStep>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub waiting: bool,
+}
+
+/// The whole picture for the title-bar indicator and the per-chat task board.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Overview {
+    pub working: usize,
+    pub live: usize,
+    pub agents: Vec<AgentSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -191,6 +258,7 @@ impl AgentManager {
                     // Nothing can still be running: children die with the app.
                     if info.is_live() {
                         info.state = STATE_INTERRUPTED.to_string();
+                        info.finished_at = Some(now_ms());
                         info.updated_at = now_ms();
                         info.error = Some("Hook closed while this agent was working.".into());
                     }
@@ -230,7 +298,8 @@ impl AgentManager {
         self.data_dir.join("updates").join(agent_id)
     }
 
-    /// Collect whatever the agents have written since the last tick.
+    /// Collect whatever the agents have written since the last tick: progress
+    /// notes, pictures and checklist updates from the guard.
     pub fn harvest(&self) {
         let ids: Vec<String> = lock(&self.inner)
             .agents
@@ -249,7 +318,10 @@ impl AgentManager {
                 .map(|e| e.path())
                 .filter(|p| {
                     p.file_name()
-                        .map(|n| n.to_string_lossy().starts_with("u-"))
+                        .map(|n| {
+                            let name = n.to_string_lossy();
+                            name.starts_with("u-") || name.starts_with("p-")
+                        })
                         .unwrap_or(false)
                         && p.extension().and_then(|e| e.to_str()) == Some("json")
                 })
@@ -260,10 +332,28 @@ impl AgentManager {
             files.sort();
 
             let mut harvested: Vec<Update> = Vec::new();
+            let mut newest_plan: Option<Vec<PlanStep>> = None;
             for file in files {
+                let is_plan = file
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with("p-"))
+                    .unwrap_or(false);
                 let parsed = std::fs::read_to_string(&file)
                     .ok()
                     .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+
+                if is_plan {
+                    // Files are written in timestamp order, so the last one in
+                    // the sorted list is the state the agent means now.
+                    if let Some(value) = parsed {
+                        if let Some(plan) = plan_from_value(&value) {
+                            newest_plan = Some(plan);
+                        }
+                    }
+                    let _ = std::fs::remove_file(&file);
+                    continue;
+                }
+
                 if let Some(value) = parsed {
                     let note = value
                         .get("note")
@@ -290,12 +380,33 @@ impl AgentManager {
                 let _ = std::fs::remove_file(&file);
             }
 
-            if harvested.is_empty() {
+            if harvested.is_empty() && newest_plan.is_none() {
                 continue;
             }
-            let mut inner = lock(&self.inner);
-            if let Some(entry) = inner.agents.get_mut(&id) {
-                entry.pending.extend(harvested);
+
+            let plan_changed = {
+                let mut inner = lock(&self.inner);
+                let mut changed = false;
+                if let Some(entry) = inner.agents.get_mut(&id) {
+                    entry.pending.extend(harvested);
+                    if let Some(plan) = newest_plan {
+                        if entry.info.plan != plan {
+                            entry.info.plan = plan;
+                            entry.info.updated_at = now_ms();
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    persist(&self.data_dir, &inner);
+                }
+                changed
+            };
+
+            // A checklist update is for the eye, not for the chat agent: it
+            // must not wake the model, only refresh the task board.
+            if plan_changed {
+                let _ = self.signal_tx.send(Signal::Changed);
             }
         }
     }
@@ -384,12 +495,42 @@ impl AgentManager {
             .count()
     }
 
-    pub fn live_count(&self) -> usize {
-        lock(&self.inner)
+    /// Counts for the title-bar pill plus the summaries the task board draws.
+    pub fn overview(&self) -> Overview {
+        let inner = lock(&self.inner);
+        let mut agents: Vec<AgentSummary> = inner
             .agents
             .values()
-            .filter(|e| e.info.is_live())
-            .count()
+            .map(|entry| {
+                let info = &entry.info;
+                AgentSummary {
+                    id: info.id.clone(),
+                    chat_id: info.chat_id.clone(),
+                    title: info.title.clone(),
+                    project: info.project.clone(),
+                    state: info.state.clone(),
+                    steps: info.steps,
+                    plan: info.plan.clone(),
+                    created_at: info.created_at,
+                    updated_at: info.updated_at,
+                    finished_at: info.finished_at,
+                    error: info.error.clone(),
+                    waiting: info.question.is_some() || info.state == STATE_NEEDS_INPUT,
+                }
+            })
+            .collect();
+        agents.sort_by_key(|a| a.created_at);
+        // `agents.json` keeps every run for resumability. The board only ever
+        // needs the recent tail, so an old install does not ship its whole
+        // history to the UI on every heartbeat.
+        if agents.len() > 60 {
+            agents.drain(..agents.len() - 60);
+        }
+        Overview {
+            working: inner.agents.values().filter(|e| e.info.is_working()).count(),
+            live: inner.agents.values().filter(|e| e.info.is_live()).count(),
+            agents,
+        }
     }
 
     pub fn start(
@@ -399,6 +540,7 @@ impl AgentManager {
         task: &str,
         title: Option<&str>,
         resume_session: Option<&str>,
+        plan_titles: &[String],
     ) -> Result<AgentInfo, String> {
         let task = task.trim();
         if task.is_empty() {
@@ -450,6 +592,9 @@ impl AgentManager {
             .filter(|t| !t.is_empty())
             .map(|t| truncate(t, 60))
             .unwrap_or_else(|| truncate(task, 60));
+        // The chat agent's plain-language steps seed the checklist the user
+        // watches. The coding agent fills in the status as it goes.
+        let plan = plan_from_titles(plan_titles);
 
         let args = agent_args(
             &self.sessions_dir,
@@ -463,6 +608,12 @@ impl AgentManager {
         // Where the agent's guard writes progress notes for Hook to collect.
         let updates_dir = crate::store::strip_verbatim(&self.updates_dir(&id));
         let _ = std::fs::create_dir_all(&updates_dir);
+        // The guard reads this to tell the coding agent which checklist the
+        // user is looking at, so it keeps the chat agent's wording.
+        let _ = std::fs::write(
+            updates_dir.join("plan.json"),
+            serde_json::json!({ "steps": &plan }).to_string(),
+        );
 
         // Keep the engine's stderr: when it dies before doing anything, this
         // file is the only thing that explains why.
@@ -515,6 +666,7 @@ impl AgentManager {
             last_message: None,
             error: None,
             question: None,
+            plan,
         };
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -684,14 +836,48 @@ impl AgentManager {
             Some(tx) if info.is_live() => {
                 let _ = tx.send(AgentCmd::Kill);
                 self.set_state(agent_id, STATE_STOPPED, |info| {
+                    // The step it was on did not finish; leave it open so the
+                    // board does not claim work that was thrown away.
+                    for step in info.plan.iter_mut() {
+                        if step.status == STEP_ACTIVE {
+                            step.status = STEP_PENDING.to_string();
+                        }
+                    }
                     info.question = None;
                     info.updated_at = now_ms();
                     info.finished_at = Some(now_ms());
                 });
+                // Stopping is the user's decision, not a milestone to report:
+                // drop a queued wake and unread notes so no model turn follows.
+                {
+                    let mut inner = lock(&self.inner);
+                    if let Some(entry) = inner.agents.get_mut(agent_id) {
+                        entry.wake_pending = false;
+                        entry.pending.clear();
+                    }
+                }
                 Ok(self.get(agent_id).unwrap_or(info))
             }
             _ => Err("That coding agent has already finished.".into()),
         }
+    }
+
+    /// Stop every live agent that belongs to one chat. This is what the Stop
+    /// button in the task board calls: no model round-trip, no confirmation.
+    pub fn stop_chat(&self, chat_id: &str) -> usize {
+        let ids: Vec<String> = lock(&self.inner)
+            .agents
+            .values()
+            .filter(|entry| entry.info.chat_id == chat_id && entry.info.is_live())
+            .map(|entry| entry.info.id.clone())
+            .collect();
+        let mut stopped = 0;
+        for id in ids {
+            if self.stop(&id).is_ok() {
+                stopped += 1;
+            }
+        }
+        stopped
     }
 
     /// Called from the app's exit path: kill every live child process tree so
@@ -1022,6 +1208,56 @@ fn short_step(tool: &str, args: &serde_json::Value) -> String {
     }
 }
 
+/// Build the checklist the chat agent asked for. The first step is the one the
+/// run is about to start, so the board shows motion immediately.
+pub fn plan_from_titles(titles: &[String]) -> Vec<PlanStep> {
+    titles
+        .iter()
+        .map(|title| title.trim())
+        .filter(|title| !title.is_empty())
+        .take(MAX_PLAN_STEPS)
+        .enumerate()
+        .map(|(index, title)| PlanStep {
+            title: truncate(title, MAX_STEP_TITLE),
+            status: if index == 0 {
+                STEP_ACTIVE.to_string()
+            } else {
+                STEP_PENDING.to_string()
+            },
+        })
+        .collect()
+}
+
+/// Read a plan written by the guard's `update_plan` tool. Empty plans are
+/// refused: a tool call that produced nothing must not blank the board.
+fn plan_from_value(value: &serde_json::Value) -> Option<Vec<PlanStep>> {
+    let raw = value.get("steps")?.as_array()?;
+    let mut steps: Vec<PlanStep> = Vec::new();
+    for item in raw.iter().take(MAX_PLAN_STEPS) {
+        let Some(title) = item.get("title").and_then(|t| t.as_str()) else {
+            continue;
+        };
+        let title = title.trim();
+        if title.is_empty() {
+            continue;
+        }
+        let status = match item.get("status").and_then(|s| s.as_str()) {
+            Some(STEP_ACTIVE) => STEP_ACTIVE,
+            Some(STEP_DONE) => STEP_DONE,
+            _ => STEP_PENDING,
+        };
+        steps.push(PlanStep {
+            title: truncate(title, MAX_STEP_TITLE),
+            status: status.to_string(),
+        });
+    }
+    if steps.is_empty() {
+        None
+    } else {
+        Some(steps)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn drive(
     agent_id: String,
@@ -1035,6 +1271,7 @@ async fn drive(
     mut rx: mpsc::UnboundedReceiver<AgentCmd>,
 ) {
     let mut lines = BufReader::new(stdout).lines();
+    let engine_pid = child.id();
     let mut idle_deadline: Option<tokio::time::Instant> = None;
     let mut question_deadline: Option<tokio::time::Instant> = None;
     let mut kill_deadline: Option<tokio::time::Instant> = None;
@@ -1125,6 +1362,11 @@ async fn drive(
     drop(stdin);
     let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
     let _ = child.kill().await;
+    // The Stop button means the whole tree, not just the process we spawned:
+    // a `.cmd` shim on a developer machine leaves the real node process behind.
+    if let Some(pid) = engine_pid {
+        kill_tree(pid);
+    }
 
     let mut wake: Option<Wake> = None;
     {
@@ -1192,8 +1434,12 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
 
         match kind {
             "agent_start" | "turn_start" => {
-                info.state = STATE_RUNNING.to_string();
-                info.updated_at = now_ms();
+                // A run the user stopped must not look alive again when the
+                // engine's abort handshake produces more records.
+                if info.state != STATE_STOPPED {
+                    info.state = STATE_RUNNING.to_string();
+                    info.updated_at = now_ms();
+                }
             }
             "tool_execution_start" => {
                 let tool = record
@@ -1276,21 +1522,42 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                 }
             }
             "agent_settled" => {
-                // Settled means nothing is pending any more, question included.
-                info.question = None;
-                info.state = STATE_IDLE.to_string();
-                info.finished_at = Some(now_ms());
-                info.updated_at = now_ms();
-                if entry.truncated {
-                    // Report it: otherwise the run looks like it simply stopped
-                    // without doing anything.
-                    entry.truncated = false;
-                    entry.pending.push(Update {
-                        note: "The run ran out of room while thinking and stopped before finishing anything. Nothing is broken - the work can be picked up from where it stopped.".into(),
-                        images: Vec::new(),
-                    });
+                if info.state == STATE_STOPPED {
+                    // The abort we asked for landed. Keep the reason it stopped
+                    // and the checklist exactly as the stop left it.
+                    info.question = None;
+                    if info.finished_at.is_none() {
+                        info.finished_at = Some(now_ms());
+                    }
+                    info.updated_at = now_ms();
+                } else {
+                    // Settled means nothing is pending any more, question included.
+                    info.question = None;
+                    info.state = STATE_IDLE.to_string();
+                    info.finished_at = Some(now_ms());
+                    info.updated_at = now_ms();
+                    let truncated = entry.truncated;
+                    if truncated {
+                        // Report it: otherwise the run looks like it simply stopped
+                        // without doing anything.
+                        entry.truncated = false;
+                        entry.pending.push(Update {
+                            note: "The run ran out of room while thinking and stopped before finishing anything. Nothing is broken - the work can be picked up from where it stopped.".into(),
+                            images: Vec::new(),
+                        });
+                    } else if !record
+                        .get("aborted")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        // The run ended cleanly: nothing on the checklist is
+                        // still being worked on, so cross off what is left.
+                        for step in info.plan.iter_mut() {
+                            step.status = STEP_DONE.to_string();
+                        }
+                    }
+                    wake = true;
                 }
-                wake = true;
             }
             _ => {}
         }
@@ -1326,6 +1593,24 @@ mod tests {
             projects,
             tx,
         )
+    }
+
+    fn manager_channel() -> (AgentManager, mpsc::UnboundedReceiver<Signal>) {
+        let base = std::env::temp_dir().join(format!("hook-agents-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let settings = Arc::new(SettingsStore::new(&base));
+        let projects = Arc::new(ProjectsStore::new(&base));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mgr = AgentManager::new(
+            &base,
+            Arc::new(test_config()),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            test_engine(&base),
+            settings,
+            projects,
+            tx,
+        );
+        (mgr, rx)
     }
 
     fn test_config() -> crate::config::HarnessConfig {
@@ -1387,6 +1672,7 @@ name = "test-model"
             last_message: None,
             error: None,
             question: None,
+            plan: Vec::new(),
         };
         inner.agents.insert(
             "ag_1".into(),
@@ -1467,6 +1753,7 @@ name = "test-model"
                         last_message: None,
                         error: None,
                         question: None,
+                        plan: Vec::new(),
                     },
                     tx: None,
                     pid: None,
@@ -1525,7 +1812,23 @@ node \"%~dp0fake-pi.mjs\" %*
             projects,
             tx,
         );
-        let info = mgr.start("chat-1", "demo", "build it", None, None).unwrap();
+        let info = mgr
+            .start(
+                "chat-1",
+                "demo",
+                "build it",
+                None,
+                None,
+                &["Setting things up".into(), "Designing the front page".into()],
+            )
+            .unwrap();
+        assert_eq!(info.plan.len(), 2);
+        assert_eq!(info.plan[0].status, STEP_ACTIVE);
+        // The guard gets the same checklist on disk, so its system prompt can
+        // tell the coding agent to keep the wording the user already sees.
+        let seed = std::fs::read_to_string(mgr.updates_dir(&info.id).join("plan.json")).unwrap();
+        assert!(seed.contains("Setting things up"));
+        assert!(seed.contains(STEP_ACTIVE));
 
         // The agent writes two notes and a picture into its mailbox.
         let dir = mgr.updates_dir(&info.id);
@@ -1619,7 +1922,7 @@ node \"%~dp0fake-pi.mjs\" %*
             projects,
             tx,
         );
-        let info = mgr.start("chat-1", "demo", "do a thing", None, None).unwrap();
+        let info = mgr.start("chat-1", "demo", "do a thing", None, None, &[]).unwrap();
         assert!(mgr.get(&info.id).unwrap().is_live());
 
         mgr.kill_all_sync();
@@ -1627,7 +1930,7 @@ node \"%~dp0fake-pi.mjs\" %*
         let after = mgr.get(&info.id).unwrap();
         assert_eq!(after.state, STATE_INTERRUPTED);
         assert!(after.error.is_some());
-        assert_eq!(mgr.live_count(), 0);
+        assert_eq!(mgr.overview().live, 0);
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -1675,9 +1978,17 @@ node \"%~dp0fake-pi.mjs\" %*
         );
 
         let info = mgr
-            .start("chat-1", "demo", "Add the login page", Some("login"), None)
+            .start(
+                "chat-1",
+                "demo",
+                "Add the login page",
+                Some("login"),
+                None,
+                &["Setting things up".into(), "Building the login page".into()],
+            )
             .expect("agent should start");
         assert_eq!(info.state, STATE_STARTING);
+        assert_eq!(info.plan.len(), 2);
         assert_eq!(mgr.working_count(), 1);
 
         // Wait for the settle signal, then check the recorded state. In the
@@ -1714,6 +2025,10 @@ node \"%~dp0fake-pi.mjs\" %*
             .as_deref()
             .unwrap_or_default()
             .contains("echo hello"));
+        assert!(
+            settled.plan.iter().all(|step| step.status == STEP_DONE),
+            "a clean settle crosses off whatever the agent left open"
+        );
 
         // Stopping a live agent records it as stopped rather than failed.
         mgr.stop(&info.id).unwrap();
@@ -1721,6 +2036,199 @@ node \"%~dp0fake-pi.mjs\" %*
         assert_eq!(stopped.state, STATE_STOPPED);
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_chat_agents_plan_becomes_a_checklist() {
+        let steps = plan_from_titles(&[
+            "  Setting things up ".into(),
+            "   ".into(),
+            "Designing the front page".into(),
+        ]);
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].title, "Setting things up");
+        assert_eq!(steps[0].status, STEP_ACTIVE);
+        assert_eq!(steps[1].status, STEP_PENDING);
+
+        // The guard's plan is normalized: blank steps vanish, unknown statuses
+        // become pending, and an empty plan never erases the board.
+        let from_guard = plan_from_value(&serde_json::json!({
+            "steps": [
+                {"title": "Setting things up", "status": "done"},
+                {"title": "   ", "status": "done"},
+                {"title": "Designing the front page", "status": "weird"}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(from_guard.len(), 2);
+        assert_eq!(from_guard[0].status, STEP_DONE);
+        assert_eq!(from_guard[1].status, STEP_PENDING);
+        assert!(plan_from_value(&serde_json::json!({"steps": []})).is_none());
+    }
+
+    fn plan_entry(plan: Vec<PlanStep>) -> Entry {
+        Entry {
+            info: AgentInfo {
+                id: "ag_1".into(),
+                chat_id: "c1".into(),
+                project: "p".into(),
+                project_path: "C:/p".into(),
+                title: "t".into(),
+                task: "do it".into(),
+                session_id: "s1".into(),
+                state: STATE_RUNNING.into(),
+                created_at: 1,
+                updated_at: 1,
+                finished_at: None,
+                steps: 0,
+                last_step: None,
+                last_message: None,
+                error: None,
+                question: None,
+                plan,
+            },
+            tx: None,
+            pid: None,
+            pending: Vec::new(),
+            wake_pending: false,
+            last_flush_at: now_ms(),
+            delivered: false,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn a_clean_settle_crosses_off_the_rest_of_the_checklist() {
+        let mgr = manager();
+        let plan = plan_from_titles(&[
+            "Setting things up".into(),
+            "Designing the front page".into(),
+        ]);
+        lock(&mgr.inner).agents.insert("ag_1".into(), plan_entry(plan));
+
+        // The agent left the first step active on purpose? No: an aborted turn
+        // changes nothing, so the board never claims work that was thrown away.
+        apply_record(
+            &mgr.inner,
+            "ag_1",
+            &serde_json::json!({"type":"agent_settled","aborted":true}),
+        );
+        {
+            let guard = lock(&mgr.inner);
+            let plan = &guard.agents["ag_1"].info.plan;
+            assert_eq!(plan[0].status, STEP_ACTIVE);
+            assert_eq!(plan[1].status, STEP_PENDING);
+        }
+
+        // A normal settle means the run is over: everything left is done.
+        apply_record(
+            &mgr.inner,
+            "ag_1",
+            &serde_json::json!({"type":"agent_settled","aborted":false}),
+        );
+        let guard = lock(&mgr.inner);
+        assert!(guard.agents["ag_1"]
+            .info
+            .plan
+            .iter()
+            .all(|step| step.status == STEP_DONE));
+    }
+
+    #[test]
+    fn stopping_a_run_reopens_the_step_it_was_on() {
+        let mgr = manager();
+        let plan = plan_from_titles(&[
+            "Setting things up".into(),
+            "Designing the front page".into(),
+            "Hooking up the real service".into(),
+        ]);
+        let mut entry = plan_entry(plan);
+        entry.info.plan[0].status = STEP_DONE.into();
+        entry.info.plan[1].status = STEP_ACTIVE.into();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        entry.tx = Some(tx);
+        lock(&mgr.inner).agents.insert("ag_1".into(), entry);
+
+        mgr.stop("ag_1").unwrap();
+
+        let info = mgr.get("ag_1").unwrap();
+        assert_eq!(info.state, STATE_STOPPED);
+        assert_eq!(info.plan[0].status, STEP_DONE);
+        assert_eq!(info.plan[1].status, STEP_PENDING, "not finished, not claimed");
+        assert_eq!(info.plan[2].status, STEP_PENDING);
+        assert_eq!(mgr.overview().live, 0);
+    }
+
+    #[tokio::test]
+    async fn a_checklist_update_refreshes_the_board_without_waking_the_chat() {
+        use std::time::Duration as StdDuration;
+
+        let (mgr, mut rx) = manager_channel();
+        let plan = plan_from_titles(&[
+            "Setting things up".into(),
+            "Designing the front page".into(),
+        ]);
+        let mut entry = plan_entry(plan);
+        let (agent_tx, _agent_rx) = mpsc::unbounded_channel();
+        entry.tx = Some(agent_tx);
+        lock(&mgr.inner).agents.insert("ag_1".into(), entry);
+
+        let dir = mgr.updates_dir("ag_1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("p-1.json"),
+            serde_json::json!({"steps": [
+                {"title": "Setting things up", "status": "done"},
+                {"title": "Designing the front page", "status": "active"}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+
+        mgr.harvest();
+
+        let info = mgr.get("ag_1").unwrap();
+        assert_eq!(info.plan[0].status, STEP_DONE);
+        assert_eq!(info.plan[1].status, STEP_ACTIVE);
+        assert!(!dir.join("p-1.json").exists(), "harvested files are consumed");
+
+        let first = tokio::time::timeout(StdDuration::from_millis(500), rx.recv()).await;
+        assert!(
+            matches!(first, Ok(Some(Signal::Changed))),
+            "a plan change refreshes the UI"
+        );
+        let second = tokio::time::timeout(StdDuration::from_millis(200), rx.recv()).await;
+        assert!(
+            second.is_err(),
+            "a plan change is for the eye only; it must never wake the chat agent"
+        );
+    }
+
+    #[test]
+    fn the_overview_lists_the_plan_for_the_task_board() {
+        let mgr = manager();
+        let plan = plan_from_titles(&["Setting things up".into()]);
+        let mut entry = plan_entry(plan);
+        entry.info.chat_id = "c9".into();
+        lock(&mgr.inner).agents.insert("ag_1".into(), entry);
+
+        let overview = mgr.overview();
+        assert_eq!(overview.working, 1);
+        assert_eq!(overview.live, 1);
+        assert_eq!(overview.agents.len(), 1);
+        assert_eq!(overview.agents[0].chat_id, "c9");
+        assert_eq!(overview.agents[0].plan.len(), 1);
+        assert_eq!(overview.agents[0].plan[0].title, "Setting things up");
+        assert!(!overview.agents[0].waiting);
+
+        // The UI reads these exact keys; a rename here would silently blank the
+        // task board, so pin the wire shape.
+        let wire = serde_json::to_value(&overview).unwrap();
+        assert_eq!(wire["live"], 1);
+        assert_eq!(wire["agents"][0]["chatId"], "c9");
+        assert_eq!(wire["agents"][0]["plan"][0]["title"], "Setting things up");
+        assert_eq!(wire["agents"][0]["plan"][0]["status"], STEP_ACTIVE);
+        assert_eq!(wire["agents"][0]["createdAt"], 1);
     }
 
     #[test]

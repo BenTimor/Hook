@@ -3,6 +3,7 @@ import { ArrowUp, CornerDownLeft, ImagePlus, Square, X } from "lucide-react";
 
 import { useChatStore } from "../store/useChatStore";
 import type { DraftImage } from "../lib/types";
+import { useSteering } from "../lib/agents";
 
 /** Downscale before sending: a 6 MP phone photo is not worth 8 MB of base64. */
 const MAX_EDGE = 1600;
@@ -42,6 +43,9 @@ export function Composer() {
   const draftImages = useChatStore((s) => s.draftImages);
   const addDraftImages = useChatStore((s) => s.addDraftImages);
   const removeDraftImage = useChatStore((s) => s.removeDraftImage);
+  // While an agent works, the composer is mostly a steering wheel: the chat
+  // agent hands what you type to the coding agent instead of starting new work.
+  const steering = useSteering();
 
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -139,7 +143,7 @@ export function Composer() {
             rows={1}
             value={draft}
             spellCheck={false}
-            placeholder="Ask anything…"
+            placeholder={steering ? "Steer the agent…" : "Ask anything…"}
             onChange={(event) => setDraft(event.target.value)}
             onCompositionStart={() => setComposing(true)}
             onCompositionEnd={() => setComposing(false)}
@@ -170,8 +174,8 @@ export function Composer() {
           ) : (
             <button
               className="send-btn"
-              title="Send"
-              aria-label="Send"
+              title={steering ? "Send to the working agent" : "Send"}
+              aria-label={steering ? "Send to the working agent" : "Send"}
               disabled={!canSend}
               onClick={submit}
             >
@@ -180,9 +184,15 @@ export function Composer() {
           )}
         </div>
       </div>
-      <div className="composer-hint" data-active={canSend}>
-        <CornerDownLeft size={10} style={{ display: "inline", verticalAlign: "-1px" }} /> Enter to
-        send · Shift + Enter for a new line
+      <div className="composer-hint" data-active={canSend || steering}>
+        {steering ? (
+          <>Enter to send · your message steers the working agent</>
+        ) : (
+          <>
+            <CornerDownLeft size={10} style={{ display: "inline", verticalAlign: "-1px" }} /> Enter to
+            send · Shift + Enter for a new line
+          </>
+        )}
       </div>
     </div>
   );

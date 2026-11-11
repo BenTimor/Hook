@@ -1,17 +1,26 @@
 import { useChatStore } from "../store/useChatStore";
 
 /**
- * Deliberately opaque: the user learns that work is happening, never what it is
- * or which agent. Everything else comes from the chat agent in prose.
+ * The title-bar pill. The detail lives in the task board above the composer;
+ * this only tells the user that something is moving — or blocked — even when
+ * they are looking at another chat.
  */
 export function AgentPill() {
-  const working = useChatStore((s) => s.agents.working);
-  if (working <= 0) return null;
+  const agents = useChatStore((s) => s.agents.agents);
+  const working = agents.filter(
+    (agent) => agent.state === "starting" || agent.state === "running",
+  ).length;
+  const waiting = agents.filter((agent) => agent.state === "needs_input").length;
+  if (working === 0 && waiting === 0) return null;
 
   return (
     <div className="agent-pill" role="status" aria-live="polite">
-      <span className="agent-dot" aria-hidden="true" />
-      {working === 1 ? "Coding agent working" : `${working} coding agents working`}
+      <span className="agent-dot" data-waiting={waiting > 0 && working === 0} aria-hidden="true" />
+      {working > 0
+        ? working === 1
+          ? "Coding agent working"
+          : `${working} coding agents working`
+        : "Coding agent waiting for you"}
     </div>
   );
 }

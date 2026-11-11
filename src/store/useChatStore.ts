@@ -56,6 +56,8 @@ interface ChatStore {
   closeSettings: () => void;
   refreshSettings: () => Promise<void>;
   chooseProjectsDir: () => Promise<void>;
+  /** Stop every coding agent working in the active chat, right now. */
+  stopChatAgents: () => Promise<void>;
 }
 
 function textOf(error: unknown): string {
@@ -182,7 +184,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     focusToken: 0,
     searchToken: 0,
     pendingNewChat: false,
-    agents: { working: 0, live: 0 },
+    agents: { working: 0, live: 0, agents: [] },
     settings: null,
     settingsOpen: false,
 
@@ -391,6 +393,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
         const settings = await api.setProjectsDir(picked);
         set({ settings });
         toast.success("Projects folder updated");
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
+    stopChatAgents: async () => {
+      const { activeId } = get();
+      if (!activeId) return;
+      try {
+        const overview = await api.stopChatAgents(activeId);
+        set({ agents: overview });
+        toast("Coding agent stopped", { duration: 4000 });
       } catch (error) {
         toast.error(textOf(error));
       }
