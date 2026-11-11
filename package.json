@@ -12,10 +12,10 @@
     "waitlist:build": "tsc --noEmit && vite build --config waitlist.vite.config.mjs",
     "waitlist:start": "node --env-file-if-exists=.env.waitlist.local server/waitlist.mjs",
     "mock": "node dev/mock-provider.mjs",
-    "tauri": "tauri",
-    "app": "tauri dev",
-    "app:build": "node scripts/fetch-pi-runtime.mjs && tauri build",
-    "app:portable": "node scripts/fetch-pi-runtime.mjs && tauri build --no-bundle && node scripts/make-portable.mjs",
+    "tauri": "node scripts/tauri.mjs",
+    "app": "node scripts/tauri.mjs dev",
+    "app:build": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build",
+    "app:portable": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build --no-bundle && node scripts/make-portable.mjs",
     "engine": "node scripts/fetch-pi-runtime.mjs"
   },
   "dependencies": {
