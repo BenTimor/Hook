@@ -1,0 +1,55 @@
+# ============================================================
+# hookcode.io — Hook landing page + Google waitlist
+#
+# Lives at /opt/hook-web/hookcode.caddy on the MoonRock VPS and is
+# imported by /opt/scout/Caddyfile via:  import /srv/hook-web/*.caddy
+# (/opt/hook-web is mounted into the caddy container at /srv/hook-web:ro.)
+#
+# Static build  → /srv/hook-web/site      (uploaded by scripts/deploy-waitlist.sh)
+# Waitlist API  → hook-waitlist:5173      (container on the scout_default network)
+#
+# Deploy from the dev machine:  ./scripts/deploy-waitlist.sh
+# ============================================================
+
+hookcode.io {
+	root * /srv/hook-web/site
+
+	# A route block is deliberate: in Caddy's default handler order try_files runs
+	# BEFORE reverse_proxy, so a site-level try_files would rewrite
+	# /api/waitlist/status to /index.html and the API would never be reached
+	# (try_files takes no matcher, so it cannot be scoped away). Inside `route`
+	# the handlers run exactly in the order written here.
+	route {
+		encode zstd gzip
+
+		header {
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "no-referrer"
+			Permissions-Policy "geolocation=(), microphone=(), camera=()"
+			# style-src-attr is required by the letter-by-letter demo animation,
+			# which sets a --type-at custom property through a style attribute.
+			Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; style-src 'self'; style-src-attr 'unsafe-inline'"
+		}
+
+		# OAuth start / callback / status. The API sets its own no-store, so the
+		# static cache policy below is placed after this line, where it can no
+		# longer touch proxied responses.
+		@api path /api/waitlist/*
+		reverse_proxy @api hook-waitlist:5173
+
+		# Static: HTML revalidates so a deploy is visible instantly, hashed build
+		# assets are immutable.
+		header Cache-Control "public, max-age=0, must-revalidate"
+		@hashed path /assets/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+		# Single-page site: unknown paths render the app, which shows its own state.
+		# {path}.html lets /privacy and /terms serve their static pages.
+		try_files {path} {path}.html {path}/index.html /index.html
+		file_server
+	}
+}
+
+www.hookcode.io {
+	redir https://hookcode.io{uri} permanent
+}

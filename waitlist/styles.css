@@ -148,8 +148,7 @@ h1 {
   background: #e3e7db;
 }
 
-.signup-note, .signup-error { margin: 12px 0 0 3px; font-size: 13px; line-height: 1.5; }
-.signup-note { color: var(--muted); }
+.signup-error { margin: 12px 0 0 3px; font-size: 13px; line-height: 1.5; }
 .signup-error { color: #8c342d; max-width: 33ch; }
 
 .spinner {
@@ -200,6 +199,42 @@ h1 {
 }
 .benefits li + li { border-left: 1px solid var(--line); }
 .benefit-icon { width: 33px; height: 33px; }
+
+.site-footer {
+  max-width: 1250px;
+  margin: clamp(26px, 4vw, 44px) auto 0;
+  padding-top: 17px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.site-footer p { margin: 0; }
+
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.site-footer a {
+  color: var(--muted);
+  text-decoration: none;
+  border-radius: 3px;
+}
+
+.site-footer a:hover,
+.site-footer a:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 
 @media (max-width: 730px) {
   .site { padding-bottom: 28px; }

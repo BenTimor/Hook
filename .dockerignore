@@ -1,0 +1,25 @@
+# The image only needs package.json, pnpm-lock.yaml, tsconfig.json,
+# waitlist.vite.config.mjs, src/, waitlist/, public/ and server/.
+.git
+.github
+node_modules
+dist
+dist-waitlist
+dist-portable
+release
+.tmp
+src-tauri
+waitlist-data
+Documents
+
+# Secrets and machine-local overrides — never baked into an image.
+.env
+.env.*
+*.local
+harness.config.toml
+
+Dockerfile
+.dockerignore
+infra
+scripts
+README.md

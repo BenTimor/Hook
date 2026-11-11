@@ -116,12 +116,11 @@ function Waitlist() {
                 <p className="subheadline">You just need to use it.</p>
                 <p className="description">Hook helps you get more done with AI with less effort and smarter usage.</p>
                 <div className="signup">
-                  <button type="button" className="join-button" onClick={join} disabled={busy} aria-busy={busy} aria-describedby={cta !== CTA_COPY.google ? "join-description" : undefined}>
+                  <button type="button" className="join-button" onClick={join} disabled={busy} aria-busy={busy}>
                     <span className="join-icon"><UserRoundPlus size={17} strokeWidth={1.8} aria-hidden="true" /></span>
                     <span>{state === "redirecting" ? "Opening Google…" : state === "checking" ? "Checking waitlist…" : cta}</span>
                     {busy ? <span className="spinner" aria-hidden="true" /> : <ArrowRight size={17} strokeWidth={1.75} aria-hidden="true" />}
                   </button>
-                  {cta !== CTA_COPY.google && <p className="signup-note" id="join-description">Join the waitlist with Google</p>}
                   {error && <p className="signup-error" role="alert">{error}</p>}
                 </div>
               </>
@@ -136,6 +135,17 @@ function Waitlist() {
           ))}
         </ul>
       </main>
+
+      <footer className="site-footer">
+        <p>© {new Date().getFullYear()} Hook</p>
+        <nav aria-label="Legal and contact">
+          <a href="/privacy">Privacy</a>
+          <span aria-hidden="true">·</span>
+          <a href="/terms">Terms</a>
+          <span aria-hidden="true">·</span>
+          <a href="mailto:nsgi3111@gmail.com">Contact</a>
+        </nav>
+      </footer>
     </div>
   );
 }

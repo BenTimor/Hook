@@ -23,17 +23,87 @@ To enable signup locally:
    Generate `WAITLIST_SESSION_SECRET` with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
 4. Restart `pnpm waitlist:dev`.
 
-For deployment, run `pnpm waitlist:build` and `pnpm waitlist:start` on a Node
-host. Set `WAITLIST_ORIGIN` to the public HTTPS origin and register that origin
-plus `/api/waitlist/google/callback` in Google Cloud. Set the OAuth and session
-secrets on the host and route HTTPS traffic to the Node listener (`PORT`, default
-`5173`). Set `WAITLIST_DB_PATH` to a SQLite file on a persistent writable volume.
-The `waitlist_signups` table stores each Google subject, verified email, and first
-signup timestamp. The default local path is `waitlist-data/signups.sqlite`.
+### Production
 
-Set `VITE_WAITLIST_CTA` before running dev or building to change the button copy.
-The values are `hook` (Hook Me In), `google` (Join the waitlist with Google),
-`early` (Get early access), and `first` (Be first to try Hook).
+The page is live at **[hookcode.io](https://hookcode.io)** on the MoonRock VPS
+(`root@167.233.58.139`), next to the other sites on that box:
+
+```
+                    ┌── Caddy (scout-caddy-1, :80/:443, auto TLS)
+                    │      hookcode.io
+   browser ─────────┤        /                → /opt/hook-web/site  (static)
+                    │        /api/waitlist/*  → hook-waitlist:5173  (container)
+                    │                                └── /opt/hook-web/data/signups.sqlite
+```
+
+```bash
+./scripts/deploy-waitlist.sh     # build → upload site + source → rebuild container → probe
+```
+
+Server-side layout, the two `/opt/scout` edits that mount the site into the shared
+Caddy container, and the ops commands are in [`infra/README.md`](infra/README.md).
+
+The waitlist API is a container because the VPS has no Node runtime; Caddy serves
+the static build itself, so an API failure never takes the marketing page down.
+Run it standalone anywhere with `docker build -t hook-waitlist . && docker run -p
+5173:5173 --env-file .env.waitlist.local hook-waitlist`.
+
+Required environment (local `.env.waitlist.local`, server `/opt/hook-web/.env`):
+
+| Variable | Meaning |
+|---|---|
+| `WAITLIST_ORIGIN` | Exact public origin, e.g. `https://hookcode.io`. HTTPS only outside `localhost`. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth **Web application** client; redirect URI must be `<origin>/api/waitlist/google/callback`. |
+| `WAITLIST_SESSION_SECRET` | ≥32 chars, HMAC key for the flow/receipt cookies. |
+| `WAITLIST_DB_PATH` | SQLite file; `/data/signups.sqlite` in the container, `waitlist-data/signups.sqlite` locally. |
+| `PORT` | Listener port, default `5173`. |
+
+The `waitlist_signups` table stores each Google subject, verified email, and first
+signup timestamp. If the three credentials are missing the API refuses to start
+(and the landing page still renders — the button then reports that sign-in is
+unavailable).
+
+Who's on the list:
+
+```bash
+./scripts/waitlist-people.sh            # table, newest first
+./scripts/waitlist-people.sh --csv      # email,joined_at,google_subject
+./scripts/waitlist-people.sh --count
+```
+
+It runs a read-only query inside the container, so nothing has to be installed on
+the VPS or your machine.
+
+### Google Cloud
+
+The OAuth client lives in its own project so the consent screen is branded for
+Hook rather than for the other sites on this box:
+
+| | |
+|---|---|
+| Project | `hookcode-waitlist` (display name `Hook`) |
+| Consent screen | External, **In production** — anyone with a Google Account can join, no cap |
+| Scopes | `openid`, `email` (non-sensitive: no verification review, no unverified-app warning) |
+| Client | `Web application` → `Hook Waitlist` |
+| Redirect URIs | `https://hookcode.io/api/waitlist/google/callback`, `http://localhost:5173/api/waitlist/google/callback` |
+| Branding | app name `Hook`, support/contact `nsgi3111@gmail.com`, authorised domain `hookcode.io`, home `https://hookcode.io`, policy links to `/privacy` and `/terms` |
+
+The app name is not brand-verified, so Google's account chooser says “continue to
+hookcode.io” instead of “continue to Hook”. Verifying `hookcode.io` in Search
+Console (a DNS TXT or the HTML file it gives you, dropped into `public/`) is what
+switches that to the app name; nothing else depends on it.
+
+To rotate the client secret: Clients → `Hook Waitlist` → add a new secret, copy it
+into `/opt/hook-web/.env`, then `docker compose up -d waitlist`.
+
+`/privacy` and `/terms` are static pages in `public/`, served through
+`try_files {path} {path}.html …` and linked from the consent screen.
+
+Set `VITE_WAITLIST_CTA` in `.env.waitlist.local` before running dev or building to
+change the button copy. The values are `hook` (Hook Me In), `google` (Join the
+waitlist with Google), `early` (Get early access), and `first` (Be first to try
+Hook). It is baked into the HTML at build time, which is why the static files are
+built on your machine and uploaded, rather than built inside the container.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐

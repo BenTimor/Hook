@@ -1,0 +1,34 @@
+# /opt/hook-web/docker-compose.yml
+#
+# Reference copy — uploads itself on every ./scripts/deploy-waitlist.sh run.
+# Secrets live in /opt/hook-web/.env (chmod 600, created once on first deploy,
+# never uploaded from the dev machine).
+#
+#   docker compose up -d --build waitlist     # rebuild + restart
+#   docker compose logs -f waitlist           # OAuth / SQLite errors
+#   docker compose ps                         # health
+#
+# No ports: published — the container is reachable only from Caddy over the
+# shared scout_default network (see /opt/scout/docker-compose.yml).
+
+name: hook-web
+
+services:
+  waitlist:
+    build:
+      context: ./app
+    image: hook-waitlist:latest
+    container_name: hook-waitlist
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    volumes:
+      # SQLite lives on the host so it survives rebuilds and is easy to back up.
+      - ./data:/data
+    networks:
+      - scout
+
+networks:
+  scout:
+    name: scout_default
+    external: true
