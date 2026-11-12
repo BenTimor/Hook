@@ -267,8 +267,9 @@ conversation while you keep chatting.
   `Designing the front page`, `Hooking up the real service`), written by the
   chat agent, never file names or jargon. That checklist sits directly above
   the composer with the run's title: the active step shows a spinner, finished
-  steps are struck through, and each step shows how long it took (the active
-  one ticks while it runs). The coding agent
+  steps are struck through and settle to the bottom of the list, and only the
+  step in progress carries a clock: it ticks while the agent works on it, and
+  the time disappears once the step is crossed off. The coding agent
   keeps it current through `update_plan`, and a clean finish crosses off
   whatever is left. It cannot quietly batch the steps to the end: after a few
   tool calls without a checklist update a reminder rides on the tool result,
@@ -343,8 +344,8 @@ conversation while you keep chatting.
   an update in its own words. If the chat agent is mid-turn, the wake waits.
 - **You see the work, not the machinery.** A title-bar pill says an agent is
   working (or waiting for an answer), the chat's task board shows the plan and
-  how long each step took, and every chat with a live agent gets a green dot in
-  the sidebar.
+  how long the current step has been running, and every chat with a live agent
+  gets a green dot in the sidebar.
   There is no log, no tool feed and no session browser: the raw run stays
   between Hook and the chat agent, and everything you read in the conversation
   is written by the chat agent.

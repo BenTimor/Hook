@@ -59,13 +59,37 @@ function StepIcon({ status }: { status: PlanStep["status"] }) {
   return <Circle strokeWidth={1.7} />;
 }
 
-/** How long one step has taken so far, or took in total. Nothing until it starts. */
+/**
+ * The clock belongs to the step being worked on right now. Finished steps drop
+ * their time entirely, so the board only ever shows the current effort.
+ */
 function stepDuration(step: PlanStep, now: number, live: boolean): string {
-  if (step.startedAt === undefined) return "";
-  // A live run's current step keeps ticking; a finished run's clocks are frozen.
-  const endedAt = step.finishedAt ?? (step.status === "active" && live ? now : undefined);
-  if (endedAt === undefined) return "";
-  return compactDuration(endedAt - step.startedAt);
+  if (!live || step.status !== "active" || step.startedAt === undefined) return "";
+  return compactDuration(now - step.startedAt);
+}
+
+/**
+ * The checklist reads top-down like the work itself: open steps keep their plan
+ * order, and crossed-off steps settle at the bottom in the order they finished.
+ * The original index is kept so each row keeps a stable React key while moving.
+ */
+function orderedPlan(plan: PlanStep[]): { step: PlanStep; index: number }[] {
+  return plan
+    .map((step, index) => ({ step, index }))
+    .sort((a, b) => {
+      const aDone = a.step.status === "done";
+      const bDone = b.step.status === "done";
+      if (aDone !== bDone) return aDone ? 1 : -1;
+      if (aDone) {
+        // A step crossed off without ever being seen in progress has no clock;
+        // it still belongs with the finished rows, after the timed ones.
+        const aAt = a.step.finishedAt ?? Number.POSITIVE_INFINITY;
+        const bAt = b.step.finishedAt ?? Number.POSITIVE_INFINITY;
+        const byFinish = aAt - bAt;
+        if (byFinish !== 0) return byFinish;
+      }
+      return a.index - b.index;
+    });
 }
 
 function AgentTask({
@@ -118,7 +142,7 @@ function AgentTask({
       {!collapsed &&
         (total > 0 ? (
           <ol className="agent-plan">
-            {agent.plan.map((step, index) => {
+            {orderedPlan(agent.plan).map(({ step, index }) => {
               const spent = stepDuration(step, now, live);
               return (
                 <li className="agent-step" data-status={step.status} key={`${agent.id}-${index}`}>
