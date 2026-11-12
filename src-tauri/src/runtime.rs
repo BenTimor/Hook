@@ -161,7 +161,10 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Re
     let mut entry = serde_json::json!({
         "id": model,
         "name": model,
-        "reasoning": cfg.model.thinking_level().is_some(),
+        // The card says whether the engine may pass a thinking level at all.
+        // Either side can want one: the chat model and the coding agent have
+        // separate levels now, so one of them asking is enough.
+        "reasoning": cfg.model.thinking_level().is_some() || cfg.coding.thinking().is_some(),
         "input": if vision { serde_json::json!(["text", "image"]) } else { serde_json::json!(["text"]) },
         "contextWindow": cfg.coding.context_window,
         "maxTokens": output_budget(cfg),

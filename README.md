@@ -186,7 +186,7 @@ sections:
 ```toml
 [coding]
 model = ""            # passed to pi as --model; empty = pi's default
-thinking = ""         # passed to pi as --thinking
+thinking = ""         # passed to pi as --thinking; empty = pi's default (medium)
 max_concurrent = 3    # how many coding agents may run at once
 bash_max_timeout = 3600   # seconds, enforced on every bash call
 bash_min_timeout = 1
@@ -288,19 +288,28 @@ conversation while you keep chatting.
 
   `PI_CODING_AGENT_DIR` points at `%APPDATA%\app.hook.chat\agent-home`, whose
   `models.json` is rewritten from `harness.config.toml` on every launch. So an
-  agent uses exactly the chat agent's endpoint, key, model and thinking level,
-  and never touches your own `~/.pi` — different extensions, skills, MCP servers
-  and logins on your machine cannot change what it does.
+  agent uses exactly the chat agent's endpoint, key and model, and never touches
+  your own `~/.pi` — different extensions, skills, MCP servers and logins on
+  your machine cannot change what it does. Its thinking level is its own: with
+  `[coding] thinking` empty the engine uses its default (medium) rather than the
+  chat model's level, because a run is dozens of small turns and a high level on
+  each one leaves the checklist frozen for minutes at a time.
 - **The plan is visible, and so is the Stop button.** `start_coding_agent` takes
   a `plan`: three to six short steps in plain language (`Setting things up`,
   `Designing the front page`, `Hooking up the real service`), written by the
   chat agent, never file names or jargon. That checklist sits directly above
   the composer with the run's title: the active step shows a spinner, finished
-  steps are struck through, and the header counts elapsed time. The coding agent
+  steps are struck through and settle to the bottom of the list, and only the
+  step in progress carries a clock: it ticks while the agent works on it, and
+  the time disappears once the step is crossed off. The coding agent
   keeps it current through `update_plan`, and a clean finish crosses off
-  whatever is left. While an agent is live, the composer says **Steer the
-  agent…**: your message is still answered by the chat agent, which passes the
-  instruction on with `steer_agent` instead of starting a second agent. **Stop**
+  whatever is left. It cannot quietly batch the steps to the end: after a few
+  tool calls without a checklist update a reminder rides on the tool result,
+  and after more the next tool call is refused until the plan moves — so a
+  long run's step actually changes while the work does. While an agent is
+  live, the composer says **Steer the agent…**: your message is still answered
+  by the chat agent, which passes the instruction on with `steer_agent`
+  instead of starting a second agent. **Stop**
   kills every live agent in that chat — abort first, then the process tree —
   without a model round-trip. A finished checklist stays for a few minutes, then
   gets out of the way.
@@ -357,14 +366,18 @@ conversation while you keep chatting.
   timeouts are blocked with an explanation, and the model re-issues the call.
   Tune it with `bash_max_timeout` / `bash_min_timeout`. The same guard offers
   `report_progress` and `update_plan`, and seeds the coding agent with the
-  checklist the user is watching so the wording stays plain.
+  checklist the user is watching so the wording stays plain. The checklist is
+  also enforced: every third tool call without an `update_plan` carries a
+  one-line reminder, and after five the next call is blocked with the current
+  checklist. Both counters reset, so a run that keeps ignoring it can never hang.
 - **They run asynchronously.** `start_coding_agent` returns immediately and you
   can keep talking. When an agent settles, fails, or asks a question, Hook
   appends a hidden note to the owning chat and wakes the chat agent, which posts
   an update in its own words. If the chat agent is mid-turn, the wake waits.
 - **You see the work, not the machinery.** A title-bar pill says an agent is
   working (or waiting for an answer), the chat's task board shows the plan and
-  time spent, and every chat with a live agent gets a green dot in the sidebar.
+  how long the current step has been running, and every chat with a live agent
+  gets a green dot in the sidebar.
   There is no log, no tool feed and no session browser: the raw run stays
   between Hook and the chat agent, and everything you read in the conversation
   is written by the chat agent.

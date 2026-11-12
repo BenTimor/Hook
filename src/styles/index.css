@@ -2180,6 +2180,25 @@ textarea {
   height: 12px;
 }
 
+.agent-step-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agent-step-time {
+  flex: 0 0 auto;
+  margin-left: 10px;
+  padding-top: 1px;
+  font-size: 10.8px;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-step[data-status="active"] .agent-step-time {
+  color: var(--ink-3);
+}
+
 .agent-step[data-status="pending"] {
   color: var(--ink-3);
 }

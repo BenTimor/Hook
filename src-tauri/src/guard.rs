@@ -43,6 +43,18 @@ mod tests {
         assert!(GUARD_SOURCE.contains("update_plan"));
         assert!(GUARD_SOURCE.contains("no file names"));
         assert!(GUARD_SOURCE.contains("plan.json"));
+        // The guidance must forbid batching the plan to the end of the run, not
+        // just describe the fields: that is what left the board stuck on step 1.
+        assert!(GUARD_SOURCE.contains("not a report you write at the end"));
+        assert!(GUARD_SOURCE.contains("still shown `active` is a lie"));
+        // A long run must be pulled back to the checklist even if the model
+        // ignores the system prompt, without ever deadlocking it.
+        assert!(GUARD_SOURCE.contains("PLAN_NUDGE_AFTER"));
+        assert!(GUARD_SOURCE.contains("PLAN_BLOCK_AFTER"));
+        assert!(GUARD_SOURCE.contains("pi.on(\"tool_result\""));
+        assert!(GUARD_SOURCE.contains("[Hook checklist]"));
+        assert!(GUARD_SOURCE.contains("without updating the user's checklist"));
+        assert!(GUARD_SOURCE.contains("callsSincePlan = 0;"));
         // The guidance must forbid heartbeat updates, not encourage them.
         assert!(GUARD_SOURCE.contains("still working"));
         assert!(GUARD_SOURCE.contains("Long stretches of silence"));

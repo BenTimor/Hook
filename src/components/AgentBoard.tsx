@@ -59,6 +59,39 @@ function StepIcon({ status }: { status: PlanStep["status"] }) {
   return <Circle strokeWidth={1.7} />;
 }
 
+/**
+ * The clock belongs to the step being worked on right now. Finished steps drop
+ * their time entirely, so the board only ever shows the current effort.
+ */
+function stepDuration(step: PlanStep, now: number, live: boolean): string {
+  if (!live || step.status !== "active" || step.startedAt === undefined) return "";
+  return compactDuration(now - step.startedAt);
+}
+
+/**
+ * The checklist reads top-down like the work itself: open steps keep their plan
+ * order, and crossed-off steps settle at the bottom in the order they finished.
+ * The original index is kept so each row keeps a stable React key while moving.
+ */
+function orderedPlan(plan: PlanStep[]): { step: PlanStep; index: number }[] {
+  return plan
+    .map((step, index) => ({ step, index }))
+    .sort((a, b) => {
+      const aDone = a.step.status === "done";
+      const bDone = b.step.status === "done";
+      if (aDone !== bDone) return aDone ? 1 : -1;
+      if (aDone) {
+        // A step crossed off without ever being seen in progress has no clock;
+        // it still belongs with the finished rows, after the timed ones.
+        const aAt = a.step.finishedAt ?? Number.POSITIVE_INFINITY;
+        const bAt = b.step.finishedAt ?? Number.POSITIVE_INFINITY;
+        const byFinish = aAt - bAt;
+        if (byFinish !== 0) return byFinish;
+      }
+      return a.index - b.index;
+    });
+}
+
 function AgentTask({
   agent,
   now,
@@ -74,10 +107,7 @@ function AgentTask({
   const live = isLiveAgent(agent);
   const total = agent.plan.length;
   const done = agent.plan.filter((step) => step.status === "done").length;
-  const spent = compactDuration((agent.finishedAt ?? now) - agent.createdAt);
-  const meta = live
-    ? `${stateLabel(agent)} · ${spent}${total ? ` · ${done}/${total}` : ""}`
-    : `${stateLabel(agent)} in ${spent}`;
+  const meta = total ? `${stateLabel(agent)} · ${done}/${total}` : stateLabel(agent);
 
   return (
     <section className="agent-card" data-state={agent.state}>
@@ -112,14 +142,18 @@ function AgentTask({
       {!collapsed &&
         (total > 0 ? (
           <ol className="agent-plan">
-            {agent.plan.map((step, index) => (
-              <li className="agent-step" data-status={step.status} key={`${agent.id}-${index}`}>
-                <span className="agent-step-icon" aria-hidden="true">
-                  <StepIcon status={step.status} />
-                </span>
-                <span className="agent-step-title">{step.title}</span>
-              </li>
-            ))}
+            {orderedPlan(agent.plan).map(({ step, index }) => {
+              const spent = stepDuration(step, now, live);
+              return (
+                <li className="agent-step" data-status={step.status} key={`${agent.id}-${index}`}>
+                  <span className="agent-step-icon" aria-hidden="true">
+                    <StepIcon status={step.status} />
+                  </span>
+                  <span className="agent-step-title">{step.title}</span>
+                  {spent && <span className="agent-step-time">{spent}</span>}
+                </li>
+              );
+            })}
           </ol>
         ) : (
           <div className="agent-plan-empty">Getting started…</div>

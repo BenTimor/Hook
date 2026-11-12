@@ -18,6 +18,12 @@
  *    Hook seeds it (the chat agent writes it) and the `update_plan` tool lets the
  *    coding agent move steps between pending, active and done. Plain files only:
  *    nothing here talks to a network or a model.
+ * 5. Checklist upkeep: a model deep in a task will happily make forty tool calls
+ *    with the first step still marked active, then mark everything done at the
+ *    end - the user watches a stuck checklist for the whole run. The guard keeps
+ *    the plan in front of the model: a one-line reminder rides on a tool result
+ *    after a few calls, and after more the next tool call is refused until the
+ *    plan moves. Both counters reset, so a run can never be deadlocked.
  *
  * Tunables (environment, set by the Hook runtime from harness.config.toml):
  *   PI_BASH_MAX_TIMEOUT  hard cap in seconds (default 3600)
@@ -53,6 +59,14 @@ const MAX_PLAN_STEPS = 12;
 const MAX_STEP_TITLE = 90;
 const STEP_STATUSES = ["pending", "active", "done"];
 
+// How many tool calls may pass before the checklist is put back in front of the
+// model, and before one call is refused outright. Small enough that a long run
+// moves the plan several times, large enough not to interrupt every other turn.
+const PLAN_NUDGE_AFTER = 3;
+const PLAN_BLOCK_AFTER = 5;
+let callsSincePlan = 0;
+let callsSinceNudge = 0;
+
 /** Keep only steps a person can read; drop empties and unknown statuses. */
 function cleanPlan(input) {
   if (!Array.isArray(input)) return [];
@@ -82,23 +96,42 @@ function readSeedPlan() {
   }
 }
 
+/** The checklist as the user is seeing it, one step per line. */
+function planLines(steps) {
+  return steps.map((step, index) => `${index + 1}. ${step.title} [${step.status}]`).join("\n");
+}
+
+/** The step the user currently sees spinning, in one short sentence. */
+function planReminder() {
+  const steps = readSeedPlan();
+  if (!steps.length) {
+    return "The user is watching an empty checklist: call `update_plan` with three to six plain-language steps.";
+  }
+  const index = steps.findIndex((step) => step.status === "active");
+  const position = index < 0 ? 0 : index;
+  return `The user still sees step ${position + 1}/${steps.length} active: "${steps[position].title}". Call \`update_plan\` as soon as that changes.`;
+}
+
 /** Tell the coding agent which checklist the user is watching, and how to keep it. */
 function planGuidance() {
   const seed = readSeedPlan();
   const rules =
     "\n\n## The user's checklist (Hook)\n" +
-    "The user watches this checklist at the bottom of the chat while you work. Keep it honest with `update_plan`:\n" +
-    "- Mark the step you are on `active` and a step `done` the moment it is finished. Update it when the step changes, not all at once at the end.\n" +
+    "The user watches this checklist at the bottom of the chat while you work. Keeping it current is part of the job, not a report you write at the end. `update_plan` is how you move it:\n" +
+    "- Call `update_plan` the moment a step is finished: mark that step `done` and the step you are now on `active` in the same call. Do not wait for the end of the work, and never mark several finished steps only when you are done.\n" +
+    "- A step that is finished but still shown `active` is a lie to the user. If you have moved past a step, update the checklist before you carry on.\n" +
+    "- If one step is taking a lot of tool calls because it really holds several jobs, split it into smaller plain-language steps instead of leaving it as one. The user should see the checklist move.\n" +
     "- Keep the wording that is already shown. Add or reorder a step only when the work genuinely changes. Never more than " +
     MAX_PLAN_STEPS +
     " steps.\n" +
     "- Plain, everyday language only. The user is not reading a changelog: no file names, no tool names, no commands, no package names, no jargon. Good: 'Setting things up', 'Designing the front page', 'Hooking up the real service'.\n" +
-    "- At most one step is `active` at a time; everything not started stays `pending`.\n";
+    "- At most one step is `active` at a time; everything not started stays `pending`. When the whole job is finished, every step is `done`.\n";
   if (!seed.length) {
-    return rules + "There is no checklist yet. Before you start working, call `update_plan` with three to six steps.";
+    return rules + "There is no checklist yet. Before your first tool call, call `update_plan` with three to six steps.";
   }
-  const lines = seed.map((step, index) => `${index + 1}. ${step.title} [${step.status}]`);
-  return rules + "Current checklist:\n" + lines.join("\n");
+  const index = seed.findIndex((step) => step.status === "active");
+  const current = index < 0 ? "" : `\nThe user currently sees step ${index + 1} active. Move it on as soon as it is done.`;
+  return rules + "Current checklist:\n" + planLines(seed) + current;
 }
 
 /** Copy one picture into the mailbox so it cannot vanish before Hook reads it. */
@@ -122,6 +155,10 @@ function stagePicture(filesDir, source, files) {
 
 export default function (pi) {
   pi.on("before_agent_start", async (event) => {
+    // A new run (or a steer) starts with a clean slate: the counters describe
+    // one stretch of work, not the whole process.
+    callsSincePlan = 0;
+    callsSinceNudge = 0;
     const guideline = `\n\nGuideline (Hook guard): EVERY \`bash\` tool call MUST include a \`timeout\` in seconds (between ${clampLabel(
       MIN_TIMEOUT,
     )} and ${clampLabel(
@@ -133,6 +170,23 @@ export default function (pi) {
   });
 
   pi.on("tool_call", async (event) => {
+    // The checklist first. A long run that never moves it leaves the user
+    // watching a step that finished ten minutes ago, so one call is refused and
+    // the model is sent back to `update_plan`. The counter resets either way:
+    // a model that ignores the refusal still gets to retry instead of hanging.
+    if (UPDATES_DIR && event.toolName !== "update_plan" && callsSincePlan >= PLAN_BLOCK_AFTER) {
+      callsSincePlan = 0;
+      callsSinceNudge = 0;
+      const steps = readSeedPlan();
+      return {
+        block: true,
+        reason:
+          `BLOCKED by Hook guard: ${PLAN_BLOCK_AFTER} tool calls have gone by without updating the user's checklist, so it no longer matches what you are doing. ` +
+          "Call `update_plan` now - mark the steps that are finished `done` and the step you are working on `active` - then re-issue this call.\n" +
+          (steps.length ? "Current checklist:\n" + planLines(steps) : planReminder()),
+      };
+    }
+
     if (event.toolName !== "bash") return;
 
     const input = event.input ?? {};
@@ -183,6 +237,33 @@ export default function (pi) {
 
   // ── Progress reporting ───────────────────────────────────────────────────
   if (UPDATES_DIR) {
+    // Keep the checklist in the freshest part of the context. The system prompt
+    // is thousands of tokens behind by the time a step is finished; a line on
+    // the tool result the model just read is not.
+    pi.on("tool_result", async (event) => {
+      if (event.toolName === "update_plan") {
+        if (!event.isError) {
+          callsSincePlan = 0;
+          callsSinceNudge = 0;
+        }
+        return;
+      }
+      callsSincePlan += 1;
+      callsSinceNudge += 1;
+      if (callsSinceNudge < PLAN_NUDGE_AFTER) return;
+      callsSinceNudge = 0;
+      return {
+        content: [
+          ...(event.content ?? []),
+          { type: "text", text: `\n\n[Hook checklist] ${planReminder()}` },
+        ],
+        details: event.details,
+        structuredContent: event.structuredContent,
+        isError: event.isError,
+        usage: event.usage,
+      };
+    });
+
     pi.registerTool({
       name: "report_progress",
       label: "Report progress",
@@ -251,9 +332,11 @@ export default function (pi) {
       name: "update_plan",
       label: "Update plan",
       description:
-        "Replace the checklist the user is watching under the chat. Call it when you start or finish a step, or when the work changes shape. Keep the existing plain-language wording; never add technical detail.",
+        "Replace the checklist the user is watching under the chat. Call it the moment a step is finished - before you move on to the next piece of work - not at the end. Keep the existing plain-language wording; never add technical detail.",
       promptGuidelines: [
-        "Call this when the step you are on changes. Mark the finished step `done` and the next one `active` in the same call.",
+        "`update_plan` is the user's checklist: call it when you start or finish a step, and before you pick up the next piece of work.",
+        "Mark the finished step `done` and the next one `active` in the same `update_plan` call. Never leave a finished step marked active, and never batch the whole plan to the end.",
+        "When a step turns out to hide several separate jobs, split it into smaller plain-language steps rather than keeping one step active for many tool calls.",
         "Keep the step names short, friendly and non-technical - the user reads them directly. No file names, tool names, commands, package names or jargon.",
         "Keep the plan from the chat agent. Add a step only if the work genuinely needs it, and keep the total at eight or fewer.",
         "Before you finish, make sure every step you completed is marked `done`.",

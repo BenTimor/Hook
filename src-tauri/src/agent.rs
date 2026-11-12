@@ -50,6 +50,12 @@ pub struct PlanStep {
     pub title: String,
     #[serde(default = "pending_step")]
     pub status: String,
+    /// When this step was first seen in progress, in epoch ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    /// When this step crossed into done, in epoch ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<i64>,
 }
 
 fn pending_step() -> String {
@@ -332,7 +338,8 @@ impl AgentManager {
             files.sort();
 
             let mut harvested: Vec<Update> = Vec::new();
-            let mut newest_plan: Option<Vec<PlanStep>> = None;
+            // The plan the guard wrote last, with the moment it wrote it.
+            let mut newest_plan: Option<(Vec<PlanStep>, i64)> = None;
             for file in files {
                 let is_plan = file
                     .file_name()
@@ -346,8 +353,12 @@ impl AgentManager {
                     // Files are written in timestamp order, so the last one in
                     // the sorted list is the state the agent means now.
                     if let Some(value) = parsed {
+                        let at = value
+                            .get("at")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or_else(now_ms);
                         if let Some(plan) = plan_from_value(&value) {
-                            newest_plan = Some(plan);
+                            newest_plan = Some((plan, at));
                         }
                     }
                     let _ = std::fs::remove_file(&file);
@@ -389,7 +400,10 @@ impl AgentManager {
                 let mut changed = false;
                 if let Some(entry) = inner.agents.get_mut(&id) {
                     entry.pending.extend(harvested);
-                    if let Some(plan) = newest_plan {
+                    if let Some((plan, at)) = newest_plan {
+                        // Every update rewrites the whole checklist, so the
+                        // clocks have to be carried over by hand.
+                        let plan = merge_plan_times(&entry.info.plan, plan, at);
                         if entry.info.plan != plan {
                             entry.info.plan = plan;
                             entry.info.updated_at = now_ms();
@@ -594,7 +608,7 @@ impl AgentManager {
             .unwrap_or_else(|| truncate(task, 60));
         // The chat agent's plain-language steps seed the checklist the user
         // watches. The coding agent fills in the status as it goes.
-        let plan = plan_from_titles(plan_titles);
+        let plan = merge_plan_times(&[], plan_from_titles(plan_titles), now_ms());
 
         let args = agent_args(
             &self.sessions_dir,
@@ -602,7 +616,13 @@ impl AgentManager {
             &title,
             &guard,
             &crate::runtime::model_ref(&self.cfg),
-            self.coding.thinking().or_else(|| self.cfg.model.thinking_level()),
+            // The coding agent gets its own thinking level, not the chat model's.
+            // A chat turn is one answer; a run is dozens of small turns, and a
+            // high level on every one of them makes a five-minute job take
+            // twenty, with the user's checklist frozen while the model thinks.
+            // Unset means pi's own default (medium): `[coding] thinking` is the
+            // one knob that decides this.
+            self.coding.thinking(),
         );
 
         // Where the agent's guard writes progress notes for Hook to collect.
@@ -841,6 +861,8 @@ impl AgentManager {
                     for step in info.plan.iter_mut() {
                         if step.status == STEP_ACTIVE {
                             step.status = STEP_PENDING.to_string();
+                            step.started_at = None;
+                            step.finished_at = None;
                         }
                     }
                     info.question = None;
@@ -1224,8 +1246,47 @@ pub fn plan_from_titles(titles: &[String]) -> Vec<PlanStep> {
             } else {
                 STEP_PENDING.to_string()
             },
+            started_at: None,
+            finished_at: None,
         })
         .collect()
+}
+
+/// Carry each step's clock across the plan rewrites the guard writes.
+///
+/// An update replaces the whole checklist, so steps are matched by title (or by
+/// position when titles line up): a step keeps the moment it was first seen in
+/// progress and the moment it finished. Only work Hook actually watched gets a
+/// duration; a step crossed off without ever being seen active stays without
+/// one rather than pretending it took no time.
+fn merge_plan_times(previous: &[PlanStep], mut next: Vec<PlanStep>, at: i64) -> Vec<PlanStep> {
+    for (index, step) in next.iter_mut().enumerate() {
+        let before = previous
+            .get(index)
+            .filter(|old| old.title == step.title)
+            .or_else(|| previous.iter().find(|old| old.title == step.title));
+        if let Some(before) = before {
+            step.started_at = before.started_at;
+            step.finished_at = before.finished_at;
+        }
+        match step.status.as_str() {
+            STEP_DONE => {
+                if step.started_at.is_some() {
+                    step.finished_at.get_or_insert(at);
+                }
+            }
+            STEP_ACTIVE => {
+                step.started_at.get_or_insert(at);
+                // A reopened step is running again, not still finished.
+                step.finished_at = None;
+            }
+            _ => {
+                step.started_at = None;
+                step.finished_at = None;
+            }
+        }
+    }
+    next
 }
 
 /// Read a plan written by the guard's `update_plan` tool. Empty plans are
@@ -1249,6 +1310,8 @@ fn plan_from_value(value: &serde_json::Value) -> Option<Vec<PlanStep>> {
         steps.push(PlanStep {
             title: truncate(title, MAX_STEP_TITLE),
             status: status.to_string(),
+            started_at: None,
+            finished_at: None,
         });
     }
     if steps.is_empty() {
@@ -1283,15 +1346,29 @@ async fn drive(
             line = lines.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        let Ok(record) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
-                        let wake = apply_record(&inner, &agent_id, &record);
-                        persist(&data_dir, &lock(&inner));
-                        match wake {
-                            Some(_) => {
-                                mark_wake(&inner, &agent_id);
-                                let _ = signal_tx.send(Signal::Changed);
+                        // `message_update` and `tool_execution_update` are the two
+                        // records a streaming turn produces by the hundred, one per
+                        // delta, and Hook reads neither. Skipping them before parsing is
+                        // cheap: pi always writes `type` first, and anything that does
+                        // not match the prefix takes the normal path.
+                        let trimmed = line.trim();
+                        if let Some(rest) = trimmed.strip_prefix("{\"type\":\"") {
+                            if rest.starts_with("message_update\"")
+                                || rest.starts_with("tool_execution_update\"")
+                            {
+                                continue;
                             }
-                            None => {}
+                        }
+                        let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
+                        let outcome = apply_record(&inner, &agent_id, &record);
+                        // Only rewrite agents.json when the record changed something that
+                        // is actually stored: a token delta is not news.
+                        if outcome.changed {
+                            persist(&data_dir, &lock(&inner));
+                        }
+                        if outcome.wake {
+                            mark_wake(&inner, &agent_id);
+                            let _ = signal_tx.send(Signal::Changed);
                         }
                         let state = lock(&inner).agents.get(&agent_id).map(|e| e.info.state.clone()).unwrap_or_default();
                         match state.as_str() {
@@ -1420,15 +1497,25 @@ fn mark_state(
     }
 }
 
-/// Apply one pi RPC record. Returns Some when the chat agent should be woken.
-fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::Value) -> Option<()> {
+/// What one pi RPC record did to the agent.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RecordOutcome {
+    /// Something stored or drawn changed, so the caller has to persist.
+    changed: bool,
+    /// The chat agent should be woken.
+    wake: bool,
+}
+
+/// Apply one pi RPC record.
+fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::Value) -> RecordOutcome {
     let kind = record.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let mut changed = false;
     let mut wake = false;
 
     {
         let mut guard = lock(inner);
         let Some(entry) = guard.agents.get_mut(agent_id) else {
-            return None;
+            return RecordOutcome::default();
         };
         let info = &mut entry.info;
 
@@ -1439,6 +1526,7 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                 if info.state != STATE_STOPPED {
                     info.state = STATE_RUNNING.to_string();
                     info.updated_at = now_ms();
+                    changed = true;
                 }
             }
             "tool_execution_start" => {
@@ -1450,6 +1538,7 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                 info.steps = info.steps.saturating_add(1);
                 info.last_step = Some(short_step(tool, &args));
                 info.updated_at = now_ms();
+                changed = true;
             }
             "message_end" => {
                 if let Some(message) = record.get("message") {
@@ -1459,16 +1548,19 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                         if !text.trim().is_empty() {
                             info.last_message = Some(truncate(&text, 4000));
                             info.updated_at = now_ms();
+                            changed = true;
                         }
                         if let Some(stop) = message.get("stopReason").and_then(|s| s.as_str()) {
                             if stop == "length" {
                                 // The model ran out of room mid-thought: it
                                 // stopped without writing or calling a tool.
                                 entry.truncated = true;
+                                changed = true;
                             }
                             if stop == "error" || stop == "aborted" {
                                 if let Some(err) = message.get("errorMessage").and_then(|e| e.as_str()) {
                                     info.error = Some(truncate(err, 500));
+                                    changed = true;
                                 }
                             }
                         }
@@ -1518,10 +1610,12 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                     info.state = STATE_NEEDS_INPUT.to_string();
                     info.question = Some(question);
                     info.updated_at = now_ms();
+                    changed = true;
                     wake = true;
                 }
             }
             "agent_settled" => {
+                changed = true;
                 if info.state == STATE_STOPPED {
                     // The abort we asked for landed. Keep the reason it stopped
                     // and the checklist exactly as the stop left it.
@@ -1552,8 +1646,13 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                     {
                         // The run ended cleanly: nothing on the checklist is
                         // still being worked on, so cross off what is left.
+                        let at = now_ms();
                         for step in info.plan.iter_mut() {
                             step.status = STEP_DONE.to_string();
+                            // A step nobody saw running has no honest duration.
+                            if step.started_at.is_some() {
+                                step.finished_at.get_or_insert(at);
+                            }
                         }
                     }
                     wake = true;
@@ -1563,7 +1662,7 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
         }
     }
 
-    wake.then_some(())
+    RecordOutcome { changed, wake }
 }
 
 #[cfg(test)]
@@ -1690,7 +1789,9 @@ name = "test-model"
         drop(inner);
 
         let running = serde_json::json!({"type":"agent_start"});
-        assert!(apply_record(&mgr.inner, "ag_1", &running).is_none());
+        let outcome = apply_record(&mgr.inner, "ag_1", &running);
+        assert!(!outcome.wake);
+        assert!(outcome.changed, "a state change must be persisted");
         assert_eq!(
             lock(&mgr.inner).agents["ag_1"].info.state,
             STATE_RUNNING
@@ -1711,7 +1812,8 @@ name = "test-model"
             "type":"extension_ui_request","id":"q1","method":"select",
             "title":"Which database?","options":["Postgres","SQLite"]
         });
-        assert!(apply_record(&mgr.inner, "ag_1", &question).is_some());
+        let outcome = apply_record(&mgr.inner, "ag_1", &question);
+        assert!(outcome.wake && outcome.changed);
         {
             let guard = lock(&mgr.inner);
             let info = &guard.agents["ag_1"].info;
@@ -1722,6 +1824,40 @@ name = "test-model"
         let settled = serde_json::json!({"type":"agent_settled","aborted":false});
         apply_record(&mgr.inner, "ag_1", &settled);
         assert_eq!(lock(&mgr.inner).agents["ag_1"].info.state, STATE_IDLE);
+    }
+
+    #[test]
+    fn a_token_stream_never_rewrites_the_store() {
+        // A thinking model streams hundreds of these records per turn. They
+        // change nothing Hook stores, and rewriting agents.json for each one is
+        // how a long think used to peg a core and leave the app feeling stuck.
+        let mgr = manager();
+        lock(&mgr.inner)
+            .agents
+            .insert("ag_1".into(), plan_entry(plan_from_titles(&["Setting things up".into()])));
+
+        for kind in ["message_start", "message_update", "tool_execution_update", "turn_end"] {
+            let record = serde_json::json!({
+                "type": kind,
+                "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "..."}]}
+            });
+            let outcome = apply_record(&mgr.inner, "ag_1", &record);
+            assert!(!outcome.changed, "{kind} must not trigger a persist");
+            assert!(!outcome.wake, "{kind} must not wake the chat agent");
+        }
+
+        // The finished message is what actually matters.
+        let done = serde_json::json!({
+            "type":"message_end",
+            "message": {"role":"assistant", "content":[{"type":"text","text":"built it"}]}
+        });
+        let outcome = apply_record(&mgr.inner, "ag_1", &done);
+        assert!(outcome.changed);
+        assert!(!outcome.wake);
+        assert_eq!(
+            lock(&mgr.inner).agents["ag_1"].info.last_message.as_deref(),
+            Some("built it")
+        );
     }
 
 
@@ -1773,7 +1909,7 @@ name = "test-model"
         apply_record(&mgr.inner, "ag_1", &cut);
 
         let settled = serde_json::json!({"type":"agent_settled","aborted":false});
-        assert!(apply_record(&mgr.inner, "ag_1", &settled).is_some());
+        assert!(apply_record(&mgr.inner, "ag_1", &settled).wake);
 
         let notes = mgr.take_updates("ag_1");
         assert_eq!(notes.len(), 1);
@@ -2064,6 +2200,58 @@ node \"%~dp0fake-pi.mjs\" %*
         assert_eq!(from_guard[0].status, STEP_DONE);
         assert_eq!(from_guard[1].status, STEP_PENDING);
         assert!(plan_from_value(&serde_json::json!({"steps": []})).is_none());
+    }
+
+    #[test]
+    fn every_checklist_step_keeps_its_own_clock() {
+        let seed = merge_plan_times(
+            &[],
+            plan_from_titles(&["Setting things up".into(), "Designing the page".into()]),
+            1_000,
+        );
+        assert_eq!(
+            seed[0].started_at,
+            Some(1_000),
+            "the step being worked on starts now"
+        );
+        assert_eq!(seed[0].finished_at, None);
+        assert_eq!(seed[1].started_at, None, "a step not started has no clock");
+
+        // The agent finishes step one and picks up step two.
+        let moved = merge_plan_times(
+            &seed,
+            plan_from_value(&serde_json::json!({
+                "steps": [
+                    {"title": "Setting things up", "status": "done"},
+                    {"title": "Designing the page", "status": "active"}
+                ]
+            }))
+            .unwrap(),
+            61_000,
+        );
+        assert_eq!(moved[0].started_at, Some(1_000));
+        assert_eq!(moved[0].finished_at, Some(61_000));
+        assert_eq!(moved[1].started_at, Some(61_000));
+        assert_eq!(moved[1].finished_at, None);
+
+        // Re-sending the same plan must not move an existing clock.
+        let again = merge_plan_times(&moved, moved.clone(), 90_000);
+        assert_eq!(again, moved);
+
+        // A step crossed off without ever being seen active gets no duration.
+        let crossed = merge_plan_times(
+            &seed,
+            plan_from_value(&serde_json::json!({
+                "steps": [
+                    {"title": "Setting things up", "status": "done"},
+                    {"title": "Designing the page", "status": "done"}
+                ]
+            }))
+            .unwrap(),
+            90_000,
+        );
+        assert_eq!(crossed[1].started_at, None);
+        assert_eq!(crossed[1].finished_at, None);
     }
 
     fn plan_entry(plan: Vec<PlanStep>) -> Entry {

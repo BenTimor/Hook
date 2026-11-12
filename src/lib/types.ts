@@ -92,6 +92,10 @@ export type PlanStepStatus = "pending" | "active" | "done";
 export interface PlanStep {
   title: string;
   status: PlanStepStatus;
+  /** Epoch ms when this step was first seen in progress. */
+  startedAt?: number;
+  /** Epoch ms when this step crossed into done. */
+  finishedAt?: number;
 }
 
 /** The UI-facing shape of a coding-agent run. */

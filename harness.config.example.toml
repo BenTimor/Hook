@@ -98,6 +98,9 @@ update_interval_seconds = 60
 # Passed to pi as --model. Empty = pi's own default model.
 model = ""
 # Passed to pi as --thinking: off | minimal | low | medium | high | xhigh | max
+# Empty = pi's own default (medium). This is the coding agent's own level: it
+# does not inherit [model] thinking. A run is dozens of small turns, and a high
+# level on every one of them makes each step take minutes before anything moves.
 thinking = ""
 # How many coding agents may run at the same time.
 max_concurrent = 3
