@@ -114,7 +114,7 @@ test("waitlist onboarding preserves existing signups and authenticates preferenc
         });
         assert.equal(
           response.headers.get("location"),
-          "/?signup=authenticated",
+          "/?signup=authenticated&lead=1",
         );
         const status = async () =>
           (await (await request("/status", { cookie: receipt })).json())
@@ -414,7 +414,8 @@ test("waitlist onboarding preserves existing signups and authenticates preferenc
     await t.test(
       "supports legacy signup requests and receipts without assigning invented interests or identities",
       async () => {
-        const { receipt } = await signup("legacy", {});
+        const { response, receipt } = await signup("legacy", {});
+        assert.equal(response.headers.get("location"), "/?lead=1");
         const profile = (
           await (await request("/status", { cookie: receipt })).json()
         ).profile;

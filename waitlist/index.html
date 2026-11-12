@@ -8,9 +8,23 @@
     <meta name="description" content="One place for your AI. More possibilities, less effort, and more freedom to create. Sign up with Google." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Hook · Early access</title>
+    <!--
+      Meta Pixel: the loader and PageView/Lead events live in metaPixel.ts so the
+      Content-Security-Policy can stay free of 'unsafe-inline'. The image beacon
+      below covers visitors without JavaScript.
+    -->
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <img
+        height="1"
+        width="1"
+        style="display: none"
+        alt=""
+        src="https://www.facebook.com/tr?id=1156718026779225&ev=PageView&noscript=1"
+      />
+    </noscript>
     <script type="module" src="/main.tsx"></script>
   </body>
 </html>

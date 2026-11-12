@@ -31,8 +31,14 @@ import {
 import type { Profile, Screen } from "./onboarding";
 import { resumeOnboarding, useProgressSaver } from "./progress";
 import { developmentPreview } from "./devMode";
+import { initMetaPixel, trackSignupLead } from "./metaPixel";
 import "./styles.css";
 import "./onboarding.css";
+
+// PageView for every visit, plus Lead for the one-shot flag set by the API on a
+// genuinely new signup. Both run before React mounts so no event is missed.
+initMetaPixel();
+trackSignupLead();
 
 const ORDER = {
   landing: 0,

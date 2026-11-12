@@ -46,6 +46,17 @@ older receipts require sign-in to associate new preferences with an identity.
 usage policy supports the claim, then rebuild. The default copy says “More freedom
 to create.” Prices are proposed preferences, and the flow takes no payment.
 
+### Meta Pixel
+
+The production site loads the Meta Pixel (`1156718026779225`) for ad measurement.
+`waitlist/metaPixel.ts` owns the loader and activates it only in production builds,
+so `pnpm waitlist:dev` never sends events to Meta. Every page load sends `PageView`.
+The Google callback redirects a genuinely new signup to
+`/?signup=authenticated&lead=1`, which sends the standard `Lead` event once; a
+returning sign-in is not counted again. The CSP in
+`server/waitlist.mjs` and `infra/hookcode.caddy` allows the pixel's script and beacon
+domains, and `public/privacy.html` documents the pixel and its cookies.
+
 Run `pnpm waitlist:test` for the API migration and signup regression checks.
 
 ### Production

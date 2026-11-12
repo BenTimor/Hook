@@ -18,7 +18,7 @@
       </div>
 
       <h1>Privacy policy</h1>
-      <p class="updated">Last updated 11 November 2026</p>
+      <p class="updated">Last updated 12 November 2026</p>
 
       <p>
         Hook is an early-access desktop app for working with AI. This policy covers
@@ -38,18 +38,41 @@
       <p>
         We do not receive your Google password, your contacts, your files, or any other data from your
         Google Account beyond the identifier, email, and optional name described above.
-        We record your onboarding choices directly to understand what people want from Hook. We do not use third-party analytics or advertising scripts.
+        We record your onboarding choices directly to understand what people want from Hook. Apart from the Meta advertising pixel described below, we do not use third-party analytics scripts.
+      </p>
+
+      <h2>Advertising measurement</h2>
+      <p>
+        We advertise Hook on Meta (Facebook and Instagram) and use the Meta Pixel (pixel ID
+        <code>1156718026779225</code>) to measure how those ads perform. The pixel tells Meta that a
+        page was viewed or that someone signed up after seeing an ad, so we can see which ads bring
+        people to Hook and stop spending on ones that do not.
+      </p>
+      <p>
+        The pixel sends Meta the page address, the event that happened, and technical information
+        about your browser and device. It can also read and set the <code>_fbp</code> and
+        <code>_fbc</code> cookies described below, which help Meta recognise the same browser — for
+        example, after you click one of our ads. We do not send Meta your name or email address from
+        this site.
+      </p>
+      <p>
+        Meta processes this information under its own
+        <a href="https://www.facebook.com/privacy/policy/" rel="noreferrer">privacy policy</a>. You can
+        limit ad personalisation in your Meta ad settings or block tracking scripts in your browser.
       </p>
 
       <h2>Cookies</h2>
-      <p>The site sets two first-party cookies:</p>
+      <p>The site sets these first-party cookies:</p>
       <ul>
         <li><code>hook_flow</code> — lives for 10 minutes and protects the Google sign-in round trip against forgery;</li>
-        <li><code>hook_joined</code> — lives for 7 days and associates your onboarding progress with your Google sign-in.</li>
+        <li><code>hook_joined</code> — lives for 7 days and associates your onboarding progress with your Google sign-in;</li>
+        <li><code>_fbp</code> — set by the Meta Pixel, lasts up to 90 days, and identifies this browser for ad measurement;</li>
+        <li><code>_fbc</code> — set by the Meta Pixel when you arrive from one of our Meta ads, lasts up to 90 days, and records which ad you clicked.</li>
       </ul>
       <p>
-        Both are <code>HttpOnly</code>, <code>Secure</code>, and <code>SameSite=Lax</code>. There are no
-        third-party cookies set by Hook.
+        <code>hook_flow</code> and <code>hook_joined</code> are <code>HttpOnly</code>, <code>Secure</code>, and
+        <code>SameSite=Lax</code>. The Meta cookies are written on our domain by Meta's script and are not
+        read by Hook. The site sets no third-party cookies for any other purpose.
       </p>
       <p>
         Your browser also uses session storage to remember your onboarding choices while you move
@@ -63,7 +86,9 @@
       <p>
         Your email address is used for exactly one purpose: to tell you when early access to Hook opens,
         and to send the few messages that come with it (invite, and anything that changes the invite).
-        We do not sell it, rent it, or share it with anyone, and we do not add you to any other list.
+        We do not sell or rent it and we do not add you to any other list. To measure our ads we share
+        limited page-view and signup events with Meta as described above; we never send Meta your email
+        address or name from this site.
       </p>
       <p>Your interests, plan preference, and partial onboarding progress help us understand what early members want to create with Hook and where they stop during signup. Choosing a plan records a preference and does not create a paid subscription.</p>
 
@@ -71,6 +96,8 @@
       <p>
         The waitlist is a single SQLite database on a server we operate. Google's sign-in itself is
         covered by <a href="https://policies.google.com/privacy" rel="noreferrer">Google's privacy policy</a>.
+        The Meta Pixel is operated by Meta, and the information it collects from this site is covered by
+        <a href="https://www.facebook.com/privacy/policy/" rel="noreferrer">Meta's privacy policy</a>.
       </p>
 
       <h2>How long we keep it</h2>

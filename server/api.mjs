@@ -412,8 +412,12 @@ export function createWaitlistApi(env) {
         return res.redirect(303, "/?signup=unverified");
       }
 
+      // Detect a genuinely new waitlist row inside the write transaction so
+      // concurrent callbacks cannot both treat the same account as new.
+      let newSignup = false;
       db.exec("BEGIN IMMEDIATE");
       try {
+        newSignup = !findProfile.get(account.sub);
         upsertIdentity.run(
           account.sub,
           account.email,
@@ -441,7 +445,14 @@ export function createWaitlistApi(env) {
         { joined: true, subject: account.sub },
         RECEIPT_SECONDS,
       );
-      res.redirect(303, flow.onboarding ? "/?signup=authenticated" : "/");
+      // Mark a new signup with lead=1 so the landing page sends the Meta Lead
+      // event once. The flag is cleared from the URL by the page after firing.
+      const destination = new URL(
+        flow.onboarding ? "/?signup=authenticated" : "/",
+        site,
+      );
+      if (newSignup) destination.searchParams.set("lead", "1");
+      res.redirect(303, `${destination.pathname}${destination.search}`);
     } catch {
       // OAuth errors can contain tokens or account details, so keep logs free of the response.
       console.error(
