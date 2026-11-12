@@ -50,6 +50,12 @@ pub struct PlanStep {
     pub title: String,
     #[serde(default = "pending_step")]
     pub status: String,
+    /// When this step was first seen in progress, in epoch ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    /// When this step crossed into done, in epoch ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<i64>,
 }
 
 fn pending_step() -> String {
@@ -332,7 +338,8 @@ impl AgentManager {
             files.sort();
 
             let mut harvested: Vec<Update> = Vec::new();
-            let mut newest_plan: Option<Vec<PlanStep>> = None;
+            // The plan the guard wrote last, with the moment it wrote it.
+            let mut newest_plan: Option<(Vec<PlanStep>, i64)> = None;
             for file in files {
                 let is_plan = file
                     .file_name()
@@ -346,8 +353,12 @@ impl AgentManager {
                     // Files are written in timestamp order, so the last one in
                     // the sorted list is the state the agent means now.
                     if let Some(value) = parsed {
+                        let at = value
+                            .get("at")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or_else(now_ms);
                         if let Some(plan) = plan_from_value(&value) {
-                            newest_plan = Some(plan);
+                            newest_plan = Some((plan, at));
                         }
                     }
                     let _ = std::fs::remove_file(&file);
@@ -389,7 +400,10 @@ impl AgentManager {
                 let mut changed = false;
                 if let Some(entry) = inner.agents.get_mut(&id) {
                     entry.pending.extend(harvested);
-                    if let Some(plan) = newest_plan {
+                    if let Some((plan, at)) = newest_plan {
+                        // Every update rewrites the whole checklist, so the
+                        // clocks have to be carried over by hand.
+                        let plan = merge_plan_times(&entry.info.plan, plan, at);
                         if entry.info.plan != plan {
                             entry.info.plan = plan;
                             entry.info.updated_at = now_ms();
@@ -594,7 +608,7 @@ impl AgentManager {
             .unwrap_or_else(|| truncate(task, 60));
         // The chat agent's plain-language steps seed the checklist the user
         // watches. The coding agent fills in the status as it goes.
-        let plan = plan_from_titles(plan_titles);
+        let plan = merge_plan_times(&[], plan_from_titles(plan_titles), now_ms());
 
         let args = agent_args(
             &self.sessions_dir,
@@ -847,6 +861,8 @@ impl AgentManager {
                     for step in info.plan.iter_mut() {
                         if step.status == STEP_ACTIVE {
                             step.status = STEP_PENDING.to_string();
+                            step.started_at = None;
+                            step.finished_at = None;
                         }
                     }
                     info.question = None;
@@ -1230,8 +1246,47 @@ pub fn plan_from_titles(titles: &[String]) -> Vec<PlanStep> {
             } else {
                 STEP_PENDING.to_string()
             },
+            started_at: None,
+            finished_at: None,
         })
         .collect()
+}
+
+/// Carry each step's clock across the plan rewrites the guard writes.
+///
+/// An update replaces the whole checklist, so steps are matched by title (or by
+/// position when titles line up): a step keeps the moment it was first seen in
+/// progress and the moment it finished. Only work Hook actually watched gets a
+/// duration; a step crossed off without ever being seen active stays without
+/// one rather than pretending it took no time.
+fn merge_plan_times(previous: &[PlanStep], mut next: Vec<PlanStep>, at: i64) -> Vec<PlanStep> {
+    for (index, step) in next.iter_mut().enumerate() {
+        let before = previous
+            .get(index)
+            .filter(|old| old.title == step.title)
+            .or_else(|| previous.iter().find(|old| old.title == step.title));
+        if let Some(before) = before {
+            step.started_at = before.started_at;
+            step.finished_at = before.finished_at;
+        }
+        match step.status.as_str() {
+            STEP_DONE => {
+                if step.started_at.is_some() {
+                    step.finished_at.get_or_insert(at);
+                }
+            }
+            STEP_ACTIVE => {
+                step.started_at.get_or_insert(at);
+                // A reopened step is running again, not still finished.
+                step.finished_at = None;
+            }
+            _ => {
+                step.started_at = None;
+                step.finished_at = None;
+            }
+        }
+    }
+    next
 }
 
 /// Read a plan written by the guard's `update_plan` tool. Empty plans are
@@ -1255,6 +1310,8 @@ fn plan_from_value(value: &serde_json::Value) -> Option<Vec<PlanStep>> {
         steps.push(PlanStep {
             title: truncate(title, MAX_STEP_TITLE),
             status: status.to_string(),
+            started_at: None,
+            finished_at: None,
         });
     }
     if steps.is_empty() {
@@ -1589,8 +1646,13 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                     {
                         // The run ended cleanly: nothing on the checklist is
                         // still being worked on, so cross off what is left.
+                        let at = now_ms();
                         for step in info.plan.iter_mut() {
                             step.status = STEP_DONE.to_string();
+                            // A step nobody saw running has no honest duration.
+                            if step.started_at.is_some() {
+                                step.finished_at.get_or_insert(at);
+                            }
                         }
                     }
                     wake = true;
@@ -2138,6 +2200,58 @@ node \"%~dp0fake-pi.mjs\" %*
         assert_eq!(from_guard[0].status, STEP_DONE);
         assert_eq!(from_guard[1].status, STEP_PENDING);
         assert!(plan_from_value(&serde_json::json!({"steps": []})).is_none());
+    }
+
+    #[test]
+    fn every_checklist_step_keeps_its_own_clock() {
+        let seed = merge_plan_times(
+            &[],
+            plan_from_titles(&["Setting things up".into(), "Designing the page".into()]),
+            1_000,
+        );
+        assert_eq!(
+            seed[0].started_at,
+            Some(1_000),
+            "the step being worked on starts now"
+        );
+        assert_eq!(seed[0].finished_at, None);
+        assert_eq!(seed[1].started_at, None, "a step not started has no clock");
+
+        // The agent finishes step one and picks up step two.
+        let moved = merge_plan_times(
+            &seed,
+            plan_from_value(&serde_json::json!({
+                "steps": [
+                    {"title": "Setting things up", "status": "done"},
+                    {"title": "Designing the page", "status": "active"}
+                ]
+            }))
+            .unwrap(),
+            61_000,
+        );
+        assert_eq!(moved[0].started_at, Some(1_000));
+        assert_eq!(moved[0].finished_at, Some(61_000));
+        assert_eq!(moved[1].started_at, Some(61_000));
+        assert_eq!(moved[1].finished_at, None);
+
+        // Re-sending the same plan must not move an existing clock.
+        let again = merge_plan_times(&moved, moved.clone(), 90_000);
+        assert_eq!(again, moved);
+
+        // A step crossed off without ever being seen active gets no duration.
+        let crossed = merge_plan_times(
+            &seed,
+            plan_from_value(&serde_json::json!({
+                "steps": [
+                    {"title": "Setting things up", "status": "done"},
+                    {"title": "Designing the page", "status": "done"}
+                ]
+            }))
+            .unwrap(),
+            90_000,
+        );
+        assert_eq!(crossed[1].started_at, None);
+        assert_eq!(crossed[1].finished_at, None);
     }
 
     fn plan_entry(plan: Vec<PlanStep>) -> Entry {

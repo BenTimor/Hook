@@ -59,6 +59,15 @@ function StepIcon({ status }: { status: PlanStep["status"] }) {
   return <Circle strokeWidth={1.7} />;
 }
 
+/** How long one step has taken so far, or took in total. Nothing until it starts. */
+function stepDuration(step: PlanStep, now: number, live: boolean): string {
+  if (step.startedAt === undefined) return "";
+  // A live run's current step keeps ticking; a finished run's clocks are frozen.
+  const endedAt = step.finishedAt ?? (step.status === "active" && live ? now : undefined);
+  if (endedAt === undefined) return "";
+  return compactDuration(endedAt - step.startedAt);
+}
+
 function AgentTask({
   agent,
   now,
@@ -74,10 +83,7 @@ function AgentTask({
   const live = isLiveAgent(agent);
   const total = agent.plan.length;
   const done = agent.plan.filter((step) => step.status === "done").length;
-  const spent = compactDuration((agent.finishedAt ?? now) - agent.createdAt);
-  const meta = live
-    ? `${stateLabel(agent)} · ${spent}${total ? ` · ${done}/${total}` : ""}`
-    : `${stateLabel(agent)} in ${spent}`;
+  const meta = total ? `${stateLabel(agent)} · ${done}/${total}` : stateLabel(agent);
 
   return (
     <section className="agent-card" data-state={agent.state}>
@@ -112,14 +118,18 @@ function AgentTask({
       {!collapsed &&
         (total > 0 ? (
           <ol className="agent-plan">
-            {agent.plan.map((step, index) => (
-              <li className="agent-step" data-status={step.status} key={`${agent.id}-${index}`}>
-                <span className="agent-step-icon" aria-hidden="true">
-                  <StepIcon status={step.status} />
-                </span>
-                <span className="agent-step-title">{step.title}</span>
-              </li>
-            ))}
+            {agent.plan.map((step, index) => {
+              const spent = stepDuration(step, now, live);
+              return (
+                <li className="agent-step" data-status={step.status} key={`${agent.id}-${index}`}>
+                  <span className="agent-step-icon" aria-hidden="true">
+                    <StepIcon status={step.status} />
+                  </span>
+                  <span className="agent-step-title">{step.title}</span>
+                  {spent && <span className="agent-step-time">{spent}</span>}
+                </li>
+              );
+            })}
           </ol>
         ) : (
           <div className="agent-plan-empty">Getting started…</div>

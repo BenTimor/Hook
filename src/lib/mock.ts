@@ -432,12 +432,41 @@ export const mock = {
     const now = Date.now();
     const waiting = demo === "needs_input";
     const finished = demo === "done";
+    const startedAt = now - (finished ? 214_000 : 96_000);
+    // The finished demo settles a little before "now", like a real run does.
+    const settledAt = now - 41_000;
+    const step = (
+      title: string,
+      status: PlanStep["status"],
+      from: number,
+      to?: number,
+    ): PlanStep => ({
+      title,
+      status,
+      startedAt: status === "pending" ? undefined : startedAt + from,
+      finishedAt: status === "done" && to !== undefined ? startedAt + to : undefined,
+    });
     const plan: PlanStep[] = [
-      { title: "Setting things up", status: "done" },
-      { title: "Designing the pricing page", status: "done" },
-      { title: "Connecting it to the real services", status: finished ? "done" : "active" },
-      { title: "Checking it on a phone", status: finished ? "done" : "pending" },
-      { title: "Polishing the details", status: finished ? "done" : "pending" },
+      step("Setting things up", "done", 0, 18_000),
+      step("Designing the pricing page", "done", 18_000, 74_000),
+      step(
+        "Connecting it to the real services",
+        finished ? "done" : "active",
+        74_000,
+        finished ? 138_000 : undefined,
+      ),
+      step(
+        "Checking it on a phone",
+        finished ? "done" : "pending",
+        138_000,
+        finished ? settledAt - startedAt - 12_000 : undefined,
+      ),
+      step(
+        "Polishing the details",
+        finished ? "done" : "pending",
+        settledAt - startedAt - 12_000,
+        finished ? settledAt - startedAt : undefined,
+      ),
     ];
     return {
       working: finished || waiting ? 0 : 1,
