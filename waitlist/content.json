@@ -1,0 +1,67 @@
+{
+  "usage": {
+    "defaultBenefit": "More freedom to create",
+    "defaultDescription": "One place for your AI. More possibilities, less effort, and more freedom to create.",
+    "unlimitedBenefit": "Unlimited Usage",
+    "unlimitedDescription": "One place for your AI. More possibilities, less effort, and unlimited usage."
+  },
+  "interests": [
+    { "id": "websites", "label": "Websites" },
+    { "id": "apps", "label": "Apps" },
+    { "id": "videos", "label": "Videos" },
+    { "id": "design", "label": "Images & Design" },
+    { "id": "study", "label": "Study & Learning" },
+    { "id": "automations", "label": "Automations" },
+    { "id": "writing", "label": "Writing & Research" },
+    { "id": "exploring", "label": "Just Exploring" }
+  ],
+  "pricing": {
+    "currency": "$",
+    "currencyCode": "USD",
+    "period": "/month",
+    "badge": "Early Access Discount",
+    "disclosure": "Proposed plans and capabilities. Choose your preference today. No payment is taken.",
+    "plans": [
+      {
+        "id": "plus",
+        "name": "Hook Plus",
+        "description": "A little help. A lot more possibility.",
+        "originalPrice": 15,
+        "earlyPrice": 10,
+        "cta": "Choose Plus",
+        "includes": "Planned for Plus",
+        "features": [
+          "Access to supported AI models",
+          "Core AI task orchestration",
+          "Website and app prototyping",
+          "Basic animations and video workflows",
+          "Standard processing speed",
+          "Standard task priority",
+          "Shared workspace and conversation context",
+          "Usage subject to the published plan policy"
+        ]
+      },
+      {
+        "id": "pro",
+        "name": "Hook Pro",
+        "description": "More room for your biggest ideas.",
+        "originalPrice": 100,
+        "earlyPrice": 80,
+        "cta": "Choose Pro",
+        "includes": "Everything in Plus, and",
+        "features": [
+          "Access to additional premium AI models",
+          "Advanced multi-agent workflows",
+          "Premium generative video capabilities",
+          "More advanced image-generation tools",
+          "Priority processing speed",
+          "Higher concurrent task capacity",
+          "Larger context and complex project support",
+          "Priority access to upcoming features",
+          "Premium support when available",
+          "Usage subject to the published plan policy"
+        ]
+      }
+    ]
+  }
+}

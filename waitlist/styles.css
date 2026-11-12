@@ -161,11 +161,7 @@ h1 {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes reveal { from { opacity: 0; transform: translateY(8px); } }
-
-.success { animation: reveal 380ms var(--ease) both; }
-.success h1 { font-size: clamp(38px, 4.6vw, 65px); }
-.success-icon, .benefit-icon {
+.benefit-icon {
   display: grid;
   flex: none;
   place-items: center;
@@ -173,7 +169,6 @@ h1 {
   color: var(--forest);
   background: #e3e7db;
 }
-.success-icon { width: 49px; height: 49px; margin-bottom: 20px; }
 .thanks { margin-top: 21px; color: var(--sage); font-size: 14px; font-weight: 630; }
 
 .benefits {
@@ -261,5 +256,5 @@ h1 {
 @media (prefers-reduced-motion: reduce) {
   .join-button { transition: none; }
   .join-button:not(:disabled):hover, .join-button:not(:disabled):active { transform: none; }
-  .spinner, .success { animation: none; }
+  .spinner { animation: none; }
 }

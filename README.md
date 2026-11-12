@@ -23,6 +23,31 @@ To enable signup locally:
    Generate `WAITLIST_SESSION_SECRET` with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
 4. Restart `pnpm waitlist:dev`.
 
+To preview onboarding without Google or saving any details, set
+`WAITLIST_DEV_MODE=true` in `.env.waitlist.local` and restart `pnpm waitlist:dev`.
+“Hook Me In” then opens interests directly. Choices stay in memory only; refreshing
+resets the preview. This mode does not read existing signup cookies, open the
+database, send progress requests, or save choices to browser storage. It works on
+localhost/loopback in the Vite dev server only and is disabled in production
+builds, even if the flag is set. Set it to `false` and restart to test real signup.
+
+The onboarding screens, interests, proposed prices, and planned features use
+`waitlist/content.json`. Mobile pricing paginates the feature lists to keep all
+controls inside the viewport. “Hook Me In” opens Google sign-in first and saves the
+verified email immediately. The flow then shows interests, pricing, and the
+“You caught us a little early” confirmation. Each interest change and navigation
+step saves immediately, including incomplete onboarding. A plan selection saves
+its ID and price before completion is recorded separately. Pending changes are
+kept locally and retried for the same signed-in account, with an unload delivery
+attempt when the visitor leaves. Returning visitors resume their saved step;
+older receipts require sign-in to associate new preferences with an identity.
+
+`VITE_WAITLIST_UNLIMITED_USAGE` defaults to `false`. Set it to `true` only after the
+usage policy supports the claim, then rebuild. The default copy says “More freedom
+to create.” Prices are proposed preferences, and the flow takes no payment.
+
+Run `pnpm waitlist:test` for the API migration and signup regression checks.
+
 ### Production
 
 The page is live at **[hookcode.io](https://hookcode.io)** on the MoonRock VPS
@@ -58,8 +83,16 @@ Required environment (local `.env.waitlist.local`, server `/opt/hook-web/.env`):
 | `WAITLIST_DB_PATH` | SQLite file; `/data/signups.sqlite` in the container, `waitlist-data/signups.sqlite` locally. |
 | `PORT` | Listener port, default `5173`. |
 
-The `waitlist_signups` table stores each Google subject, verified email, and first
-signup timestamp. If the three credentials are missing the API refuses to start
+The `waitlist_signups` table stores each Google subject, verified email, optional
+name, selected interests, plan preference, selected price in cents/currency/period,
+current onboarding step, start/update/completion timestamps, waitlist status, and
+first signup timestamp. `onboarding_events` records individual interest changes,
+step changes, plan choices (with price), and completion, with server timestamps.
+Retries are deduplicated and stale actions from the same browser session do not
+overwrite newer actions for that field. Existing databases migrate automatically
+without replacing signups. Historical prices and completion times remain null
+when they were not previously recorded.
+If the three credentials are missing the API refuses to start
 (and the landing page still renders — the button then reports that sign-in is
 unavailable).
 
@@ -67,7 +100,8 @@ Who's on the list:
 
 ```bash
 ./scripts/waitlist-people.sh            # table, newest first
-./scripts/waitlist-people.sh --csv      # email,joined_at,google_subject
+./scripts/waitlist-people.sh --csv      # profiles, choices, prices, progress
+./scripts/waitlist-people.sh --events   # individual onboarding actions as CSV
 ./scripts/waitlist-people.sh --count
 ```
 
@@ -83,7 +117,7 @@ Hook rather than for the other sites on this box:
 |---|---|
 | Project | `hookcode-waitlist` (display name `Hook`) |
 | Consent screen | External, **In production** — anyone with a Google Account can join, no cap |
-| Scopes | `openid`, `email` (non-sensitive: no verification review, no unverified-app warning) |
+| Scopes | `openid`, `email`, `profile` |
 | Client | `Web application` → `Hook Waitlist` |
 | Redirect URIs | `https://hookcode.io/api/waitlist/google/callback`, `http://localhost:5173/api/waitlist/google/callback` |
 | Branding | app name `Hook`, support/contact `nsgi3111@gmail.com`, authorised domain `hookcode.io`, home `https://hookcode.io`, policy links to `/privacy` and `/terms` |
@@ -99,11 +133,9 @@ into `/opt/hook-web/.env`, then `docker compose up -d waitlist`.
 `/privacy` and `/terms` are static pages in `public/`, served through
 `try_files {path} {path}.html …` and linked from the consent screen.
 
-Set `VITE_WAITLIST_CTA` in `.env.waitlist.local` before running dev or building to
-change the button copy. The values are `hook` (Hook Me In), `google` (Join the
-waitlist with Google), `early` (Get early access), and `first` (Be first to try
-Hook). It is baked into the HTML at build time, which is why the static files are
-built on your machine and uploaded, rather than built inside the container.
+The landing CTA stays “Hook Me In” and starts Google sign-in. Public
+copy and the usage flag are baked into the static build, so rebuild the site
+after changing them.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐

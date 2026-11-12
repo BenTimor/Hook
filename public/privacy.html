@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#f5efe5" />
-    <meta name="description" content="How Hook handles the email address you share when you join the early-access waitlist." />
+    <meta name="description" content="How Hook handles your early-access waitlist profile and onboarding preferences." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/legal.css" />
     <title>Privacy · Hook</title>
@@ -26,26 +26,37 @@
       </p>
 
       <h2>What we collect</h2>
-      <p>If you join the waitlist, you sign in with Google and we store three things:</p>
+      <p>If you join the waitlist, you sign in with Google and we store:</p>
       <ul>
         <li>the verified email address on your Google Account;</li>
         <li>a stable Google account identifier (the OpenID <code>sub</code> value), so that joining twice does not create two entries;</li>
-        <li>the date and time you joined.</li>
+        <li>your name, if Google provides it;</li>
+        <li>the interests you select and your preference for a future Hook plan, including its displayed price and billing period;</li>
+        <li>your onboarding selections and changes as you make them, even if you leave before finishing;</li>
+        <li>the date and time you joined, your current onboarding step, completion time if you finish, and your waitlist status.</li>
       </ul>
       <p>
         We do not receive your Google password, your contacts, your files, or any other data from your
-        Google Account. We do not run analytics, advertising, or tracking scripts on this site.
+        Google Account beyond the identifier, email, and optional name described above.
+        We record your onboarding choices directly to understand what people want from Hook. We do not use third-party analytics or advertising scripts.
       </p>
 
       <h2>Cookies</h2>
-      <p>The waitlist sets two first-party cookies, and nothing else:</p>
+      <p>The site sets two first-party cookies:</p>
       <ul>
         <li><code>hook_flow</code> — lives for 10 minutes and protects the Google sign-in round trip against forgery;</li>
-        <li><code>hook_joined</code> — lives for 7 days and remembers that you are already on the list so the page can say so.</li>
+        <li><code>hook_joined</code> — lives for 7 days and associates your onboarding progress with your Google sign-in.</li>
       </ul>
       <p>
         Both are <code>HttpOnly</code>, <code>Secure</code>, and <code>SameSite=Lax</code>. There are no
-        third-party cookies and no cookie banner, because there is nothing to consent to beyond this.
+        third-party cookies set by Hook.
+      </p>
+      <p>
+        Your browser also uses session storage to remember your onboarding choices while you move
+        between screens. This stores your selected interests, plan preference, and onboarding step,
+        and is cleared when your browser session ends. Choices that have not yet reached our server
+        are also kept in local storage, associated with your Google account identifier, so they can
+        be retried when you return with the same sign-in. They are removed after a successful save.
       </p>
 
       <h2>Why we keep it</h2>
@@ -54,6 +65,7 @@
         and to send the few messages that come with it (invite, and anything that changes the invite).
         We do not sell it, rent it, or share it with anyone, and we do not add you to any other list.
       </p>
+      <p>Your interests, plan preference, and partial onboarding progress help us understand what early members want to create with Hook and where they stop during signup. Choosing a plan records a preference and does not create a paid subscription.</p>
 
       <h2>Where it lives</h2>
       <p>

@@ -3,7 +3,8 @@
 # Look at who joined the Hook waitlist.
 #
 #   ./scripts/waitlist-people.sh              # table, newest first
-#   ./scripts/waitlist-people.sh --csv        # email,joined_at,google_subject
+#   ./scripts/waitlist-people.sh --csv        # profiles, choices, prices, progress
+#   ./scripts/waitlist-people.sh --events     # onboarding action history as CSV
 #   ./scripts/waitlist-people.sh --count      # just the number
 #
 # Reads /data/signups.sqlite inside the hook-waitlist container, so it works
@@ -33,22 +34,36 @@ const { DatabaseSync } = require("node:sqlite");
 const format = process.argv[2] || "table";
 
 const db = new DatabaseSync(process.env.WAITLIST_DB_PATH || "/data/signups.sqlite", { readOnly: true });
+const columns = new Set(db.prepare("PRAGMA table_info(waitlist_signups)").all().map(c => c.name));
+const optional = ["interests", "plan_preference", "plan_price_cents", "plan_currency", "plan_period", "onboarding_step", "onboarding_started_at", "onboarding_updated_at", "onboarding_completed_at"];
 const rows = db
-  .prepare("select email, joined_at, google_subject from waitlist_signups order by joined_at desc")
+  .prepare(`SELECT email, joined_at, google_subject, ${optional.map(c => columns.has(c) ? c : `NULL AS ${c}`).join(", ")} FROM waitlist_signups ORDER BY joined_at DESC`)
   .all();
+const csv = (entries, headers) => {
+  const esc = (value) => {
+    const text = value == null ? "" : String(value);
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  console.log(headers.map(esc).join(","));
+  for (const entry of entries) console.log(headers.map(h => esc(entry[h])).join(","));
+};
 
 if (format === "--count") {
   console.log(rows.length);
+} else if (format === "--events") {
+  const headers = ["email", "google_subject", "recorded_at", "event_type", "details", "applied", "client_id", "sequence", "event_id"];
+  const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'onboarding_events'").get();
+  const events = exists ? db.prepare(`SELECT s.email, e.* FROM onboarding_events e JOIN waitlist_signups s USING (google_subject) ORDER BY e.recorded_at DESC, e.rowid DESC`).all() : [];
+  csv(events, headers);
 } else if (format === "--csv") {
-  const esc = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-  console.log("email,joined_at,google_subject");
-  for (const r of rows) console.log([r.email, r.joined_at, r.google_subject].map(esc).join(","));
+  csv(rows, ["email", "joined_at", "google_subject", ...optional]);
 } else {
   if (!rows.length) {
     console.log("No signups yet.");
   } else {
-    const head = ["EMAIL", "JOINED (UTC)", "GOOGLE SUBJECT"];
-    const body = rows.map((r) => [r.email, r.joined_at.replace("T", " ").slice(0, 19), r.google_subject]);
+    const head = ["EMAIL", "JOINED (UTC)", "INTERESTS", "PLAN", "PRICE", "STEP", "COMPLETED (UTC)"];
+    const utc = (value) => value ? value.replace("T", " ").slice(0, 19) : "—";
+    const body = rows.map((r) => [r.email, utc(r.joined_at), JSON.parse(r.interests || "[]").join(", ") || "—", r.plan_preference || "—", r.plan_price_cents == null ? "—" : `${(r.plan_price_cents / 100).toFixed(2)} ${r.plan_currency}${r.plan_period}`, r.onboarding_step || "—", utc(r.onboarding_completed_at)]);
     const width = head.map((h, i) => Math.max(h.length, ...body.map((b) => b[i].length)));
     const line = (cols) => cols.map((c, i) => c.padEnd(width[i])).join("  ").trimEnd();
     console.log(line(head));
@@ -57,4 +72,5 @@ if (format === "--count") {
     console.log(`\n${rows.length} signup${rows.length === 1 ? "" : "s"}`);
   }
 }
+db.close();
 JS

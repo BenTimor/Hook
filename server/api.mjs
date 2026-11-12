@@ -2,52 +2,202 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Router } from "express";
+import { json, Router } from "express";
 import { OAuth2Client } from "google-auth-library";
+import content from "../waitlist/content.json" with { type: "json" };
 
 const FLOW_SECONDS = 600;
 const RECEIPT_SECONDS = 7 * 24 * 60 * 60;
 const CALLBACK_PATH = "/api/waitlist/google/callback";
+const interestIds = new Set(content.interests.map((interest) => interest.id));
+const planIds = new Set(content.pricing.plans.map((plan) => plan.id));
+const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+
+function progressEventsFrom(body) {
+  if (
+    !body ||
+    !Array.isArray(body.events) ||
+    body.events.length < 1 ||
+    body.events.length > 25
+  ) {
+    throw new Error("Invalid progress events");
+  }
+  for (const event of body.events) {
+    if (
+      !event ||
+      typeof event.eventId !== "string" ||
+      typeof event.clientId !== "string" ||
+      !/^[\w-]{8,80}$/.test(event.eventId) ||
+      !/^[\w-]{8,80}$/.test(event.clientId) ||
+      !Number.isSafeInteger(event.sequence) ||
+      event.sequence < 1
+    )
+      throw new Error("Invalid progress event");
+    const valid =
+      (event.type === "interest_changed" &&
+        interestIds.has(event.interestId) &&
+        typeof event.selected === "boolean") ||
+      (event.type === "step_changed" &&
+        ["interests", "pricing"].includes(event.step)) ||
+      (["plan_selected", "completed"].includes(event.type) &&
+        planIds.has(event.planPreference));
+    if (!valid) throw new Error("Invalid progress event");
+  }
+  return body.events;
+}
+
+function publicProfile(row) {
+  return {
+    id: row.google_subject,
+    name: row.name,
+    email: row.email,
+    interests: JSON.parse(row.interests),
+    planPreference: row.plan_preference,
+    selectedPrice:
+      row.plan_price_cents === null
+        ? null
+        : {
+            amountCents: row.plan_price_cents,
+            currency: row.plan_currency,
+            period: row.plan_period,
+          },
+    joinedAt: row.joined_at,
+    status: row.waitlist_status,
+    onboardingStep: row.onboarding_step,
+    onboardingStartedAt: row.onboarding_started_at,
+    onboardingUpdatedAt: row.onboarding_updated_at,
+    onboardingCompletedAt: row.onboarding_completed_at,
+  };
+}
+
+function preferencesFrom(body) {
+  if (body === undefined) return null;
+  if (!body || typeof body !== "object" || Array.isArray(body))
+    throw new Error("Invalid preferences");
+  if (Object.keys(body).length === 0) return null;
+  if (
+    !Array.isArray(body.interests) ||
+    body.interests.length > interestIds.size ||
+    !body.interests.every((id) => interestIds.has(id)) ||
+    !planIds.has(body.planPreference)
+  ) {
+    throw new Error("Invalid preferences");
+  }
+  return {
+    interests: [...new Set(body.interests)],
+    planPreference: body.planPreference,
+  };
+}
 
 export function createWaitlistApi(env) {
   const site = new URL(env.WAITLIST_ORIGIN || "http://localhost:5173");
-  const local = site.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(site.hostname);
-  if ((!local && site.protocol !== "https:") || site.href !== `${site.origin}/`) {
-    throw new Error("WAITLIST_ORIGIN must be a site origin, using HTTPS outside local development.");
+  const local =
+    site.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(site.hostname);
+  if (
+    (!local && site.protocol !== "https:") ||
+    site.href !== `${site.origin}/`
+  ) {
+    throw new Error(
+      "WAITLIST_ORIGIN must be a site origin, using HTTPS outside local development.",
+    );
   }
 
   const clientId = env.GOOGLE_CLIENT_ID;
   const clientSecret = env.GOOGLE_CLIENT_SECRET;
   const sessionSecret = env.WAITLIST_SESSION_SECRET;
-  const configured = Boolean(clientId && clientSecret && sessionSecret?.length >= 32);
+  const configured = Boolean(
+    clientId && clientSecret && sessionSecret?.length >= 32,
+  );
   if (!configured && (!local || clientId || clientSecret || sessionSecret)) {
-    throw new Error("Set both Google OAuth credentials and a WAITLIST_SESSION_SECRET of at least 32 characters.");
+    throw new Error(
+      "Set both Google OAuth credentials and a WAITLIST_SESSION_SECRET of at least 32 characters.",
+    );
   }
 
-  const google = configured ? new OAuth2Client(clientId, clientSecret, `${site.origin}${CALLBACK_PATH}`) : null;
-  const cookies = { httpOnly: true, secure: !local, sameSite: "lax", path: "/" };
+  const google = configured
+    ? new OAuth2Client(clientId, clientSecret, `${site.origin}${CALLBACK_PATH}`)
+    : null;
+  const cookies = {
+    httpOnly: true,
+    secure: !local,
+    sameSite: "lax",
+    path: "/",
+  };
   const prefix = local ? "" : "__Host-";
   const flowCookie = `${prefix}hook_flow`;
   const receiptCookie = `${prefix}hook_joined`;
   const router = Router();
   const db = configured ? openWaitlist(env.WAITLIST_DB_PATH) : null;
-  const upsert = db?.prepare(`
-    INSERT INTO waitlist_signups (google_subject, email) VALUES (?, ?)
-    ON CONFLICT(google_subject) DO UPDATE SET email = excluded.email
+  const upsertIdentity = db?.prepare(`
+    INSERT INTO waitlist_signups (google_subject, email, name) VALUES (?, ?, ?)
+    ON CONFLICT(google_subject) DO UPDATE SET
+      email = excluded.email, name = COALESCE(excluded.name, waitlist_signups.name)
   `);
+  const savePreferences = db?.prepare(`
+    UPDATE waitlist_signups SET interests = ?, plan_preference = ? WHERE google_subject = ?
+  `);
+  const findProfile = db?.prepare(
+    "SELECT * FROM waitlist_signups WHERE google_subject = ?",
+  );
+  const beginOnboarding = db?.prepare(`UPDATE waitlist_signups SET
+    onboarding_started_at = COALESCE(onboarding_started_at, ${NOW}),
+    onboarding_updated_at = ${NOW} WHERE google_subject = ?`);
+  const saveInterests = db?.prepare(`UPDATE waitlist_signups SET interests = ?,
+    onboarding_updated_at = ${NOW} WHERE google_subject = ?`);
+  const saveStep = db?.prepare(`UPDATE waitlist_signups SET onboarding_step = ?,
+    onboarding_updated_at = ${NOW} WHERE google_subject = ?`);
+  const savePlan = db?.prepare(`UPDATE waitlist_signups SET plan_preference = ?,
+    plan_price_cents = ?, plan_currency = ?, plan_period = ?, onboarding_step = 'pricing',
+    onboarding_updated_at = ${NOW} WHERE google_subject = ?`);
+  const completeOnboarding =
+    db?.prepare(`UPDATE waitlist_signups SET onboarding_step = 'completed',
+    onboarding_completed_at = COALESCE(onboarding_completed_at, ${NOW}),
+    onboarding_updated_at = ${NOW} WHERE google_subject = ?`);
+  const findEvent = db?.prepare(
+    "SELECT 1 FROM onboarding_events WHERE google_subject = ? AND event_id = ?",
+  );
+  const latestSequence =
+    db?.prepare(`SELECT MAX(sequence) AS sequence FROM onboarding_events
+    WHERE google_subject = ? AND client_id = ? AND field = ?`);
+  const insertEvent = db?.prepare(`INSERT INTO onboarding_events
+    (google_subject, event_id, client_id, sequence, field, event_type, details, applied)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
 
-  const sign = (data) => createHmac("sha256", sessionSecret).update(data).digest("base64url");
+  function choosePlan(subject, id) {
+    const plan = content.pricing.plans.find((item) => item.id === id);
+    const price = {
+      amountCents: Math.round(plan.earlyPrice * 100),
+      currency: content.pricing.currencyCode,
+      period: content.pricing.period,
+    };
+    savePlan.run(id, price.amountCents, price.currency, price.period, subject);
+    return price;
+  }
+
+  const sign = (data) =>
+    createHmac("sha256", sessionSecret).update(data).digest("base64url");
 
   function writeCookie(res, name, payload, seconds) {
-    const data = Buffer.from(JSON.stringify({ ...payload, expires: Date.now() + seconds * 1000 })).toString("base64url");
-    res.cookie(name, `${data}.${sign(data)}`, { ...cookies, maxAge: seconds * 1000 });
+    const data = Buffer.from(
+      JSON.stringify({ ...payload, expires: Date.now() + seconds * 1000 }),
+    ).toString("base64url");
+    res.cookie(name, `${data}.${sign(data)}`, {
+      ...cookies,
+      maxAge: seconds * 1000,
+    });
   }
 
   function readCookie(req, name) {
-    const value = req.headers.cookie?.split(/;\s*/).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
-    if (!configured || !value || !/^[\w-]+\.[\w-]{43}$/.test(value)) return null;
+    const value = req.headers.cookie
+      ?.split(/;\s*/)
+      .find((part) => part.startsWith(`${name}=`))
+      ?.slice(name.length + 1);
+    if (!configured || !value || !/^[\w-]+\.[\w-]{43}$/.test(value))
+      return null;
     const [data, signature] = value.split(".");
-    if (!timingSafeEqual(Buffer.from(signature), Buffer.from(sign(data)))) return null;
+    if (!timingSafeEqual(Buffer.from(signature), Buffer.from(sign(data))))
+      return null;
     const payload = JSON.parse(Buffer.from(data, "base64url").toString());
     return payload.expires > Date.now() ? payload : null;
   }
@@ -56,20 +206,156 @@ export function createWaitlistApi(env) {
     res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
     next();
   });
+  router.use((req, res, next) => {
+    if (req.method === "POST" && req.get("origin") !== site.origin) {
+      return res.status(403).json({ error: "origin" });
+    }
+    next();
+  });
+  router.use(json({ limit: "32kb" }));
+
+  function profileFor(req) {
+    const subject = readCookie(req, receiptCookie)?.subject;
+    return typeof subject === "string" ? findProfile?.get(subject) : null;
+  }
+
+  function finishPreferences(res, subject, preferences) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      savePreferences.run(
+        JSON.stringify(preferences.interests),
+        preferences.planPreference,
+        subject,
+      );
+      beginOnboarding.run(subject);
+      choosePlan(subject, preferences.planPreference);
+      completeOnboarding.run(subject);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    writeCookie(res, receiptCookie, { joined: true, subject }, RECEIPT_SECONDS);
+    return res.json({ joined: true });
+  }
 
   router.get("/status", (req, res) => {
-    res.json({ joined: readCookie(req, receiptCookie)?.joined === true });
+    const receipt = readCookie(req, receiptCookie);
+    const row = profileFor(req);
+    res.json({
+      joined: Boolean(row) || receipt?.joined === true,
+      profile: row ? publicProfile(row) : null,
+    });
+  });
+
+  router.post("/progress", (req, res) => {
+    const profile = profileFor(req);
+    if (!profile) return res.status(401).json({ error: "signin_required" });
+    if (req.body?.subject !== profile.google_subject)
+      return res.status(409).json({ error: "account_changed" });
+    let events;
+    try {
+      events = progressEventsFrom(req.body);
+    } catch {
+      return res.status(400).json({ error: "invalid_progress" });
+    }
+    const subject = profile.google_subject;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const event of events) {
+        if (findEvent.get(subject, event.eventId)) continue;
+        const field =
+          event.type === "interest_changed"
+            ? `interest:${event.interestId}`
+            : "flow";
+        const previous = latestSequence.get(
+          subject,
+          event.clientId,
+          field,
+        ).sequence;
+        const applied = previous === null || event.sequence > previous;
+        const details = { type: event.type };
+        if (event.type === "interest_changed")
+          Object.assign(details, {
+            interestId: event.interestId,
+            selected: event.selected,
+          });
+        else if (event.type === "step_changed") details.step = event.step;
+        else details.planPreference = event.planPreference;
+        if (applied) {
+          const current = findProfile.get(subject);
+          if (!current.onboarding_started_at) beginOnboarding.run(subject);
+          if (event.type === "interest_changed") {
+            const interests = new Set(JSON.parse(current.interests));
+            if (event.selected) interests.add(event.interestId);
+            else interests.delete(event.interestId);
+            saveInterests.run(JSON.stringify([...interests]), subject);
+          } else if (event.type === "step_changed") {
+            saveStep.run(event.step, subject);
+          } else if (event.type === "plan_selected") {
+            details.price = choosePlan(subject, event.planPreference);
+          } else {
+            if (current.plan_preference !== event.planPreference) {
+              db.exec("ROLLBACK");
+              return res.status(409).json({ error: "plan_required" });
+            }
+            completeOnboarding.run(subject);
+          }
+        }
+        insertEvent.run(
+          subject,
+          event.eventId,
+          event.clientId,
+          event.sequence,
+          field,
+          event.type,
+          JSON.stringify(details),
+          Number(applied),
+        );
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    res.json({ profile: publicProfile(findProfile.get(subject)) });
+  });
+
+  router.post("/preferences", (req, res) => {
+    const profile = profileFor(req);
+    if (!profile) return res.status(401).json({ error: "signin_required" });
+    let preferences;
+    try {
+      preferences = preferencesFrom(req.body);
+      if (!preferences) throw new Error("Missing preferences");
+    } catch {
+      return res.status(400).json({ error: "invalid_preferences" });
+    }
+    return finishPreferences(res, profile.google_subject, preferences);
   });
 
   router.post("/google", async (req, res) => {
-    if (req.get("origin") !== site.origin) return res.status(403).json({ error: "origin" });
     if (!google) return res.status(503).json({ error: "unavailable" });
+    let preferences;
+    try {
+      preferences =
+        req.body?.mode === "onboarding" ? null : preferencesFrom(req.body);
+    } catch {
+      return res.status(400).json({ error: "invalid_preferences" });
+    }
+
+    const profile = profileFor(req);
+    if (profile && preferences)
+      return finishPreferences(res, profile.google_subject, preferences);
+    if (profile)
+      return res.json({ authenticated: true, profile: publicProfile(profile) });
 
     const state = randomBytes(32).toString("base64url");
     const nonce = randomBytes(32).toString("base64url");
-    const { codeVerifier, codeChallenge } = await google.generateCodeVerifierAsync();
+    const { codeVerifier, codeChallenge } =
+      await google.generateCodeVerifierAsync();
     const url = google.generateAuthUrl({
-      scope: ["openid", "email"],
+      scope: ["openid", "email", "profile"],
       prompt: "select_account",
       state,
       nonce,
@@ -77,35 +363,90 @@ export function createWaitlistApi(env) {
       code_challenge_method: "S256",
     });
 
-    writeCookie(res, flowCookie, { state, nonce, codeVerifier }, FLOW_SECONDS);
+    writeCookie(
+      res,
+      flowCookie,
+      {
+        state,
+        nonce,
+        codeVerifier,
+        preferences,
+        onboarding: req.body?.mode === "onboarding",
+      },
+      FLOW_SECONDS,
+    );
     res.json({ url });
   });
 
   router.get("/google/callback", async (req, res) => {
     const flow = readCookie(req, flowCookie);
     const { state, code, error } = req.query;
-    if (!google || !flow || state !== flow.state) return res.redirect(303, "/?signup=expired");
+    if (!google || !flow || state !== flow.state)
+      return res.redirect(303, "/?signup=expired");
 
     res.clearCookie(flowCookie, cookies);
-    if (error === "access_denied") return res.redirect(303, "/?signup=cancelled");
-    if (error || typeof code !== "string" || !code) return res.redirect(303, "/?signup=failed");
+    if (error === "access_denied")
+      return res.redirect(303, "/?signup=cancelled");
+    if (error || typeof code !== "string" || !code)
+      return res.redirect(303, "/?signup=failed");
 
     try {
-      const { tokens } = await google.getToken({ code, codeVerifier: flow.codeVerifier });
+      const { tokens } = await google.getToken({
+        code,
+        codeVerifier: flow.codeVerifier,
+      });
       if (!tokens.id_token) throw new Error("Missing ID token");
 
-      const ticket = await google.verifyIdToken({ idToken: tokens.id_token, audience: clientId });
+      const ticket = await google.verifyIdToken({
+        idToken: tokens.id_token,
+        audience: clientId,
+      });
       const account = ticket.getPayload();
-      if (!account || account.nonce !== flow.nonce || !account.sub || !account.email || account.email_verified !== true) {
+      if (
+        !account ||
+        account.nonce !== flow.nonce ||
+        !account.sub ||
+        !account.email ||
+        account.email_verified !== true
+      ) {
         return res.redirect(303, "/?signup=unverified");
       }
 
-      upsert.run(account.sub, account.email);
-      writeCookie(res, receiptCookie, { joined: true }, RECEIPT_SECONDS);
-      res.redirect(303, "/");
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        upsertIdentity.run(
+          account.sub,
+          account.email,
+          typeof account.name === "string" ? account.name : null,
+        );
+        beginOnboarding.run(account.sub);
+        if (flow.preferences) {
+          const preferences = preferencesFrom(flow.preferences);
+          savePreferences.run(
+            JSON.stringify(preferences.interests),
+            preferences.planPreference,
+            account.sub,
+          );
+          choosePlan(account.sub, preferences.planPreference);
+          completeOnboarding.run(account.sub);
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      writeCookie(
+        res,
+        receiptCookie,
+        { joined: true, subject: account.sub },
+        RECEIPT_SECONDS,
+      );
+      res.redirect(303, flow.onboarding ? "/?signup=authenticated" : "/");
     } catch {
       // OAuth errors can contain tokens or account details, so keep logs free of the response.
-      console.error("Hook waitlist: Google sign-in or signup persistence failed.");
+      console.error(
+        "Hook waitlist: Google sign-in or signup persistence failed.",
+      );
       res.redirect(303, "/?signup=failed");
     }
   });
@@ -113,6 +454,10 @@ export function createWaitlistApi(env) {
   router.use((_req, res) => res.sendStatus(404));
   router.use((error, _req, res, next) => {
     if (res.headersSent) return next(error);
+    if (error.type === "entity.parse.failed")
+      return res.status(400).json({ error: "invalid_json" });
+    if (error.type === "entity.too.large")
+      return res.status(413).json({ error: "too_large" });
     console.error("Hook waitlist: request failed.");
     res.status(500).json({ error: "failed" });
   });
@@ -126,6 +471,7 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
   const db = new DatabaseSync(file);
   db.exec(`
     PRAGMA busy_timeout = 5000;
+    PRAGMA foreign_keys = ON;
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS waitlist_signups (
       google_subject TEXT PRIMARY KEY NOT NULL,
@@ -133,5 +479,54 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       joined_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ) STRICT;
   `);
+  // Serialize schema upgrades so existing waitlists also work on concurrent starts.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const columns = new Set(
+      db
+        .prepare("PRAGMA table_info(waitlist_signups)")
+        .all()
+        .map((column) => column.name),
+    );
+    const additions = {
+      name: "TEXT",
+      interests: "TEXT NOT NULL DEFAULT '[]'",
+      plan_preference: "TEXT",
+      waitlist_status: "TEXT NOT NULL DEFAULT 'waitlisted'",
+      onboarding_step: "TEXT NOT NULL DEFAULT 'interests'",
+      onboarding_started_at: "TEXT",
+      onboarding_updated_at: "TEXT",
+      onboarding_completed_at: "TEXT",
+      plan_price_cents: "INTEGER",
+      plan_currency: "TEXT",
+      plan_period: "TEXT",
+    };
+    for (const [name, definition] of Object.entries(additions)) {
+      if (!columns.has(name))
+        db.exec(
+          `ALTER TABLE waitlist_signups ADD COLUMN ${name} ${definition}`,
+        );
+    }
+    if (!columns.has("onboarding_step")) {
+      db.exec(
+        "UPDATE waitlist_signups SET onboarding_step = 'completed' WHERE plan_preference IS NOT NULL",
+      );
+    }
+    db.exec(`CREATE TABLE IF NOT EXISTS onboarding_events (
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      event_id TEXT NOT NULL, client_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+      field TEXT NOT NULL, event_type TEXT NOT NULL, details TEXT NOT NULL,
+      applied INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL DEFAULT (${NOW}),
+      PRIMARY KEY (google_subject, event_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS onboarding_event_sequence
+      ON onboarding_events (google_subject, client_id, field, sequence);`);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    db.close();
+    throw error;
+  }
   return db;
 }

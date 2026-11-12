@@ -22,6 +22,7 @@ RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 COPY server ./server
+COPY waitlist/content.json ./waitlist/content.json
 COPY --from=build /app/dist-waitlist ./dist-waitlist
 
 # node:24-slim ships uid/gid 1000 as "node"; /data is the SQLite directory
