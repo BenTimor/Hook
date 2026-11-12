@@ -65,6 +65,28 @@ The page is live at **[hookcode.io](https://hookcode.io)** on the MoonRock VPS
 ./scripts/deploy-waitlist.sh     # build → upload site + source → rebuild container → probe
 ```
 
+#### Automatic deploys (GitHub Actions)
+
+Pushes to `main` deploy automatically. `.github/workflows/deploy-waitlist.yml` runs
+`pnpm waitlist:test` + `pnpm waitlist:build` on a clean runner, then calls the same
+`scripts/deploy-waitlist.sh` over SSH with `SKIP_BUILD=1` (it reuses the artifact the
+verify job built). Pull requests run the checks without deploying
+(`.github/workflows/ci.yml`). Deploys are serialized; a running deploy is never
+cancelled by the next push.
+
+Two repository secrets are required:
+
+| Secret | Value |
+|---|---|
+| `DEPLOY_SSH_KEY` | Private key of a dedicated deploy keypair; its public half is in `root@167.233.58.139:~/.ssh/authorized_keys` with the comment `github-actions hookcode.io deploy` |
+| `DEPLOY_KNOWN_HOSTS` | Pinned `ssh-keyscan 167.233.58.139` output, so the runner refuses an unexpected host key |
+
+To rotate the key: generate a new ed25519 keypair, replace the
+`github-actions hookcode.io deploy` line in `authorized_keys` on the server, update
+both secrets, then delete the old private key. The key is unrestricted (the deploy
+script needs docker, tar and mv on the host), so treat `main` as root-on-the-VPS:
+review workflow changes in PRs.
+
 Server-side layout, the two `/opt/scout` edits that mount the site into the shared
 Caddy container, and the ops commands are in [`infra/README.md`](infra/README.md).
 

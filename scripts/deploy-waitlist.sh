@@ -5,7 +5,8 @@
 #   ./scripts/deploy-waitlist.sh
 #
 # What it does:
-#   1. builds the site locally (tsc + vite → dist-waitlist/)
+#   1. builds the site locally (tsc + vite → dist-waitlist/), unless SKIP_BUILD=1
+#      (GitHub Actions builds once in the verify job and passes the artifact on)
 #   2. streams the source into /opt/hook-web/app (Docker build context)
 #   3. streams dist-waitlist/ into /opt/hook-web/site (served by Caddy)
 #   4. syncs docker-compose.yml + hookcode.caddy, reloads Caddy only if changed
@@ -47,8 +48,16 @@ cd "$(dirname "$0")/.."
 step() { printf '\n\033[1m→ %s\033[0m\n' "$1"; }
 ssh_do() { "$SSH_BIN" "${SSH_OPTS[@]}" "$HOST" "$@"; }
 
-step "Building"
-pnpm waitlist:build
+if [ "${SKIP_BUILD:-0}" = 1 ]; then
+  step "Using prebuilt dist-waitlist/ (SKIP_BUILD=1)"
+  if [ ! -f dist-waitlist/index.html ]; then
+    echo "  !! dist-waitlist/index.html missing — run pnpm waitlist:build first" >&2
+    exit 1
+  fi
+else
+  step "Building"
+  pnpm waitlist:build
+fi
 
 step "Uploading source → $HOST:$DIR/app"
 # Only tracked / gitignore-visible files: src-tauri is 11 GB locally and none

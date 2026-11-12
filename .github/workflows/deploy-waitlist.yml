@@ -1,0 +1,97 @@
+name: Deploy waitlist
+
+# Every push to main deploys https://hookcode.io. Reuses scripts/deploy-waitlist.sh
+# so CI and a local deploy stay identical; the only difference is that the built
+# site is passed from the verify job instead of being rebuilt (SKIP_BUILD=1).
+#
+# Required repository secrets:
+#   DEPLOY_SSH_KEY      private key whose public half is in
+#                       root@167.233.58.139:~/.ssh/authorized_keys
+#                       (comment: "github-actions hookcode.io deploy")
+#   DEPLOY_KNOWN_HOSTS  pinned `ssh-keyscan 167.233.58.139` output
+#
+# Rotation: generate a new keypair, replace that line in authorized_keys, then
+# update both secrets. Nothing else needs to change.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize deploys; never cancel one halfway through.
+concurrency:
+  group: deploy-waitlist
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify build & tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run API regression tests
+        run: pnpm waitlist:test
+
+      - name: Build landing page
+        run: pnpm waitlist:build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-waitlist
+          path: dist-waitlist/
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy:
+    name: Deploy to VPS
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built site
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-waitlist
+          path: dist-waitlist
+
+      - name: Install SSH credentials
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::Missing DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS repository secrets."
+            exit 1
+          fi
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          # Pinned host keys: ssh then refuses to talk to an unexpected server.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: root@167.233.58.139
+          DEPLOY_KEY: /home/runner/.ssh/deploy_key
+          SKIP_BUILD: "1"
+        run: ./scripts/deploy-waitlist.sh
