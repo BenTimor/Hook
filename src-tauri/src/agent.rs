@@ -602,7 +602,13 @@ impl AgentManager {
             &title,
             &guard,
             &crate::runtime::model_ref(&self.cfg),
-            self.coding.thinking().or_else(|| self.cfg.model.thinking_level()),
+            // The coding agent gets its own thinking level, not the chat model's.
+            // A chat turn is one answer; a run is dozens of small turns, and a
+            // high level on every one of them makes a five-minute job take
+            // twenty, with the user's checklist frozen while the model thinks.
+            // Unset means pi's own default (medium): `[coding] thinking` is the
+            // one knob that decides this.
+            self.coding.thinking(),
         );
 
         // Where the agent's guard writes progress notes for Hook to collect.
@@ -1283,15 +1289,29 @@ async fn drive(
             line = lines.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        let Ok(record) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
-                        let wake = apply_record(&inner, &agent_id, &record);
-                        persist(&data_dir, &lock(&inner));
-                        match wake {
-                            Some(_) => {
-                                mark_wake(&inner, &agent_id);
-                                let _ = signal_tx.send(Signal::Changed);
+                        // `message_update` and `tool_execution_update` are the two
+                        // records a streaming turn produces by the hundred, one per
+                        // delta, and Hook reads neither. Skipping them before parsing is
+                        // cheap: pi always writes `type` first, and anything that does
+                        // not match the prefix takes the normal path.
+                        let trimmed = line.trim();
+                        if let Some(rest) = trimmed.strip_prefix("{\"type\":\"") {
+                            if rest.starts_with("message_update\"")
+                                || rest.starts_with("tool_execution_update\"")
+                            {
+                                continue;
                             }
-                            None => {}
+                        }
+                        let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
+                        let outcome = apply_record(&inner, &agent_id, &record);
+                        // Only rewrite agents.json when the record changed something that
+                        // is actually stored: a token delta is not news.
+                        if outcome.changed {
+                            persist(&data_dir, &lock(&inner));
+                        }
+                        if outcome.wake {
+                            mark_wake(&inner, &agent_id);
+                            let _ = signal_tx.send(Signal::Changed);
                         }
                         let state = lock(&inner).agents.get(&agent_id).map(|e| e.info.state.clone()).unwrap_or_default();
                         match state.as_str() {
@@ -1420,15 +1440,25 @@ fn mark_state(
     }
 }
 
-/// Apply one pi RPC record. Returns Some when the chat agent should be woken.
-fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::Value) -> Option<()> {
+/// What one pi RPC record did to the agent.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RecordOutcome {
+    /// Something stored or drawn changed, so the caller has to persist.
+    changed: bool,
+    /// The chat agent should be woken.
+    wake: bool,
+}
+
+/// Apply one pi RPC record.
+fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::Value) -> RecordOutcome {
     let kind = record.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let mut changed = false;
     let mut wake = false;
 
     {
         let mut guard = lock(inner);
         let Some(entry) = guard.agents.get_mut(agent_id) else {
-            return None;
+            return RecordOutcome::default();
         };
         let info = &mut entry.info;
 
@@ -1439,6 +1469,7 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                 if info.state != STATE_STOPPED {
                     info.state = STATE_RUNNING.to_string();
                     info.updated_at = now_ms();
+                    changed = true;
                 }
             }
             "tool_execution_start" => {
@@ -1450,6 +1481,7 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                 info.steps = info.steps.saturating_add(1);
                 info.last_step = Some(short_step(tool, &args));
                 info.updated_at = now_ms();
+                changed = true;
             }
             "message_end" => {
                 if let Some(message) = record.get("message") {
@@ -1459,16 +1491,19 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                         if !text.trim().is_empty() {
                             info.last_message = Some(truncate(&text, 4000));
                             info.updated_at = now_ms();
+                            changed = true;
                         }
                         if let Some(stop) = message.get("stopReason").and_then(|s| s.as_str()) {
                             if stop == "length" {
                                 // The model ran out of room mid-thought: it
                                 // stopped without writing or calling a tool.
                                 entry.truncated = true;
+                                changed = true;
                             }
                             if stop == "error" || stop == "aborted" {
                                 if let Some(err) = message.get("errorMessage").and_then(|e| e.as_str()) {
                                     info.error = Some(truncate(err, 500));
+                                    changed = true;
                                 }
                             }
                         }
@@ -1518,10 +1553,12 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                     info.state = STATE_NEEDS_INPUT.to_string();
                     info.question = Some(question);
                     info.updated_at = now_ms();
+                    changed = true;
                     wake = true;
                 }
             }
             "agent_settled" => {
+                changed = true;
                 if info.state == STATE_STOPPED {
                     // The abort we asked for landed. Keep the reason it stopped
                     // and the checklist exactly as the stop left it.
@@ -1563,7 +1600,7 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
         }
     }
 
-    wake.then_some(())
+    RecordOutcome { changed, wake }
 }
 
 #[cfg(test)]
@@ -1690,7 +1727,9 @@ name = "test-model"
         drop(inner);
 
         let running = serde_json::json!({"type":"agent_start"});
-        assert!(apply_record(&mgr.inner, "ag_1", &running).is_none());
+        let outcome = apply_record(&mgr.inner, "ag_1", &running);
+        assert!(!outcome.wake);
+        assert!(outcome.changed, "a state change must be persisted");
         assert_eq!(
             lock(&mgr.inner).agents["ag_1"].info.state,
             STATE_RUNNING
@@ -1711,7 +1750,8 @@ name = "test-model"
             "type":"extension_ui_request","id":"q1","method":"select",
             "title":"Which database?","options":["Postgres","SQLite"]
         });
-        assert!(apply_record(&mgr.inner, "ag_1", &question).is_some());
+        let outcome = apply_record(&mgr.inner, "ag_1", &question);
+        assert!(outcome.wake && outcome.changed);
         {
             let guard = lock(&mgr.inner);
             let info = &guard.agents["ag_1"].info;
@@ -1722,6 +1762,40 @@ name = "test-model"
         let settled = serde_json::json!({"type":"agent_settled","aborted":false});
         apply_record(&mgr.inner, "ag_1", &settled);
         assert_eq!(lock(&mgr.inner).agents["ag_1"].info.state, STATE_IDLE);
+    }
+
+    #[test]
+    fn a_token_stream_never_rewrites_the_store() {
+        // A thinking model streams hundreds of these records per turn. They
+        // change nothing Hook stores, and rewriting agents.json for each one is
+        // how a long think used to peg a core and leave the app feeling stuck.
+        let mgr = manager();
+        lock(&mgr.inner)
+            .agents
+            .insert("ag_1".into(), plan_entry(plan_from_titles(&["Setting things up".into()])));
+
+        for kind in ["message_start", "message_update", "tool_execution_update", "turn_end"] {
+            let record = serde_json::json!({
+                "type": kind,
+                "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "..."}]}
+            });
+            let outcome = apply_record(&mgr.inner, "ag_1", &record);
+            assert!(!outcome.changed, "{kind} must not trigger a persist");
+            assert!(!outcome.wake, "{kind} must not wake the chat agent");
+        }
+
+        // The finished message is what actually matters.
+        let done = serde_json::json!({
+            "type":"message_end",
+            "message": {"role":"assistant", "content":[{"type":"text","text":"built it"}]}
+        });
+        let outcome = apply_record(&mgr.inner, "ag_1", &done);
+        assert!(outcome.changed);
+        assert!(!outcome.wake);
+        assert_eq!(
+            lock(&mgr.inner).agents["ag_1"].info.last_message.as_deref(),
+            Some("built it")
+        );
     }
 
 
@@ -1773,7 +1847,7 @@ name = "test-model"
         apply_record(&mgr.inner, "ag_1", &cut);
 
         let settled = serde_json::json!({"type":"agent_settled","aborted":false});
-        assert!(apply_record(&mgr.inner, "ag_1", &settled).is_some());
+        assert!(apply_record(&mgr.inner, "ag_1", &settled).wake);
 
         let notes = mgr.take_updates("ag_1");
         assert_eq!(notes.len(), 1);
