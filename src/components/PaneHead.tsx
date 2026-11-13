@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PanelLeft } from "lucide-react";
+import { PanelLeft, PanelRight, PanelRightClose } from "lucide-react";
 
 import { win } from "../lib/bridge";
 import { modKey } from "../lib/utils";
@@ -15,6 +15,9 @@ export function PaneHead() {
   const rename = useChatStore((s) => s.rename);
   const open = useChatStore((s) => s.sidebarOpen);
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
+  const preview = useChatStore((s) => s.preview);
+  const previewOpen = useChatStore((s) => s.previewOpen);
+  const togglePreview = useChatStore((s) => s.togglePreview);
 
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
@@ -75,6 +78,20 @@ export function PaneHead() {
       )}
 
       <div className="spacer" />
+      {preview && (
+        <button
+          className="icon-btn preview-toggle"
+          data-active={previewOpen}
+          title={previewOpen ? "Hide preview" : "Show preview"}
+          onClick={togglePreview}
+        >
+          {previewOpen ? (
+            <PanelRightClose strokeWidth={1.8} />
+          ) : (
+            <PanelRight strokeWidth={1.8} />
+          )}
+        </button>
+      )}
       <AgentPill />
       <WindowControls />
     </div>

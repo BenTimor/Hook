@@ -120,6 +120,31 @@ export interface AgentsOverview {
   agents: AgentSummary[];
 }
 
+/** One HTML page shown in the right-side preview panel. */
+export interface PreviewView {
+  active: true;
+  chatId: string;
+  project?: string;
+  file?: string;
+  title?: string;
+  /** Loopback URL of the page, served for as long as the preview lives. */
+  url?: string;
+  /** Bumped by the backend whenever the project changes. */
+  version: number;
+  /** The first time a run shows a preview the panel should open. */
+  open: boolean;
+  /** The page file has not been written yet. */
+  waiting: boolean;
+}
+
+/** The coding-agent run settled, the chat was deleted, or another page replaced it. */
+export interface PreviewClosed {
+  active: false;
+  chatId: string;
+}
+
+export type PreviewEvent = PreviewView | PreviewClosed;
+
 export type StreamEvent =
   | { kind: "started"; messages: Message[]; meta: ChatMeta }
   | { kind: "delta"; text: string }

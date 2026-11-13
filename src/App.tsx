@@ -7,6 +7,7 @@ import { AgentBoard } from "./components/AgentBoard";
 import { Composer } from "./components/Composer";
 import { Hero } from "./components/Hero";
 import { PaneHead } from "./components/PaneHead";
+import { PreviewPanel } from "./components/PreviewPanel";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
@@ -105,6 +106,7 @@ export default function App() {
           )}
         </div>
       </main>
+      <PreviewPanel />
       <SettingsSheet />
       <Toaster
         theme="light"

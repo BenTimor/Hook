@@ -24,19 +24,24 @@
  *    the plan in front of the model: a one-line reminder rides on a tool result
  *    after a few calls, and after more the next tool call is refused until the
  *    plan moves. Both counters reset, so a run can never be deadlocked.
+ * 6. The preview panel: the user can watch one HTML page from the project in a
+ *    panel on the right. `show_preview` writes a pointer into the same mailbox;
+ *    Hook serves the page and reloads it as the project changes. The coding
+ *    agent decides when a page is worth showing, and can switch it later.
  *
  * Tunables (environment, set by the Hook runtime from harness.config.toml):
  *   PI_BASH_MAX_TIMEOUT  hard cap in seconds (default 3600)
  *   PI_BASH_MIN_TIMEOUT  floor in seconds (default 1)
  *   PI_BASH_ENFORCE      "0" downgrades to warn-and-cap instead of blocking
- *   HOOK_UPDATES_DIR     mailbox folder for progress notes and the plan
+ *   HOOK_UPDATES_DIR     mailbox folder for progress notes, the plan and the
+ *                        preview pointer
  *                        (unset = disabled)
  *
  * Plain ESM on purpose: only Node built-ins, nothing that can fail to resolve.
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const MAX_TIMEOUT = Number(process.env.PI_BASH_MAX_TIMEOUT ?? 3600);
 const MIN_TIMEOUT = Number(process.env.PI_BASH_MIN_TIMEOUT ?? 1);
@@ -53,6 +58,7 @@ const UPDATES_DIR = process.env.HOOK_UPDATES_DIR ?? "";
 const MAX_PICTURES = 4;
 const MAX_PICTURE_BYTES = 8 * 1024 * 1024;
 const PICTURE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+const PREVIEW_TITLE_MAX = 80;
 
 const PLAN_SEED_FILE = join(UPDATES_DIR || ".", "plan.json");
 const MAX_PLAN_STEPS = 12;
@@ -134,6 +140,39 @@ function planGuidance() {
   return rules + "Current checklist:\n" + planLines(seed) + current;
 }
 
+/** The page a coding agent wants Hook to show in the right-side panel. */
+function normalizePreviewFile(raw) {
+  const text = String(raw ?? "").trim().replace(/\\/g, "/");
+  if (!text) return { error: "show_preview needs a `file`." };
+  const cwd = process.cwd();
+  const absolute = resolve(cwd, text);
+  const inside = relative(cwd, absolute);
+  if (!inside || inside.startsWith("..") || isAbsolute(inside)) {
+    return { error: "The preview file must stay inside the project." };
+  }
+  if (!/\.html?$/i.test(inside)) {
+    return { error: "The preview file must be an .html page." };
+  }
+  if (existsSync(absolute) && statSync(absolute).isDirectory()) {
+    return { error: "The preview path must be an HTML file, not a folder." };
+  }
+  return { file: inside.replace(/\\/g, "/"), absolute };
+}
+
+/** Tell the coding agent when a preview is worth showing, and how to point it. */
+function previewGuidance() {
+  return (
+    "\n\n## Preview panel (Hook)\n" +
+    "Hook has a preview panel on the right side of the window. It shows one HTML page from this project and refreshes it by itself whenever the project changes. It is optional, and it is for the user - you never see it.\n" +
+    "- Call `show_preview` when the work has something worth looking at: a frontend page, a UI change, a data analysis with charts, a visual report. Skip it for backend work, refactors, scripts, configuration, or anything with nothing to look at.\n" +
+    "- Set it as early as possible, not at the end. The page does not have to exist yet: `show_preview` can point at a file you are about to write, and the panel waits for it.\n" +
+    "- Frontend work: point at the page the user should see, usually index.html or the project preview entry - never a source file such as App.tsx. Keep that page working and current while you change the app, with relative paths so it behaves like the real page.\n" +
+    "- Other work worth seeing: create a standalone, self-contained HTML page (for example preview.html) with the real insights and charts, and call `show_preview` for it. Keep it updated as findings change.\n" +
+    "- Call `show_preview` again only to switch to a different page. Do not re-show the same file.\n" +
+    "- The panel opens by itself the first time in a session; never ask permission and never explain the mechanics to the user. If the brief asks for a preview, do it."
+  );
+}
+
 /** Copy one picture into the mailbox so it cannot vanish before Hook reads it. */
 function stagePicture(filesDir, source, files) {
   const absolute = resolve(source);
@@ -166,7 +205,9 @@ export default function (pi) {
     )}). Calls without a \`timeout\`, or with a \`timeout\` larger than ${clampLabel(
       MAX_TIMEOUT,
     )}, are BLOCKED and will not execute. Pick the smallest timeout that comfortably covers the command (e.g. 15s for a quick curl, 60s for a build, 300s for a long test). Never issue a bash call without setting \`timeout\`.`;
-    return { systemPrompt: (event.systemPrompt ?? "") + guideline + (UPDATES_DIR ? planGuidance() : "") };
+    return {
+      systemPrompt: (event.systemPrompt ?? "") + guideline + (UPDATES_DIR ? planGuidance() + previewGuidance() : ""),
+    };
   });
 
   pi.on("tool_call", async (event) => {
@@ -323,6 +364,69 @@ export default function (pi) {
         return {
           content: [{ type: "text", text: parts.join(" ") }],
           details: { pictures: files.length, skipped },
+        };
+      },
+    });
+
+    // ── The page the user watches on the right ────────────────────────────
+    pi.registerTool({
+      name: "show_preview",
+      label: "Show preview",
+      description:
+        "Show one HTML page from this project in Hook's right-side preview panel. The panel refreshes it whenever the project changes. Optional: use it when the work has something worth looking at, and set it early - the file may not exist yet.",
+      promptGuidelines: [
+        "Use `show_preview` for visual work: a frontend page, a UI change, a data analysis with charts, a visual report. Skip it when there is nothing to look at.",
+        "Point `file` at the page the user should see, never at a source file such as App.tsx. Keep that page current while you work.",
+        "Set it as early as possible, not at the end. The page may not exist yet; the panel waits for it.",
+        "Call it again only to switch pages. Do not re-show the same file.",
+      ],
+      parameters: {
+        type: "object",
+        properties: {
+          file: {
+            type: "string",
+            description:
+              "HTML page path relative to the project, e.g. 'index.html' or 'dist/preview.html'.",
+          },
+          title: {
+            type: "string",
+            description: "Short, plain-language title shown above the page, e.g. 'Pricing page'.",
+          },
+        },
+        required: ["file", "title"],
+        additionalProperties: false,
+      },
+      async execute(_callId, params) {
+        const checked = normalizePreviewFile(params?.file);
+        if (checked.error) {
+          return {
+            content: [{ type: "text", text: checked.error }],
+            isError: true,
+            details: {},
+          };
+        }
+        const title =
+          String(params?.title ?? "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, PREVIEW_TITLE_MAX) || basename(checked.file);
+        const record = { file: checked.file, title, at: Date.now() };
+        mkdirSync(UPDATES_DIR, { recursive: true });
+        writeFileSync(
+          join(UPDATES_DIR, `v-${Date.now()}-${process.pid}.json`),
+          JSON.stringify(record),
+        );
+        const state = existsSync(checked.absolute)
+          ? "It is live now."
+          : "It will load as soon as that file appears.";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Preview set to ${checked.file}. ${state} It refreshes by itself as the project changes; call show_preview again only to switch pages.`,
+            },
+          ],
+          details: { file: checked.file, title },
         };
       },
     });

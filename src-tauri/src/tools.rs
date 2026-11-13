@@ -54,7 +54,7 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "start_coding_agent",
-                "description": "Launch a coding agent in a project folder. It runs pi with full permissions inside that folder and can read, edit and run code. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. Returns immediately - you are notified when it settles or asks a question.",
+                "description": "Launch a coding agent in a project folder. It runs pi with full permissions inside that folder and can read, edit and run code. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. When the work has something to look at, tell the agent to build and keep an HTML preview page current and to call its show_preview tool early (see the preview panel instructions). Returns immediately - you are notified when it settles or asks a question.",
                 "parameters": {
                     "type": "object",
                     "properties": {

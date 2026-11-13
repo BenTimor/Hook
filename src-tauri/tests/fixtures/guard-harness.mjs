@@ -48,7 +48,23 @@ const planResult = await tools.update_plan?.execute("call_plan", {
   ],
 });
 const emptyPlan = await tools.update_plan?.execute("call_empty", { steps: [] });
+const previewOk = await tools.show_preview?.execute("call_preview", {
+  file: "preview.html",
+  title: "Insights",
+});
+const previewOutside = await tools.show_preview?.execute("call_preview_bad", {
+  file: "../evil.html",
+  title: "Nope",
+});
+const previewNotHtml = await tools.show_preview?.execute("call_preview_tsx", {
+  file: "app.tsx",
+  title: "Nope",
+});
 const planFiles = readdirSync(updatesDir).filter((name) => name.startsWith("p-"));
+const previewFiles = readdirSync(updatesDir).filter((name) => name.startsWith("v-"));
+const previewWritten = previewFiles.length
+  ? JSON.parse(readFileSync(join(updatesDir, previewFiles[0]), "utf8"))
+  : null;
 const written = planFiles.length
   ? JSON.parse(readFileSync(join(updatesDir, planFiles[0]), "utf8"))
   : null;
@@ -66,6 +82,16 @@ const results = {
   wrongType: await bash({ command: "ls -la", timeout: "30" }),
   ok: await bash({ command: "ls -la", timeout: 30 }),
   nonBash: await handlers.tool_call[0]({ toolName: "read", input: {} }, {}),
+  preview: {
+    toolsRegistered: Boolean(tools.show_preview),
+    guidanceExplainsOptional: /optional/i.test(before?.systemPrompt ?? ""),
+    resultOk: previewOk?.isError !== true,
+    outsideRejected: previewOutside?.isError === true,
+    nonHtmlRejected: previewNotHtml?.isError === true,
+    written: previewWritten
+      ? { file: previewWritten.file, title: previewWritten.title }
+      : null,
+  },
   plan: {
     toolsRegistered: Boolean(tools.report_progress && tools.update_plan),
     guidanceIncludesSeed:

@@ -181,6 +181,14 @@ pub struct Update {
     pub images: Vec<std::path::PathBuf>,
 }
 
+/// One page a coding agent asked Hook to show in the preview panel.
+#[derive(Debug, Clone)]
+pub struct PreviewReport {
+    pub agent_id: String,
+    pub file: String,
+    pub title: String,
+}
+
 /// Sent to the chat layer when a coding agent needs the chat agent's attention.
 #[derive(Debug, Clone)]
 pub struct Wake {
@@ -194,6 +202,8 @@ pub enum Signal {
     Wake(Wake),
     /// The set of running agents changed (for the indicator).
     Changed,
+    /// A coding agent pointed the preview panel at a page.
+    Preview(PreviewReport),
 }
 
 enum AgentCmd {
@@ -305,7 +315,7 @@ impl AgentManager {
     }
 
     /// Collect whatever the agents have written since the last tick: progress
-    /// notes, pictures and checklist updates from the guard.
+    /// notes, pictures, checklist updates and preview pointers from the guard.
     pub fn harvest(&self) {
         let ids: Vec<String> = lock(&self.inner)
             .agents
@@ -326,7 +336,7 @@ impl AgentManager {
                     p.file_name()
                         .map(|n| {
                             let name = n.to_string_lossy();
-                            name.starts_with("u-") || name.starts_with("p-")
+                            name.starts_with("u-") || name.starts_with("p-") || name.starts_with("v-")
                         })
                         .unwrap_or(false)
                         && p.extension().and_then(|e| e.to_str()) == Some("json")
@@ -340,14 +350,44 @@ impl AgentManager {
             let mut harvested: Vec<Update> = Vec::new();
             // The plan the guard wrote last, with the moment it wrote it.
             let mut newest_plan: Option<(Vec<PlanStep>, i64)> = None;
+            // The page the guard pointed the preview panel at, newest wins.
+            let mut newest_preview: Option<PreviewReport> = None;
             for file in files {
-                let is_plan = file
+                let name = file
                     .file_name()
-                    .map(|n| n.to_string_lossy().starts_with("p-"))
-                    .unwrap_or(false);
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let is_plan = name.starts_with("p-");
+                let is_preview = name.starts_with("v-");
                 let parsed = std::fs::read_to_string(&file)
                     .ok()
                     .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+
+                if is_preview {
+                    if let Some(value) = parsed {
+                        let shown = value
+                            .get("file")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        let title = value
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        if !shown.is_empty() {
+                            newest_preview = Some(PreviewReport {
+                                agent_id: id.clone(),
+                                file: shown,
+                                title,
+                            });
+                        }
+                    }
+                    let _ = std::fs::remove_file(&file);
+                    continue;
+                }
 
                 if is_plan {
                     // Files are written in timestamp order, so the last one in
@@ -391,7 +431,7 @@ impl AgentManager {
                 let _ = std::fs::remove_file(&file);
             }
 
-            if harvested.is_empty() && newest_plan.is_none() {
+            if harvested.is_empty() && newest_plan.is_none() && newest_preview.is_none() {
                 continue;
             }
 
@@ -421,6 +461,9 @@ impl AgentManager {
             // must not wake the model, only refresh the task board.
             if plan_changed {
                 let _ = self.signal_tx.send(Signal::Changed);
+            }
+            if let Some(report) = newest_preview {
+                let _ = self.signal_tx.send(Signal::Preview(report));
             }
         }
     }
@@ -2027,6 +2070,25 @@ node \"%~dp0fake-pi.mjs\" %*
         mgr.harvest();
         assert!(mgr.take_updates(&info.id).is_empty());
 
+        // A preview pointer travels the same mailbox and reaches the supervisor.
+        std::fs::write(
+            dir.join("v-2.json"),
+            serde_json::json!({"file": "preview.html", "title": "Insights"}).to_string(),
+        )
+        .unwrap();
+        mgr.harvest();
+        let mut preview = None;
+        while let Ok(signal) = rx.try_recv() {
+            if let Signal::Preview(report) = signal {
+                preview = Some(report);
+            }
+        }
+        let report = preview.expect("harvest should announce the preview");
+        assert_eq!(report.agent_id, info.id);
+        assert_eq!(report.file, "preview.html");
+        assert_eq!(report.title, "Insights");
+        assert!(!dir.join("v-2.json").exists(), "the pointer is consumed once");
+
         mgr.stop(&info.id).ok();
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -2141,7 +2203,7 @@ node \"%~dp0fake-pi.mjs\" %*
                         break;
                     }
                 }
-                Ok(Some(Signal::Changed)) | Ok(None) => {}
+                Ok(Some(Signal::Changed)) | Ok(Some(Signal::Preview(_))) | Ok(None) => {}
                 Err(_) => {}
             }
         }

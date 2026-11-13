@@ -1,13 +1,14 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 
-import { api, onAgentsEvent, onChatEvent } from "../lib/bridge";
+import { api, onAgentsEvent, onChatEvent, onPreviewEvent } from "../lib/bridge";
 import type {
   AgentsOverview,
   AppInfo,
   ChatMeta,
   DraftImage,
   Message,
+  PreviewView,
   SettingsView,
   StreamEvent,
 } from "../lib/types";
@@ -34,6 +35,10 @@ interface ChatStore {
   /** A brand new chat is being created by the first send. */
   pendingNewChat: boolean;
   agents: AgentsOverview;
+  /** The page the preview panel is showing, or null when nothing is open. */
+  preview: PreviewView | null;
+  /** The user's choice for the right-side panel; auto-opens the first time a run shows one. */
+  previewOpen: boolean;
   settings: SettingsView | null;
   settingsOpen: boolean;
 
@@ -51,6 +56,8 @@ interface ChatStore {
   setDraft: (value: string) => void;
   focusComposer: () => void;
   toggleSidebar: () => void;
+  togglePreview: () => void;
+  setPreviewOpen: (open: boolean) => void;
   requestSearch: () => void;
   openSettings: () => Promise<void>;
   closeSettings: () => void;
@@ -185,6 +192,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     searchToken: 0,
     pendingNewChat: false,
     agents: { working: 0, live: 0, agents: [] },
+    preview: null,
+    previewOpen: false,
     settings: null,
     settingsOpen: false,
 
@@ -195,14 +204,34 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubscribe?.();
       unsubscribe = onChatEvent(handleEvent);
       onAgentsEvent((overview) => set({ agents: overview }));
+      onPreviewEvent((preview) => {
+        if (!preview.active) {
+          set({ preview: null, previewOpen: false });
+          return;
+        }
+        set((state) => ({
+          preview,
+          // Only the first show in a run opens the panel; later page switches
+          // and refreshes leave the user's choice alone.
+          previewOpen: preview.open ? true : state.previewOpen,
+        }));
+      });
 
       try {
-        const [info, chats, agents] = await Promise.all([
+        const [info, chats, agents, preview] = await Promise.all([
           api.appInfo(),
           api.listChats(),
           api.agentsOverview(),
+          api.previewState(),
         ]);
-        set({ info, chats: sortMetas(chats), ready: true, agents });
+        set({
+          info,
+          chats: sortMetas(chats),
+          ready: true,
+          agents,
+          preview,
+          previewOpen: Boolean(preview?.active),
+        });
 
         // Design-time deep link used by the browser preview only.
         const params = new URLSearchParams(window.location.search);
@@ -367,6 +396,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
     focusComposer: () => set((state) => ({ focusToken: state.focusToken + 1 })),
 
     toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+
+    togglePreview: () =>
+      set((state) => (state.preview ? { previewOpen: !state.previewOpen } : {})),
+
+    setPreviewOpen: (open) => set({ previewOpen: open }),
 
     requestSearch: () => set((state) => ({ searchToken: state.searchToken + 1 })),
 

@@ -10,6 +10,7 @@ import type {
   ChatMeta,
   Message,
   PlanStep,
+  PreviewView,
   SearchHit,
   SettingsView,
   StreamEvent,
@@ -66,6 +67,53 @@ I'd start with the rail, then add depth only where something is interactive.`;
 function msg(role: "user" | "assistant", content: string, at: number): Message {
   return { id: id("m"), role, content, createdAt: at, status: "complete" };
 }
+
+/** A stand-in page so the panel can be designed in the browser preview. */
+const PREVIEW_HTML = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 48px 36px 56px; background: #f5efe5; color: #24241e;
+    font: 15px/1.5 Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+  .eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #736d60; }
+  h1 { margin: 8px 0 6px; font-size: 34px; letter-spacing: -.03em; }
+  p.lede { margin: 0 0 30px; color: #5f5a51; max-width: 44ch; }
+  .plans { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .plan {
+    background: #fffdf9; border: 1px solid rgba(63,57,43,.1); border-radius: 18px;
+    padding: 20px 18px; box-shadow: 0 1px 2px rgba(63,57,43,.04), 0 10px 28px -16px rgba(63,57,43,.22);
+  }
+  .plan.dark { background: #283b31; color: #f5efe5; border-color: transparent; }
+  .name { font-weight: 600; font-size: 13px; }
+  .price { margin: 14px 0 2px; font-size: 30px; letter-spacing: -.04em; }
+  .price small { font-size: 12px; font-weight: 400; opacity: .6; }
+  .plan ul { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .plan li { font-size: 12.5px; color: #5f5a51; }
+  .plan li::before { content: "✓"; color: #526457; margin-right: 7px; }
+  .plan.dark li { color: rgba(245,239,229,.8); }
+  .plan.dark li::before { color: #cbd4c2; }
+</style>
+</head>
+<body>
+  <div class="eyebrow">Pricing</div>
+  <h1>Simple plans, no surprises.</h1>
+  <p class="lede">A live preview of the page the coding agent is building. Every save in the project refreshes this frame.</p>
+  <div class="plans">
+    <div class="plan"><div class="name">Starter</div><div class="price">$0<small> / forever</small></div><ul><li>One project</li><li>Community support</li></ul></div>
+    <div class="plan dark"><div class="name">Pro</div><div class="price">$19<small> / month</small></div><ul><li>Unlimited projects</li><li>Preview every branch</li><li>Priority support</li></ul></div>
+    <div class="plan"><div class="name">Studio</div><div class="price">$49<small> / month</small></div><ul><li>Everything in Pro</li><li>Shared workspaces</li></ul></div>
+  </div>
+</body>
+</html>`;
+
+const PREVIEW_URL = `data:text/html;charset=utf-8,${encodeURIComponent(PREVIEW_HTML)}`;
+
 
 function build(): Record<string, Chat> {
   const now = Date.now();
@@ -492,4 +540,24 @@ export const mock = {
   async stopChatAgents(): Promise<AgentsOverview> {
     return { working: 0, live: 0, agents: [] };
   },
+
+  async previewState(): Promise<PreviewView | null> {
+    // Design-time preview: `?preview=1` opens the panel with a sample page,
+    // `?preview=waiting` shows the state before the coding agent writes it.
+    const demo = new URLSearchParams(window.location.search).get("preview");
+    if (!demo) return null;
+    const waiting = demo === "waiting";
+    return {
+      active: true,
+      chatId: "c1",
+      project: "site",
+      file: "dist/pricing.html",
+      title: "Pricing page",
+      url: waiting ? undefined : PREVIEW_URL,
+      version: 1,
+      open: true,
+      waiting,
+    };
+  },
+
 };

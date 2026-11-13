@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod guard;
 mod projects;
+mod preview;
 mod provider;
 mod runtime;
 mod settings;
@@ -77,12 +78,20 @@ pub fn run() {
                 signal_tx,
             ));
 
+            let preview_emit: preview::Emitter = {
+                let app = app.handle().clone();
+                Arc::new(move |event| {
+                    let _ = app.emit("hook://preview", event);
+                })
+            };
+
             let state = Arc::new(AppState {
                 app: app.handle().clone(),
                 store,
                 settings,
                 projects,
                 agents,
+                preview: Arc::new(preview::PreviewManager::new(preview_emit)),
                 streams: Arc::new(Mutex::new(HashMap::new())),
                 turns: turn::TurnState::default(),
                 vision: vision.clone(),
@@ -130,6 +139,21 @@ pub fn run() {
                                 turn::on_agent_event(supervisor.clone(), info);
                             }
                         }
+                        Signal::Preview(report) => {
+                            if let Some(info) = supervisor.agents.get(&report.agent_id) {
+                                let root = std::path::PathBuf::from(&info.project_path);
+                                if let Err(error) = supervisor.preview.show(
+                                    &info.chat_id,
+                                    &info.id,
+                                    &info.project,
+                                    &root,
+                                    &report.file,
+                                    &report.title,
+                                ) {
+                                    eprintln!("hook: preview rejected: {error}");
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -147,6 +171,18 @@ pub fn run() {
                     tick.tick().await;
                     ticker.agents.harvest();
                     ticker.agents.flush_due(interval);
+                    // The preview belongs to one coding-agent run. Once that run
+                    // settles, close the panel and stop watching the page.
+                    if let Some(agent_id) = ticker.preview.agent_id() {
+                        let live = ticker
+                            .agents
+                            .get(&agent_id)
+                            .map(|info| info.is_active())
+                            .unwrap_or(false);
+                        if !live {
+                            ticker.preview.stop();
+                        }
+                    }
                 }
             });
 
@@ -177,6 +213,7 @@ pub fn run() {
             commands::open_path,
             commands::agents_overview,
             commands::stop_chat_agents,
+            commands::preview_state,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Hook")
@@ -189,6 +226,7 @@ pub fn run() {
             ) {
                 if let Some(state) = app.try_state::<Arc<AppState>>() {
                     state.agents.kill_all_sync();
+                    state.preview.stop();
                 }
             }
         });

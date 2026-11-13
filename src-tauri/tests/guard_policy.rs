@@ -37,7 +37,10 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     let raw = String::from_utf8_lossy(&output.stdout);
     let value: serde_json::Value = serde_json::from_str(&raw).expect("harness prints JSON");
 
-    assert_eq!(value["hooks"], serde_json::json!(["before_agent_start", "tool_call"]));
+    assert_eq!(
+        value["hooks"],
+        serde_json::json!(["before_agent_start", "tool_call", "tool_result"])
+    );
     assert_eq!(value["guidelineAppended"], true);
 
     for blocked in ["missing", "zero", "huge", "negative", "wrongType"] {
@@ -83,4 +86,18 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     );
     assert_eq!(plan["written"][0]["status"], "done");
     assert_eq!(plan["written"][1]["status"], "active");
+
+    // The preview panel: the tool is offered, the guidance says it is optional,
+    // and a page is only accepted inside the project and as HTML.
+    let preview = &value["preview"];
+    assert_eq!(preview["toolsRegistered"], true, "show_preview must be offered");
+    assert_eq!(
+        preview["guidanceExplainsOptional"], true,
+        "the coding agent must be told the preview is optional"
+    );
+    assert_eq!(preview["resultOk"], true);
+    assert_eq!(preview["outsideRejected"], true, "../evil.html must be refused");
+    assert_eq!(preview["nonHtmlRejected"], true, "a .tsx file must be refused");
+    assert_eq!(preview["written"]["file"], "preview.html");
+    assert_eq!(preview["written"]["title"], "Insights");
 }

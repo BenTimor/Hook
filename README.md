@@ -285,8 +285,8 @@ also proves the copy can load Hook's guard before anything gets packaged.
   agent-sessions\          coding-engine session files (resumable)
   agent-home\              the engine's own config: models.json (this build's
                            endpoint + key + model), settings.json, sessions
-  updates\<agent id>\      progress notes and checklist updates the agents wrote,
-                           collected each second
+  updates\<agent id>\      progress notes, checklist updates and preview pointers
+                           the agents wrote, collected each second
   hook-guard.mjs           the guard loaded into every coding agent
 ```
 
@@ -303,9 +303,9 @@ conversation while you keep chatting.
   right project later.
 - **The chat agent never touches files.** Its tools are `list_projects`,
   `create_project`, `update_project_description`, `start_coding_agent`,
-  `list_agents`, `agent_status`, `steer_agent`, `answer_agent`, `stop_agent` and
-  `list_coding_sessions`. All code reading and editing happens inside a coding
-  agent.
+  `list_agents`, `agent_status`, `steer_agent`, `answer_agent`, `stop_agent`
+  and `list_coding_sessions`. All code reading and editing happens inside a
+  coding agent, including setting the preview panel.
 - **Hook ships its own engine.** The installer carries a Node runtime and the
   pi coding agent's bundle as app resources; agents run on that copy. Nothing is
   installed on the machine, nothing is looked up on `PATH`, and there is no
@@ -363,6 +363,19 @@ conversation while you keep chatting.
   is the menu as it stands" with the screenshot right there. How an agent
   produces them is up to it: a headless browser, the project's own harness, an
   engine's screenshot API.
+- **A live preview when there is something to see.** The coding agent gets a
+  `show_preview(file, title)` tool: it puts one HTML page from its project in a
+  panel on the right. Hook serves the project over a loopback HTTP server, so
+  relative CSS, images, modules and `fetch` behave like a normal browser, and
+  the frame reloads whenever a web asset in the project changes. The page does
+  not have to exist yet: the panel waits and loads it the moment the agent
+  writes it. Previewing is optional and for the user's eyes — a frontend task, a
+  data analysis with charts, a visual report. The guard tells the agent to set
+  it early, and the chat agent asks for it in the brief. The first time a run
+  shows a preview the panel opens; the user can hide it and bring it back from
+  the title bar. Calling `show_preview` again switches the page. Hook watches
+  only that one project, and when the coding-agent run settles the panel closes
+  and the watch stops. A deleted chat or quitting Hook stops it too.
 - **Context and output budget.** `[coding] context_window` (1,048,576) and
   `max_output_tokens` (393,216) are what `models.json` advertises to pi; both
   should match the model (check `GET /models`: `context_window` and
@@ -398,11 +411,11 @@ conversation while you keep chatting.
   `timeout` in seconds (1–3600 by default). Missing, oversized or non-numeric
   timeouts are blocked with an explanation, and the model re-issues the call.
   Tune it with `bash_max_timeout` / `bash_min_timeout`. The same guard offers
-  `report_progress` and `update_plan`, and seeds the coding agent with the
-  checklist the user is watching so the wording stays plain. The checklist is
-  also enforced: every third tool call without an `update_plan` carries a
-  one-line reminder, and after five the next call is blocked with the current
-  checklist. Both counters reset, so a run that keeps ignoring it can never hang.
+  `report_progress`, `update_plan` and `show_preview`, and seeds the coding
+  agent with the checklist the user is watching so the wording stays plain. The
+  checklist is also enforced: every third tool call without an `update_plan`
+  carries a one-line reminder, and after five the next call is blocked with the
+  current checklist. Both counters reset, so a run that keeps ignoring it can never hang.
 - **They run asynchronously.** `start_coding_agent` returns immediately and you
   can keep talking. When an agent settles, fails, or asks a question, Hook
   appends a hidden note to the owning chat and wakes the chat agent, which posts

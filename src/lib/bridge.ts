@@ -9,6 +9,8 @@ import type {
   Chat,
   ChatEvent,
   ChatMeta,
+  PreviewEvent,
+  PreviewView,
   SearchHit,
   SettingsView,
   StreamEvent,
@@ -19,9 +21,11 @@ export const isTauri = (): boolean =>
 
 type ChatListener = (chatId: string, event: StreamEvent) => void;
 type AgentsListener = (overview: AgentsOverview) => void;
+type PreviewListener = (preview: PreviewEvent) => void;
 
 const chatListeners = new Set<ChatListener>();
 const agentsListeners = new Set<AgentsListener>();
+const previewListeners = new Set<PreviewListener>();
 
 function dispatch(chatId: string, event: StreamEvent) {
   for (const listener of chatListeners) listener(chatId, event);
@@ -58,6 +62,30 @@ export function onAgentsEvent(listener: AgentsListener): () => void {
   let off: (() => void) | null = null;
   let cancelled = false;
   void listen<AgentsOverview>("hook://agents", (event) =>
+    listener(event.payload),
+  ).then((unlisten) => {
+    if (cancelled) unlisten();
+    else off = unlisten;
+  });
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
+/**
+ * The preview panel is a sidecar of the app, not of one chat: the backend
+ * keeps at most one page open and announces the page being shown, every
+ * refresh, and when the panel closes.
+ */
+export function onPreviewEvent(listener: PreviewListener): () => void {
+  if (!isTauri()) {
+    previewListeners.add(listener);
+    return () => previewListeners.delete(listener);
+  }
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void listen<PreviewEvent>("hook://preview", (event) =>
     listener(event.payload),
   ).then((unlisten) => {
     if (cancelled) unlisten();
@@ -170,6 +198,12 @@ export const api = {
 
   agentsOverview: (): Promise<AgentsOverview> =>
     isTauri() ? invoke<AgentsOverview>("agents_overview") : mock.agentsOverview(),
+
+  previewState: (): Promise<PreviewView | null> =>
+    isTauri()
+      ? invoke<PreviewView | null>("preview_state")
+      : mock.previewState(),
+
 
   stopChatAgents: (chatId: string): Promise<AgentsOverview> =>
     isTauri()

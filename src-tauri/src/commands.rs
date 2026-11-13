@@ -6,6 +6,7 @@ use tauri::{AppHandle, State};
 
 use crate::agent::AgentManager;
 use crate::config;
+use crate::preview::{PreviewManager, PreviewView};
 use crate::projects::{Project, ProjectsStore};
 use crate::provider::CancelToken;
 use crate::settings::SettingsStore;
@@ -18,6 +19,7 @@ pub struct AppState {
     pub settings: Arc<SettingsStore>,
     pub projects: Arc<ProjectsStore>,
     pub agents: Arc<AgentManager>,
+    pub preview: Arc<PreviewManager>,
     pub streams: Arc<Mutex<HashMap<String, CancelToken>>>,
     pub turns: TurnState,
     /// Whether the model can see images, taken from its `/models` card.
@@ -82,6 +84,7 @@ pub fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(
             let _ = state.agents.stop(&agent.id);
         }
     }
+    state.preview.stop_chat(&chat_id);
     state.store.delete(&chat_id)
 }
 
@@ -387,6 +390,12 @@ pub fn stop_chat_agents(
 ) -> Result<crate::agent::Overview, String> {
     state.agents.stop_chat(&chat_id);
     Ok(state.agents.overview())
+}
+
+/// The preview the panel should show when the webview boots (or reloads).
+#[tauri::command]
+pub fn preview_state(state: State<'_, Arc<AppState>>) -> Option<PreviewView> {
+    state.preview.snapshot()
 }
 
 fn derive_title(text: &str) -> String {

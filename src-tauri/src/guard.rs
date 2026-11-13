@@ -55,6 +55,14 @@ mod tests {
         assert!(GUARD_SOURCE.contains("[Hook checklist]"));
         assert!(GUARD_SOURCE.contains("without updating the user's checklist"));
         assert!(GUARD_SOURCE.contains("callsSincePlan = 0;"));
+        // The preview panel: the coding agent points it at a page from the
+        // project, and the guard refuses anything outside it or anything that
+        // is not HTML.
+        assert!(GUARD_SOURCE.contains("name: \"show_preview\""));
+        assert!(GUARD_SOURCE.contains("preview file must stay inside the project"));
+        assert!(GUARD_SOURCE.contains("must be an .html page"));
+        assert!(GUARD_SOURCE.contains("`v-${Date.now()}-${process.pid}.json`"));
+        assert!(GUARD_SOURCE.contains("It is optional"));
         // The guidance must forbid heartbeat updates, not encourage them.
         assert!(GUARD_SOURCE.contains("still working"));
         assert!(GUARD_SOURCE.contains("Long stretches of silence"));
