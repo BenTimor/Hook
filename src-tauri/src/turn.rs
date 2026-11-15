@@ -45,6 +45,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 
 ## Progress
 - A note arrives when a coding agent reported something. It is not a request to speak, and most notes are not worth a message.
+- A note is never permission to start, steer, or restart coding work. Only a message from the user can do that. When a note says a run finished, leave it finished - report it, or call no_update and stay silent.
 - Speak only when the user would learn something they would care about: a milestone you can state concretely, a decision that changes the outcome, a problem, or a picture worth looking at. Then two or three sentences, no preamble, no recap of what you already said.
 - Otherwise call no_update and stay silent. Silence is normal: several notes in a row can pass without a word, and a stretch of quiet is expected while work is underway.
 - A status line is never news. 'Still working', 'building now', 'on it', 'in progress', 'making good progress' and 'I'll report back when...' are all filler: if that is all you have to say, call no_update instead. Never promise a future update - either there is something to say now or there is not.
@@ -196,6 +197,15 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         }
         set
     });
+
+    // A coding-agent note can wake this turn, but it is not permission to put
+    // more work in motion. Only a message the user has not been answered for
+    // lets the chat agent start or redirect a coding agent.
+    let user_initiated = state
+        .store
+        .load(&chat_id)
+        .map(|chat| user_is_waiting(&chat))
+        .unwrap_or(false);
 
     let mut rounds = 0usize;
 
@@ -395,7 +405,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     );
 
                     for call in &calls {
-                        let result = run_tool(&state, &chat_id, call);
+                        let result = run_tool(&state, &chat_id, call, user_initiated);
                         let mut message = Message::new("tool", &result, "complete");
                         message.tool_call_id = Some(call.id.clone());
                         message.hidden = true;
@@ -588,7 +598,12 @@ fn non_empty(value: String) -> Option<String> {
     }
 }
 
-fn run_tool(state: &AppState, chat_id: &str, call: &ToolCallRecord) -> String {
+fn run_tool(
+    state: &AppState,
+    chat_id: &str,
+    call: &ToolCallRecord,
+    user_initiated: bool,
+) -> String {
     let args = serde_json::from_str::<serde_json::Value>(&call.arguments)
         .unwrap_or_else(|_| json!({}));
     tools::execute(
@@ -597,10 +612,23 @@ fn run_tool(state: &AppState, chat_id: &str, call: &ToolCallRecord) -> String {
             projects: &state.projects,
             settings: &state.settings,
             chat_id,
+            user_initiated,
         },
         &call.name,
         &args,
     )
+}
+
+/// True when the newest visible word in the chat is the user's: they asked for
+/// something and no reply has been written yet. A turn woken by a coding-agent
+/// note is never user-initiated, even when an older user message sits above it.
+fn user_is_waiting(chat: &Chat) -> bool {
+    chat.messages
+        .iter()
+        .rev()
+        .find(|m| !m.hidden && (m.role == "user" || m.role == "assistant"))
+        .map(|m| m.role == "user")
+        .unwrap_or(false)
 }
 
 /// Append the agent event the chat agent must react to, then wake the chat.
@@ -1180,6 +1208,25 @@ mod tests {
             .collect();
         assert!(names.contains(&"no_update"));
         assert!(names.contains(&"list_projects"));
+    }
+
+    #[test]
+    fn only_an_unanswered_user_message_permits_coding_work() {
+        // A note woke the turn, and the user's earlier request was answered.
+        let answered = chat_with(vec![
+            Message::new("user", "build it", "complete"),
+            Message::new("assistant", "Built it.", "complete"),
+            Message::hidden("system", "[coding agent update] state: idle"),
+        ]);
+        assert!(!user_is_waiting(&answered));
+
+        // The user has asked for a change and is waiting for the answer.
+        let waiting = chat_with(vec![
+            Message::new("assistant", "Built it.", "complete"),
+            Message::new("user", "make it bolder", "complete"),
+            Message::hidden("system", "[coding agent update] state: idle"),
+        ]);
+        assert!(user_is_waiting(&waiting));
     }
 
     #[test]

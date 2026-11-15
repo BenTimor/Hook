@@ -54,7 +54,7 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "start_coding_agent",
-                "description": "Launch a coding agent in a project folder. It runs pi with full permissions inside that folder and can read, edit and run code. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. When the work has something to look at, tell the agent to build and keep an HTML preview page current and to call its show_preview tool early (see the preview panel instructions). Returns immediately - you are notified when it settles or asks a question.",
+                "description": "Launch a coding agent in a project folder, only for work the user asked for in their own message. It runs pi with full permissions inside that folder and can read, edit and run code. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. When the work has something to look at, tell the agent to build and keep an HTML preview page current and to call its show_preview tool early (see the preview panel instructions). Returns immediately - you are notified when it settles or asks a question. Never start work just because a coding-agent update arrived.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -100,7 +100,7 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "steer_agent",
-                "description": "Send guidance to a running coding agent. Use this whenever the user sends a message while an agent is already working: pass their instruction on instead of starting another agent. Delivered after its current tool calls finish. If the agent is waiting for an answer to a question, use answer_agent instead. Also starts a follow-up task in the same session when the agent is idle.",
+                "description": "Send guidance to a running coding agent when the user asks for a change while it works. Pass their instruction on instead of starting another agent. Delivered after its current tool calls finish. If the agent is waiting for an answer to a question, use answer_agent instead. Also starts a follow-up task in the same session when the agent is idle, but only when the user has asked for more work in their latest message - never from a coding-agent update.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -170,6 +170,9 @@ pub struct ToolEnv<'a> {
     pub projects: &'a ProjectsStore,
     pub settings: &'a SettingsStore,
     pub chat_id: &'a str,
+    /// True only when the user asked for something and has not been answered
+    /// yet. A turn woken by a coding-agent note is not user-initiated.
+    pub user_initiated: bool,
 }
 
 /// Runs one tool call and returns the JSON text handed back to the model.
@@ -189,6 +192,15 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 }
 
 fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
+    // A note from a coding agent can wake the chat, but it is not a user
+    // request. Refuse to start or redirect work from it: otherwise a model
+    // can "helpfully" restart a run that had already finished.
+    if !env.user_initiated && matches!(name, "start_coding_agent" | "steer_agent") {
+        return Err(
+            "Coding work can only start or change because the user asked for it. This turn was triggered by a coding-agent update, so report the update or call no_update and wait for the user."
+                .into(),
+        );
+    }
     let root = env.settings.projects_dir();
 
     match name {
@@ -581,6 +593,7 @@ mod tests {
             projects: &projects,
             settings: &settings,
             chat_id: "c1",
+            user_initiated: true,
         };
         let out = execute(&env, "nope", &json!({}));
         assert!(out.contains("Unknown tool"));
@@ -611,8 +624,45 @@ mod tests {
             projects: &projects,
             settings: &settings,
             chat_id: "c1",
+            user_initiated: true,
         };
         let out = execute(&env, "create_project", &json!({}));
         assert!(out.contains("Missing"));
+    }
+
+    #[test]
+    fn a_coding_agent_note_cannot_restart_work() {
+        let base = std::env::temp_dir().join(format!("hook-tools-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let settings = SettingsStore::new(&base);
+        let projects = ProjectsStore::new(&base);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let agents = AgentManager::new(
+            &base,
+            std::sync::Arc::new(crate::config::get().expect("config").clone()),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Ok(crate::runtime::PiRuntime {
+                program: std::path::PathBuf::from("pi"),
+                cli: None,
+                agent_home: base.join("agent-home"),
+            }),
+            std::sync::Arc::new(SettingsStore::new(&base)),
+            std::sync::Arc::new(ProjectsStore::new(&base)),
+            tx,
+        );
+        let env = ToolEnv {
+            agents: &agents,
+            projects: &projects,
+            settings: &settings,
+            chat_id: "c1",
+            user_initiated: false,
+        };
+        for tool in ["start_coding_agent", "steer_agent"] {
+            let out = execute(&env, tool, &json!({}));
+            assert!(
+                out.contains("only start or change because the user asked"),
+                "{tool}: {out}"
+            );
+        }
     }
 }
