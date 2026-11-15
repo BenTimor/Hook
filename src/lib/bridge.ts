@@ -76,7 +76,7 @@ export function onAgentsEvent(listener: AgentsListener): () => void {
 /**
  * The preview panel is a sidecar of the app, not of one chat: the backend
  * keeps at most one page open and announces the page being shown, every
- * refresh, and when the panel closes.
+ * refresh, the run settling (no more auto-refresh) and when the panel closes.
  */
 export function onPreviewEvent(listener: PreviewListener): () => void {
   if (!isTauri()) {

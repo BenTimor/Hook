@@ -58,10 +58,15 @@ pub struct PreviewView {
     pub open: bool,
     /// The page file does not exist yet. The watcher loads it when it appears.
     pub waiting: bool,
+    /// The run is still working and the page refreshes itself as files change.
+    /// It becomes false when the run settles: the panel stays open and usable,
+    /// but the user reloads it by hand from then on.
+    pub live: bool,
 }
 
-/// Sent when the preview ends: the coding-agent run settled, the chat was
-/// deleted, or another preview replaced it.
+/// Sent when the preview ends: the chat was deleted, another preview replaced
+/// it, or the app is quitting. A settled coding-agent run no longer closes the
+/// panel.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewClosed {
@@ -89,8 +94,8 @@ pub struct PreviewManager {
 
 struct Active {
     chat_id: String,
-    /// The coding agent that pointed the panel at this page. The preview is
-    /// closed when that run settles.
+    /// The coding agent that pointed the panel at this page. The preview stops
+    /// refreshing when that run settles, but stays open.
     agent_id: String,
     project: String,
     file: String,
@@ -100,6 +105,9 @@ struct Active {
     path: PathBuf,
     version: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
+    /// Set when the coding-agent run settles. The server keeps serving the
+    /// page; only automatic refreshes stop.
+    settled: Arc<AtomicBool>,
     server: Option<Server>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -116,6 +124,7 @@ impl Active {
             version: self.version.load(Ordering::SeqCst),
             open,
             waiting: !self.path.is_file(),
+            live: !self.settled.load(Ordering::SeqCst),
         }
     }
 
@@ -142,8 +151,8 @@ impl PreviewManager {
     /// panel shows a waiting state and the watcher opens it when it appears.
     ///
     /// `agent_id` is this coding-agent run. The first preview of a run opens
-    /// the panel; the same run later only switches pages. The run also decides
-    /// when the panel closes (see the ticker in `lib.rs`).
+    /// the panel; the same run later only switches pages. When the run settles
+    /// the panel stays open and the watcher stops (see the ticker in `lib.rs`).
     pub fn show(
         &self,
         chat_id: &str,
@@ -188,6 +197,7 @@ impl PreviewManager {
         let url = format!("http://127.0.0.1:{port}/{}", encode_path(&file));
         let version = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
+        let settled = Arc::new(AtomicBool::new(false));
         let thread = start_watch(
             self.emit.clone(),
             root,
@@ -199,6 +209,7 @@ impl PreviewManager {
             url.clone(),
             version.clone(),
             stop.clone(),
+            settled.clone(),
             self.epoch.clone(),
             my_epoch,
         )?;
@@ -213,6 +224,7 @@ impl PreviewManager {
             path,
             version,
             stop,
+            settled,
             server: Some(server),
             thread: Some(thread),
         };
@@ -229,6 +241,26 @@ impl PreviewManager {
     /// the webview on boot.
     pub fn snapshot(&self) -> Option<PreviewView> {
         lock(&self.active).as_ref().map(|active| active.view(true))
+    }
+
+    /// The coding-agent run settled. Keep the page open and usable, but stop
+    /// following the project: no more automatic reloads. Idempotent, because
+    /// the ticker keeps asking while the panel stays around.
+    pub fn settle(&self) {
+        let mut guard = lock(&self.active);
+        let Some(active) = guard.as_mut() else {
+            return;
+        };
+        if active.settled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        // Invalidate a scan that is already in flight, then ask the watcher to
+        // exit. Bumping only here keeps the ticker's repeated asks cheap.
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        active.stop.store(true, Ordering::SeqCst);
+        let view = active.view(false);
+        drop(guard);
+        (self.emit)(PreviewEvent::Open(view));
     }
 
     /// End the preview unconditionally.
@@ -662,6 +694,7 @@ fn start_watch(
     url: String,
     version: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
+    settled: Arc<AtomicBool>,
     epoch: Arc<AtomicU64>,
     my_epoch: u64,
 ) -> Result<std::thread::JoinHandle<()>, String> {
@@ -698,6 +731,7 @@ fn start_watch(
                     version: version.load(Ordering::SeqCst),
                     open: false,
                     waiting: !path.is_file(),
+                    live: !settled.load(Ordering::SeqCst),
                 }));
             }
         })
@@ -780,12 +814,14 @@ mod tests {
             version: 3,
             open: true,
             waiting: false,
+            live: true,
         });
         let value = serde_json::to_value(open).unwrap();
         assert_eq!(value["active"], true);
         assert_eq!(value["chatId"], "chat-1");
         assert_eq!(value["version"], 3);
         assert_eq!(value["waiting"], false);
+        assert_eq!(value["live"], true);
 
         let closed = PreviewEvent::Closed(PreviewClosed {
             active: false,
@@ -862,6 +898,35 @@ mod tests {
         let snapshot = manager.snapshot().unwrap();
         assert!(!snapshot.waiting);
         assert!(snapshot.version >= 1);
+        assert!(snapshot.live);
+
+        // When the coding-agent run settles the panel stays available, but the
+        // page stops refreshing itself. The server must keep serving it.
+        manager.settle();
+        let settled = events.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(settled["active"], true);
+        assert_eq!(settled["live"], false);
+        let frozen = manager.snapshot().unwrap();
+        assert!(!frozen.live);
+
+        std::fs::write(dir.join("later.html"), "<h1>changed after settle</h1>").unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(manager.snapshot().unwrap().version, frozen.version);
+
+        let rest = frozen.url.strip_prefix("http://127.0.0.1:").unwrap();
+        let (port, path) = rest.split_once('/').unwrap();
+        let mut stream =
+            std::net::TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap())).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        write!(
+            stream,
+            "GET /{path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.contains("200 OK"), "{response}");
+        assert!(response.contains("changed after settle"), "{response}");
 
         // Ending the session stops the watch and announces the close.
         manager.stop();

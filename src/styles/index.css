@@ -654,32 +654,59 @@ textarea {
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  min-width: 300px;
+  min-width: 0;
   max-width: 62vw;
+  overflow: hidden;
   border-left: 1px solid var(--line);
   background: rgba(255, 253, 249, 0.62);
   backdrop-filter: blur(30px) saturate(140%);
   -webkit-backdrop-filter: blur(30px) saturate(140%);
-  animation: preview-in 200ms var(--ease);
+  animation: preview-in 240ms var(--ease);
+  will-change: width, opacity, transform;
 }
 
 @keyframes preview-in {
   from {
+    width: 0;
     opacity: 0;
-    transform: translateX(10px);
+    transform: translateX(14px);
   }
   to {
+    width: var(--preview-width, 440px);
     opacity: 1;
     transform: none;
   }
 }
 
+.preview-panel[data-closing="true"] {
+  animation: preview-out 220ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
+
+.preview-panel[data-closing="true"] .preview-resize {
+  display: none;
+}
+
+@keyframes preview-out {
+  from {
+    width: var(--preview-width, 440px);
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    width: 0;
+    opacity: 0;
+    transform: translateX(14px);
+    border-left-color: transparent;
+  }
+}
+
 .preview-resize {
   position: absolute;
-  left: -4px;
+  left: 0;
   top: 0;
   bottom: 0;
-  width: 9px;
+  width: 8px;
   z-index: 20;
   cursor: col-resize;
   touch-action: none;
@@ -688,7 +715,7 @@ textarea {
 .preview-resize::after {
   content: "";
   position: absolute;
-  left: 4px;
+  left: 2px;
   top: 50%;
   width: 2px;
   height: 36px;
@@ -755,6 +782,118 @@ body[data-preview-dragging="true"] iframe {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
+}
+
+.preview-status {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.preview-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px 0 8px;
+  border: 1px solid rgba(82, 100, 87, 0.16);
+  border-radius: 999px;
+  background: rgba(227, 231, 219, 0.62);
+  color: var(--sage);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  transition: background 140ms, border-color 140ms;
+}
+
+.preview-live:hover,
+.preview-live[data-open="true"] {
+  background: rgba(227, 231, 219, 0.96);
+  border-color: rgba(82, 100, 87, 0.28);
+}
+
+.preview-live svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.55;
+  transition: opacity 140ms;
+}
+
+.preview-live:hover svg,
+.preview-live[data-open="true"] svg {
+  opacity: 0.9;
+}
+
+.preview-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sage);
+  animation: preview-live-pulse 2s ease-out infinite;
+}
+
+@keyframes preview-live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(82, 100, 87, 0.34);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 5px rgba(82, 100, 87, 0);
+  }
+}
+
+.preview-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 9px 10px 0;
+  padding: 10px 7px 10px 12px;
+  border: 1px solid rgba(82, 100, 87, 0.14);
+  border-radius: 11px;
+  background: rgba(227, 231, 219, 0.46);
+  animation: preview-note-in 190ms var(--ease);
+}
+
+@keyframes preview-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.preview-note-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-note-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.preview-note-body {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.preview-note-close {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  color: var(--ink-3);
+}
+
+.preview-note-close svg {
+  width: 13px;
+  height: 13px;
 }
 
 .preview-actions .icon-btn svg {
@@ -832,7 +971,10 @@ body[data-preview-dragging="true"] iframe {
 
 @media (prefers-reduced-motion: reduce) {
   .preview-panel,
-  .preview-waiting-dot {
+  .preview-panel[data-closing="true"],
+  .preview-waiting-dot,
+  .preview-live-dot,
+  .preview-note {
     animation: none;
   }
 }
@@ -852,6 +994,33 @@ body[data-preview-dragging="true"] iframe {
     border-left: 1px solid var(--line);
     background: var(--panel-strong);
     box-shadow: -22px 0 56px -30px rgba(var(--ink-rgb), 0.35);
+    animation-name: preview-in-sheet;
+  }
+
+  .preview-panel[data-closing="true"] {
+    animation-name: preview-out-sheet;
+  }
+
+  @keyframes preview-in-sheet {
+    from {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes preview-out-sheet {
+    from {
+      opacity: 1;
+      transform: none;
+    }
+    to {
+      opacity: 0;
+      transform: translateX(100%);
+    }
   }
 
   .preview-resize {

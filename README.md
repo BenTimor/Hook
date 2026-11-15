@@ -369,13 +369,17 @@ conversation while you keep chatting.
   relative CSS, images, modules and `fetch` behave like a normal browser, and
   the frame reloads whenever a web asset in the project changes. The page does
   not have to exist yet: the panel waits and loads it the moment the agent
-  writes it. Previewing is optional and for the user's eyes — a frontend task, a
-  data analysis with charts, a visual report. The guard tells the agent to set
-  it early, and the chat agent asks for it in the brief. The first time a run
-  shows a preview the panel opens; the user can hide it and bring it back from
-  the title bar. Calling `show_preview` again switches the page. Hook watches
-  only that one project, and when the coding-agent run settles the panel closes
-  and the watch stops. A deleted chat or quitting Hook stops it too.
+  writes it. A small “Live preview” badge explains that the page is still in
+  progress: it can change or reload on its own while the agent works. Previewing
+  is optional and for the user's eyes — a frontend task, a data analysis with
+  charts, a visual report. The guard tells the agent to set it early, and the
+  chat agent asks for it in the brief. The first time a run shows a preview the
+  panel opens; the user can hide it and bring it back from the title bar.
+  Calling `show_preview` again switches the page. Hook watches only that one
+  project. When the coding-agent run settles, the panel stays open and the page
+  stays available: only the automatic refreshing stops, and the badge goes
+  away, so the user can reload by hand. A deleted chat or quitting Hook stops it
+  and closes the panel.
 - **Context and output budget.** `[coding] context_window` (1,048,576) and
   `max_output_tokens` (393,216) are what `models.json` advertises to pi; both
   should match the model (check `GET /models`: `context_window` and

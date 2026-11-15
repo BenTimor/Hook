@@ -543,10 +543,12 @@ export const mock = {
 
   async previewState(): Promise<PreviewView | null> {
     // Design-time preview: `?preview=1` opens the panel with a sample page,
-    // `?preview=waiting` shows the state before the coding agent writes it.
+    // `?preview=waiting` shows the state before the coding agent writes it and
+    // `?preview=done` shows the panel after the run settled.
     const demo = new URLSearchParams(window.location.search).get("preview");
     if (!demo) return null;
     const waiting = demo === "waiting";
+    const live = demo !== "done";
     return {
       active: true,
       chatId: "c1",
@@ -557,6 +559,7 @@ export const mock = {
       version: 1,
       open: true,
       waiting,
+      live,
     };
   },
 

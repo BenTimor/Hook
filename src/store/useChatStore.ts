@@ -211,8 +211,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         }
         set((state) => ({
           preview,
-          // Only the first show in a run opens the panel; later page switches
-          // and refreshes leave the user's choice alone.
+          // Only the first show in a run opens the panel; later page switches,
+          // refreshes and the run settling leave the user's choice alone.
           previewOpen: preview.open ? true : state.previewOpen,
         }));
       });

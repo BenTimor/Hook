@@ -172,7 +172,8 @@ pub fn run() {
                     ticker.agents.harvest();
                     ticker.agents.flush_due(interval);
                     // The preview belongs to one coding-agent run. Once that run
-                    // settles, close the panel and stop watching the page.
+                    // settles the panel stays open and usable, but the page
+                    // stops refreshing itself; the user reloads it by hand.
                     if let Some(agent_id) = ticker.preview.agent_id() {
                         let live = ticker
                             .agents
@@ -180,7 +181,7 @@ pub fn run() {
                             .map(|info| info.is_active())
                             .unwrap_or(false);
                         if !live {
-                            ticker.preview.stop();
+                            ticker.preview.settle();
                         }
                     }
                 }

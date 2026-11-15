@@ -135,9 +135,12 @@ export interface PreviewView {
   open: boolean;
   /** The page file has not been written yet. */
   waiting: boolean;
+  /** The run is still working, so the page refreshes itself as files change. */
+  live: boolean;
 }
 
-/** The coding-agent run settled, the chat was deleted, or another page replaced it. */
+/** The preview ended: the chat was deleted, another page replaced this one, or
+ * the app is quitting. A finished coding-agent run leaves the panel open. */
 export interface PreviewClosed {
   active: false;
   chatId: string;
