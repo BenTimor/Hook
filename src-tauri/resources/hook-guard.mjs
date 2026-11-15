@@ -192,6 +192,18 @@ function stagePicture(filesDir, source, files) {
   return { name: target };
 }
 
+/** Search uses Hook's account service, which holds the provider key. */
+function webSearchGuidance() {
+  if (!process.env.HOOK_API_BASE || !process.env.HOOK_API_TOKEN) return "";
+  return `
+
+## Web search (Hook)
+Use web_search when the task depends on current information: library releases, API changes, error messages, prices, documentation, or anything you cannot read in the project. Do not search for things you already know or can read locally.
+- Results contain titles, URLs, snippets and summaries. Cite the URLs you actually use in your final report. If the results are empty or disagree, say so.
+- Keep searches focused: a couple of queries is usually enough, and the user is paying for each one.
+`;
+}
+
 export default function (pi) {
   pi.on("before_agent_start", async (event) => {
     // A new run (or a steer) starts with a clean slate: the counters describe
@@ -206,7 +218,11 @@ export default function (pi) {
       MAX_TIMEOUT,
     )}, are BLOCKED and will not execute. Pick the smallest timeout that comfortably covers the command (e.g. 15s for a quick curl, 60s for a build, 300s for a long test). Never issue a bash call without setting \`timeout\`.`;
     return {
-      systemPrompt: (event.systemPrompt ?? "") + guideline + (UPDATES_DIR ? planGuidance() + previewGuidance() : ""),
+      systemPrompt:
+        (event.systemPrompt ?? "") +
+        guideline +
+        webSearchGuidance() +
+        (UPDATES_DIR ? planGuidance() + previewGuidance() : ""),
     };
   });
 
@@ -498,6 +514,118 @@ export default function (pi) {
           ],
           details: { steps: steps.length, done },
         };
+      },
+    });
+  }
+
+  // ── Web search ──────────────────────────────────────────────────────────
+  if (process.env.HOOK_API_BASE && process.env.HOOK_API_TOKEN) {
+    pi.registerTool({
+      name: "web_search",
+      label: "Web search",
+      description:
+        "Search the live web and return titles, URLs, snippets and summaries. Use it when the task depends on current information - releases, API changes, error messages, prices, docs - rather than things you can read in the project or already know. Cite the URLs you use.",
+      promptGuidelines: [
+        "Use web_search when current external information would change the answer: a new library release, an API change, an error message you do not recognise, pricing, or documentation you cannot read locally.",
+        "Do not search for things you can find in the project, things the user already told you, or general reasoning you can do yourself.",
+        "Results contain titles, URLs, snippets and summaries. Cite the URLs you actually use in your final report. If the results are empty or disagree, say so instead of guessing.",
+        "Keep searches focused. A couple of queries is usually enough; the user pays for each search.",
+      ],
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Search query, 1-128 characters. Supports site:, after:, before:, lang:, and quoted phrases.",
+          },
+          count: {
+            type: "integer",
+            minimum: 1,
+            maximum: 10,
+            description: "How many results to return. Default 6.",
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      async execute(_callId, params) {
+        const query = String(params?.query ?? "").trim();
+        if (!query) {
+          return {
+            content: [{ type: "text", text: "web_search needs a query." }],
+            isError: true,
+            details: {},
+          };
+        }
+        const base = String(process.env.HOOK_API_BASE ?? "").replace(/[/]+$/, "");
+        const token = String(process.env.HOOK_API_TOKEN ?? "");
+        const count = Math.min(10, Math.max(1, Number(params?.count) || 6));
+        try {
+          const response = await fetch(`${base}/api/v1/search`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ query, count }),
+            signal: AbortSignal.timeout(30_000),
+          });
+          const text = await response.text();
+          if (!response.ok) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Web search failed (${response.status}): ${text.slice(0, 300)}`,
+                },
+              ],
+              isError: true,
+              details: {},
+            };
+          }
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch {
+            return {
+              content: [{ type: "text", text: "Web search returned an invalid response." }],
+              isError: true,
+              details: {},
+            };
+          }
+          const results = Array.isArray(data?.results) ? data.results : [];
+          if (!results.length) {
+            return {
+              content: [{ type: "text", text: `No web results for "${query}".` }],
+              details: { count: 0 },
+            };
+          }
+          const lines = [`Web search results for "${query}":`];
+          results.slice(0, count).forEach((result, index) => {
+            const summary = String(result.summary || result.snippet || "")
+              .replace(/[ \t\r\n]+/g, " ")
+              .slice(0, 700);
+            const meta = [result.site_name, result.date].filter(Boolean).join(" · ");
+            lines.push(`
+${index + 1}. ${result.title || "(untitled)"}
+${result.url || ""}
+${summary}${meta ? `
+(${meta})` : ""}`);
+          });
+          lines.push(`
+Cite the URLs you use. Search results can be incomplete or disagree; say so when they do.`);
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: { count: results.length },
+          };
+        } catch (error) {
+          return {
+            content: [{ type: "text", text: `Web search failed: ${error.message}` }],
+            isError: true,
+            details: {},
+          };
+        }
       },
     });
   }

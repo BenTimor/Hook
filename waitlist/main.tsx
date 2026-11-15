@@ -298,12 +298,14 @@ function Waitlist() {
 
         <main className="screen-stack">
           {approved ? (
-            <ApprovedScreen
-              profile={profile!}
-              download={download}
-              signingOut={signingOut}
-              onSignOut={() => void signOut()}
-            />
+            <section className="screen approved-screen">
+              <ApprovedScreen
+                profile={profile!}
+                download={download}
+                signingOut={signingOut}
+                onSignOut={() => void signOut()}
+              />
+            </section>
           ) : (
             <AnimatePresence initial={false} custom={direction}>
             <OnboardingTransition

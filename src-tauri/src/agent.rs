@@ -728,6 +728,11 @@ impl AgentManager {
             .env("HOOK_UPDATES_DIR", &updates_dir)
             .env("PI_BASH_MAX_TIMEOUT", self.coding.bash_max_timeout.to_string())
             .env("PI_BASH_MIN_TIMEOUT", self.coding.bash_min_timeout.to_string());
+        if self.cfg.auth.required {
+            // The guard's web_search tool calls Hook's account service, which
+            // owns the provider key. Standalone/mock builds do not get it.
+            command.env("HOOK_API_BASE", self.cfg.auth.base_url.trim_end_matches('/'));
+        }
 
         let mut child = command.spawn().map_err(|e| {
             format!("Could not start the coding engine ({}): {e}", engine.describe())

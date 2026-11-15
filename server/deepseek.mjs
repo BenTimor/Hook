@@ -17,13 +17,26 @@ const DEFAULT_MODEL = "deepseek-flash";
 const MAX_CONCURRENT = 8;
 const MAX_PER_MINUTE = 240;
 
-function upstreamUrl(env) {
+function upstreamBase(env) {
   const base = (env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(
     /\/+$/,
     "",
   );
+  return base.replace(/\/(chat\/completions|completions)$/, "");
+}
+
+function upstreamUrl(env) {
+  const base = upstreamBase(env);
   if (base.endsWith("/chat/completions")) return base;
   return `${base}/chat/completions`;
+}
+
+/** DeepSeek's standalone Search API lives under /v1/tools/search. */
+function searchUrl(env) {
+  const base = upstreamBase(env);
+  return base.endsWith("/v1")
+    ? `${base}/tools/search`
+    : `${base}/v1/tools/search`;
 }
 
 function headerId(req, name, max = 120) {
@@ -58,7 +71,7 @@ function parseUsage(value) {
  * Keep the proxy from being an unbounded fan-out if a token leaks. This is a
  * per-process guard; the real spend control is the approval list.
  */
-function createLimiter() {
+function createLimiter(maxConcurrent = MAX_CONCURRENT, maxPerMinute = MAX_PER_MINUTE) {
   const buckets = new Map();
   return {
     acquire(subject) {
@@ -72,9 +85,9 @@ function createLimiter() {
         bucket.window = now;
         bucket.count = 0;
       }
-      if (bucket.active >= MAX_CONCURRENT)
+      if (bucket.active >= maxConcurrent)
         return { ok: false, message: "Too many requests in flight. Wait for one to finish." };
-      if (bucket.count >= MAX_PER_MINUTE)
+      if (bucket.count >= maxPerMinute)
         return { ok: false, message: "Too many requests. Try again in a minute." };
       bucket.count += 1;
       bucket.active += 1;
@@ -88,6 +101,9 @@ export function createProxyRouter({ env, db }) {
   const router = Router();
   router.use(json({ limit: "64mb" }));
   const limiter = createLimiter();
+  // Search is a separate upstream API with its own account-level QPS. Keep it
+  // from fanning out faster than a user can reasonably type.
+  const searchLimiter = createLimiter(4, 60);
   const modelId = env.HOOK_MODEL_ID || "hook";
   const upstreamModel = env.DEEPSEEK_MODEL || DEFAULT_MODEL;
   const apiKey = env.DEEPSEEK_API_KEY || "";
@@ -146,6 +162,110 @@ export function createProxyRouter({ env, db }) {
         },
       ],
     });
+  });
+
+  /**
+   * DeepSeek's standalone Search API, exposed to Hook's agents as a regular
+   * function tool. The built-in `deepseek_web_search` server tool cannot be
+   * mixed with the agents' own function tools, so they call this instead.
+   */
+  router.post("/search", async (req, res) => {
+    const row = requireApiUser(db, req, res);
+    if (!row) return;
+    if (!apiKey)
+      return apiError(
+        res,
+        503,
+        "The model service is not configured yet.",
+        "upstream_unavailable",
+      );
+
+    const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
+    if (!query || query.length > 128)
+      return apiError(
+        res,
+        400,
+        "`query` must be between 1 and 128 characters.",
+        "invalid_query",
+      );
+    const count = Number.isInteger(req.body?.count)
+      ? Math.min(10, Math.max(1, req.body.count))
+      : 6;
+    const upstream = { query, count };
+    if (typeof req.body?.ori_question === "string") {
+      const question = req.body.ori_question.trim();
+      if (question && question.length <= 128)
+        upstream.ori_question = question;
+    }
+    if (typeof req.body?.need_content === "boolean")
+      upstream.need_content = req.body.need_content;
+
+    const slot = searchLimiter.acquire(row.google_subject);
+    if (!slot.ok) return apiError(res, 429, slot.message, "rate_limited");
+    const started = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    res.on("close", () => {
+      if (!res.writableEnded) controller.abort();
+    });
+    try {
+      const response = await fetch(searchUrl(env), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json",
+          "user-agent": "Hook-Proxy/1.0",
+        },
+        body: JSON.stringify(upstream),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          console.error(
+            `hook: the upstream search service rejected the server credentials (${response.status})`,
+          );
+          return apiError(
+            res,
+            502,
+            "Web search is unavailable right now. Please try again shortly.",
+            "upstream_auth",
+          );
+        }
+        const raw = (await response.text()).slice(0, 2_000);
+        let message = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          message = parsed?.error?.message || parsed?.message || raw;
+        } catch {
+          // Keep the provider's text.
+        }
+        return apiError(
+          res,
+          response.status === 429 ? 429 : 502,
+          `Web search failed: ${message || response.status}`,
+          "search_failed",
+        );
+      }
+      const payload = await response.json();
+      const results = Array.isArray(payload?.results) ? payload.results : [];
+      console.log(
+        `hook: web search for ${row.google_subject} (${results.length} results, ${Date.now() - started}ms)`,
+      );
+      res.json({ query, results });
+    } catch (error) {
+      if (controller.signal.aborted && !res.headersSent)
+        return apiError(res, 504, "Web search timed out. Try again.", "search_timeout");
+      if (!res.headersSent)
+        return apiError(
+          res,
+          502,
+          `Web search failed: ${error.message}`,
+          "search_failed",
+        );
+    } finally {
+      clearTimeout(timer);
+      slot.release();
+    }
   });
 
   router.post("/chat/completions", async (req, res) => {

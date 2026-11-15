@@ -63,6 +63,12 @@ mod tests {
         assert!(GUARD_SOURCE.contains("must be an .html page"));
         assert!(GUARD_SOURCE.contains("`v-${Date.now()}-${process.pid}.json`"));
         assert!(GUARD_SOURCE.contains("It is optional"));
+        // Web search goes through Hook's account service, never a key in the
+        // agent's environment or the binary.
+        assert!(GUARD_SOURCE.contains("name: \"web_search\""));
+        assert!(GUARD_SOURCE.contains("HOOK_API_BASE"));
+        assert!(GUARD_SOURCE.contains("/api/v1/search"));
+        assert!(GUARD_SOURCE.contains("Cite the URLs you use"));
         // The guidance must forbid heartbeat updates, not encourage them.
         assert!(GUARD_SOURCE.contains("still working"));
         assert!(GUARD_SOURCE.contains("Long stretches of silence"));

@@ -233,6 +233,25 @@ The proxy also enforces a small per-account concurrency and requests-per-minute
 limit. Revocation is checked on every request, so `--revoke` takes effect without
 restarting anything.
 
+### Web search
+
+Both agents have a `web_search` tool. It calls `/api/v1/search` on Hook's proxy,
+which forwards to DeepSeek's standalone Search API (`/v1/tools/search`) with the
+server key. DeepSeek's built-in `deepseek_web_search` **server tool** cannot be
+combined with the agents' own function tools yet, so this uses the same search
+engine behind an ordinary tool instead.
+
+The tool returns titles, URLs, snippets and summaries, and tells the model to
+cite the URLs it uses. The chat agent calls it directly; coding agents get it
+from `hook-guard.mjs` using `HOOK_API_BASE` and `HOOK_API_TOKEN`. Queries support
+DeepSeek's operators (`site:`, `-site:`, `"exact phrase"`, `lang:`, `after:`,
+`before:`, `-term`).
+
+Search is billed by DeepSeek per successful request, independently of token
+usage. It is not included in the token/cache totals; the proxy logs only that a
+search happened and how many results came back, not the query text. The
+per-account search limit is 4 in flight and 60 per minute.
+
 ### Automatic Windows builds
 
 `.github/workflows/release-app.yml` runs on every push to `main` that touches the
@@ -544,7 +563,7 @@ conversation while you keep chatting.
   `timeout` in seconds (1–3600 by default). Missing, oversized or non-numeric
   timeouts are blocked with an explanation, and the model re-issues the call.
   Tune it with `bash_max_timeout` / `bash_min_timeout`. The same guard offers
-  `report_progress`, `update_plan` and `show_preview`, and seeds the coding
+  `report_progress`, `update_plan`, `show_preview` and `web_search`, and seeds the coding
   agent with the checklist the user is watching so the wording stays plain. The
   checklist is also enforced: every third tool call without an `update_plan`
   carries a one-line reminder, and after five the next call is blocked with the

@@ -22,6 +22,12 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - Each project carries a short description that you maintain. Call list_projects whenever the task might match existing work; those descriptions are your index.
 - You cannot read or edit project files yourself. create_project and update_project_description are your only direct project tools; anything about a project-s contents comes from a coding agent.
 
+## Web search
+- Use `web_search` when the answer depends on current information: recent releases, prices, news, people, documentation, or anything you cannot know from the conversation.
+- Do not search for general reasoning, things the user already told you, or details a coding agent is already handling in the project.
+- The tool returns titles, URLs, snippets and summaries. Cite the URLs you actually use. If the results are empty or disagree, say so plainly.
+- Search more than once when the question genuinely needs different angles, but keep it to what the question asks.
+
 ## Coding agents
 - start_coding_agent runs pi inside a project folder with full permissions, sandboxed to that folder. Write a complete brief: the goal, the constraints, anything the user said that matters, and how to verify success.
 - Always pass a `plan`: three to six short steps in plain, everyday language, in the order they will happen. This is the checklist the user watches at the bottom of the chat while the agent works, so it must read like 'Setting things up', 'Designing the front page', 'Integrating the real service' - never file names, tool names, package names or jargon. Same language the user writes in.
@@ -178,7 +184,15 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
     };
 
     let toolset = if cfg.provider.tools {
-        Some(tools::definitions())
+        let mut set = tools::definitions();
+        // Search goes through Hook's account service, which a standalone or
+        // mock build does not have. Do not offer a tool that cannot work.
+        if !cfg.auth.required {
+            if let Some(list) = set.as_array_mut() {
+                list.retain(|tool| tool["function"]["name"] != "web_search");
+            }
+        }
+        Some(set)
     } else {
         None
     };
@@ -429,7 +443,8 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     );
 
                     for call in &calls {
-                        let result = run_tool(&state, &chat_id, call, user_initiated);
+                        let result =
+                            run_tool(&state, &chat_id, call, user_initiated).await;
                         let mut message = Message::new("tool", &result, "complete");
                         message.tool_call_id = Some(call.id.clone());
                         message.hidden = true;
@@ -632,7 +647,7 @@ fn non_empty(value: String) -> Option<String> {
     }
 }
 
-fn run_tool(
+async fn run_tool(
     state: &AppState,
     chat_id: &str,
     call: &ToolCallRecord,
@@ -640,6 +655,9 @@ fn run_tool(
 ) -> String {
     let args = serde_json::from_str::<serde_json::Value>(&call.arguments)
         .unwrap_or_else(|_| json!({}));
+    if call.name == "web_search" {
+        return web_search(state, &args).await;
+    }
     tools::execute(
         &ToolEnv {
             agents: &state.agents,
@@ -651,6 +669,101 @@ fn run_tool(
         &call.name,
         &args,
     )
+}
+
+/// The chat agent's web search. The model calls this as an ordinary function
+/// tool; the proxy turns it into DeepSeek's standalone Search API request. The
+/// built-in `deepseek_web_search` server tool cannot be mixed with the agent's
+/// own tools, so this keeps the same search engine without that conflict.
+async fn web_search(state: &AppState, args: &serde_json::Value) -> String {
+    let query = args
+        .get("query")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .unwrap_or_default();
+    if query.is_empty() || query.chars().count() > 128 {
+        return json!({ "error": "web_search needs a query of 1 to 128 characters." })
+            .to_string();
+    }
+    let count = args
+        .get("count")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(6)
+        .clamp(1, 10) as usize;
+    let Some(token) = state.auth.token() else {
+        return json!({ "error": "Web search needs a signed-in Hook account." })
+            .to_string();
+    };
+    let base = state.cfg.auth.base_url.trim_end_matches('/');
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return json!({ "error": format!("Web search failed: {error}") }).to_string()
+        }
+    };
+    let response = match client
+        .post(format!("{base}/api/v1/search"))
+        .bearer_auth(token)
+        .json(&json!({ "query": query, "count": count }))
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            return json!({ "error": format!("Web search failed: {error}") }).to_string()
+        }
+    };
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return json!({
+            "error": format!("Web search failed ({status}): {}", truncate(&body, 300))
+        })
+        .to_string();
+    }
+    let payload = match response.json::<serde_json::Value>().await {
+        Ok(payload) => payload,
+        Err(error) => {
+            return json!({ "error": format!("Web search returned an invalid response: {error}") })
+                .to_string()
+        }
+    };
+    let results = payload
+        .get("results")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let compact: Vec<serde_json::Value> = results
+        .iter()
+        .take(count)
+        .map(|result| {
+            json!({
+                "title": result.get("title").cloned().unwrap_or(serde_json::Value::Null),
+                "url": result.get("url").cloned().unwrap_or(serde_json::Value::Null),
+                "snippet": result.get("snippet").cloned().unwrap_or(serde_json::Value::Null),
+                "summary": result.get("summary").cloned().unwrap_or(serde_json::Value::Null),
+                "date": result.get("date").cloned().unwrap_or(serde_json::Value::Null),
+                "site": result.get("site_name").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect();
+    if compact.is_empty() {
+        return json!({
+            "query": query,
+            "results": [],
+            "note": "No web results found."
+        })
+        .to_string();
+    }
+    json!({
+        "query": query,
+        "results": compact,
+        "note": "Cite the URLs you use. Results can be incomplete or disagree; say so when they do."
+    })
+    .to_string()
 }
 
 /// True when the newest visible word in the chat is the user's: they asked for

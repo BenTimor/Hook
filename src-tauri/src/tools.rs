@@ -157,6 +157,22 @@ pub fn definitions() -> Value {
         {
             "type": "function",
             "function": {
+                "name": "web_search",
+                "description": "Search the live web and return titles, URLs, snippets and summaries. Use it when the answer depends on current information (recent releases, prices, news, people, documentation) rather than general reasoning or what the user already told you. Cite the URLs you use in your answer.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query, 1-128 characters. Supports site:, after:, before:, lang:, and \"exact phrase\"." },
+                        "count": { "type": "integer", "minimum": 1, "maximum": 10, "description": "How many results to return. Default 6." }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "no_update",
                 "description": "Say nothing to the user for this progress batch. Use this when there is nothing worth interrupting them for: routine steps, 'still working', 'building now', 'I'll report back', a run that merely settled, no new picture, no milestone.",
                 "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -538,6 +554,7 @@ mod tests {
             "answer_agent",
             "stop_agent",
             "list_coding_sessions",
+            "web_search",
         ] {
             assert!(names.contains(&expected), "{expected} missing");
         }

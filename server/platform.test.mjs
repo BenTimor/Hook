@@ -42,7 +42,25 @@ test("approved users can sign in a device, use the proxy, see usage, download an
   const upstreamApp = express();
   upstreamApp.use(express.json({ limit: "1mb" }));
   let sawUpstream = null;
+  let sawSearch = null;
   let upstreamMode = "stream";
+  upstreamApp.post("/v1/tools/search", (req, res) => {
+    sawSearch = req.body;
+    res.json({
+      results: [
+        {
+          title: "Hook docs",
+          url: "https://example.com/hook",
+          snippet: "Hook is a desktop AI chat app.",
+          summary: "Hook connects chat and coding agents to an approved model relay.",
+          site_name: "Example",
+          date: "2026-11-15T00:00:00+00:00",
+          authority: 3,
+          rerank_score: 2.4,
+        },
+      ],
+    });
+  });
   upstreamApp.post("/chat/completions", (req, res) => {
     sawUpstream = req.body;
     if (upstreamMode === "auth") {
@@ -210,6 +228,25 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       assert.deepEqual(payload.data[0].input_modalities, ["text", "image"]);
     });
 
+    await t.test("the web search tool uses DeepSeek's standalone search API", async () => {
+      const response = await request("/v1/search", {
+        method: "POST",
+        token,
+        body: { query: "Hook desktop app", count: 3 },
+        headers: {
+          "x-hook-surface": "coding",
+          "x-hook-chat-id": "chat_1",
+          "x-hook-agent-id": "ag_1",
+        },
+      });
+      assert.equal(response.status, 200);
+      const payload = await response.json();
+      assert.equal(payload.query, "Hook desktop app");
+      assert.equal(payload.results[0].title, "Hook docs");
+      assert.equal(sawSearch.query, "Hook desktop app");
+      assert.equal(sawSearch.count, 3);
+    });
+
     await t.test("the proxy relays the stream and records per-chat/agent usage", async () => {
       const response = await request("/v1/chat/completions", {
         method: "POST",
@@ -305,6 +342,13 @@ test("approved users can sign in a device, use the proxy, see usage, download an
 
       const me = await request("/auth/me", { token });
       assert.equal(me.status, 403);
+
+      const search = await request("/v1/search", {
+        method: "POST",
+        token,
+        body: { query: "still there?" },
+      });
+      assert.equal(search.status, 403);
 
       const download = await request("/download/windows", {
         cookie: approvedCookie,
