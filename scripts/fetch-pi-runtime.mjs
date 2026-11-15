@@ -36,29 +36,22 @@ const PACKAGE = "@earendil-works/pi-coding-agent";
 async function locatePi(flag) {
   if (flag) return resolve(flag);
 
-  const require = createRequire(join(root, "package.json"));
+  // pnpm links the package into the root node_modules. Read that path
+  // directly: the package's `exports` map does not expose package.json, and
+  // `require.resolve` on a symlinked path does not see the real store's
+  // sibling dependencies.
+  const local = join(root, "node_modules", ...PACKAGE.split("/"));
   try {
-    let dir = dirname(require.resolve(`${PACKAGE}/package.json`));
-    // Walk up until the directory that actually owns the package.json.
-    while (dir !== dirname(dir) && !dirname(dir).endsWith(PACKAGE)) {
-      const candidate = join(dir, "package.json");
-      try {
-        const parsed = JSON.parse(await readFile(candidate, "utf8"));
-        if (parsed.name === PACKAGE) return dir;
-      } catch {
-        /* keep walking */
-      }
-      dir = dirname(dir);
-    }
-    return dir;
+    const parsed = JSON.parse(await readFile(join(local, "package.json"), "utf8"));
+    if (parsed.name === PACKAGE) return local;
   } catch {
-    /* not resolvable from here */
+    /* not installed locally */
   }
 
   const npmRoot = await run(process.platform === "win32" ? "npm.cmd" : "npm", ["root", "-g"], {
     shell: process.platform === "win32",
   });
-  const global = join(npmRoot.stdout.trim(), PACKAGE);
+  const global = join(npmRoot.stdout.trim(), ...PACKAGE.split("/"));
   await stat(global);
   return global;
 }
@@ -81,7 +74,8 @@ async function main() {
   await rm(out, { recursive: true, force: true });
   await mkdir(join(out, "pi"), { recursive: true });
 
-  await cp(nodeSrc, join(out, process.platform === "win32" ? "node.exe" : "node"));
+  const nodeExe = join(out, process.platform === "win32" ? "node.exe" : "node");
+  await cp(nodeSrc, nodeExe);
   // `dist` is the whole self-contained bundle (21 MB). Almost nothing from
   // node_modules is needed — except the loader used to read extensions, which
   // is required at runtime and cannot be inlined.
@@ -90,11 +84,34 @@ async function main() {
 
   const externals = ["jiti"];
   for (const name of externals) {
-    const from = join(piDir, "node_modules", name);
-    await stat(from).catch(() => {
-      throw new Error(`pi is missing ${name} in node_modules; Hook's guard would not load`);
+    // npm nests dependencies under pi/node_modules; pnpm puts them next to
+    // the package inside .pnpm/.../node_modules. Try both, then the hidden
+    // pnpm hoist directory.
+    const candidates = [
+      join(piDir, "node_modules", name),
+      join(dirname(piDir), name),
+      join(root, "node_modules", ".pnpm", "node_modules", name),
+      join(root, "node_modules", name),
+    ];
+    let from = null;
+    for (const candidate of candidates) {
+      try {
+        await stat(join(candidate, "package.json"));
+        from = candidate;
+        break;
+      } catch {
+        /* try the next layout */
+      }
+    }
+    if (!from) {
+      throw new Error(`pi is missing ${name}; Hook's guard would not load`);
+    }
+    // dereference: pnpm's store entries are symlinks, and a copied relative
+    // symlink would point outside the shipped runtime.
+    await cp(from, join(out, "pi", "node_modules", name), {
+      recursive: true,
+      dereference: true,
     });
-    await cp(from, join(out, "pi", "node_modules", name), { recursive: true });
   }
 
   await writeFile(
@@ -106,7 +123,7 @@ async function main() {
   // packages it: `jiti` must resolve from the bundle.
   try {
     await run(
-      join(out, "node.exe"),
+      nodeExe,
       [
         "-e",
         `require.resolve("jiti", { paths: [${JSON.stringify(join(out, "pi", "dist", "bundle"))}] })`,
