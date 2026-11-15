@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Circle, Square } from "lucide-react";
 
 import type { AgentSummary, PlanStep } from "../lib/types";
@@ -103,10 +103,25 @@ function AgentTask({
   onStop: () => void;
   defaultCollapsed?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const live = isLiveAgent(agent);
   const total = agent.plan.length;
   const done = agent.plan.filter((step) => step.status === "done").length;
+  const allDone = total > 0 && done === total;
+  // A run that is already over starts folded: its checklist has nothing left
+  // to watch. The header stays, and the user can still open it.
+  const [collapsed, setCollapsed] = useState(
+    defaultCollapsed || (!live && allDone),
+  );
+  const wasLive = useRef(live);
+
+  useEffect(() => {
+    // Fold the list the moment the last step is done and the run settles.
+    // A follow-up run in the same session opens it again.
+    if (live && !wasLive.current) setCollapsed(false);
+    else if (!live && allDone) setCollapsed(true);
+    wasLive.current = live;
+  }, [live, allDone]);
+
   const meta = total ? `${stateLabel(agent)} · ${done}/${total}` : stateLabel(agent);
 
   return (
