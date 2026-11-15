@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#f5efe5" />
-    <meta name="description" content="How Hook handles your early-access waitlist profile and onboarding preferences." />
+    <meta name="description" content="How Hook handles your early-access waitlist profile, model requests and usage statistics." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/legal.css" />
     <title>Privacy · Hook</title>
@@ -18,11 +18,13 @@
       </div>
 
       <h1>Privacy policy</h1>
-      <p class="updated">Last updated 12 November 2026</p>
+      <p class="updated">Last updated 15 November 2026</p>
 
       <p>
         Hook is an early-access desktop app for working with AI. This policy covers
-        <strong>hookcode.io</strong> — the landing page and the early-access waitlist — and nothing else.
+        <strong>hookcode.io</strong> — the landing page, the early-access waitlist, desktop sign-in,
+        and the model relay the app uses — and nothing else. Your conversations themselves stay on
+        your computer.
       </p>
 
       <h2>What we collect</h2>
@@ -39,6 +41,31 @@
         We do not receive your Google password, your contacts, your files, or any other data from your
         Google Account beyond the identifier, email, and optional name described above.
         We record your onboarding choices directly to understand what people want from Hook. Apart from the Meta advertising pixel described below, we do not use third-party analytics scripts.
+      </p>
+
+      <h2>The desktop app and model requests</h2>
+      <p>
+        Hook signs you in with Google through a short device code. The app stores an opaque access
+        token on your computer and sends it with model requests. Only a hash of that token is kept
+        on our server, and it stops working when you sign out, when your access is revoked, or when
+        you ask us to delete your account.
+      </p>
+      <p>
+        Your conversations and pictures are stored locally by the app. When you send a message or a
+        coding agent makes a model request, the request is sent to our relay at hookcode.io and
+        forwarded to our model provider. We do not store the text, pictures, tool definitions, or
+        model replies. We do store the metadata needed to run and measure the service:
+      </p>
+      <ul>
+        <li>your account identifier and the request time;</li>
+        <li>a chat identifier and, for coding work, a run identifier, so usage can be grouped by conversation;</li>
+        <li>input and output token counts, cached and uncached input tokens, reasoning tokens, duration, and the HTTP status;</li>
+        <li>the selected model name and whether the request came from chat or a coding agent.</li>
+      </ul>
+      <p>
+        This metadata is used to understand how efficiently Hook uses models and to operate access
+        controls. It is not used for advertising and is not sold. The model provider receives the
+        request content under its own privacy policy.
       </p>
 
       <h2>Advertising measurement</h2>
@@ -90,27 +117,32 @@
         limited page-view and signup events with Meta as described above; we never send Meta your email
         address or name from this site.
       </p>
-      <p>Your interests, plan preference, and partial onboarding progress help us understand what early members want to create with Hook and where they stop during signup. Choosing a plan records a preference and does not create a paid subscription.</p>
+      <p>Your interests, plan preference, and partial onboarding progress help us understand what early members want to create with Hook and where they stop during signup. Choosing a plan records a preference and does not create a paid subscription. Token and cache statistics help us see how efficiently the app and its coding agents use the model, so we can improve them.</p>
 
       <h2>Where it lives</h2>
       <p>
-        The waitlist is a single SQLite database on a server we operate. Google's sign-in itself is
-        covered by <a href="https://policies.google.com/privacy" rel="noreferrer">Google's privacy policy</a>.
-        The Meta Pixel is operated by Meta, and the information it collects from this site is covered by
+        The waitlist, account status, access tokens and usage metadata are stored in a single SQLite
+        database on a server we operate. Model requests are relayed to our provider, currently
+        DeepSeek; its handling of request content is governed by its own policy. Google's sign-in
+        itself is covered by <a href="https://policies.google.com/privacy" rel="noreferrer">Google's
+        privacy policy</a>. The Meta Pixel is operated by Meta, and the information it collects from
+        this site is covered by
         <a href="https://www.facebook.com/privacy/policy/" rel="noreferrer">Meta's privacy policy</a>.
       </p>
 
       <h2>How long we keep it</h2>
       <p>
         Until early access ends or you ask us to remove it — whichever comes first. When the waitlist
-        is no longer needed, the database is deleted.
+        is no longer needed, the database is deleted. Usage metadata is kept for the same period so
+        that long-term efficiency can be compared.
       </p>
 
       <h2>Removing your data</h2>
       <p>
         Email <a href="mailto:nsgi3111@gmail.com?subject=Remove%20me%20from%20the%20Hook%20waitlist">nsgi3111@gmail.com</a>
-        from the address you signed up with and we will delete your entry. There is no account to close
-        and no other data to remove.
+        from the address you signed up with and we will delete your waitlist entry, revoke your app
+        token, and remove your usage metadata. You can also sign out in Hook, which revokes that
+        token immediately.
       </p>
 
       <h2>Your rights</h2>

@@ -1,0 +1,124 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Hook — configuration used by the release workflow
+#
+#  `harness.config.toml` is intentionally gitignored for local development. The
+#  GitHub Windows build copies this file into that slot before compiling, so a
+#  fresh checkout always produces a binary that points at hookcode.io.
+#
+#  This file contains no secrets: the provider key lives on the server and the
+#  desktop app sends the signed-in user's token.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[provider]
+tools = true
+
+# How many pictures from a conversation go into one request. Newer pictures win;
+# older ones stay in the chat but reach the model as "[older image omitted]".
+# Providers differ on their image limit, so this stays conservative.
+max_images = 3
+
+# Whether the model can see images is not a build decision: Hook asks the
+# provider (`GET /models`) what the model supports and sends pictures as image
+# parts only if it says yes. If the endpoint rejects them anyway, that turn is
+# retried without pictures.
+
+# Hook's own API. It is the only endpoint this build talks to; requests are
+# authenticated with the signed-in user's session token, not a key in the
+# binary. The proxy picks the upstream provider and model server-side.
+base_url = "https://hookcode.io/api/v1"
+path = "/chat/completions"
+
+# Unused for the Hook proxy: the token comes from the signed-in account.
+api_key = ""
+
+# Request field that carries the thinking level.
+#   "reasoning_effort"  OpenAI + most gateways   (default)
+#   "reasoning"         some third-party servers
+#   "none"              send nothing at all
+reasoning_param = "reasoning_effort"
+
+# Ask the server to include token usage in the stream. Turn off if your server
+# rejects unknown request fields.
+stream_usage = true
+
+# Extra request headers, e.g. OpenRouter's attribution headers.
+[provider.headers]
+
+# Extra JSON merged into the request body, for provider-specific knobs.
+[provider.extra]
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Account / desktop sign-in
+#
+#  Hook opens hookcode.io in the browser and receives an opaque API token after
+#  an approved user signs in with Google. `required = false` is only for local
+#  mock builds.
+
+[auth]
+base_url = "https://hookcode.io"
+required = true
+
+[model]
+# The single model id the proxy and the coding engine share. The proxy ignores
+# the name and forwards to the model configured on the server.
+name = "hook"
+
+# off | minimal | low | medium | high
+thinking = "high"
+
+# Optional sampling controls. Omit to leave the provider defaults alone.
+# temperature = 0.7
+# max_tokens = 4096
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Coding agents
+#
+#  The chat agent can launch pi inside a project folder. Each agent is spawned
+#  with your host pi's *auth only*: no extensions, skills, prompt templates or
+#  MCP servers load, and project-local pi config is ignored. The single policy
+#  it inherits is Hook's guard (bash needs an explicit timeout).
+
+# -----------------------------------------------------------------------------
+#  Coding agents
+#
+#  The chat agent can launch pi inside a project folder. Each agent is spawned
+#  with your host pi's *auth only*: no extensions, skills, prompt templates or
+#  MCP servers load, and project-local pi config is ignored. The single policy
+#  it inherits is Hook's guard (bash needs an explicit timeout).
+# -----------------------------------------------------------------------------
+
+[coding]
+# Context window advertised to the coding engine for the chat model.
+# The proxy's GET /models card advertises 1,048,576 by default; keep this in
+# step with HOOK_CONTEXT_WINDOW on the server.
+context_window = 1048576
+
+# Output budget for one coding-agent turn. Thinking models spend part of it on
+# reasoning before writing anything, so a small cap makes them think until they
+# are cut off and stop with nothing done (the run then reports "hit its output
+# limit"). This is also an API limit - the provider rejects more than the
+# model's own maximum (the proxy advertises 393,216 by default). pi clamps it to whatever
+# room is left in the context window; 0 means "use the model maximum".
+max_output_tokens = 393216
+
+# Upper bound on how often coding-agent progress reaches the chat. Agents only
+# report when something is worth reading, and the chat agent may answer a batch
+# with silence; a batch flushes immediately when an agent finishes or asks.
+update_interval_seconds = 60
+# Passed to pi as --model. Empty = pi's own default model.
+model = ""
+# Passed to pi as --thinking: off | minimal | low | medium | high | xhigh | max
+# Empty = pi's own default (medium). This is the coding agent's own level: it
+# does not inherit [model] thinking. A run is dozens of small turns, and a high
+# level on every one of them makes each step take minutes before anything moves.
+thinking = ""
+# How many coding agents may run at the same time.
+max_concurrent = 3
+# Deadline limits (seconds) enforced on every bash call inside a coding agent.
+bash_max_timeout = 3600
+bash_min_timeout = 1
+
+[agent]
+# Leave empty to use Hook's built-in instructions for the chat agent.
+# Set it to replace them entirely. Sent verbatim as the system prompt.
+system_prompt = ""

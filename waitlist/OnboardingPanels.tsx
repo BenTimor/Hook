@@ -5,12 +5,15 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
+  LogOut,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { HookMark } from "../src/components/HookMark";
 import { FloatingVisualStage } from "./FloatingVisualStage";
 import { interests } from "./interests";
 import content from "./content.json";
+import type { Profile, ReleaseInfo } from "./onboarding";
 
 export function InterestsScreen({
   selected,
@@ -274,6 +277,100 @@ export function ConfirmationScreen({ onHome }: { onHome: () => void }) {
         <ArrowLeft size={16} aria-hidden="true" />
         Back to Hook
       </button>
+    </div>
+  );
+}
+
+function formatSize(bytes: number | null | undefined) {
+  if (!bytes || bytes <= 0) return null;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * The screen an approved member sees instead of the waiting-list flow. The
+ * download URL is authenticated server-side; this page only decides whether
+ * to offer it.
+ */
+export function ApprovedScreen({
+  profile,
+  download,
+  signingOut,
+  onSignOut,
+}: {
+  profile: Profile;
+  download: ReleaseInfo | null;
+  signingOut: boolean;
+  onSignOut: () => void;
+}) {
+  const name = profile.name?.trim().split(/\s+/)[0] || "you";
+  const size = formatSize(download?.size);
+  return (
+    <div className="confirmation-panel approved-panel">
+      <motion.div
+        className="confirmation-mark"
+        initial={{ scale: 0.85, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 160, damping: 19 }}
+      >
+        <HookMark />
+        <span>
+          <Check size={14} aria-hidden="true" />
+        </span>
+      </motion.div>
+      <p className="step-label">You’re approved</p>
+      <h1 tabIndex={-1}>Welcome in, {name}.</h1>
+      <p className="screen-description">
+        Download Hook for Windows, then sign in with{" "}
+        <strong>{profile.email}</strong>. The app will ask Google to confirm
+        it’s you, and the same account unlocks both chat and coding agents.
+      </p>
+
+      {download?.available ? (
+        <>
+          <a
+            className="primary-button download-button"
+            href={download.url || "/api/download/windows"}
+            download
+          >
+            <Download size={17} strokeWidth={1.9} aria-hidden="true" />
+            Download Hook
+          </a>
+          <p className="download-meta">
+            Windows installer
+            {download.version ? ` · version ${download.version}` : ""}
+            {download.commit ? ` · build ${download.commit}` : ""}
+            {size ? ` · ${size}` : ""}
+          </p>
+        </>
+      ) : (
+        <button className="primary-button" disabled>
+          Your build is being prepared
+        </button>
+      )}
+      <p className="download-note">
+        This link always points at the latest build. Re-download it to update.
+        If the button says a build is being prepared, check back in a few minutes.
+      </p>
+
+      <div className="approved-account">
+        <span>
+          Signed in as <strong>{profile.email}</strong>
+        </span>
+        <button
+          className="text-button"
+          onClick={onSignOut}
+          disabled={signingOut}
+        >
+          {signingOut ? (
+            "Signing out…"
+          ) : (
+            <>
+              <LogOut size={15} strokeWidth={1.9} aria-hidden="true" />
+              Sign out
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 }

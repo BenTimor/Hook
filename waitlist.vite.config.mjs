@@ -23,7 +23,7 @@ export default defineConfig(({ command }) => {
         async configureServer(server) {
           if (developmentPreview) {
             // Do not even open the signup database while previewing locally.
-            server.middlewares.use("/api/waitlist", (_req, res) => {
+            server.middlewares.use("/api", (_req, res) => {
               res.statusCode = 503;
               res.setHeader("Content-Type", "application/json");
               res.setHeader("Cache-Control", "no-store");
@@ -32,11 +32,11 @@ export default defineConfig(({ command }) => {
             return;
           }
           const { default: express } = await import("express");
-          const { createWaitlistApi } = await import("./server/api.mjs");
-          const api = createWaitlistApi(env);
+          const { createPlatform } = await import("./server/platform.mjs");
+          const api = createPlatform(env);
           const app = express().disable("x-powered-by");
           app.use(api.router);
-          server.middlewares.use("/api/waitlist", app);
+          server.middlewares.use("/api", app);
           server.httpServer?.once("close", api.close);
         },
       },

@@ -18,6 +18,11 @@ stream_usage = true
 
 [provider.extra]
 
+[auth]
+# Local preview: no Google sign-in, no hookcode.io calls.
+base_url = "http://127.0.0.1:8787"
+required = false
+
 [model]
 name = "hook-mock-1"
 thinking = "medium"

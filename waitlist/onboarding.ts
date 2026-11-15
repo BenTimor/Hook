@@ -12,6 +12,9 @@ export interface Profile extends Preferences {
   email: string;
   joinedAt: string;
   status: string;
+  /** True only while the waiting list entry is approved for app + API access. */
+  approved: boolean;
+  approvedAt: string | null;
   selectedPrice: {
     amountCents: number;
     currency: string;
@@ -21,6 +24,18 @@ export interface Profile extends Preferences {
   onboardingStartedAt: string | null;
   onboardingUpdatedAt: string | null;
   onboardingCompletedAt: string | null;
+}
+
+/** The installer the release workflow published for approved users. */
+export interface ReleaseInfo {
+  available: boolean;
+  version?: string | null;
+  commit?: string | null;
+  builtAt?: string | null;
+  sha256?: string | null;
+  size?: number | null;
+  file?: string;
+  url?: string;
 }
 export interface OnboardingState extends Preferences {
   screen: Screen;

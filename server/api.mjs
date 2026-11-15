@@ -1,10 +1,11 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { json, Router } from "express";
 import { OAuth2Client } from "google-auth-library";
 import content from "../waitlist/content.json" with { type: "json" };
+import { releaseInfo } from "./releases.mjs";
 
 const FLOW_SECONDS = 600;
 const RECEIPT_SECONDS = 7 * 24 * 60 * 60;
@@ -63,11 +64,37 @@ function publicProfile(row) {
           },
     joinedAt: row.joined_at,
     status: row.waitlist_status,
+    approved: row.waitlist_status === "approved",
+    approvedAt: row.approved_at ?? null,
     onboardingStep: row.onboarding_step,
     onboardingStartedAt: row.onboarding_started_at,
     onboardingUpdatedAt: row.onboarding_updated_at,
     onboardingCompletedAt: row.onboarding_completed_at,
   };
+}
+
+/** Hash a bearer token before it touches the database. */
+export function hashSecret(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * Only same-origin relative paths are accepted as post-login destinations, so
+ * `/google?next=` can never become an open redirect.
+ */
+export function safeNext(raw, site) {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  if (!value || value.length > 300 || !value.startsWith("/") || value.startsWith("//"))
+    return null;
+  if (value.includes("\\") || value.includes("\r") || value.includes("\n"))
+    return null;
+  try {
+    const url = new URL(value, site);
+    return url.origin === site.origin ? `${url.pathname}${url.search}` : null;
+  } catch {
+    return null;
+  }
 }
 
 function preferencesFrom(body) {
@@ -245,7 +272,17 @@ export function createWaitlistApi(env) {
     res.json({
       joined: Boolean(row) || receipt?.joined === true,
       profile: row ? publicProfile(row) : null,
+      // Only approved accounts get a download; the URL itself re-checks the
+      // session, so the button is a convenience rather than the gate.
+      ...(row?.waitlist_status === "approved"
+        ? { download: releaseInfo(env) }
+        : {}),
     });
+  });
+
+  router.post("/logout", (req, res) => {
+    res.clearCookie(receiptCookie, cookies);
+    res.json({ joined: false });
   });
 
   router.post("/progress", (req, res) => {
@@ -343,6 +380,7 @@ export function createWaitlistApi(env) {
     } catch {
       return res.status(400).json({ error: "invalid_preferences" });
     }
+    const next = safeNext(req.body?.next, site);
 
     const profile = profileFor(req);
     if (profile && preferences)
@@ -371,6 +409,7 @@ export function createWaitlistApi(env) {
         nonce,
         codeVerifier,
         preferences,
+        next,
         onboarding: req.body?.mode === "onboarding",
       },
       FLOW_SECONDS,
@@ -384,11 +423,20 @@ export function createWaitlistApi(env) {
     if (!google || !flow || state !== flow.state)
       return res.redirect(303, "/?signup=expired");
 
+    // Errors go back to the page that started sign-in (e.g. /authorize) so it
+    // can explain what happened instead of dropping the code on the floor.
+    const returnTo = safeNext(flow.next, site);
+    const failure = (reason) => {
+      const destination = new URL(returnTo ?? "/", site);
+      destination.searchParams.set("signup", reason);
+      return `${destination.pathname}${destination.search}`;
+    };
+
     res.clearCookie(flowCookie, cookies);
     if (error === "access_denied")
-      return res.redirect(303, "/?signup=cancelled");
+      return res.redirect(303, failure("cancelled"));
     if (error || typeof code !== "string" || !code)
-      return res.redirect(303, "/?signup=failed");
+      return res.redirect(303, failure("failed"));
 
     try {
       const { tokens } = await google.getToken({
@@ -409,7 +457,7 @@ export function createWaitlistApi(env) {
         !account.email ||
         account.email_verified !== true
       ) {
-        return res.redirect(303, "/?signup=unverified");
+        return res.redirect(303, failure("unverified"));
       }
 
       // Detect a genuinely new waitlist row inside the write transaction so
@@ -447,8 +495,10 @@ export function createWaitlistApi(env) {
       );
       // Mark a new signup with lead=1 so the landing page sends the Meta Lead
       // event once. The flag is cleared from the URL by the page after firing.
+      // A `next` destination (the desktop device-approval page) wins over the
+      // default landing/onboarding destination.
       const destination = new URL(
-        flow.onboarding ? "/?signup=authenticated" : "/",
+        returnTo ?? (flow.onboarding ? "/?signup=authenticated" : "/"),
         site,
       );
       if (newSignup) destination.searchParams.set("lead", "1");
@@ -458,7 +508,7 @@ export function createWaitlistApi(env) {
       console.error(
         "Hook waitlist: Google sign-in or signup persistence failed.",
       );
-      res.redirect(303, "/?signup=failed");
+      res.redirect(303, failure("failed"));
     }
   });
 
@@ -473,7 +523,23 @@ export function createWaitlistApi(env) {
     res.status(500).json({ error: "failed" });
   });
 
-  return { router, close: () => db?.close() };
+  return {
+    router,
+    close: () => db?.close(),
+    db,
+    // Shared by the platform's device-login, API proxy and download routes.
+    auth: {
+      site,
+      local,
+      configured,
+      cookies,
+      receiptCookie,
+      readCookie,
+      writeCookie,
+      profileFor,
+      publicProfile,
+    },
+  };
 }
 
 function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
@@ -511,6 +577,8 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       plan_price_cents: "INTEGER",
       plan_currency: "TEXT",
       plan_period: "TEXT",
+      approved_at: "TEXT",
+      revoked_at: "TEXT",
     };
     for (const [name, definition] of Object.entries(additions)) {
       if (!columns.has(name))
@@ -532,7 +600,62 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       PRIMARY KEY (google_subject, event_id)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS onboarding_event_sequence
-      ON onboarding_events (google_subject, client_id, field, sequence);`);
+      ON onboarding_events (google_subject, client_id, field, sequence);
+
+    -- One desktop sign-in attempt. The app holds the secret device code; the
+    -- browser only ever sees the short user code shown in both places.
+    CREATE TABLE IF NOT EXISTS desktop_logins (
+      device_hash TEXT PRIMARY KEY NOT NULL,
+      user_code TEXT NOT NULL UNIQUE,
+      google_subject TEXT REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (${NOW}),
+      expires_at TEXT NOT NULL,
+      approved_at TEXT,
+      claimed_at TEXT
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS desktop_login_expiry
+      ON desktop_logins (expires_at);
+
+    -- Opaque bearer token the desktop app presents to /api/v1. Only its hash
+    -- is stored, and approval is re-checked on every request so revoking an
+    -- account takes effect immediately.
+    CREATE TABLE IF NOT EXISTS api_tokens (
+      token_hash TEXT PRIMARY KEY NOT NULL,
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      label TEXT,
+      created_at TEXT NOT NULL DEFAULT (${NOW}),
+      last_used_at TEXT,
+      revoked_at TEXT
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS api_token_owner
+      ON api_tokens (google_subject);
+
+    -- One row per proxied model request. Headers supplied by Hook identify the
+    -- chat and coding-agent run so usage can be analysed per conversation.
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      google_subject TEXT NOT NULL,
+      chat_id TEXT,
+      agent_id TEXT,
+      surface TEXT NOT NULL DEFAULT 'api',
+      model TEXT,
+      status INTEGER NOT NULL,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_hit_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER,
+      ttft_ms INTEGER,
+      created_at TEXT NOT NULL DEFAULT (${NOW})
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS usage_event_owner
+      ON usage_events (google_subject, created_at);
+    CREATE INDEX IF NOT EXISTS usage_event_chat
+      ON usage_events (chat_id);
+    CREATE INDEX IF NOT EXISTS usage_event_agent
+      ON usage_events (agent_id);`);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

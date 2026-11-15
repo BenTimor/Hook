@@ -1,11 +1,13 @@
 # Hook
 
-A local, single-provider AI chat app. Tauri 2 (Rust) + React 19 + TypeScript.
+A local AI chat app with an approved account gate. Tauri 2 (Rust) + React 19
++ TypeScript.
 
-One provider, one model, one thinking level — baked in at build time. No login,
-no account, no provider screen. Just a fast chat window with a sidebar full of
-your own conversations — and a chat agent that can put real coding work in
-motion inside your own project folders.
+One model, one thinking level — baked in at build time. Sign in with the Google
+account that was approved on the waiting list, and the same session unlocks the
+chat window, the coding agents, and a model proxy that keeps the provider key
+server-side. Conversations stay on your machine; the account service only sees
+token counts and cache statistics.
 
 ## Web waitlist
 
@@ -52,12 +54,14 @@ The production site loads the Meta Pixel (`1156718026779225`) for ad measurement
 `waitlist/metaPixel.ts` owns the loader and activates it only in production builds,
 so `pnpm waitlist:dev` never sends events to Meta. Every page load sends `PageView`.
 The Google callback redirects a genuinely new signup to
-`/?signup=authenticated&lead=1`, which sends the standard `Lead` event once; a
-returning sign-in is not counted again. The CSP in
+`/?signup=authenticated&lead=1` (or back to the `/authorize` page it came from),
+which sends the standard `Lead` event once; a returning sign-in is not counted
+again. The CSP in
 `server/waitlist.mjs` and `infra/hookcode.caddy` allows the pixel's script and beacon
 domains, and `public/privacy.html` documents the pixel and its cookies.
 
-Run `pnpm waitlist:test` for the API migration and signup regression checks.
+Run `pnpm waitlist:test` for the API, device-login, proxy, usage and download
+regression checks.
 
 ### Production
 
@@ -68,7 +72,8 @@ The page is live at **[hookcode.io](https://hookcode.io)** on the MoonRock VPS
                     ┌── Caddy (scout-caddy-1, :80/:443, auto TLS)
                     │      hookcode.io
    browser ─────────┤        /                → /opt/hook-web/site  (static)
-                    │        /api/waitlist/*  → hook-waitlist:5173  (container)
+                    │        /api/*           → hook-waitlist:5173  (container)
+                    │           waitlist, device login, model proxy, download
                     │                                └── /opt/hook-web/data/signups.sqlite
 ```
 
@@ -101,8 +106,10 @@ review workflow changes in PRs.
 Server-side layout, the two `/opt/scout` edits that mount the site into the shared
 Caddy container, and the ops commands are in [`infra/README.md`](infra/README.md).
 
-The waitlist API is a container because the VPS has no Node runtime; Caddy serves
-the static build itself, so an API failure never takes the marketing page down.
+The account API, model proxy and download endpoint are one container because the
+VPS has no Node runtime; Caddy serves the static build itself, so an API failure
+never takes the marketing page down. The proxy streams SSE and therefore gets
+`flush_interval -1`.
 Run it standalone anywhere with `docker build -t hook-waitlist . && docker run -p
 5173:5173 --env-file .env.waitlist.local hook-waitlist`.
 
@@ -114,6 +121,12 @@ Required environment (local `.env.waitlist.local`, server `/opt/hook-web/.env`):
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth **Web application** client; redirect URI must be `<origin>/api/waitlist/google/callback`. |
 | `WAITLIST_SESSION_SECRET` | ≥32 chars, HMAC key for the flow/receipt cookies. |
 | `WAITLIST_DB_PATH` | SQLite file; `/data/signups.sqlite` in the container, `waitlist-data/signups.sqlite` locally. |
+| `DEEPSEEK_BASE_URL` | Upstream chat API, default `https://api.deepseek.com`. |
+| `DEEPSEEK_MODEL` | Model the proxy asks for, default `deepseek-flash`. The model field in app requests is ignored. |
+| `DEEPSEEK_API_KEY` | Server-side provider key. It never reaches the desktop binary. |
+| `HOOK_MODEL_ID` | Model id the app and its coding engine see, default `hook`; must match `[model] name` in `harness.config.toml`. |
+| `HOOK_CONTEXT_WINDOW` / `HOOK_MAX_OUTPUT_TOKENS` | Optional limits advertised to the app; default `1048576` / `393216`. Keep `[coding]` in `harness.config.ci.toml` in step. |
+| `DOWNLOAD_DIR` | Installer directory, `/data/releases` in the container. |
 | `PORT` | Listener port, default `5173`. |
 
 The `waitlist_signups` table stores each Google subject, verified email, optional
@@ -127,7 +140,8 @@ without replacing signups. Historical prices and completion times remain null
 when they were not previously recorded.
 If the three credentials are missing the API refuses to start
 (and the landing page still renders — the button then reports that sign-in is
-unavailable).
+unavailable). The model proxy additionally reports `503` until
+`DEEPSEEK_API_KEY` is set.
 
 Who's on the list:
 
@@ -140,6 +154,95 @@ Who's on the list:
 
 It runs a read-only query inside the container, so nothing has to be installed on
 the VPS or your machine.
+
+### Approving people
+
+Approval is a status change on the same waitlist row. The admin script runs inside
+the container, from anywhere, and prints what changed:
+
+```bash
+./scripts/waitlist-admin.sh --list
+./scripts/waitlist-admin.sh --approve someone@example.com
+./scripts/waitlist-admin.sh --revoke someone@example.com
+./scripts/waitlist-admin.sh --delete someone@example.com
+```
+
+`--approve` lets the account sign in to the desktop app and use the model proxy.
+`--revoke` sets the account back to `revoked`, invalidates its API tokens, and
+the proxy refuses its next request. Approval does not resurrect a token that was
+already revoked by signing out; the user signs in again. `--delete` removes the
+waitlist row, tokens, device-login attempts, onboarding events and usage
+metadata. The app checks the account on launch and whenever the proxy answers
+`401`/`403`, so a revoked session drops back to the login screen instead of
+failing silently.
+
+An approved account sees a **Download Hook** button instead of the waiting-list
+flow. The button points at `/api/download/windows`, which re-checks the session
+and streams `DOWNLOAD_DIR/Hook-setup.exe`. The file and `latest.json` are written
+by the release workflow described below. Nothing is served from GitHub, so a
+shared link cannot bypass the approval check.
+
+### Desktop sign-in
+
+Hook uses the OAuth device flow, which keeps the Google client secret on the
+server and needs no custom URL scheme or local callback listener:
+
+1. the app calls `POST /api/auth/device/start` and gets a secret device code plus
+   a short code like `ABCD-EFGH`;
+2. it opens `https://hookcode.io/authorize?code=ABCD-EFGH` in the system browser;
+3. the user signs in with Google and approves the device — only an approved
+   waitlist account can do this;
+4. the app polls `POST /api/auth/device/poll` and receives an opaque `hk_…` token
+   once. Only its SHA-256 hash is stored in SQLite.
+
+The token lives in `%APPDATA%\app.hook.chat\auth.json`. The chat agent sends it
+as a bearer token; the bundled pi runtime receives it through `HOOK_API_TOKEN`
+and references it from its `models.json`. Signing out revokes the token on the
+server and closes live coding agents.
+
+### Model proxy and usage
+
+`/api/v1/chat/completions` is OpenAI-compatible, so the chat agent and pi use it
+unchanged. The app does not send a provider or a meaningful model: the proxy
+injects `DEEPSEEK_MODEL`, the server key and `stream_options.include_usage`, then
+relays the SSE stream byte-for-byte. `/api/v1/models` describes the single
+`HOOK_MODEL_ID` model (with the configured model's context, output and image
+capabilities) so the app's capability probe works.
+
+Every request is tagged with headers from the client:
+
+| Header | Meaning |
+|---|---|
+| `X-Hook-Surface` | `chat` or `coding` |
+| `X-Hook-Chat-Id` | Conversation id, so usage can be grouped per chat |
+| `X-Hook-Agent-Id` | Coding-agent run id, set per spawned process |
+| `X-Hook-Client` / `X-Hook-App-Version` | Client build |
+
+`usage_events` stores input/output tokens, `prompt_cache_hit_tokens`,
+`prompt_cache_miss_tokens`, reasoning tokens, duration, time-to-first-token and
+the status for each request. The cache hit rate is computed from the hit/miss
+pair, not from a guess. Analyse it with:
+
+```bash
+./scripts/waitlist-admin.sh --usage          # per account
+./scripts/waitlist-admin.sh --usage-chats    # per conversation
+./scripts/waitlist-admin.sh --usage-agents   # per coding-agent run
+```
+
+The proxy also enforces a small per-account concurrency and requests-per-minute
+limit. Revocation is checked on every request, so `--revoke` takes effect without
+restarting anything.
+
+### Automatic Windows builds
+
+`.github/workflows/release-app.yml` runs on every push to `main` that touches the
+desktop app, its config, the bundled pi dependency, or the build scripts. It
+builds the NSIS installer on `windows-latest`, writes `release/latest.json`
+(version, commit, size, SHA-256), and atomically uploads both files to
+`/opt/hook-web/data/releases` over the same SSH deploy key as the website. The
+next download is the new build; no tag or release step is needed. The build takes
+roughly 15 minutes and is serialized so two runs cannot overwrite each other.
+Builds also appear as workflow artifacts for 14 days.
 
 ### Google Cloud
 
@@ -189,36 +292,44 @@ after changing them.
 Everything lives in **`harness.config.toml`** at the repo root. It is compiled
 into the binary with `include_str!`, so there is no way to change it at runtime:
 
+The production config (`harness.config.ci.toml`) points at Hook's own proxy:
+
 ```toml
 [provider]
-base_url = "https://api.openai.com/v1"   # any OpenAI-compatible endpoint
+base_url = "https://hookcode.io/api/v1"
 path = "/chat/completions"
-api_key  = "sk-...-your-key"             # hard-coded into the build
-reasoning_param = "reasoning_effort"     # or "reasoning", or "none"
+api_key = ""                 # unused: the signed-in session supplies the token
+reasoning_param = "reasoning_effort"
 stream_usage = true
-tools = true                             # offer the agent tools to the model
-reasoning_echo = "auto"                  # replay reasoning on tool turns
+tools = true
+reasoning_echo = "auto"
 
 [model]
-name = "gpt-5.1"
-thinking = "medium"                      # off | minimal | low | medium | high
+name = "hook"                # must match HOOK_MODEL_ID on the server
+thinking = "high"
+
+[auth]
+base_url = "https://hookcode.io"
+required = true              # false only for the local mock provider
 ```
 
-`thinking` is sent to the provider using `reasoning_param` (mapped to
-`reasoning_effort` for OpenAI-style APIs). It is never shown in the UI.
+`thinking` is sent using `reasoning_param` (mapped to `reasoning_effort` for
+OpenAI-style APIs). It is never shown in the UI. Thinking-mode APIs (DeepSeek
+among them) reject the follow-up request unless the assistant's
+`reasoning_content` is replayed on tool-calling turns — an empty string counts.
+Hook records the field each answer was streamed in and sends it back
+automatically (`reasoning_echo = "auto"`).
 
-Thinking-mode APIs (DeepSeek among them) reject the follow-up request unless the
-assistant's `reasoning_content` is replayed on tool-calling turns — an empty
-string counts. Hook records the field each answer was streamed in and sends it
-back automatically (`reasoning_echo = "auto"`); set it to `"off"` or to an
-explicit field name if your provider wants something else.
+The provider key lives on the server. The binary is built without it and sends
+the signed-in user's opaque token instead, so extracting strings from the
+executable no longer yields a usable model key.
 
 Coding agents and the chat agent's instructions have their own optional
 sections:
 
 ```toml
 [coding]
-model = ""            # passed to pi as --model; empty = pi's default
+model = ""            # passed to pi as --model; empty = the chat model
 thinking = ""         # passed to pi as --thinking; empty = pi's default (medium)
 max_concurrent = 3    # how many coding agents may run at once
 bash_max_timeout = 3600   # seconds, enforced on every bash call
@@ -228,20 +339,23 @@ bash_min_timeout = 1
 system_prompt = ""    # empty = Hook's built-in instructions
 ```
 
-> The key ends up inside the executable. asar/bytecode/obfuscation do not change
-> that. For a personal machine that is fine; if the key ever becomes valuable,
-> put a small proxy in front of the provider instead.
+`harness.config.example.toml` remains a direct-provider template if you want to
+build a standalone copy without the account service.
 
 ## Run
 
 Prerequisites: Node 20+, Rust stable (MSVC toolchain), WebView2 runtime.
 
 ```bash
-cp harness.config.example.toml harness.config.toml   # then fill in your provider
+cp harness.config.ci.toml harness.config.toml   # production proxy config
 pnpm install
 pnpm app          # dev window with hot reload
 ```
 
+`harness.config.toml` is gitignored so you can keep a local provider. On a fresh
+clone, copy `harness.config.ci.toml` (the build the release workflow ships) or
+`harness.config.example.toml`. The production config requires a signed-in
+approved account. For UI work without the service, use the mock provider below.
 The config file must exist before building — it is compiled into the binary, so a
 missing file is a compile error by design.
 
@@ -253,7 +367,7 @@ pnpm mock         # terminal 1 — fake OpenAI-compatible endpoint on :8787
 pnpm app          # terminal 2
 ```
 
-Restore your real config afterwards (`cp harness.config.example.toml harness.config.toml`).
+Restore the production config afterwards (`cp harness.config.ci.toml harness.config.toml`).
 
 ## Build
 
@@ -265,12 +379,19 @@ pnpm app:portable  # portable folder, zipped (runs `pnpm engine` first)
 
 Outputs:
 
-- `release/Hook-0.1.0-setup.exe` — installer, ~28 MB (also in `src-tauri/target/release/bundle/nsis/`)
+- `src-tauri/target/release/bundle/nsis/Hook_0.1.0_x64-setup.exe` — installer, ~28 MB
+  (the release workflow copies it to `release/Hook-setup.exe` before upload)
 - `release/Hook-0.1.0-portable.zip` — `Hook.exe` + `resources\pi-runtime`, no install
 
 The engine (Node + pi) is ~104 MB of binaries and is not in git; `pnpm engine`
-copies it from the pi package on this machine. `scripts/fetch-pi-runtime.mjs`
-also proves the copy can load Hook's guard before anything gets packaged.
+copies it from the pinned `@earendil-works/pi-coding-agent` dev dependency.
+`scripts/fetch-pi-runtime.mjs` also proves the copy can load Hook's guard before
+anything gets packaged.
+
+`harness.config.toml` is gitignored so a local developer can keep a custom
+provider. The Windows release workflow copies the committed
+`harness.config.ci.toml` (hookcode.io proxy, no secrets) into that slot before
+building.
 
 ## Where the data lives
 
@@ -282,15 +403,20 @@ also proves the copy can load Hook's guard before anything gets packaged.
   settings.json            projects folder
   projects.json            the notes the chat agent keeps about projects
   agents.json              coding-agent runs and their states
+  auth.json                the opaque API token from the approved Google account
   agent-sessions\          coding-engine session files (resumable)
-  agent-home\              the engine's own config: models.json (this build's
-                           endpoint + key + model), settings.json, sessions
+  agent-home\              the engine's own config: models.json (endpoint,
+                           model and `$HOOK_*` header references), settings.json
   updates\<agent id>\      progress notes, checklist updates and preview pointers
                            the agents wrote, collected each second
   hook-guard.mjs           the guard loaded into every coding agent
 ```
 
-No database, no sync, no telemetry. Deleting the folder resets the app.
+The app keeps no local database and no sync. Conversations never leave the
+machine; the account service sees the request metadata described above (token
+counts, cache hits, a chat id and a coding-agent run id) and stores it next to the
+account. Deleting the folder resets the local app; revoke the account on the
+server to remove access.
 
 ## Coding agents
 
@@ -320,13 +446,16 @@ conversation while you keep chatting.
   ```
 
   `PI_CODING_AGENT_DIR` points at `%APPDATA%\app.hook.chat\agent-home`, whose
-  `models.json` is rewritten from `harness.config.toml` on every launch. So an
-  agent uses exactly the chat agent's endpoint, key and model, and never touches
-  your own `~/.pi` — different extensions, skills, MCP servers and logins on
-  your machine cannot change what it does. Its thinking level is its own: with
-  `[coding] thinking` empty the engine uses its default (medium) rather than the
-  chat model's level, because a run is dozens of small turns and a high level on
-  each one leaves the checklist frozen for minutes at a time.
+  `models.json` is written atomically from `harness.config.toml` before launch.
+  The token is referenced as `$HOOK_API_TOKEN` and supplied through the agent's
+  environment; the run id and chat id travel as `$HOOK_AGENT_ID` /
+  `$HOOK_CHAT_ID` headers, so concurrent agents report usage against the right
+  conversation. An agent uses exactly the chat agent's endpoint and model and
+  never touches your own `~/.pi` — different extensions, skills, MCP servers and
+  logins on your machine cannot change what it does. Its thinking level is its
+  own: with `[coding] thinking` empty the engine uses its default (medium)
+  rather than the chat model's level, because a run is dozens of small turns and
+  a high level on each one leaves the checklist frozen for minutes at a time.
 - **The plan is visible, and so is the Stop button.** `start_coding_agent` takes
   a `plan`: three to six short steps in plain language (`Setting things up`,
   `Designing the front page`, `Hooking up the real service`), written by the

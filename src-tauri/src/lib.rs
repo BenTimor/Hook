@@ -1,4 +1,5 @@
 mod agent;
+mod auth;
 mod commands;
 mod config;
 mod guard;
@@ -12,7 +13,6 @@ mod tools;
 mod turn;
 
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
@@ -50,33 +50,33 @@ pub fn run() {
                     .map_err(|e| std::io::Error::other(e))?
                     .clone(),
             );
-            // Written at startup as well as before each run, so the engine's
-            // config on disk always matches this build.
+            let auth = Arc::new(auth::AuthStore::new(
+                &data_dir,
+                &cfg.auth.base_url,
+                cfg.auth.required,
+                &cfg.provider.api_key,
+            ));
+            // Written before each run instead of once here: a coding agent's
+            // model config carries its own run id and the current token.
             // Capabilities come from the model card, not from the build: the
             // endpoint says what the model can do, and a provider that cannot
             // answer simply reports nothing.
             let vision = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let engine = runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir)
-                .map(|engine| {
-                    if let Err(error) =
-                        runtime::write_agent_home(&engine, &cfg, vision.load(Ordering::Relaxed))
-                    {
-                        eprintln!("hook: {error}");
-                    }
-                    engine
-                });
-            let probe_engine = engine.as_ref().ok().cloned();
+            let engine = runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir);
 
             let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
-            let agents = Arc::new(AgentManager::new(
-                &data_dir,
-                cfg.clone(),
-                vision.clone(),
-                engine,
-                settings.clone(),
-                projects.clone(),
-                signal_tx,
-            ));
+            let agents = Arc::new(
+                AgentManager::new(
+                    &data_dir,
+                    cfg.clone(),
+                    vision.clone(),
+                    engine,
+                    settings.clone(),
+                    projects.clone(),
+                    signal_tx,
+                )
+                .with_auth(auth.clone()),
+            );
 
             let preview_emit: preview::Emitter = {
                 let app = app.handle().clone();
@@ -94,6 +94,8 @@ pub fn run() {
                 preview: Arc::new(preview::PreviewManager::new(preview_emit)),
                 streams: Arc::new(Mutex::new(HashMap::new())),
                 turns: turn::TurnState::default(),
+                cfg: cfg.clone(),
+                auth: auth.clone(),
                 vision: vision.clone(),
                 vision_off: Arc::new(Default::default()),
             });
@@ -101,28 +103,11 @@ pub fn run() {
 
             // One request tells us what the model can see. If the card says
             // images, the chat may send them and the engine is told so before
-            // any agent starts.
+            // any agent starts. Re-run after sign-in and on window reload.
             {
-                let cfg = cfg.clone();
-                let vision = vision.clone();
+                let state = state.clone();
                 tauri::async_runtime::spawn(async move {
-                    let caps = provider::fetch_capabilities(&cfg).await;
-                    if !caps.known {
-                        eprintln!("hook: no model card at the provider; capabilities unknown");
-                        return;
-                    }
-                    eprintln!(
-                        "hook: model {} capabilities from /models: vision={}",
-                        cfg.model.name, caps.vision
-                    );
-                    if caps.vision {
-                        vision.store(true, Ordering::Relaxed);
-                        if let Some(engine) = probe_engine {
-                            if let Err(error) = runtime::write_agent_home(&engine, &cfg, true) {
-                                eprintln!("hook: {error}");
-                            }
-                        }
-                    }
+                    commands::refresh_capabilities(&state).await;
                 });
             }
 
@@ -212,6 +197,13 @@ pub fn run() {
             commands::open_image,
             commands::save_image_as,
             commands::open_path,
+            commands::app_info,
+            commands::auth_status,
+            commands::auth_login,
+            commands::auth_cancel_login,
+            commands::auth_refresh,
+            commands::auth_logout,
+            commands::open_url,
             commands::agents_overview,
             commands::stop_chat_agents,
             commands::preview_state,

@@ -72,6 +72,17 @@ export interface AppInfo {
   version: string;
 }
 
+/** Desktop sign-in state. `pending` carries the code shown in the login window. */
+export interface AuthView {
+  signedIn: boolean;
+  state: "signed_out" | "pending" | "signed_in";
+  email: string | null;
+  name: string | null;
+  userCode: string | null;
+  verificationUrl: string | null;
+  message: string | null;
+}
+
 export interface Project {
   name: string;
   path: string;

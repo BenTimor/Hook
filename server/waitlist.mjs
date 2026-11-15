@@ -1,11 +1,11 @@
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { createWaitlistApi } from "./api.mjs";
+import { createPlatform } from "./platform.mjs";
 
 const app = express();
 app.disable("x-powered-by");
 
-const api = createWaitlistApi(process.env);
+const api = createPlatform(process.env);
 app.use((_req, res, next) => {
   res.set({
     // style-src-attr is required by the letter-by-letter demo animation, which
@@ -19,7 +19,7 @@ app.use((_req, res, next) => {
   });
   next();
 });
-app.use("/api/waitlist", api.router);
+app.use("/api", api.router);
 app.use(express.static(fileURLToPath(new URL("../dist-waitlist", import.meta.url))));
 
 const port = Number(process.env.PORT ?? 5173);

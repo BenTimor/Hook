@@ -46,6 +46,25 @@ pub enum Chunk {
     Reasoning(String),
 }
 
+/// Which part of Hook is making the request. These values travel as headers
+/// so the proxy can attribute usage to a conversation or a coding-agent run.
+#[derive(Debug, Clone)]
+pub struct RequestContext {
+    pub chat_id: String,
+    pub agent_id: Option<String>,
+    pub surface: &'static str,
+}
+
+impl RequestContext {
+    pub fn chat(chat_id: impl Into<String>) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            agent_id: None,
+            surface: "chat",
+        }
+    }
+}
+
 /// One finished assistant response, tool calls included.
 pub struct Completion {
     pub text: String,
@@ -113,6 +132,8 @@ impl ToolCallAccumulator {
 
 pub async fn stream_chat<F>(
     cfg: &HarnessConfig,
+    token: &str,
+    context: &RequestContext,
     messages: &[serde_json::Value],
     tools: Option<&serde_json::Value>,
     cancel: CancelToken,
@@ -121,6 +142,9 @@ pub async fn stream_chat<F>(
 where
     F: FnMut(Chunk) + Send,
 {
+    if token.trim().is_empty() {
+        return Err("Sign in to Hook to send messages.".into());
+    }
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .pool_idle_timeout(Duration::from_secs(90))
@@ -131,8 +155,15 @@ where
         .post(cfg.provider.endpoint())
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
-        .bearer_auth(&cfg.provider.api_key)
+        .bearer_auth(token)
+        .header("X-Hook-Client", "hook-desktop")
+        .header("X-Hook-Surface", context.surface)
+        .header("X-Hook-Chat-Id", &context.chat_id)
+        .header("X-Hook-App-Version", env!("CARGO_PKG_VERSION"))
         .json(&build_body(cfg, messages, tools));
+    if let Some(agent_id) = &context.agent_id {
+        request = request.header("X-Hook-Agent-Id", agent_id);
+    }
 
     for (name, value) in &cfg.provider.headers {
         request = request.header(name, value);
@@ -435,7 +466,10 @@ pub struct Capabilities {
 /// Ask the provider what our model can do. Never fails: a provider without a
 /// usable `/models` simply reports nothing, and pictures are then described in
 /// text instead of being sent as image parts.
-pub async fn fetch_capabilities(cfg: &HarnessConfig) -> Capabilities {
+pub async fn fetch_capabilities(cfg: &HarnessConfig, token: &str) -> Capabilities {
+    if token.trim().is_empty() {
+        return Capabilities::default();
+    }
     let Ok(client) = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(6))
         .timeout(Duration::from_secs(12))
@@ -446,7 +480,9 @@ pub async fn fetch_capabilities(cfg: &HarnessConfig) -> Capabilities {
     let mut request = client
         .get(cfg.provider.models_endpoint())
         .header(reqwest::header::ACCEPT, "application/json")
-        .bearer_auth(&cfg.provider.api_key);
+        .header("X-Hook-Client", "hook-desktop")
+        .header("X-Hook-Surface", "chat")
+        .bearer_auth(token);
     for (name, value) in &cfg.provider.headers {
         request = request.header(name, value);
     }
@@ -556,6 +592,7 @@ mod tests {
                 temperature: None,
                 max_tokens: None,
             },
+            auth: Default::default(),
             coding: Default::default(),
             agent: Default::default(),
         }
@@ -670,11 +707,19 @@ mod tests {
     async fn streams_text_from_an_openai_compatible_endpoint() {
         let cfg = mock_config();
         let mut text = String::new();
-        let outcome = stream_chat(&cfg, &messages(), None, CancelToken::new(), |chunk| {
-            if let Chunk::Text(part) = chunk {
-                text.push_str(&part);
-            }
-        })
+        let outcome = stream_chat(
+            &cfg,
+            "test-token",
+            &RequestContext::chat("chat_test"),
+            &messages(),
+            None,
+            CancelToken::new(),
+            |chunk| {
+                if let Chunk::Text(part) = chunk {
+                    text.push_str(&part);
+                }
+            },
+        )
         .await
         .expect("stream failed");
 
@@ -700,9 +745,17 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(400)).await;
             handle.cancel();
         });
-        let outcome = stream_chat(&cfg, &messages(), None, token, |_| {})
-            .await
-            .expect("stream failed");
+        let outcome = stream_chat(
+            &cfg,
+            "test-token",
+            &RequestContext::chat("chat_test"),
+            &messages(),
+            None,
+            token,
+            |_| {},
+        )
+        .await
+        .expect("stream failed");
         assert!(matches!(outcome, Outcome::Cancelled));
     }
 }

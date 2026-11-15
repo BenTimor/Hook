@@ -23,3 +23,4 @@ Dockerfile
 infra
 scripts
 README.md
+harness.config.ci.toml

@@ -35,7 +35,7 @@ const format = process.argv[2] || "table";
 
 const db = new DatabaseSync(process.env.WAITLIST_DB_PATH || "/data/signups.sqlite", { readOnly: true });
 const columns = new Set(db.prepare("PRAGMA table_info(waitlist_signups)").all().map(c => c.name));
-const optional = ["interests", "plan_preference", "plan_price_cents", "plan_currency", "plan_period", "onboarding_step", "onboarding_started_at", "onboarding_updated_at", "onboarding_completed_at"];
+const optional = ["waitlist_status", "approved_at", "revoked_at", "interests", "plan_preference", "plan_price_cents", "plan_currency", "plan_period", "onboarding_step", "onboarding_started_at", "onboarding_updated_at", "onboarding_completed_at"];
 const rows = db
   .prepare(`SELECT email, joined_at, google_subject, ${optional.map(c => columns.has(c) ? c : `NULL AS ${c}`).join(", ")} FROM waitlist_signups ORDER BY joined_at DESC`)
   .all();
@@ -61,7 +61,7 @@ if (format === "--count") {
   if (!rows.length) {
     console.log("No signups yet.");
   } else {
-    const head = ["EMAIL", "JOINED (UTC)", "INTERESTS", "PLAN", "PRICE", "STEP", "COMPLETED (UTC)"];
+    const head = ["EMAIL", "STATUS", "JOINED (UTC)", "INTERESTS", "PLAN", "PRICE", "STEP", "COMPLETED (UTC)"];
     const utc = (value) => value ? value.replace("T", " ").slice(0, 19) : "—";
     const body = rows.map((r) => [r.email, utc(r.joined_at), JSON.parse(r.interests || "[]").join(", ") || "—", r.plan_preference || "—", r.plan_price_cents == null ? "—" : `${(r.plan_price_cents / 100).toFixed(2)} ${r.plan_currency}${r.plan_period}`, r.onboarding_step || "—", utc(r.onboarding_completed_at)]);
     const width = head.map((h, i) => Math.max(h.length, ...body.map((b) => b[i].length)));

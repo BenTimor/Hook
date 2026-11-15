@@ -6,6 +6,7 @@ import { useChatStore } from "./store/useChatStore";
 import { AgentBoard } from "./components/AgentBoard";
 import { Composer } from "./components/Composer";
 import { Hero } from "./components/Hero";
+import { LoginScreen } from "./components/LoginScreen";
 import { PaneHead } from "./components/PaneHead";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { SettingsSheet } from "./components/SettingsSheet";
@@ -14,6 +15,7 @@ import { Thread } from "./components/Thread";
 
 export default function App() {
   const bootstrap = useChatStore((s) => s.bootstrap);
+  const auth = useChatStore((s) => s.auth);
   const activeId = useChatStore((s) => s.activeId);
   const newChat = useChatStore((s) => s.newChat);
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
@@ -24,6 +26,7 @@ export default function App() {
   );
 
   const [maximized, setMaximized] = useState(false);
+  const signedIn = Boolean(auth?.signedIn);
 
   useEffect(() => {
     void bootstrap();
@@ -45,6 +48,7 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!signedIn) return;
       const mod = event.metaKey || event.ctrlKey;
       if (!mod) {
         if (event.key === "Escape" && streaming) {
@@ -67,7 +71,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [newChat, requestSearch, streaming, stop, toggleSidebar]);
+  }, [newChat, requestSearch, streaming, stop, toggleSidebar, signedIn]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -86,6 +90,24 @@ export default function App() {
       window.removeEventListener("drop", block);
     };
   }, []);
+
+  if (!signedIn) {
+    return (
+      <>
+        <LoginScreen maximized={maximized} />
+        <Toaster
+          theme="light"
+          position="bottom-center"
+          offset={104}
+          gap={8}
+          toastOptions={{
+            unstyled: true,
+            classNames: { toast: "toast", actionButton: "toast-action" },
+          }}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="shell" data-maximized={maximized}>

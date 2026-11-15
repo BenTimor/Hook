@@ -1,0 +1,308 @@
+import { json, Router } from "express";
+import { apiError, requireApiUser } from "./tokens.mjs";
+
+/**
+ * A transparent OpenAI-compatible endpoint in front of DeepSeek.
+ *
+ * Hook (and the pi coding agent Hook ships) send the same shape they would
+ * send to DeepSeek: `{ messages, tools?, stream? }`. The `model` field is
+ * accepted for compatibility but ignored — this deployment serves exactly one
+ * upstream model, chosen by the server. The request is forwarded with the
+ * server's key, the SSE stream is relayed byte-for-byte, and the usage block
+ * is mirrored into `usage_events` so token counts and cache hits can be
+ * analysed per user, per chat and per coding-agent run.
+ */
+
+const DEFAULT_MODEL = "deepseek-flash";
+const MAX_CONCURRENT = 8;
+const MAX_PER_MINUTE = 240;
+
+function upstreamUrl(env) {
+  const base = (env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(
+    /\/+$/,
+    "",
+  );
+  if (base.endsWith("/chat/completions")) return base;
+  return `${base}/chat/completions`;
+}
+
+function headerId(req, name, max = 120) {
+  const raw = req.get(name);
+  if (typeof raw !== "string") return null;
+  const value = raw.trim().slice(0, max);
+  return value || null;
+}
+
+function parseUsage(value) {
+  if (!value || typeof value !== "object") return null;
+  const prompt = Number(value.prompt_tokens) || 0;
+  const completion = Number(value.completion_tokens) || 0;
+  const hit =
+    Number(value.prompt_cache_hit_tokens) ||
+    Number(value.prompt_tokens_details?.cached_tokens) ||
+    0;
+  const miss =
+    value.prompt_cache_miss_tokens === undefined
+      ? Math.max(prompt - hit, 0)
+      : Number(value.prompt_cache_miss_tokens) || 0;
+  return {
+    prompt,
+    completion,
+    hit,
+    miss,
+    reasoning: Number(value.completion_tokens_details?.reasoning_tokens) || 0,
+  };
+}
+
+/**
+ * Keep the proxy from being an unbounded fan-out if a token leaks. This is a
+ * per-process guard; the real spend control is the approval list.
+ */
+function createLimiter() {
+  const buckets = new Map();
+  return {
+    acquire(subject) {
+      const now = Date.now();
+      let bucket = buckets.get(subject);
+      if (!bucket) {
+        bucket = { window: now, count: 0, active: 0 };
+        buckets.set(subject, bucket);
+      }
+      if (now - bucket.window >= 60_000) {
+        bucket.window = now;
+        bucket.count = 0;
+      }
+      if (bucket.active >= MAX_CONCURRENT)
+        return { ok: false, message: "Too many requests in flight. Wait for one to finish." };
+      if (bucket.count >= MAX_PER_MINUTE)
+        return { ok: false, message: "Too many requests. Try again in a minute." };
+      bucket.count += 1;
+      bucket.active += 1;
+      if (buckets.size > 10_000) buckets.clear();
+      return { ok: true, release: () => (bucket.active = Math.max(0, bucket.active - 1)) };
+    },
+  };
+}
+
+export function createProxyRouter({ env, db }) {
+  const router = Router();
+  router.use(json({ limit: "64mb" }));
+  const limiter = createLimiter();
+  const modelId = env.HOOK_MODEL_ID || "hook";
+  const upstreamModel = env.DEEPSEEK_MODEL || DEFAULT_MODEL;
+  const apiKey = env.DEEPSEEK_API_KEY || "";
+  const url = upstreamUrl(env);
+
+  function record(req, row, status, usage, started, ttft, model) {
+    const elapsed = Date.now() - started;
+    try {
+      db.prepare(
+        `INSERT INTO usage_events
+           (google_subject, chat_id, agent_id, surface, model, status,
+            prompt_tokens, completion_tokens, cache_hit_tokens,
+            cache_miss_tokens, reasoning_tokens, duration_ms, ttft_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        row.google_subject,
+        headerId(req, "x-hook-chat-id"),
+        headerId(req, "x-hook-agent-id"),
+        headerId(req, "x-hook-surface", 32) || "api",
+        model,
+        status,
+        usage?.prompt ?? 0,
+        usage?.completion ?? 0,
+        usage?.hit ?? 0,
+        usage?.miss ?? 0,
+        usage?.reasoning ?? 0,
+        elapsed,
+        ttft,
+      );
+    } catch (error) {
+      // Usage must never take a reply down with it.
+      console.error("hook: could not record model usage", error.message);
+    }
+  }
+
+  /**
+   * `/models` is what Hook asks at startup to learn whether the model can see
+   * images. The proxy answers for the one model it serves.
+   */
+  router.get("/models", (req, res) => {
+    const row = requireApiUser(db, req, res);
+    if (!row) return;
+    res.json({
+      object: "list",
+      data: [
+        {
+          id: modelId,
+          object: "model",
+          owned_by: "hook",
+          name: "Hook",
+          context_window: Number(env.HOOK_CONTEXT_WINDOW) || 1_048_576,
+          max_output_tokens: Number(env.HOOK_MAX_OUTPUT_TOKENS) || 393_216,
+          // deepseek-flash accepts image parts; the app asks this card at
+          // startup and only sends pictures when the card says so.
+          input_modalities: ["text", "image"],
+        },
+      ],
+    });
+  });
+
+  router.post("/chat/completions", async (req, res) => {
+    const row = requireApiUser(db, req, res);
+    if (!row) return;
+
+    const body = req.body;
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      return apiError(res, 400, "Expected a JSON object.", "invalid_body");
+    if (!Array.isArray(body.messages) || body.messages.length === 0)
+      return apiError(res, 400, "`messages` must be a non-empty array.", "invalid_messages");
+    if (!apiKey)
+      return apiError(
+        res,
+        503,
+        "The model service is not configured yet.",
+        "upstream_unavailable",
+      );
+
+    const slot = limiter.acquire(row.google_subject);
+    if (!slot.ok) return apiError(res, 429, slot.message, "rate_limited");
+
+    const started = Date.now();
+    const controller = new AbortController();
+    let clientGone = false;
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        clientGone = true;
+        controller.abort();
+      }
+    });
+
+    const upstream = {
+      ...body,
+      model: upstreamModel,
+      stream: body.stream !== false,
+    };
+    upstream.stream_options = {
+      ...(body.stream_options && typeof body.stream_options === "object"
+        ? body.stream_options
+        : {}),
+      include_usage: true,
+    };
+
+    let usage = null;
+    let ttft = null;
+    let status = 502;
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json",
+          accept: upstream.stream ? "text/event-stream" : "application/json",
+          "user-agent": "Hook-Proxy/1.0",
+        },
+        body: JSON.stringify(upstream),
+        signal: controller.signal,
+      });
+      status = response.status;
+      const contentType = response.headers.get("content-type") || "";
+
+      if (!response.ok) {
+        // A bad server-side provider key must not look like a revoked Hook
+        // session: the app signs out on 401/403 from this proxy. Surface those
+        // as a 502 instead.
+        if (response.status === 401 || response.status === 403) {
+          console.error(
+            `hook: the upstream model service rejected the server credentials (${response.status})`,
+          );
+          status = 502;
+          return apiError(
+            res,
+            502,
+            "The model service is unavailable right now. Please try again shortly.",
+            "upstream_auth",
+          );
+        }
+        const raw = (await response.text()).slice(0, 16_384);
+        let payload = raw;
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          // Relay the provider's text as-is; it is already an error.
+        }
+        res.status(response.status);
+        if (typeof payload === "string")
+          return res.type(contentType || "text/plain").send(payload);
+        return res.type("application/json").json(payload);
+      }
+
+      if (!contentType.includes("text/event-stream")) {
+        const payload = await response.json();
+        usage = parseUsage(payload.usage);
+        res.status(200).json(payload);
+        return;
+      }
+
+      res.status(200);
+      res.set({
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-store",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      res.flushHeaders?.();
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for await (const chunk of response.body) {
+        if (res.writableEnded) break;
+        if (ttft === null) ttft = Date.now() - started;
+        res.write(chunk);
+        buffer += decoder.decode(chunk, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          try {
+            const frame = JSON.parse(data);
+            if (frame.usage) usage = parseUsage(frame.usage);
+          } catch {
+            // A partial or non-JSON frame is not ours to interpret.
+          }
+        }
+      }
+      res.end();
+    } catch (error) {
+      if (clientGone) {
+        status = 499;
+      } else {
+        status = 502;
+        if (res.headersSent) {
+          // The reply has started; finish the SSE stream with an error frame
+          // rather than leaving the client waiting forever.
+          if (!res.writableEnded) {
+            res.write(
+              `data: ${JSON.stringify({
+                error: { message: `Upstream stream failed: ${error.message}` },
+              })}\n\n`,
+            );
+            res.end();
+          }
+        } else {
+          apiError(res, 502, `Could not reach the model service: ${error.message}`, "upstream_error");
+        }
+      }
+    } finally {
+      slot.release();
+      // A client abort still represents work the provider may have billed for;
+      // the usage frame usually arrived before the abort.
+      record(req, row, status, usage, started, ttft, upstreamModel);
+    }
+  });
+
+  return router;
+}

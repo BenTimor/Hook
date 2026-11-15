@@ -6,6 +6,7 @@
 import type {
   AgentsOverview,
   AppInfo,
+  AuthView,
   Chat,
   ChatMeta,
   Message,
@@ -239,9 +240,45 @@ function plain(input: string): string {
 /** Data URLs for pictures staged in the browser preview. */
 const previewImages = new Map<string, string>();
 
+const mockAuth: AuthView = {
+  signedIn: true,
+  state: "signed_in",
+  email: "preview@hookcode.io",
+  name: "Preview",
+  userCode: null,
+  verificationUrl: null,
+  message: null,
+};
+
+const demoLogin = () =>
+  new URLSearchParams(window.location.search).get("login") === "1";
+
 export const mock = {
   async appInfo() {
     return clone(info);
+  },
+
+  async authStatus(): Promise<AuthView> {
+    // `?login=1` previews the sign-in window without the Tauri shell.
+    return demoLogin()
+      ? { ...mockAuth, signedIn: false, state: "signed_out", email: null }
+      : { ...mockAuth };
+  },
+
+  async authLogin(): Promise<AuthView> {
+    return { ...mockAuth };
+  },
+
+  async authCancelLogin(): Promise<AuthView> {
+    return { ...mockAuth };
+  },
+
+  async authRefresh(): Promise<AuthView> {
+    return { ...mockAuth };
+  },
+
+  async authLogout(): Promise<AuthView> {
+    return { ...mockAuth, signedIn: false, state: "signed_out", email: null };
   },
 
   async listChats() {

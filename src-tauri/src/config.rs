@@ -9,12 +9,38 @@ use serde::Deserialize;
 pub struct HarnessConfig {
     pub provider: ProviderConfig,
     pub model: ModelConfig,
+    /// Where the desktop app signs in. Optional; defaults to hookcode.io.
+    #[serde(default)]
+    pub auth: AuthConfig,
     /// Coding agents (pi subprocesses). Optional section.
     #[serde(default)]
     pub coding: CodingConfig,
     /// Chat-agent behaviour. Optional section.
     #[serde(default)]
     pub agent: AgentConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthConfig {
+    /// Origin of the Hook account service (no trailing slash needed).
+    #[serde(default = "default_auth_base")]
+    pub base_url: String,
+    /// Mock builds can turn the account gate off; production always requires it.
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+fn default_auth_base() -> String {
+    "https://hookcode.io".to_string()
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_auth_base(),
+            required: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -111,6 +137,9 @@ impl CodingConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConfig {
     pub base_url: String,
+    /// Reserved for direct-provider development builds. The Hook proxy uses
+    /// the signed-in session token instead.
+    #[allow(dead_code)]
     pub api_key: String,
     #[serde(default)]
     pub path: Option<String>,

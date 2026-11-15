@@ -6,7 +6,7 @@
 # (/opt/hook-web is mounted into the caddy container at /srv/hook-web:ro.)
 #
 # Static build  → /srv/hook-web/site      (uploaded by scripts/deploy-waitlist.sh)
-# Waitlist API  → hook-waitlist:5173      (container on the scout_default network)
+# API + proxy   → hook-waitlist:5173      (container on the scout_default network)
 #
 # Deploy from the dev machine:  ./scripts/deploy-waitlist.sh
 # ============================================================
@@ -20,6 +20,16 @@ hookcode.io {
 	# (try_files takes no matcher, so it cannot be scoped away). Inside `route`
 	# the handlers run exactly in the order written here.
 	route {
+		# Waitlist, desktop device login, the model proxy and the auth-gated
+		# download all live under /api. flush_interval -1 keeps the model's SSE
+		# stream flowing token by token instead of waiting for a buffer to fill.
+		@api path /api/*
+		reverse_proxy @api hook-waitlist:5173 {
+			flush_interval -1
+		}
+
+		# Encoding comes after the API: proxied SSE must not be buffered or
+		# compressed, and the installer is already compressed.
 		encode zstd gzip
 
 		header {
@@ -32,12 +42,6 @@ hookcode.io {
 			# www.facebook.com for its event beacon; everything else stays first-party.
 			Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'self' https://connect.facebook.net; img-src 'self' https://www.facebook.com; connect-src 'self' https://www.facebook.com https://connect.facebook.net; style-src 'self'; style-src-attr 'unsafe-inline'"
 		}
-
-		# OAuth start / callback / status. The API sets its own no-store, so the
-		# static cache policy below is placed after this line, where it can no
-		# longer touch proxied responses.
-		@api path /api/waitlist/*
-		reverse_proxy @api hook-waitlist:5173
 
 		# Static: HTML revalidates so a deploy is visible instantly, hashed build
 		# assets are immutable.

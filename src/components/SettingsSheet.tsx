@@ -1,7 +1,7 @@
 import { useEffect } from "react";
-import { FolderOpen, GitBranch, X } from "lucide-react";
+import { FolderOpen, GitBranch, LogOut, UserRound, X } from "lucide-react";
 
-import { api } from "../lib/bridge";
+import { api, openExternal } from "../lib/bridge";
 import { useChatStore } from "../store/useChatStore";
 
 export function SettingsSheet() {
@@ -9,6 +9,9 @@ export function SettingsSheet() {
   const close = useChatStore((s) => s.closeSettings);
   const settings = useChatStore((s) => s.settings);
   const chooseProjectsDir = useChatStore((s) => s.chooseProjectsDir);
+  const auth = useChatStore((s) => s.auth);
+  const authBusy = useChatStore((s) => s.authBusy);
+  const signOut = useChatStore((s) => s.signOut);
 
   useEffect(() => {
     if (!open) return;
@@ -41,6 +44,40 @@ export function SettingsSheet() {
         </div>
 
         <div className="sheet-body">
+          <section className="sheet-section">
+            <div className="sheet-label">
+              <span>Account</span>
+            </div>
+            <div className="account-row">
+              <span className="account-badge" aria-hidden="true">
+                <UserRound strokeWidth={1.8} />
+              </span>
+              <div className="account-identity">
+                <strong>{auth?.name || "Signed in"}</strong>
+                <span>{auth?.email}</span>
+              </div>
+              <button
+                className="btn btn-ghost"
+                onClick={() => void signOut()}
+                disabled={authBusy}
+                title="Sign out"
+              >
+                <LogOut strokeWidth={1.9} />
+                {authBusy ? "Signing out…" : "Sign out"}
+              </button>
+            </div>
+            <p className="sheet-help">
+              Chat and coding agents use this account.{" "}
+              <button
+                className="inline-link"
+                onClick={() => void openExternal("https://hookcode.io/")}
+              >
+                Manage access on hookcode.io
+              </button>
+              .
+            </p>
+          </section>
+
           <section className="sheet-section">
             <div className="sheet-label">
               <span>Projects folder</span>
@@ -94,8 +131,8 @@ export function SettingsSheet() {
           </section>
 
           <p className="sheet-foot">
-            Provider settings are compiled into this build — edit{" "}
-            <code>harness.config.toml</code> and rebuild Hook to change them.
+            Hook talks to its own account service; provider settings live on
+            the server, not in this window.
           </p>
         </div>
       </div>

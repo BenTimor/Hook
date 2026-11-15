@@ -31,7 +31,8 @@ RUN mkdir -p /data && chown -R node:node /app /data
 USER node
 
 ENV PORT=5173 \
-    WAITLIST_DB_PATH=/data/signups.sqlite
+    WAITLIST_DB_PATH=/data/signups.sqlite \
+    DOWNLOAD_DIR=/data/releases
 EXPOSE 5173
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

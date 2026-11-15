@@ -21,6 +21,7 @@ import {
   ConfirmationScreen,
   InterestsScreen,
   PricingScreen,
+  ApprovedScreen,
 } from "./OnboardingPanels";
 import {
   rememberOnboarding,
@@ -28,10 +29,11 @@ import {
   usageBenefit,
   usageDescription,
 } from "./onboarding";
-import type { Profile, Screen } from "./onboarding";
+import type { Profile, ReleaseInfo, Screen } from "./onboarding";
 import { resumeOnboarding, useProgressSaver } from "./progress";
 import { developmentPreview } from "./devMode";
 import { initMetaPixel, trackSignupLead } from "./metaPixel";
+import { AuthorizePage } from "./Authorize";
 import "./styles.css";
 import "./onboarding.css";
 
@@ -65,6 +67,8 @@ function Waitlist() {
   const [onboarding, setOnboarding] = useState(restoreOnboarding);
   const [direction, setDirection] = useState(1);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [download, setDownload] = useState<ReleaseInfo | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const progress = useProgressSaver(profile?.id);
   const [checking, setChecking] = useState(!developmentPreview);
   const [busy, setBusy] = useState(false);
@@ -114,6 +118,7 @@ function Waitlist() {
         const status = await response.json();
         if (!active) return;
         setProfile(status.profile ?? null);
+        setDownload(status.download ?? null);
         if (status.profile && !callbackError)
           setOnboarding(resumeOnboarding(status.profile));
         else
@@ -216,11 +221,35 @@ function Waitlist() {
       );
   }
 
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await fetch("/api/waitlist/logout", {
+        method: "POST",
+        signal: AbortSignal.timeout(8_000),
+      });
+    } catch {
+      // The local screen still signs out even if the network is down.
+    }
+    setProfile(null);
+    setDownload(null);
+    setError("");
+    setOnboarding({ screen: "landing", interests: [], planPreference: null });
+    setSigningOut(false);
+    history.replaceState(null, "", "/");
+  }
+
   const screen = checking ? "landing" : onboarding.screen;
   const step = ORDER[screen];
+  const approved = Boolean(profile?.approved);
   return (
     <MotionConfig reducedMotion="user">
-      <div className="site" data-screen={screen} data-visible={visible}>
+      <div
+        className="site"
+        data-screen={approved ? "approved" : screen}
+        data-visible={visible}
+      >
         <motion.div
           className="site-atmosphere"
           aria-hidden="true"
@@ -231,13 +260,18 @@ function Waitlist() {
           <button
             className="wordmark"
             onClick={() => go("landing")}
-            disabled={busy}
+            disabled={busy || approved}
             aria-label="Hook home"
           >
             <HookMark />
             Hook
           </button>
-          {step === 0 ? (
+          {approved ? (
+            <span className="availability" data-approved="true">
+              <span aria-hidden="true" />
+              Approved
+            </span>
+          ) : step === 0 ? (
             <span className="availability">
               <span aria-hidden="true" />
               {developmentPreview ? "Local preview" : "Early access"}
@@ -263,7 +297,15 @@ function Waitlist() {
         </header>
 
         <main className="screen-stack">
-          <AnimatePresence initial={false} custom={direction}>
+          {approved ? (
+            <ApprovedScreen
+              profile={profile!}
+              download={download}
+              signingOut={signingOut}
+              onSignOut={() => void signOut()}
+            />
+          ) : (
+            <AnimatePresence initial={false} custom={direction}>
             <OnboardingTransition
               key={screen}
               screen={screen}
@@ -392,14 +434,18 @@ function Waitlist() {
               )}
             </OnboardingTransition>
           </AnimatePresence>
+          )}
         </main>
 
         <footer
           className="site-footer"
-          data-syncing={screen === "interests" || screen === "pricing"}
+          data-syncing={
+            !approved && (screen === "interests" || screen === "pricing")
+          }
         >
           <p>© {new Date().getFullYear()} Hook</p>
-          {(screen === "interests" || screen === "pricing") && (
+          {!approved &&
+            (screen === "interests" || screen === "pricing") && (
             <div className="progress-save" role="status" aria-live="polite">
               {developmentPreview ? (
                 "Preview · not saved"
@@ -439,6 +485,10 @@ function Waitlist() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Waitlist />
+    {location.pathname.replace(/\/+$/, "") === "/authorize" ? (
+      <AuthorizePage />
+    ) : (
+      <Waitlist />
+    )}
   </StrictMode>,
 );

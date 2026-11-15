@@ -1,10 +1,17 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 
-import { api, onAgentsEvent, onChatEvent, onPreviewEvent } from "../lib/bridge";
+import {
+  api,
+  onAgentsEvent,
+  onAuthEvent,
+  onChatEvent,
+  onPreviewEvent,
+} from "../lib/bridge";
 import type {
   AgentsOverview,
   AppInfo,
+  AuthView,
   ChatMeta,
   DraftImage,
   Message,
@@ -19,6 +26,10 @@ type StreamState = { messageId: string; text: string };
 interface ChatStore {
   info: AppInfo | null;
   ready: boolean;
+  /** Who is signed in. Null until the first status call finishes. */
+  auth: AuthView | null;
+  authBusy: boolean;
+  authError: string | null;
   chats: ChatMeta[];
   activeId: string | null;
   messages: Message[];
@@ -43,6 +54,10 @@ interface ChatStore {
   settingsOpen: boolean;
 
   bootstrap: () => Promise<void>;
+  signIn: () => Promise<void>;
+  cancelSignIn: () => Promise<void>;
+  signOut: () => Promise<void>;
+  refreshAuth: () => Promise<void>;
   select: (id: string | null) => Promise<void>;
   newChat: () => void;
   send: (text: string) => Promise<void>;
@@ -90,8 +105,61 @@ let deltaQueue: Record<string, string> = {};
 let rafId = 0;
 let booting = false;
 let unsubscribe: (() => void) | null = null;
+let unsubscribeAuth: (() => void) | null = null;
 
 export const useChatStore = create<ChatStore>((set, get) => {
+  /** Load everything that belongs to the signed-in window. */
+  const loadWorkspace = async () => {
+    const [info, chats, agents, preview] = await Promise.all([
+      api.appInfo(),
+      api.listChats(),
+      api.agentsOverview(),
+      api.previewState(),
+    ]);
+    set({
+      info,
+      chats: sortMetas(chats),
+      ready: true,
+      agents,
+      preview,
+      previewOpen: Boolean(preview?.active),
+    });
+  };
+
+  const clearWorkspace = () => {
+    set({
+      chats: [],
+      activeId: null,
+      messages: [],
+      streams: {},
+      draft: "",
+      draftImages: [],
+      pendingNewChat: false,
+      agents: { working: 0, live: 0, agents: [] },
+      preview: null,
+      previewOpen: false,
+      settings: null,
+      settingsOpen: false,
+    });
+  };
+
+  const handleAuth = (view: AuthView) => {
+    const wasSignedIn = Boolean(get().auth?.signedIn);
+    set({
+      auth: view,
+      authBusy: view.state === "pending",
+      authError: view.message,
+    });
+    if (view.message && view.state !== "signed_out") toast.error(view.message);
+    if (!view.signedIn) {
+      clearWorkspace();
+      return;
+    }
+    if (!wasSignedIn) {
+      void loadWorkspace().catch((error) => toast.error(textOf(error)));
+    }
+  };
+
   const flushDeltas = () => {
     if (rafId) return;
     rafId = requestAnimationFrame(() => {
@@ -181,6 +249,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
   return {
     info: null,
     ready: false,
+    auth: null,
+    authBusy: false,
+    authError: null,
     chats: [],
     activeId: null,
     messages: [],
@@ -203,6 +274,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
       unsubscribe?.();
       unsubscribe = onChatEvent(handleEvent);
+      unsubscribeAuth?.();
+      unsubscribeAuth = onAuthEvent(handleAuth);
       onAgentsEvent((overview) => set({ agents: overview }));
       onPreviewEvent((preview) => {
         if (!preview.active) {
@@ -218,20 +291,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
 
       try {
-        const [info, chats, agents, preview] = await Promise.all([
-          api.appInfo(),
-          api.listChats(),
-          api.agentsOverview(),
-          api.previewState(),
-        ]);
-        set({
-          info,
-          chats: sortMetas(chats),
-          ready: true,
-          agents,
-          preview,
-          previewOpen: Boolean(preview?.active),
-        });
+        const auth = await api.authStatus();
+        set({ auth, authBusy: auth.state === "pending" });
+        if (!auth.signedIn) {
+          set({ ready: true });
+          return;
+        }
+        await loadWorkspace();
 
         // Design-time deep link used by the browser preview only.
         const params = new URLSearchParams(window.location.search);
@@ -239,8 +305,78 @@ export const useChatStore = create<ChatStore>((set, get) => {
         if (demoChat) await get().select(demoChat);
         const demoText = params.get("send");
         if (demoText) await get().send(demoText);
+
+        // A cached login may have been revoked while Hook was closed.
+        void get().refreshAuth();
       } catch (error) {
-        set({ ready: true });
+        const message = textOf(error);
+        if (get().auth?.signedIn) {
+          // The account is fine; a workspace command failed. Keep the window
+          // usable and let the user retry rather than showing the login screen.
+          set({ ready: true });
+        } else {
+          set({
+            ready: true,
+            auth: {
+              signedIn: false,
+              state: "signed_out",
+              email: null,
+              name: null,
+              userCode: null,
+              verificationUrl: null,
+              message,
+            },
+            authError: message,
+          });
+        }
+        toast.error(message);
+      }
+    },
+
+    signIn: async () => {
+      if (get().authBusy) return;
+      set({ authBusy: true, authError: null });
+      try {
+        const auth = await api.authLogin();
+        set({
+          auth,
+          authBusy: auth.state === "pending",
+          authError: auth.message,
+        });
+      } catch (error) {
+        const message = textOf(error);
+        set({ authBusy: false, authError: message });
+        toast.error(message);
+      }
+    },
+
+    cancelSignIn: async () => {
+      try {
+        const auth = await api.authCancelLogin();
+        set({ auth, authBusy: false, authError: null });
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
+    signOut: async () => {
+      set({ authBusy: true });
+      try {
+        const auth = await api.authLogout();
+        handleAuth(auth);
+      } catch (error) {
+        toast.error(textOf(error));
+      } finally {
+        set({ authBusy: false });
+      }
+    },
+
+    refreshAuth: async () => {
+      try {
+        const auth = await api.authRefresh();
+        handleAuth(auth);
+      } catch (error) {
+        // A network blip should not hide a working cached session.
         toast.error(textOf(error));
       }
     },
@@ -271,6 +407,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
       })),
 
     send: async (text) => {
+      if (!get().auth?.signedIn) {
+        toast.error("Sign in to Hook to send messages.");
+        return;
+      }
       const trimmed = text.trim();
       const images = get().draftImages;
       if (!trimmed && images.length === 0) return;

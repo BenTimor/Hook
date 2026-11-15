@@ -169,14 +169,30 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Re
         "contextWindow": cfg.coding.context_window,
         "maxTokens": output_budget(cfg),
         "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        // Hook's proxy lives on hookcode.io, which pi cannot recognise as a
+        // DeepSeek endpoint from the URL alone. Pin the wire format so coding
+        // agents send the same reasoning_effort field as the chat agent.
+        "compat": {
+            "thinkingFormat": "openai",
+            "supportsReasoningEffort": true,
+            "supportsUsageInStreaming": true,
+        },
     });
+
+    // The token itself stays in the process environment. models.json only
+    // carries `$HOOK_API_TOKEN`, and the per-run env is set when the agent is
+    // spawned, so the key is not duplicated into every agent directory.
     if let Some(obj) = entry.as_object_mut() {
-        if !cfg.provider.headers.is_empty() {
-            obj.insert(
-                "headers".into(),
-                serde_json::to_value(&cfg.provider.headers).unwrap_or_default(),
-            );
-        }
+        let mut headers = cfg.provider.headers.clone();
+        headers.insert("X-Hook-Client".into(), "hook-desktop".into());
+        headers.insert("X-Hook-Surface".into(), "coding".into());
+        headers.insert("X-Hook-Chat-Id".into(), "$HOOK_CHAT_ID".into());
+        headers.insert("X-Hook-Agent-Id".into(), "$HOOK_AGENT_ID".into());
+        headers.insert("X-Hook-App-Version".into(), env!("CARGO_PKG_VERSION").into());
+        obj.insert(
+            "headers".into(),
+            serde_json::to_value(headers).unwrap_or_default(),
+        );
     }
 
     let models = serde_json::json!({
@@ -184,7 +200,8 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Re
             "hook": {
                 "baseUrl": base,
                 "api": "openai-completions",
-                "apiKey": cfg.provider.api_key,
+                "apiKey": "$HOOK_API_TOKEN",
+                "authHeader": true,
                 "models": [entry],
             }
         }
@@ -192,8 +209,13 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Re
 
     let models_path = rt.agent_home.join("models.json");
     let raw = serde_json::to_string_pretty(&models).map_err(|e| e.to_string())?;
-    fs::write(&models_path, raw)
-        .map_err(|e| format!("Could not write {}: {e}", models_path.display()))?;
+    // Temp + rename: two agents can start at once without one reading a
+    // truncated models.json from the other's write.
+    let tmp = models_path.with_extension("json.tmp");
+    fs::write(&tmp, raw)
+        .map_err(|e| format!("Could not write {}: {e}", tmp.display()))?;
+    fs::rename(&tmp, &models_path)
+        .map_err(|e| format!("Could not replace {}: {e}", models_path.display()))?;
 
     // Keep the engine quiet: no install pings from an app the user thinks is local.
     let settings_path = rt.agent_home.join("settings.json");
@@ -201,8 +223,14 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Re
         "enableInstallTelemetry": false,
         "enableAnalytics": false,
     });
-    fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap_or_default())
-        .map_err(|e| format!("Could not write {}: {e}", settings_path.display()))?;
+    let settings_tmp = settings_path.with_extension("json.tmp");
+    fs::write(
+        &settings_tmp,
+        serde_json::to_string_pretty(&settings).unwrap_or_default(),
+    )
+    .map_err(|e| format!("Could not write {}: {e}", settings_tmp.display()))?;
+    fs::rename(&settings_tmp, &settings_path)
+        .map_err(|e| format!("Could not replace {}: {e}", settings_path.display()))?;
 
     Ok(())
 }
@@ -227,6 +255,33 @@ fn base_url_for_pi(endpoint: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{AuthConfig, CodingConfig, ModelConfig, ProviderConfig};
+
+    fn config() -> HarnessConfig {
+        HarnessConfig {
+            provider: ProviderConfig {
+                base_url: "https://hookcode.io/api/v1".into(),
+                api_key: String::new(),
+                path: None,
+                reasoning_param: None,
+                stream_usage: true,
+                tools: true,
+                max_images: 3,
+                reasoning_echo: None,
+                headers: Default::default(),
+                extra: Default::default(),
+            },
+            model: ModelConfig {
+                name: "hook".into(),
+                thinking: Some("medium".into()),
+                temperature: None,
+                max_tokens: None,
+            },
+            auth: AuthConfig::default(),
+            coding: CodingConfig::default(),
+            agent: Default::default(),
+        }
+    }
 
     #[test]
     fn endpoint_is_reduced_to_a_base_url() {
@@ -246,6 +301,30 @@ mod tests {
             base_url_for_pi("https://gateway.example.com/v1"),
             "https://gateway.example.com/v1"
         );
+    }
+
+    #[test]
+    fn agent_models_json_uses_the_env_token_and_usage_headers() {
+        let dir = std::env::temp_dir().join(format!("hook-runtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rt = PiRuntime {
+            program: PathBuf::from("node"),
+            cli: Some(PathBuf::from("cli.js")),
+            agent_home: dir.clone(),
+        };
+        write_agent_home(&rt, &config(), false).unwrap();
+        let raw = std::fs::read_to_string(dir.join("models.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let provider = &parsed["providers"]["hook"];
+        assert_eq!(provider["baseUrl"], "https://hookcode.io/api/v1");
+        assert_eq!(provider["apiKey"], "$HOOK_API_TOKEN");
+        assert_eq!(provider["authHeader"], true);
+        let headers = &provider["models"][0]["headers"];
+        assert_eq!(headers["X-Hook-Surface"], "coding");
+        assert_eq!(headers["X-Hook-Chat-Id"], "$HOOK_CHAT_ID");
+        assert_eq!(headers["X-Hook-Agent-Id"], "$HOOK_AGENT_ID");
+        assert_eq!(provider["models"][0]["compat"]["thinkingFormat"], "openai");
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

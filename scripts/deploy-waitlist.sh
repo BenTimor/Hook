@@ -99,9 +99,9 @@ fi
 step "Bootstrapping $DIR/.env + data volume"
 ssh_do "DIR='$DIR' DOMAIN='$DOMAIN' bash -s" <<'REMOTE'
 set -euo pipefail
-mkdir -p "$DIR/site" "$DIR/data"
+mkdir -p "$DIR/site" "$DIR/data" "$DIR/data/releases"
 # The container runs as uid 1000 (node) and writes the SQLite file here.
-chown 1000:1000 "$DIR/data"
+chown 1000:1000 "$DIR/data" "$DIR/data/releases"
 if [ ! -s "$DIR/.env" ]; then
   cat > "$DIR/.env" <<ENV
 WAITLIST_ORIGIN=https://$DOMAIN
@@ -109,11 +109,30 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 WAITLIST_SESSION_SECRET=$(openssl rand -hex 32)
 WAITLIST_DB_PATH=/data/signups.sqlite
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-flash
+DEEPSEEK_API_KEY=
+HOOK_MODEL_ID=hook
+DOWNLOAD_DIR=/data/releases
 PORT=5173
 ENV
   chmod 600 "$DIR/.env"
   echo "  created .env — Google credentials are still empty"
 else
+  # Existing deployments predate the API proxy. Add any missing keys without
+  # touching values that are already configured.
+  ensure_env() {
+    key="$1"; value="$2"
+    if ! grep -q "^$key=" "$DIR/.env"; then
+      printf '%s=%s\n' "$key" "$value" >> "$DIR/.env"
+      echo "  added $key to .env"
+    fi
+  }
+  ensure_env DEEPSEEK_BASE_URL https://api.deepseek.com
+  ensure_env DEEPSEEK_MODEL deepseek-flash
+  ensure_env DEEPSEEK_API_KEY ""
+  ensure_env HOOK_MODEL_ID hook
+  ensure_env DOWNLOAD_DIR /data/releases
   echo "  kept existing .env"
 fi
 if ! grep -q 'import /srv/hook-web' /opt/scout/Caddyfile 2>/dev/null; then
@@ -157,6 +176,11 @@ probe() {
 probe /
 probe /favicon.svg
 probe /api/waitlist/status
+probe /api/download/info
+probe /api/v1/models
+if [ ! -s "$DIR/data/releases/Hook-setup.exe" ]; then
+  echo "  installer: not uploaded yet (release workflow fills this)"
+fi
 if [ ! -s "$DIR/data/signups.sqlite" ]; then
   echo "  signups: none yet"
 fi

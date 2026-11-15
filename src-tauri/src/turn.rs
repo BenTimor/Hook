@@ -294,8 +294,32 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         let mut reasoning = String::new();
         let mut reasoning_field: Option<String> = None;
 
+        let Some(token) = state.auth.token() else {
+            let Some(index) = chat.messages.iter().position(|m| m.id == assistant_id) else {
+                break;
+            };
+            let entry = &mut chat.messages[index];
+            entry.status = "error".into();
+            entry.error = Some("Sign in to Hook to continue.".into());
+            chat.meta.updated_at = now_ms();
+            let _ = state.store.save(&mut chat);
+            emit(
+                &state,
+                &chat_id,
+                StreamEvent::Error {
+                    message: "Sign in to Hook to continue.".into(),
+                    messages: chat.messages.clone(),
+                    meta: chat.meta.clone(),
+                },
+            );
+            break;
+        };
+        let context = provider::RequestContext::chat(chat_id.clone());
+
         let outcome = provider::stream_chat(
             &cfg,
+            &token,
+            &context,
             &history,
             toolset.as_ref(),
             cancel.clone(),
@@ -456,6 +480,16 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 break;
             }
             Err(err) => {
+                // 401/403 from the Hook proxy means the account was signed out
+                // or unapproved while this window was open. Drop the token and
+                // show the login screen; the chat keeps the failed message.
+                if err.starts_with("401") || err.starts_with("403") {
+                    state.auth.clear_session();
+                    crate::commands::revoke_local(&state);
+                    let mut view = state.auth.view();
+                    view.message = Some(err.clone());
+                    let _ = state.app.emit("hook://auth", view);
+                }
                 if vision && rounds <= MAX_ROUNDS && rejects_images(&err) {
                     // The model card promised vision and the endpoint
                     // disagrees. Drop the images, remember it, and try again.

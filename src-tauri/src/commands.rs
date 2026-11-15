@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::agent::AgentManager;
+use crate::auth::{AuthStore, AuthView, LoginOutcome, RefreshOutcome};
 use crate::config;
 use crate::preview::{PreviewManager, PreviewView};
 use crate::projects::{Project, ProjectsStore};
@@ -22,6 +23,10 @@ pub struct AppState {
     pub preview: Arc<PreviewManager>,
     pub streams: Arc<Mutex<HashMap<String, CancelToken>>>,
     pub turns: TurnState,
+    /// The compiled-in harness config (provider, model, auth origin).
+    pub cfg: Arc<config::HarnessConfig>,
+    /// The signed-in account and its API token.
+    pub auth: Arc<AuthStore>,
     /// Whether the model can see images, taken from its `/models` card.
     pub vision: Arc<std::sync::atomic::AtomicBool>,
     /// Set when the endpoint rejects image parts anyway, so later turns stop
@@ -47,6 +52,167 @@ pub fn app_info() -> Result<AppInfo, String> {
     Ok(AppInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+fn emit_auth(app: &AppHandle, view: &AuthView) {
+    let _ = app.emit("hook://auth", view);
+}
+
+/// Drop everything that belonged to the signed-in account: live coding
+/// agents, in-flight chat streams and the preview server. Used when the token
+/// is revoked server-side or the user signs out.
+pub(crate) fn revoke_local(state: &AppState) {
+    state.agents.kill_all_sync();
+    state.preview.stop();
+    for token in lock(&state.streams).values() {
+        token.cancel();
+    }
+    lock(&state.streams).clear();
+}
+
+/// Ask the model card what it can see. Called at launch, after sign-in and on
+/// window reload. A provider without `/models` simply reports nothing.
+pub async fn refresh_capabilities(state: &Arc<AppState>) {
+    let Some(token) = state.auth.token() else {
+        state.vision.store(false, std::sync::atomic::Ordering::Relaxed);
+        return;
+    };
+    let caps = crate::provider::fetch_capabilities(&state.cfg, &token).await;
+    if !caps.known {
+        eprintln!("hook: no model card at the provider; capabilities unknown");
+        return;
+    }
+    eprintln!(
+        "hook: model {} capabilities from /models: vision={}",
+        state.cfg.model.name, caps.vision
+    );
+    state
+        .vision
+        .store(caps.vision, std::sync::atomic::Ordering::Relaxed);
+    if caps.vision {
+        state
+            .vision_off
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[tauri::command]
+pub fn auth_status(state: State<'_, Arc<AppState>>) -> AuthView {
+    state.auth.view()
+}
+
+/// Start the browser half of device sign-in. Returns the pending view (with the
+/// short code and URL) immediately; the poll loop reports the result over
+/// `hook://auth`.
+#[tauri::command]
+pub async fn auth_login(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AuthView, String> {
+    let state = state.inner().clone();
+    let (generation, _device_code, _interval) = state.auth.begin().await?;
+    let mut view = state.auth.view();
+    if let Some(url) = view.verification_url.clone() {
+        if let Err(error) = open_url_inner(&app, &url) {
+            // Keep the code pending: the window shows it and offers the link
+            // again, so a browser that refused to open is not a dead end.
+            eprintln!("hook: could not open the sign-in page: {error}");
+            view.message = Some(
+                "Could not open your browser. Use the link shown here to continue.".into(),
+            );
+        }
+    }
+    emit_auth(&app, &view);
+
+    let poll_state = state.clone();
+    let poll_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match poll_state.auth.wait_for_approval(generation).await {
+            LoginOutcome::Approved => {
+                // Show the app as soon as the token is stored; the model-card
+                // probe can finish in the background.
+                emit_auth(&poll_app, &poll_state.auth.view());
+                refresh_capabilities(&poll_state).await;
+            }
+            LoginOutcome::Cancelled => {
+                emit_auth(&poll_app, &poll_state.auth.view());
+            }
+            LoginOutcome::Failed(message) => {
+                poll_state.auth.cancel();
+                let mut view = poll_state.auth.view();
+                view.message = Some(message);
+                emit_auth(&poll_app, &view);
+            }
+        }
+    });
+
+    Ok(view)
+}
+
+#[tauri::command]
+pub fn auth_cancel_login(app: AppHandle, state: State<'_, Arc<AppState>>) -> AuthView {
+    state.auth.cancel();
+    let view = state.auth.view();
+    emit_auth(&app, &view);
+    view
+}
+
+/// Check the cached token against hookcode.io. A revoked or unapproved account
+/// is signed out here, before its next message fails.
+#[tauri::command]
+pub async fn auth_refresh(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AuthView, String> {
+    let state = state.inner().clone();
+    match state.auth.refresh().await {
+        RefreshOutcome::Valid => {
+            refresh_capabilities(&state).await;
+            Ok(state.auth.view())
+        }
+        RefreshOutcome::Revoked(message) => {
+            revoke_local(&state);
+            let mut view = state.auth.view();
+            view.message = Some(message);
+            emit_auth(&app, &view);
+            Ok(view)
+        }
+        RefreshOutcome::Unreachable(message) => {
+            // A network blip must not log the user out; the cached session still
+            // works when the service is reachable again.
+            eprintln!("hook: could not verify the account: {message}");
+            Ok(state.auth.view())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn auth_logout(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AuthView, String> {
+    let state = state.inner().clone();
+    state.auth.logout().await;
+    revoke_local(&state);
+    let view = state.auth.view();
+    emit_auth(&app, &view);
+    Ok(view)
+}
+
+#[tauri::command]
+pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    open_url_inner(&app, &url)
+}
+
+fn open_url_inner(app: &AppHandle, url: &str) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let parsed = reqwest::Url::parse(url).map_err(|_| "That link is not valid.".to_string())?;
+    if !matches!(parsed.scheme(), "https" | "http") {
+        return Err("Only web links can be opened.".into());
+    }
+    app.opener()
+        .open_url(url.to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

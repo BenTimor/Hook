@@ -8,6 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
+use crate::auth::AuthStore;
 use crate::config::CodingConfig;
 use crate::projects::ProjectsStore;
 use crate::config::HarnessConfig;
@@ -251,6 +252,10 @@ pub struct AgentManager {
     settings: Arc<SettingsStore>,
     projects: Arc<ProjectsStore>,
     signal_tx: mpsc::UnboundedSender<Signal>,
+    /// Who is signed in, so every coding agent gets the current proxy token.
+    /// `new` installs a local-preview (always signed in) store; production
+    /// replaces it with the real one via `with_auth`.
+    auth: Arc<AuthStore>,
 }
 
 impl AgentManager {
@@ -306,7 +311,14 @@ impl AgentManager {
             settings,
             projects,
             signal_tx,
+            auth: Arc::new(AuthStore::new(data_dir, "https://hookcode.io", false, "")),
         }
+    }
+
+    /// Use the real account store instead of the local-preview placeholder.
+    pub fn with_auth(mut self, auth: Arc<AuthStore>) -> Self {
+        self.auth = auth;
+        self
     }
 
     /// Folder the guard writes `u-*.json` progress files into.
@@ -631,6 +643,21 @@ impl AgentManager {
         }
 
         let engine = self.engine.clone().map_err(|e| e)?;
+        let token = self
+            .auth
+            .token()
+            .ok_or("Sign in to Hook to start a coding agent.")?;
+        let guard = crate::guard::ensure(&self.data_dir)?;
+
+        let session_id = resume_session
+            .map(str::to_string)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let id = format!("ag_{}", uuid::Uuid::new_v4().simple());
+
+        // One shared config directory, but per-process `$HOOK_CHAT_ID` /
+        // `$HOOK_AGENT_ID` headers and token. The file content is identical
+        // for every agent and written atomically, so concurrent starts cannot
+        // see a half-written models.json.
         // Written on every start so a rebuilt app always drives the engine
         // with the provider compiled into it.
         crate::runtime::write_agent_home(
@@ -638,12 +665,6 @@ impl AgentManager {
             &self.cfg,
             self.vision.load(std::sync::atomic::Ordering::Relaxed),
         )?;
-        let guard = crate::guard::ensure(&self.data_dir)?;
-
-        let session_id = resume_session
-            .map(str::to_string)
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let id = format!("ag_{}", uuid::Uuid::new_v4().simple());
         let title = title
             .map(str::trim)
             .filter(|t| !t.is_empty())
@@ -695,6 +716,11 @@ impl AgentManager {
             .stderr(stderr)
             // The engine's own config directory: Hook's provider, nobody else's.
             .env("PI_CODING_AGENT_DIR", &engine.agent_home)
+            // models.json references these instead of containing the token, so
+            // concurrent agents can each report their own chat and run ids.
+            .env("HOOK_API_TOKEN", &token)
+            .env("HOOK_CHAT_ID", chat_id)
+            .env("HOOK_AGENT_ID", &id)
             // The app's own WebView2 flags are none of the agent's business:
             // a debug port in its environment is an invitation to drive the
             // window it runs inside.

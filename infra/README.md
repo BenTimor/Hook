@@ -7,13 +7,13 @@ on every deploy — edit it *here*, not on the server.
 | File | Lives on the server at | Purpose |
 |------|------------------------|---------|
 | `docker-compose.yml` | `/opt/hook-web/docker-compose.yml` | `hook-waitlist` container (built from `/opt/hook-web/app`), joins `scout_default`, SQLite bind-mounted from `/opt/hook-web/data` |
-| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/waitlist/*` to the container, `www` → apex redirect |
+| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, download) to the container, `www` → apex redirect |
 
 Not in this directory because it must **never** be committed:
 
 | File | Lives on the server at | Contents |
 |------|------------------------|----------|
-| `.env` | `/opt/hook-web/.env` (chmod 600) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WAITLIST_SESSION_SECRET`, `WAITLIST_ORIGIN`, `WAITLIST_DB_PATH`, `PORT` |
+| `.env` | `/opt/hook-web/.env` (chmod 600) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WAITLIST_SESSION_SECRET`, `WAITLIST_ORIGIN`, `WAITLIST_DB_PATH`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_API_KEY`, `HOOK_MODEL_ID`, `DOWNLOAD_DIR`, `PORT` |
 
 ## Two hand edits to `/opt/scout` (outside this repo)
 
@@ -44,8 +44,9 @@ import line has gone missing.
 ## Why a container instead of static files
 
 bentimor.com is pure static output, so Caddy serves it straight from disk. Hook's
-landing page also needs `/api/waitlist/*` (Google OAuth code exchange + SQLite),
-and the VPS has no Node runtime, so the API runs as a container. Caddy still
+landing page also needs `/api/*` (Google OAuth, desktop device login, SQLite,
+the model proxy and the installer download), and the VPS has no Node runtime, so
+the API runs as a container. Caddy still
 serves the static build itself, which means a rebuild of the API or a missing
 `/opt/hook-web/.env` never takes the marketing page down.
 
@@ -64,7 +65,16 @@ Who signed up — from the dev machine, no sqlite3 or Node needed locally:
 ./scripts/waitlist-people.sh             # table, newest first
 ./scripts/waitlist-people.sh --csv       # email,joined_at,google_subject
 ./scripts/waitlist-people.sh --count     # just the number
+
+./scripts/waitlist-admin.sh --list                     # status + usage roll-up
+./scripts/waitlist-admin.sh --approve someone@x.com    # unlock the app + proxy
+./scripts/waitlist-admin.sh --revoke someone@x.com     # take access away now
+./scripts/waitlist-admin.sh --delete someone@x.com     # remove the row + usage
+./scripts/waitlist-admin.sh --usage-chats              # per-conversation tokens
+./scripts/waitlist-admin.sh --usage-agents             # per coding-agent run
 ```
 
 Backups are just a copy of `/opt/hook-web/data/signups.sqlite` (plus the `-wal`
-file while the container is running).
+file while the container is running). The Windows installer lives in
+`/opt/hook-web/data/releases/` and is replaced atomically by the GitHub release
+workflow; it is not part of the container image.

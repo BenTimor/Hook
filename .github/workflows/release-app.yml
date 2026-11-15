@@ -1,0 +1,136 @@
+name: Release Windows app
+
+# Every push to main that can change the desktop app rebuilds the Windows
+# installer and publishes it to the website's download slot. The waitlist
+# container serves /opt/hook-web/data/releases/Hook-setup.exe only to signed-in,
+# approved accounts, so the next download is the new build with no separate
+# release step.
+#
+# Required repository secrets (same ones the website deploy uses):
+#   DEPLOY_SSH_KEY      private key for root@167.233.58.139
+#   DEPLOY_KNOWN_HOSTS  pinned ssh-keyscan output for that host
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "harness.config.ci.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/fetch-pi-runtime.mjs"
+      - "scripts/build-release-manifest.mjs"
+      - ".github/workflows/release-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never publish two installers over each other; a running build finishes.
+concurrency:
+  group: release-hook-windows
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: "10"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # harness.config.toml is gitignored locally; the committed CI copy has
+      # the hookcode.io proxy settings and no secrets.
+      - name: Use CI harness config
+        shell: pwsh
+        run: Copy-Item harness.config.ci.toml harness.config.toml -Force
+
+      # Runs fetch-pi-runtime (node + pi bundle), the Vite/TS build, and the
+      # Tauri NSIS bundle. The token is not baked in: signed-in users supply it.
+      - name: Build Hook
+        run: pnpm app:build
+
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { throw "Tauri did not produce an NSIS installer." }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item $exe.FullName release/Hook-setup.exe -Force
+          Write-Host "installer: $($exe.Name) ($([math]::Round($exe.Length / 1MB, 1)) MB)"
+
+      - name: Write version manifest
+        run: node scripts/build-release-manifest.mjs release/Hook-setup.exe release/latest.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hook-windows-release
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Publish to hookcode.io
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: hook-windows-release
+          path: release
+
+      - name: Install SSH credentials
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::Missing DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS repository secrets."
+            exit 1
+          fi
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      - name: Upload installer and manifest
+        env:
+          DEPLOY_HOST: root@167.233.58.139
+        run: |
+          set -euo pipefail
+          SSH=(-i "$HOME/.ssh/deploy_key" -o BatchMode=yes -o ConnectTimeout=10)
+          ssh "${SSH[@]}" "$DEPLOY_HOST" "mkdir -p /opt/hook-web/data/releases && chmod 755 /opt/hook-web/data/releases"
+          scp "${SSH[@]}" release/Hook-setup.exe "$DEPLOY_HOST:/opt/hook-web/data/releases/Hook-setup.exe.new"
+          scp "${SSH[@]}" release/latest.json "$DEPLOY_HOST:/opt/hook-web/data/releases/latest.json.new"
+          ssh "${SSH[@]}" "$DEPLOY_HOST" '
+            set -euo pipefail
+            cd /opt/hook-web/data/releases
+            chmod 644 Hook-setup.exe.new latest.json.new
+            mv Hook-setup.exe.new Hook-setup.exe
+            mv latest.json.new latest.json
+            ls -lh Hook-setup.exe latest.json
+          '
+          node -p "'published Hook ' + require('./release/latest.json').version"

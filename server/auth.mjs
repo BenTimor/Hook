@@ -1,0 +1,224 @@
+import { randomBytes } from "node:crypto";
+import { json, Router } from "express";
+import { apiUser, bearerToken, hashToken } from "./tokens.mjs";
+
+const DEVICE_TTL_MS = 10 * 60 * 1000;
+const POLL_INTERVAL_SECONDS = 2;
+// Unambiguous alphabet: no 0/O, 1/I/L.
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const CODE_LENGTH = 8;
+const START_LIMIT = 20;
+const START_WINDOW_MS = 60 * 60 * 1000;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function userCode() {
+  let raw = "";
+  for (let i = 0; i < CODE_LENGTH; i += 1) {
+    raw += CODE_ALPHABET[randomBytes(1)[0] % CODE_ALPHABET.length];
+  }
+  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+}
+
+function normalizeUserCode(value) {
+  if (typeof value !== "string") return null;
+  const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return cleaned.length === CODE_LENGTH ? cleaned : null;
+}
+
+function publicUser(row) {
+  return {
+    subject: row.google_subject,
+    email: row.email,
+    name: row.name ?? null,
+    approved: row.waitlist_status === "approved",
+  };
+}
+
+/**
+ * Desktop sign-in uses the OAuth device pattern:
+ *
+ *   1. the app posts /device/start and receives a secret device code plus a
+ *      short user code and a hookcode.io/authorize URL;
+ *   2. the app opens that URL in the system browser, where the user signs in
+ *      with Google and approves the device;
+ *   3. the app polls /device/poll and receives the opaque API token once.
+ *
+ * The token is stored hashed and approval is checked again by every proxied
+ * request, so unapproving an account takes effect on its next call.
+ */
+export function createAuthRouter({ db, auth }) {
+  const router = Router();
+  router.use(json({ limit: "16kb" }));
+
+  // The website's approval POSTs must come from hookcode.io itself. The native
+  // app's start/poll calls have no Origin header and are unaffected.
+  function requireOrigin(req, res) {
+    if (req.get("origin") !== auth.site.origin) {
+      res.status(403).json({ error: "origin" });
+      return false;
+    }
+    return true;
+  }
+
+  const starts = new Map();
+  function allowStart(req) {
+    const forwarded = req.get("x-forwarded-for");
+    const key = (forwarded ? forwarded.split(",")[0] : req.ip) || "unknown";
+    const now = Date.now();
+    const entry = starts.get(key);
+    if (!entry || now - entry.at > START_WINDOW_MS) {
+      starts.set(key, { at: now, count: 1 });
+      return true;
+    }
+    entry.count += 1;
+    if (starts.size > 10_000) starts.clear();
+    return entry.count <= START_LIMIT;
+  }
+
+  const findLogin = db
+    ? db.prepare("SELECT * FROM desktop_logins WHERE device_hash = ?")
+    : null;
+  const findUserCode = db
+    ? db.prepare("SELECT * FROM desktop_logins WHERE user_code = ?")
+    : null;
+
+  router.post("/device/start", (req, res) => {
+    if (!db) return res.status(503).json({ error: "unavailable" });
+    if (!allowStart(req))
+      return res.status(429).json({ error: "rate_limited" });
+
+    // Housekeeping: these rows are worthless once the app stopped polling.
+    db.prepare("DELETE FROM desktop_logins WHERE expires_at < ?").run(nowIso());
+
+    let code = userCode();
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      if (!findUserCode.get(code.replace("-", ""))) break;
+      code = userCode();
+    }
+    const deviceCode = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + DEVICE_TTL_MS).toISOString();
+    db.prepare(
+      `INSERT INTO desktop_logins (device_hash, user_code, expires_at)
+       VALUES (?, ?, ?)`,
+    ).run(hashToken(deviceCode), code.replace("-", ""), expiresAt);
+
+    const verificationUrl = new URL("/authorize", auth.site);
+    verificationUrl.searchParams.set("code", code);
+    res.json({
+      deviceCode,
+      userCode: code,
+      verificationUrl: verificationUrl.toString(),
+      expiresAt,
+      interval: POLL_INTERVAL_SECONDS,
+    });
+  });
+
+  router.post("/device/poll", (req, res) => {
+    if (!db) return res.status(503).json({ error: "unavailable" });
+    const deviceCode =
+      typeof req.body?.deviceCode === "string" ? req.body.deviceCode : "";
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(deviceCode))
+      return res.status(400).json({ error: "invalid_code" });
+
+    const row = findLogin.get(hashToken(deviceCode));
+    if (!row || row.expires_at <= nowIso())
+      return res.json({ status: "expired" });
+    if (row.claimed_at) return res.json({ status: "claimed" });
+    if (row.status !== "approved" || !row.google_subject)
+      return res.json({ status: "pending" });
+
+    const token = `hk_${randomBytes(32).toString("base64url")}`;
+    const user = db
+      .prepare("SELECT * FROM waitlist_signups WHERE google_subject = ?")
+      .get(row.google_subject);
+    if (!user || user.waitlist_status !== "approved")
+      return res.json({ status: "expired" });
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const claimed = db
+        .prepare(
+          `UPDATE desktop_logins SET claimed_at = ?
+           WHERE device_hash = ? AND claimed_at IS NULL`,
+        )
+        .run(nowIso(), row.device_hash);
+      if (claimed.changes !== 1) {
+        db.exec("ROLLBACK");
+        return res.json({ status: "claimed" });
+      }
+      db.prepare(
+        `INSERT INTO api_tokens (token_hash, google_subject, label)
+         VALUES (?, ?, ?)`,
+      ).run(hashToken(token), row.google_subject, "Hook desktop");
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    res.json({ status: "approved", token, user: publicUser(user) });
+  });
+
+  router.post("/device/approve", (req, res) => {
+    if (!db) return res.status(503).json({ error: "unavailable" });
+    if (!requireOrigin(req, res)) return;
+    const profile = auth.profileFor(req);
+    if (!profile) return res.status(401).json({ error: "signin_required" });
+    if (profile.waitlist_status !== "approved")
+      return res.status(403).json({ error: "not_approved" });
+
+    const code = normalizeUserCode(req.body?.userCode);
+    if (!code) return res.status(400).json({ error: "invalid_code" });
+    const row = findUserCode.get(code);
+    if (!row || row.expires_at <= nowIso())
+      return res.status(410).json({ error: "expired" });
+    if (row.claimed_at) return res.status(409).json({ error: "already_used" });
+    if (
+      row.google_subject &&
+      row.google_subject !== profile.google_subject
+    )
+      return res.status(409).json({ error: "account_changed" });
+
+    db.prepare(
+      `UPDATE desktop_logins SET
+         google_subject = ?, status = 'approved', approved_at = ?
+       WHERE user_code = ? AND claimed_at IS NULL`,
+    ).run(profile.google_subject, nowIso(), code);
+    res.json({
+      approved: true,
+      userCode: `${code.slice(0, 4)}-${code.slice(4)}`,
+      email: profile.email,
+    });
+  });
+
+  /** The desktop app asks this on launch to notice a revoked account. */
+  router.get("/me", (req, res) => {
+    if (!db) return res.status(503).json({ error: "unavailable" });
+    const result = apiUser(db, req);
+    if (!result.row)
+      return res.status(result.status).json({
+        error: {
+          message: result.message,
+          type: "invalid_request_error",
+          code: result.code,
+        },
+      });
+    res.json({ authenticated: true, user: publicUser(result.row) });
+  });
+
+  /** Signing out of the desktop app revokes just that token. */
+  router.post("/token/logout", (req, res) => {
+    if (!db) return res.status(503).json({ error: "unavailable" });
+    const token = bearerToken(req);
+    if (!token) return res.status(401).json({ error: "missing_token" });
+    db.prepare(
+      `UPDATE api_tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE token_hash = ? AND revoked_at IS NULL`,
+    ).run(hashToken(token));
+    res.json({ ok: true });
+  });
+
+  return router;
+}

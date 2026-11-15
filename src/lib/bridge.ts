@@ -6,6 +6,7 @@ import { mock } from "./mock";
 import type {
   AgentsOverview,
   AppInfo,
+  AuthView,
   Chat,
   ChatEvent,
   ChatMeta,
@@ -22,10 +23,12 @@ export const isTauri = (): boolean =>
 type ChatListener = (chatId: string, event: StreamEvent) => void;
 type AgentsListener = (overview: AgentsOverview) => void;
 type PreviewListener = (preview: PreviewEvent) => void;
+type AuthListener = (view: AuthView) => void;
 
 const chatListeners = new Set<ChatListener>();
 const agentsListeners = new Set<AgentsListener>();
 const previewListeners = new Set<PreviewListener>();
+const authListeners = new Set<AuthListener>();
 
 function dispatch(chatId: string, event: StreamEvent) {
   for (const listener of chatListeners) listener(chatId, event);
@@ -97,6 +100,29 @@ export function onPreviewEvent(listener: PreviewListener): () => void {
   };
 }
 
+/**
+ * Sign-in state changes: pending while the browser approval is open, then
+ * signed_in, cancelled or signed_out after a revocation.
+ */
+export function onAuthEvent(listener: AuthListener): () => void {
+  if (!isTauri()) {
+    authListeners.add(listener);
+    return () => authListeners.delete(listener);
+  }
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void listen<AuthView>("hook://auth", (event) => listener(event.payload)).then(
+    (unlisten) => {
+      if (cancelled) unlisten();
+      else off = unlisten;
+    },
+  );
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
 /** Browser preview: the in-memory backend replays turns through the same bus. */
 async function streamMock(
   command: string,
@@ -112,6 +138,21 @@ async function streamMock(
 export const api = {
   appInfo: (): Promise<AppInfo> =>
     isTauri() ? invoke<AppInfo>("app_info") : mock.appInfo(),
+
+  authStatus: (): Promise<AuthView> =>
+    isTauri() ? invoke<AuthView>("auth_status") : mock.authStatus(),
+
+  authLogin: (): Promise<AuthView> =>
+    isTauri() ? invoke<AuthView>("auth_login") : mock.authLogin(),
+
+  authCancelLogin: (): Promise<AuthView> =>
+    isTauri() ? invoke<AuthView>("auth_cancel_login") : mock.authCancelLogin(),
+
+  authRefresh: (): Promise<AuthView> =>
+    isTauri() ? invoke<AuthView>("auth_refresh") : mock.authRefresh(),
+
+  authLogout: (): Promise<AuthView> =>
+    isTauri() ? invoke<AuthView>("auth_logout") : mock.authLogout(),
 
   listChats: (): Promise<ChatMeta[]> =>
     isTauri() ? invoke<ChatMeta[]>("list_chats") : mock.listChats(),

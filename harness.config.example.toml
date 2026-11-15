@@ -51,6 +51,14 @@ reasoning_echo = "auto"
 # Extra JSON merged into the request body, for provider-specific knobs.
 [provider.extra]
 
+# Desktop sign-in. Hook opens <base_url>/authorize in the browser, the user
+# signs in with Google, and the app receives an API token for the provider
+# above. For a standalone build without the account service, set
+# `required = false`; provider.api_key above is then sent as the bearer token.
+[auth]
+base_url = "https://hookcode.io"
+required = true
+
 [model]
 name = "gpt-5.1"
 
@@ -80,14 +88,14 @@ thinking = "medium"
 
 [coding]
 # Context window advertised to the coding engine for the chat model.
-# deepseek-flash is 1,048,576; check GET /models for the model you use.
+# Check GET /models for the model you use and keep this in step.
 context_window = 1048576
 
 # Output budget for one coding-agent turn. Thinking models spend part of it on
 # reasoning before writing anything, so a small cap makes them think until they
 # are cut off and stop with nothing done (the run then reports "hit its output
 # limit"). This is also an API limit - the provider rejects more than the
-# model's own maximum (393,216 for deepseek-flash). pi clamps it to whatever
+# model's own maximum (check GET /models). pi clamps it to whatever
 # room is left in the context window; 0 means "use the model maximum".
 max_output_tokens = 393216
 
