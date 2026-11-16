@@ -98,8 +98,10 @@ function directoryBytes(path) {
   return total;
 }
 
-function mb(bytes) {
-  return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
+function sizeLabel(bytes) {
+  if (bytes >= 1024 * 1024)
+    return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 function main() {
@@ -118,7 +120,7 @@ function main() {
   const repoTotal = existingRepoBytes() + incoming;
   if (repoTotal > REPO_MAX) {
     console.error(
-      `Hook: this project is ${mb(repoTotal)}, over the ${mb(REPO_MAX)} limit. ` +
+      `Hook: this project is ${sizeLabel(repoTotal)}, over the ${sizeLabel(REPO_MAX)} limit. ` +
         "Remove build output, dependencies (node_modules, .venv, dist) or large files, commit, and push again.",
     );
     process.exit(1);
@@ -129,7 +131,7 @@ function main() {
   const ownerTotal = directoryBytes(dirname(gitDir)) + incoming;
   if (ownerTotal > USER_MAX) {
     console.error(
-      `Hook: this account's projects total ${mb(ownerTotal)}, over the ${mb(USER_MAX)} limit. ` +
+      `Hook: this account's projects total ${sizeLabel(ownerTotal)}, over the ${sizeLabel(USER_MAX)} limit. ` +
         "Delete files or whole projects you no longer need, then push again.",
     );
     process.exit(1);

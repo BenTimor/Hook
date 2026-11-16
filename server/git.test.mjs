@@ -153,7 +153,7 @@ test("an app token cannot reach git, and a git token cannot reach chats", async 
 });
 
 test("the pre-receive hook rejects a project over its storage limit", async (t) => {
-  const { directory, origin, git } = await setup(t, { GIT_REPO_MAX_BYTES: 4096 });
+  const { directory, origin, git } = await setup(t, { GIT_REPO_MAX_BYTES: 32 * 1024 });
   const work = join(directory, "work");
   mkdirSync(work);
   await git(work, ["init", "-b", "main"]);
@@ -162,7 +162,7 @@ test("the pre-receive hook rejects a project over its storage limit", async (t) 
   await git(work, ["remote", "add", "origin", url]);
   await git(work, ["push", "-u", "origin", "main"]);
 
-  writeFileSync(join(work, "big.bin"), Buffer.alloc(16 * 1024, 7));
+  writeFileSync(join(work, "big.bin"), Buffer.alloc(128 * 1024, 7));
   await git(work, ["add", "big.bin"]);
   await git(work, ["commit", "-m", "too big"]);
   await assert.rejects(git(work, ["push", "origin", "main"]), (error) => {
