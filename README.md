@@ -428,13 +428,15 @@ pnpm app:portable  # portable folder, zipped (runs `pnpm engine` and `pnpm git` 
 Outputs:
 
 - `src-tauri/target/release/bundle/nsis/Hook_<version>_x64-setup.exe` — installer,
-  ~28 MB (the release workflow copies it to `release/Hook-<version>-setup.exe`)
-- `release/Hook-<version>-portable.zip` — `Hook.exe` + `resources\pi-runtime`, no install
+  ~54 MB (the release workflow copies it to `release/Hook-<version>-setup.exe`)
+- `release/Hook-<version>-portable.zip` — `Hook.exe` + `resources\pi-runtime` +
+  `resources\git`, no install
 
 The engine (Node + pi) is ~104 MB of binaries and is not in git; `pnpm engine`
 copies it from the pinned `@earendil-works/pi-coding-agent` dev dependency.
-`scripts/fetch-pi-runtime.mjs` also proves the copy can load Hook's guard before
-anything gets packaged.
+`scripts/fetch-git.mjs` adds the pinned MinGit tree (~93 MB extracted) for the
+coding agents' project sync. `scripts/fetch-pi-runtime.mjs` also proves the copy
+can load Hook's guard before anything gets packaged.
 
 `pnpm version:bump patch|minor|major` is the only way to change the version (see
 [Updates](#updates)); hand-editing one of the four files makes the app and the
@@ -462,7 +464,18 @@ recent releases with their sizes, checksums and dates. What Hook does with it:
 
 A packaged Microsoft Store build uses its own pair (`store.latest` /
 `store.minimumVersion`) because certification lags behind direct releases; see
-**Microsoft Store (MSIX)** below.
+**Microsoft Store (MSIX)** below. The live config is:
+
+```json
+{
+  "minimumVersion": "0.1.0",
+  "store": { "latest": "0.2.0", "minimumVersion": "0.1.0" }
+}
+```
+
+`store.latest` stays empty until Microsoft certifies the named version; an empty
+value means Store builds are never told an update exists. Raise
+`store.minimumVersion` only to force Store installs below it to update.
 
 "Update now" downloads the installer with the signed-in token, checks it against
 the published SHA-256, and hands it to the NSIS installer in passive update mode
@@ -544,7 +557,8 @@ identity.
 pnpm app:msix      # fetch the engine, build Hook.exe, package the MSIX
 ```
 
-The result is `release/Hook-<version>-x64.msix` (about 43 MB). The release
+The result is `release/Hook-<version>-x64.msix` (about 84 MB with the bundled
+engine and git). The release
 workflow runs the same packaging step after the NSIS build and keeps the `.msix`
 in the `hook-windows-release` artifact for 14 days. The package is deliberately
 unsigned: Partner Center re-signs Store submissions, and signing it yourself
@@ -552,8 +566,8 @@ with a self-signed certificate only breaks the upload. For local sideload
 testing, pass `--sign dev.pfx --password …` to sign with a development
 certificate.
 
-The package contains `Hook.exe` plus `resources/pi-runtime` and declares
-`runFullTrust` (the coding agents spawn a bundled Node runtime and work in the
+The package contains `Hook.exe` plus `resources/pi-runtime` and `resources/git`,
+and declares `runFullTrust` (the coding agents spawn a bundled Node runtime and work in the
 user's project folders) and `unvirtualizedResources`. The latter opts
 `%APPDATA%\app.hook.chat` out of MSIX AppData virtualization, so the Store and
 direct builds share chats, sign-in and project notes — and uninstalling the
@@ -581,23 +595,23 @@ always included, so the dialog warns against reporting secrets.
 
 ### Store listing draft
 
-**Short description** (256 characters max):
+**Short description** (256 characters max, currently 235):
 
 > HookCode is the Microsoft Store edition of Hook, an AI chat app with coding
-> agents for Windows. Chat with one model, hand real coding work to agents that
-> edit and run projects, and keep your conversations and code in step across
-> your computers.
+> agents for Windows. Hand real work to agents that edit and run projects, and
+> pick up the same conversations and code on any computer signed in to your
+> account.
 
 **Full description:**
 
-> HookCode is the Microsoft Store edition of Hook, an AI chat app with
-> coding agents for Windows.
+> HookCode is the Microsoft Store edition of Hook, an AI chat app with coding
+> agents for Windows.
 >
 > Chat with one model, then hand real work to coding agents that can read, edit
-> and run projects in a folder you choose. HookCode saves your conversations,
-> pictures and project code to your account so the same work continues on
-> another computer; the coding engine runs on your PC. An approved Hook account
-> unlocks the model through Hook's relay.
+> and run projects in a folder you choose. Your conversations, pictures and
+> project code are saved to your Hook account, so you can start on one computer
+> and continue on another. The coding engine itself runs on your PC. An approved
+> Hook account unlocks the model through Hook's relay.
 >
 > WHAT YOU CAN DO
 >
@@ -609,22 +623,28 @@ always included, so the dialog warns against reporting secrets.
 > • Attach screenshots and images and ask questions about them when the model
 >   supports vision.
 > • Keep every conversation in readable files on your machine, with search,
->   pinning and undoable deletion; the account copy keeps your computers in
->   step.
+>   pinning and undoable deletion — and an account copy that keeps your
+>   computers in step.
+> • Start a conversation or a project on one PC and pick it up on another,
+>   without exporting or transferring anything.
 > • Update HookCode from inside the app — the Store handles the download and
 >   restart.
 >
 > YOUR WORK, ON EVERY COMPUTER
 >
-> Your chats, pictures and project code are saved to your Hook account. That is
-> how a conversation or a project started on one computer continues on another.
-> The saved workspace is stored on hookcode.io and removed when you delete it
-> there or ask us to delete your account. Model requests are relayed through
-> hookcode.io to our model provider; apart from the saved workspace, we do not
-> store the text, pictures, tool definitions or replies — except when you
-> deliberately send a report (see below). We store the metadata needed to run
-> and measure the service (account identifier, token counts, cache statistics
-> and request status). See the privacy policy for the full picture.
+> Your chats, pictures and project code are saved to your Hook account so the
+> same work is available on every computer you sign in to. The saved workspace
+> is stored on hookcode.io. Deleting a conversation removes it from your account
+> on the next sync; ask us to delete the whole workspace or your account and we
+> will remove the chats, pictures and project repositories. Project repositories
+> contain the files the coding agent saved, which can include configuration and
+> `.env` files — do not put files in a project that you would not want stored
+> with your account. Model requests are relayed through hookcode.io to our model
+> provider; apart from the saved workspace, we do not store the text, pictures,
+> tool definitions or replies — except when you deliberately send a report (see
+> below). We store the metadata needed to run and measure the service (account
+> identifier, token counts, cache statistics and request status). See the
+> privacy policy for the full picture.
 >
 > LIVE GENERATIVE AI
 >
@@ -636,10 +656,13 @@ always included, so the dialog warns against reporting secrets.
 >
 > BUILT FOR CODING
 >
-> Coding agents work inside a project folder with a bundled Node runtime, the
-> pi coding agent and git. They can read and edit files, run commands with timeouts,
-> search the web and show you a live preview. They run as child processes of
-> HookCode and stop when you close the app.
+> Coding agents work inside a project folder with a bundled Node runtime, the pi
+> coding agent and git. They can read and edit files, run commands with timeouts,
+> search the web and show you a live preview. Each project is backed by a private
+> git repository in your account: agents pull the latest saved work before they
+> start — even when the project was begun on another computer — and save when
+> they finish. They run as child processes of HookCode and stop when you close
+> the app.
 >
 > REQUIREMENTS
 >
@@ -649,7 +672,7 @@ always included, so the dialog warns against reporting secrets.
 > • An approved Hook account. HookCode is in early access: sign in with the
 >   Google account that was approved for Hook. If you do not have access yet,
 >   join the waitlist at https://hookcode.io.
-> • An internet connection for model requests.
+> • An internet connection for model requests and for syncing your saved work.
 >
 > HookCode is free to download. Model access is included with an approved
 > early-access account; there are no per-message charges.
@@ -661,6 +684,7 @@ always included, so the dialog warns against reporting secrets.
 **Feature bullets** (optional; each under 200 characters):
 
 > • Your work follows you: chats, pictures and projects are saved to your account and available on every computer.
+> • Projects are backed by private git, so agents continue from the latest saved work.
 > • Coding agents that read, edit and run real projects.
 > • A live plan and progress while an agent works; steer or stop it at any time.
 > • A live preview of the page or report being built.
@@ -669,62 +693,31 @@ always included, so the dialog warns against reporting secrets.
 > • Image attachments, with vision when the model supports it.
 > • Report inappropriate AI output from inside the app.
 
-**What's new in this version:**
+**What's new in 0.2.0** (Partner Center "What's new in this version", 1,042 characters):
 
-> First Microsoft Store release. Adds Store-managed updates, an in-app Report
-> action for AI output, and keeps chats and sign-in when moving from the direct
-> installer.
+> HookCode 0.2.0 makes your work follow you between computers while the coding
+> agents keep running on your PC.
+>
+> • Your chats, pictures and projects now sync to your Hook account
+>   automatically. Start on one PC, continue on another.
+> • Every project is a private git repository. Coding agents pull the latest
+>   saved work before they begin — even when the project was started on another
+>   computer — and save it when they finish.
+> • Projects have stable identities, so a project created on one computer
+>   appears on your others with its description and code.
+> • HookCode now bundles git for its coding agents. Force-pushes and branch
+>   deletion are blocked, so a shared project cannot lose another computer's
+>   history.
+> • Settings has a new Sync row: see whether your work is saved, and run a sync
+>   manually if you want.
+> • Chat sync merges work from several computers: messages are combined,
+>   deletions carry across, and a reply that is still being written is never
+>   uploaded.
+> • The privacy policy now explains what is saved to your account and how to
+>   remove it.
 
-**Search terms:** AI chat, coding agent, local AI, developer tools, AI assistant,
-code assistant, privacy.
-
-### Submit
-
-1. Partner Center → your product → Submission → Packages → upload the `.msix`.
-2. Fill the listing: the description above (it contains the required AI
-   disclosure), at least one desktop screenshot at 1366×768 or larger (5–8
-   recommended), an optional 300×300 app tile icon, category, support contact,
-   the age-rating questionnaire, and privacy policy
-   `https://hookcode.io/privacy`.
-3. On **Properties**, tick “This product incorporates generative AI features”.
-4. **Notes for certification:** HookCode requires an approved account. Include
-   a test account whose email is approved (or approve the reviewer's), and
-   explain that **Sign in** opens a Google device-login page. Point testers at
-   the **Report** action on an assistant reply, and mention that
-   `unvirtualizedResources` keeps the existing desktop app data (chats, the
-   account token and coding-agent sessions) in `%APPDATA%\app.hook.chat`, so a
-   Store install continues an existing installation instead of starting blank.
-5. Before submitting, install the package on a clean Windows 11 VM and run the
-   **Windows App Certification Kit**. For sideload testing, sign the MSIX with a
-   development certificate whose subject matches the manifest `Publisher`
-   (`node scripts/build-msix.mjs --sign dev.pfx --password …`), trust that
-   certificate, then `Add-AppxPackage release\Hook-<version>-x64.msix`. WebView2
-   must be present; the listing states the requirement.
-6. Submit. The first review is typically about two days; updates are usually
-   under 24 hours.
-
-### Store updates move on their own schedule
-
-A direct build can ship days before Microsoft certifies the same version, so the
-Store channel has its own latest and floor in `release.config.json`:
-
-```json
-{
-  "minimumVersion": "0.1.0",
-  "store": { "latest": "0.1.2", "minimumVersion": "0.1.2" }
-}
-```
-
-A packaged build detects its MSIX identity at runtime and reads
-`store.latest` / `store.minimumVersion` instead of the direct pair. Nothing is
-shown until `store.latest` names a version that is actually live in the Store.
-After the Store submission is approved, set `store.latest` to that version and
-push: the website deploy updates the config, with no app rebuild.
-
-Direct updates are unchanged. The unpackaged build still downloads the NSIS
-installer with its account token, verifies the SHA-256 and installs it in place.
-Keep one channel installed at a time: both builds write the same
-`%APPDATA%\app.hook.chat` data folder.
+**Search terms:** AI chat, coding agent, AI assistant, code assistant, developer
+tools, cross-device sync, project sync.
 
 ## Where the data lives
 
