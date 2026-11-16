@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 /**
- * Build the small manifest the download endpoint serves next to the installer.
+ * Build the manifest the download endpoints and the updater read next to an
+ * installer.
  *
  *   node scripts/build-release-manifest.mjs <installer> <manifest> [version]
  *
- * The release workflow runs this on Windows, uploads both files to
- * /opt/hook-web/data/releases, and the website then reports the new version and
- * checksum automatically. The download route streams the installer only to
- * signed-in, approved accounts.
+ * The release workflow runs this on Windows after `tauri build`, uploads the
+ * installer under its versioned name, and merges this manifest into the public
+ * release index. `sourceHash` is what lets the next push skip a rebuild when
+ * nothing that goes into the app changed.
  */
 import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+
+import { appSourceHash } from "./app-source-hash.mjs";
+import { readRepoVersion } from "./release-gate.mjs";
 
 const [, , installerArg, manifestArg, versionArg] = process.argv;
 if (!installerArg || !manifestArg) {
@@ -25,27 +29,32 @@ const installer = resolve(installerArg);
 const manifest = resolve(manifestArg);
 const bytes = await readFile(installer);
 const info = await stat(installer);
-const pkg = JSON.parse(
-  await readFile(resolve("package.json"), "utf8"),
-);
-let tauriVersion = null;
-try {
-  const tauri = JSON.parse(
-    await readFile(resolve("src-tauri/tauri.conf.json"), "utf8"),
+
+// A drift here ships an installer that reports a different version than the
+// one users were told about, and every later update check lies.
+const repoVersion = readRepoVersion();
+const version = versionArg || process.env.HOOK_VERSION || repoVersion;
+if (version !== repoVersion) {
+  throw new Error(
+    `requested version ${version} does not match the checked-out version ${repoVersion}`,
   );
-  tauriVersion = tauri.version ?? null;
-} catch {
-  // A standalone checkout may not have the Tauri config; fall back to package.json.
 }
+
 const commit = (process.env.GITHUB_SHA || process.env.HOOK_COMMIT || "").slice(0, 12);
+const notes =
+  (process.env.HOOK_RELEASE_NOTES || "").trim().split("\n")[0].slice(0, 200) || null;
 
 const payload = {
-  version: versionArg || process.env.HOOK_VERSION || tauriVersion || pkg.version,
+  version,
   commit: commit || null,
   builtAt: new Date().toISOString(),
-  file: "Hook-setup.exe",
+  file: `Hook-${version}-setup.exe`,
   size: info.size,
   sha256: createHash("sha256").update(bytes).digest("hex"),
+  // The gate runs on Linux and the build on Windows; use its hash so checkout
+  // line endings can never make the same commit look like two releases.
+  sourceHash: process.env.HOOK_SOURCE_HASH || appSourceHash(),
+  notes,
 };
 
 await writeFile(manifest, `${JSON.stringify(payload, null, 2)}\n`);

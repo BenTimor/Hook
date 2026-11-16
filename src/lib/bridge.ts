@@ -15,6 +15,8 @@ import type {
   SearchHit,
   SettingsView,
   StreamEvent,
+  UpdateEvent,
+  UpdateInfo,
 } from "./types";
 
 export const isTauri = (): boolean =>
@@ -24,11 +26,13 @@ type ChatListener = (chatId: string, event: StreamEvent) => void;
 type AgentsListener = (overview: AgentsOverview) => void;
 type PreviewListener = (preview: PreviewEvent) => void;
 type AuthListener = (view: AuthView) => void;
+type UpdateListener = (event: UpdateEvent) => void;
 
 const chatListeners = new Set<ChatListener>();
 const agentsListeners = new Set<AgentsListener>();
 const previewListeners = new Set<PreviewListener>();
 const authListeners = new Set<AuthListener>();
+const updateListeners = new Set<UpdateListener>();
 
 function dispatch(chatId: string, event: StreamEvent) {
   for (const listener of chatListeners) listener(chatId, event);
@@ -112,6 +116,26 @@ export function onAuthEvent(listener: AuthListener): () => void {
   let off: (() => void) | null = null;
   let cancelled = false;
   void listen<AuthView>("hook://auth", (event) => listener(event.payload)).then(
+    (unlisten) => {
+      if (cancelled) unlisten();
+      else off = unlisten;
+    },
+  );
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
+/** Download progress for an in-app update. The app exits when it is installed. */
+export function onUpdateEvent(listener: UpdateListener): () => void {
+  if (!isTauri()) {
+    updateListeners.add(listener);
+    return () => updateListeners.delete(listener);
+  }
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void listen<UpdateEvent>("hook://update", (event) => listener(event.payload)).then(
     (unlisten) => {
       if (cancelled) unlisten();
       else off = unlisten;
@@ -239,6 +263,12 @@ export const api = {
 
   agentsOverview: (): Promise<AgentsOverview> =>
     isTauri() ? invoke<AgentsOverview>("agents_overview") : mock.agentsOverview(),
+
+  checkUpdate: (): Promise<UpdateInfo> =>
+    isTauri() ? invoke<UpdateInfo>("check_update") : mock.checkUpdate(),
+
+  installUpdate: (): Promise<void> =>
+    isTauri() ? invoke<void>("install_update") : mock.installUpdate(),
 
   previewState: (): Promise<PreviewView | null> =>
     isTauri()

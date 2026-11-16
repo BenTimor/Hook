@@ -1,8 +1,17 @@
 import { useEffect } from "react";
-import { FolderOpen, GitBranch, LogOut, UserRound, X } from "lucide-react";
+import {
+  ArrowUpCircle,
+  FolderOpen,
+  GitBranch,
+  LogOut,
+  RefreshCw,
+  UserRound,
+  X,
+} from "lucide-react";
 
 import { api, openExternal } from "../lib/bridge";
 import { useChatStore } from "../store/useChatStore";
+import { useUpdateStore } from "../store/useUpdateStore";
 
 export function SettingsSheet() {
   const open = useChatStore((s) => s.settingsOpen);
@@ -12,6 +21,12 @@ export function SettingsSheet() {
   const auth = useChatStore((s) => s.auth);
   const authBusy = useChatStore((s) => s.authBusy);
   const signOut = useChatStore((s) => s.signOut);
+  const version = useChatStore((s) => s.info?.version);
+  const update = useUpdateStore((s) => s.info);
+  const checking = useUpdateStore((s) => s.checking);
+  const installing = useUpdateStore((s) => s.installing);
+  const checkUpdate = useUpdateStore((s) => s.check);
+  const installUpdate = useUpdateStore((s) => s.install);
 
   useEffect(() => {
     if (!open) return;
@@ -128,6 +143,50 @@ export function SettingsSheet() {
                 No projects yet. Ask for something and the chat agent will create one.
               </p>
             )}
+          </section>
+
+          <section className="sheet-section">
+            <div className="sheet-label">
+              <span>Updates</span>
+            </div>
+            <div className="update-settings-row">
+              <div className="update-settings-copy">
+                <strong>Hook {update?.current ?? version ?? "…"}</strong>
+                <span>
+                  {update
+                    ? update.available
+                      ? `Version ${update.latest} is available.`
+                      : "You’re on the latest version."
+                    : "Check whether a newer version is available."}
+                </span>
+              </div>
+              {update?.available ? (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => void installUpdate()}
+                  disabled={installing}
+                >
+                  <ArrowUpCircle strokeWidth={1.9} />
+                  {installing ? "Updating…" : "Update now"}
+                </button>
+              ) : (
+                <button
+                  className="btn"
+                  onClick={() => void checkUpdate()}
+                  disabled={checking}
+                >
+                  <RefreshCw strokeWidth={1.9} className={checking ? "spin" : undefined} />
+                  {checking ? "Checking…" : "Check for updates"}
+                </button>
+              )}
+            </div>
+            <p className="sheet-help">
+              Updates install from inside Hook and restart it. Your chats and
+              projects stay where they are.
+              {update && update.minimum !== "0.0.0" ? (
+                <> Hook {update.minimum} is the oldest supported version.</>
+              ) : null}
+            </p>
           </section>
 
           <p className="sheet-foot">

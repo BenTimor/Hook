@@ -7,7 +7,31 @@ on every deploy — edit it *here*, not on the server.
 | File | Lives on the server at | Purpose |
 |------|------------------------|---------|
 | `docker-compose.yml` | `/opt/hook-web/docker-compose.yml` | `hook-waitlist` container (built from `/opt/hook-web/app`), joins `scout_default`, SQLite bind-mounted from `/opt/hook-web/data` |
-| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, download) to the container, `www` → apex redirect |
+| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, download, release index) to the container, `www` → apex redirect |
+
+`release.config.json` (repo root) is copied into the image by the Dockerfile. It
+holds `minimumVersion`, the oldest desktop build allowed to keep working; raising
+it forces older installs to update on their next check, without rebuilding the
+app. It is shipped by `deploy-waitlist.sh` like any other tracked file.
+
+## Release slot
+
+`/opt/hook-web/data/releases` is bind-mounted into the container as
+`/data/releases` (`DOWNLOAD_DIR`) and written only by the Windows release
+workflow:
+
+| Path | Purpose |
+|------|---------|
+| `releases.json` | the published index; swapped last, atomically |
+| `Hook-<version>-setup.exe` | one immutable installer per version (last five kept) |
+| `latest.json` | the newest build's manifest (version, commit, size, SHA-256) |
+| `Hook-setup.exe` | legacy single-slot installer; read only while the index does not exist yet |
+
+`GET /api/releases` is public and returns `{ latest, minimum, updatedAt, releases }`
+for the desktop updater and anyone curious. `GET /api/download/windows?version=`
+is still gated to signed-in, approved accounts. A bad `releases.json` never takes
+downloads down: entries whose installer file is missing are ignored, and the old
+index keeps serving the previous version until the swap.
 
 Not in this directory because it must **never** be committed:
 

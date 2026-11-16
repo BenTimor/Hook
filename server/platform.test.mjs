@@ -29,6 +29,10 @@ test("approved users can sign in a device, use the proxy, see usage, download an
   mkdirSync(releases, { recursive: true });
   writeFileSync(join(releases, "Hook-setup.exe"), Buffer.from("fake-installer"));
   writeFileSync(
+    join(directory, "release.config.json"),
+    JSON.stringify({ minimumVersion: "1.0.0" }),
+  );
+  writeFileSync(
     join(releases, "latest.json"),
     JSON.stringify({
       version: "1.2.3",
@@ -113,6 +117,7 @@ test("approved users can sign in a device, use the proxy, see usage, download an
     DEEPSEEK_MODEL: "deepseek-flash",
     HOOK_MODEL_ID: "hook",
     DOWNLOAD_DIR: releases,
+    RELEASE_CONFIG: join(directory, "release.config.json"),
   });
   app.use("/api", api.router);
 
@@ -289,6 +294,18 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       assert.equal(usage.status, 200);
     });
 
+    await t.test("the release index is public and names the supported floor", async () => {
+      const response = await request("/releases");
+      assert.equal(response.status, 200);
+      const index = await response.json();
+      assert.equal(index.latest, "1.2.3");
+      assert.equal(index.minimum, "1.0.0");
+      assert.equal(index.releases[0].version, "1.2.3");
+      // The installer URL stays behind the account gate even though the
+      // version list does not.
+      assert.equal(index.releases[0].url, "/api/download/windows");
+    });
+
     await t.test("an approved session can see and download the installer", async () => {
       const info = await request("/download/info", { cookie: approvedCookie });
       assert.equal(info.status, 200);
@@ -306,6 +323,17 @@ test("approved users can sign in a device, use the proxy, see usage, download an
         Buffer.from(await download.arrayBuffer()),
         Buffer.from("fake-installer"),
       );
+
+      const pinned = await request("/download/windows?version=1.2.3", {
+        cookie: approvedCookie,
+      });
+      assert.equal(pinned.status, 200);
+
+      const unknown = await request("/download/windows?version=9.9.9", {
+        cookie: approvedCookie,
+      });
+      assert.equal(unknown.status, 404);
+      assert.equal((await unknown.json()).error.code, "unknown_version");
 
       const denied = await request("/download/info", { cookie: waitingCookie });
       assert.equal(denied.status, 403);

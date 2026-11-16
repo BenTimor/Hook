@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 
 import { isTauri, win } from "./lib/bridge";
 import { useChatStore } from "./store/useChatStore";
+import { UPDATE_CHECK_INTERVAL, useUpdateStore } from "./store/useUpdateStore";
 import { AgentBoard } from "./components/AgentBoard";
 import { Composer } from "./components/Composer";
 import { Hero } from "./components/Hero";
@@ -10,6 +11,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { PaneHead } from "./components/PaneHead";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { SettingsSheet } from "./components/SettingsSheet";
+import { UpdatePrompt } from "./components/UpdatePrompt";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
 
@@ -27,10 +29,22 @@ export default function App() {
 
   const [maximized, setMaximized] = useState(false);
   const signedIn = Boolean(auth?.signedIn);
+  const checkUpdate = useUpdateStore((s) => s.check);
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  // The release index is public, so this also runs before signing in: a build
+  // below the supported floor must be able to say so on the login screen.
+  useEffect(() => {
+    void checkUpdate({ silent: true });
+    const timer = window.setInterval(
+      () => void checkUpdate({ silent: true }),
+      UPDATE_CHECK_INTERVAL,
+    );
+    return () => window.clearInterval(timer);
+  }, [checkUpdate]);
 
   useEffect(() => {
     let alive = true;
@@ -95,6 +109,7 @@ export default function App() {
     return (
       <>
         <LoginScreen maximized={maximized} />
+        <UpdatePrompt showBanner={false} />
         <Toaster
           theme="light"
           position="bottom-center"
@@ -114,6 +129,7 @@ export default function App() {
       <Sidebar />
       <main className="pane">
         <PaneHead />
+        <UpdatePrompt />
         <div className="pane-body">
           {activeId ? (
             <>

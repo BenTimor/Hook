@@ -1,5 +1,6 @@
 # The image only needs package.json, pnpm-lock.yaml, tsconfig.json,
-# waitlist.vite.config.mjs, src/, waitlist/, public/ and server/.
+# waitlist.vite.config.mjs, src/, waitlist/, public/, server/ and
+# release.config.json.
 .git
 .github
 node_modules

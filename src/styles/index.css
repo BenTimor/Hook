@@ -3299,3 +3299,240 @@ body[data-preview-dragging="true"] iframe {
 .inline-link:hover {
   text-decoration-color: currentColor;
 }
+
+/* ── Updates ───────────────────────────────────────────────────────────── */
+
+.spin {
+  animation: agent-spin 780ms linear infinite;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--ivory);
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: transparent;
+}
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin: 0 14px 8px;
+  padding: 8px 8px 8px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--accent-rgb), 0.14);
+  background: rgba(var(--accent-rgb), 0.055);
+  animation: fadeIn 220ms var(--ease);
+}
+
+.update-banner-icon,
+.update-dialog-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.update-banner-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+}
+
+.update-banner-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.update-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.update-banner-copy strong {
+  font-size: 12.6px;
+  font-weight: 600;
+  letter-spacing: -0.004em;
+}
+
+.update-banner-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.update-banner .btn {
+  height: 30px;
+  padding: 0 11px;
+}
+
+.update-banner .icon-btn {
+  width: 26px;
+  height: 26px;
+  color: var(--ink-3);
+}
+
+.update-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: rgba(var(--ink-rgb), 0.26);
+  backdrop-filter: blur(7px);
+  animation: sheet-fade 150ms var(--ease);
+}
+
+.update-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  width: min(430px, 100%);
+  padding: 24px;
+  border-radius: 18px;
+  background: var(--ivory);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg);
+  animation: sheet-rise 180ms var(--ease);
+}
+
+.update-dialog-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.update-dialog-icon svg {
+  width: 21px;
+  height: 21px;
+}
+
+.update-dialog-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-dialog-copy h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.update-dialog-copy p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.update-dialog-notes {
+  margin-top: 2px !important;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--canvas-soft);
+  font-size: 12.4px !important;
+  color: var(--ink-3) !important;
+}
+
+.update-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.update-reassure {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.update-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(var(--ink-rgb), 0.09);
+}
+
+.update-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 200ms var(--ease);
+}
+
+.update-progress-track span[data-indeterminate="true"] {
+  animation: update-shimmer 1.3s var(--ease) infinite;
+}
+
+@keyframes update-shimmer {
+  0% {
+    transform: translateX(-30%);
+  }
+  100% {
+    transform: translateX(330%);
+  }
+}
+
+.update-progress-label {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.update-error {
+  margin: 0;
+  font-size: 12.4px;
+  color: var(--danger);
+}
+
+.update-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.update-settings-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.update-settings-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.update-settings-copy span {
+  font-size: 12.2px;
+  color: var(--ink-3);
+}

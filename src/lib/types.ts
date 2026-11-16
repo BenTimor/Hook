@@ -72,6 +72,28 @@ export interface AppInfo {
   version: string;
 }
 
+/** What the release index says about this build. */
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  minimum: string;
+  /** A newer build exists. */
+  available: boolean;
+  /** The running build is below the supported floor and must update. */
+  required: boolean;
+  notes: string | null;
+  builtAt: string | null;
+  commit: string | null;
+  size: number | null;
+}
+
+/** Download progress for an in-app update. */
+export interface UpdateEvent {
+  phase: "downloading" | "installing";
+  received: number;
+  total: number | null;
+}
+
 /** Desktop sign-in state. `pending` carries the code shown in the login window. */
 export interface AuthView {
   signedIn: boolean;

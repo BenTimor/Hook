@@ -1,10 +1,10 @@
 name: Release Windows app
 
-# Every push to main that can change the desktop app rebuilds the Windows
-# installer and publishes it to the website's download slot. The waitlist
-# container serves /opt/hook-web/data/releases/Hook-setup.exe only to signed-in,
-# approved accounts, so the next download is the new build with no separate
-# release step.
+# Every push to main that can change the desktop app runs a cheap "gate" first:
+# it fingerprints the application source and compares it with the published
+# release. Identical source skips the Windows build entirely; real changes need
+# a version bump (`pnpm version:bump patch`) and publish a new immutable
+# installer. The old installer keeps being served while the new one builds.
 #
 # Required repository secrets (same ones the website deploy uses):
 #   DEPLOY_SSH_KEY      private key for root@167.233.58.139
@@ -18,10 +18,19 @@ on:
       - "harness.config.ci.toml"
       - "package.json"
       - "pnpm-lock.yaml"
-      - "scripts/fetch-pi-runtime.mjs"
+      - "release.config.json"
+      - "scripts/app-source-hash.mjs"
+      - "scripts/release-gate.mjs"
       - "scripts/build-release-manifest.mjs"
+      - "scripts/merge-release-index.mjs"
+      - "scripts/fetch-pi-runtime.mjs"
       - ".github/workflows/release-app.yml"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if the application source is unchanged"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,8 +41,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Decide whether a build is needed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      version: ${{ steps.gate.outputs.version }}
+      source_hash: ${{ steps.gate.outputs.source_hash }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # Fails on a source change without a version bump; skips identical source.
+      - name: Compare with the published release
+        id: gate
+        env:
+          HOOK_RELEASES_URL: https://hookcode.io
+        run: node scripts/release-gate.mjs ${{ inputs.force && '--force' || '' }}
+
   build:
     name: Build Windows installer
+    needs: check
+    if: needs.check.outputs.publish == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -76,11 +109,17 @@ jobs:
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $exe) { throw "Tauri did not produce an NSIS installer." }
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item $exe.FullName release/Hook-setup.exe -Force
+          Copy-Item $exe.FullName "release/Hook-${{ needs.check.outputs.version }}-setup.exe" -Force
           Write-Host "installer: $($exe.Name) ($([math]::Round($exe.Length / 1MB, 1)) MB)"
 
       - name: Write version manifest
-        run: node scripts/build-release-manifest.mjs release/Hook-setup.exe release/latest.json
+        env:
+          HOOK_RELEASE_NOTES: ${{ github.event.head_commit.message }}
+          HOOK_SOURCE_HASH: ${{ needs.check.outputs.source_hash }}
+        run: >
+          node scripts/build-release-manifest.mjs
+          "release/Hook-${{ needs.check.outputs.version }}-setup.exe"
+          release/latest.json
 
       - uses: actions/upload-artifact@v7
         with:
@@ -91,14 +130,33 @@ jobs:
 
   deploy:
     name: Publish to hookcode.io
-    needs: build
+    needs: [check, build]
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
       - uses: actions/download-artifact@v8
         with:
           name: hook-windows-release
           path: release
+
+      # Merge the new build into the public version history. Fails rather than
+      # replacing history if hookcode.io cannot be read.
+      - name: Merge release index
+        env:
+          HOOK_SERVER: https://hookcode.io
+        run: >
+          node scripts/merge-release-index.mjs
+          --manifest release/latest.json
+          --out release/releases.json
+          --server "$HOOK_SERVER"
+          --keep 5
 
       - name: Install SSH credentials
         env:
@@ -116,21 +174,40 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 644 "$HOME/.ssh/known_hosts"
 
-      - name: Upload installer and manifest
+      # New files are uploaded under their final (versioned) names first. The
+      # index that points at them is swapped last, so downloads keep working
+      # against the previous version for the whole upload.
+      - name: Upload installer and release index
         env:
           DEPLOY_HOST: root@167.233.58.139
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
           set -euo pipefail
           SSH=(-i "$HOME/.ssh/deploy_key" -o BatchMode=yes -o ConnectTimeout=10)
-          ssh "${SSH[@]}" "$DEPLOY_HOST" "mkdir -p /opt/hook-web/data/releases && chmod 755 /opt/hook-web/data/releases"
-          scp "${SSH[@]}" release/Hook-setup.exe "$DEPLOY_HOST:/opt/hook-web/data/releases/Hook-setup.exe.new"
-          scp "${SSH[@]}" release/latest.json "$DEPLOY_HOST:/opt/hook-web/data/releases/latest.json.new"
-          ssh "${SSH[@]}" "$DEPLOY_HOST" '
-            set -euo pipefail
-            cd /opt/hook-web/data/releases
-            chmod 644 Hook-setup.exe.new latest.json.new
-            mv Hook-setup.exe.new Hook-setup.exe
-            mv latest.json.new latest.json
-            ls -lh Hook-setup.exe latest.json
-          '
+          DIR=/opt/hook-web/data/releases
+          KEEP=$(node -e "const i=require('./release/releases.json'); process.stdout.write(Object.values(i.releases).map(r=>r.file).join(' '))")
+          ssh "${SSH[@]}" "$DEPLOY_HOST" "mkdir -p '$DIR' && chmod 755 '$DIR'"
+          scp "${SSH[@]}" "release/Hook-$VERSION-setup.exe" "$DEPLOY_HOST:$DIR/Hook-$VERSION-setup.exe.new"
+          scp "${SSH[@]}" release/latest.json "$DEPLOY_HOST:$DIR/latest.json.new"
+          scp "${SSH[@]}" release/releases.json "$DEPLOY_HOST:$DIR/releases.json.new"
+          ssh "${SSH[@]}" "$DEPLOY_HOST" "DIR='$DIR' KEEP='$KEEP' VERSION='$VERSION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DIR"
+          chmod 644 "Hook-$VERSION-setup.exe.new" latest.json.new releases.json.new
+          mv "Hook-$VERSION-setup.exe.new" "Hook-$VERSION-setup.exe"
+          mv latest.json.new latest.json
+          # The atomic switch: from here on the new version is what /api/releases
+          # reports and what new downloads receive.
+          mv releases.json.new releases.json
+          # Keep exactly the installers the published index references.
+          for file in *.exe; do
+            [ -e "$file" ] || continue
+            case " $KEEP " in
+              *" $file "*) ;;
+              *) rm -f "$file" ;;
+            esac
+          done
+          # Keep a legacy single-slot installer only while the index mentions it.
+          ls -lh releases.json latest.json *.exe
+          REMOTE
           node -p "'published Hook ' + require('./release/latest.json').version"

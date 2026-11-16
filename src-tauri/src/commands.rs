@@ -564,6 +564,23 @@ pub fn preview_state(state: State<'_, Arc<AppState>>) -> Option<PreviewView> {
     state.preview.snapshot()
 }
 
+/// Compare this build with the published release index. Public endpoint: a
+/// signed-out window still learns that it is too old to sign in.
+#[tauri::command]
+pub async fn check_update(state: State<'_, Arc<AppState>>) -> Result<crate::update::UpdateInfo, String> {
+    crate::update::check(&state.cfg).await
+}
+
+/// Download the newest installer, verify it, launch it and exit Hook. The
+/// installer replaces this build and starts it again.
+#[tauri::command]
+pub async fn install_update(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    crate::update::install(&app, &state.cfg, state.auth.token()).await
+}
+
 fn derive_title(text: &str) -> String {
     let first_line = text.lines().next().unwrap_or(text);
     let cleaned = first_line

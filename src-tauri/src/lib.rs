@@ -11,6 +11,7 @@ mod settings;
 mod store;
 mod tools;
 mod turn;
+mod update;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -207,6 +208,8 @@ pub fn run() {
             commands::agents_overview,
             commands::stop_chat_agents,
             commands::preview_state,
+            commands::check_update,
+            commands::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Hook")

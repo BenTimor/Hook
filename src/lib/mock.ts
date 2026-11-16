@@ -15,6 +15,7 @@ import type {
   SearchHit,
   SettingsView,
   StreamEvent,
+  UpdateInfo,
 } from "./types";
 
 const HOUR = 3_600_000;
@@ -256,6 +257,42 @@ const demoLogin = () =>
 export const mock = {
   async appInfo() {
     return clone(info);
+  },
+
+  async checkUpdate(): Promise<UpdateInfo> {
+    // Design-time preview: `?update=1` shows the optional banner,
+    // `?update=required` shows the blocking dialog, `?update=installing`
+    // shows the progress state.
+    const demo = new URLSearchParams(window.location.search).get("update");
+    const idle = {
+      current: info.version,
+      latest: info.version,
+      minimum: "0.0.0",
+      available: false,
+      required: false,
+      notes: null,
+      builtAt: null,
+      commit: null,
+      size: null,
+    };
+    if (!demo) return idle;
+    return {
+      ...idle,
+      latest: "0.2.0",
+      minimum: demo === "required" ? "0.2.0" : "0.1.0",
+      available: true,
+      required: demo === "required",
+      notes: "Updates install themselves now, and the task board keeps its place.",
+      builtAt: new Date().toISOString(),
+      commit: "abc1234",
+      size: 29_400_000,
+    };
+  },
+
+  async installUpdate(): Promise<void> {
+    // The desktop app exits and hands over to the installer; the browser
+    // preview stops at the progress state (see useUpdateStore).
+    await sleep(30_000);
   },
 
   async authStatus(): Promise<AuthView> {

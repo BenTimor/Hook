@@ -9,6 +9,9 @@ chat window, the coding agents, and a model proxy that keeps the provider key
 server-side. Conversations stay on your machine; the account service only sees
 token counts and cache statistics.
 
+> Working on the code? Start with [AGENTS.md](AGENTS.md) — commands, repo map,
+> and the constraints that are not obvious from the tree.
+
 ## Web waitlist
 
 The public landing page runs separately from the Tauri desktop app. Use Node
@@ -254,14 +257,36 @@ per-account search limit is 4 in flight and 60 per minute.
 
 ### Automatic Windows builds
 
-`.github/workflows/release-app.yml` runs on every push to `main` that touches the
-desktop app, its config, the bundled pi dependency, or the build scripts. It
-builds the NSIS installer on `windows-latest`, writes `release/latest.json`
-(version, commit, size, SHA-256), and atomically uploads both files to
-`/opt/hook-web/data/releases` over the same SSH deploy key as the website. The
-next download is the new build; no tag or release step is needed. The build takes
-roughly 15 minutes and is serialized so two runs cannot overwrite each other.
-Builds also appear as workflow artifacts for 14 days.
+`.github/workflows/release-app.yml` runs on every push to `main` that can change
+the desktop app. A cheap first job fingerprints the application source
+(`scripts/app-source-hash.mjs`) and compares it with the published release, so a
+twenty-minute Windows build only happens when there is something new to ship:
+
+| Repo state | What happens |
+|---|---|
+| Same application source as the published build | the build is skipped |
+| Source changed, version bumped | builds and publishes |
+| Source changed, same version | fails and asks for `pnpm version:bump` |
+| Source changed, lower version | fails (no downgrades) |
+
+The build runs on `windows-latest` (roughly 15 minutes), writes
+`release/latest.json` (version, commit, builtAt, size, SHA-256, source hash,
+release notes), merges it into `release/releases.json`, and uploads the installer
+(under `Hook-<version>-setup.exe`) and the index to `/opt/hook-web/data/releases`
+over the same SSH deploy key as the website. Builds also appear as workflow
+artifacts for 14 days.
+
+Publishing never takes downloads down. The new installer is uploaded under its
+versioned name first; the old `releases.json` keeps serving the previous version
+until the new one is complete, and the index swap is a single `mv`. The last five
+versions stay downloadable.
+
+Bump the version with `pnpm version:bump patch` (or `minor`, `major`, or an
+explicit version). It updates `package.json`, `src-tauri/Cargo.toml`,
+`src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json` together: the app reports
+Cargo's version, the installer is named after Tauri's, and the release manifest
+refuses to publish if they disagree.
+
 
 ### Google Cloud
 
@@ -398,19 +423,59 @@ pnpm app:portable  # portable folder, zipped (runs `pnpm engine` first)
 
 Outputs:
 
-- `src-tauri/target/release/bundle/nsis/Hook_0.1.0_x64-setup.exe` — installer, ~28 MB
-  (the release workflow copies it to `release/Hook-setup.exe` before upload)
-- `release/Hook-0.1.0-portable.zip` — `Hook.exe` + `resources\pi-runtime`, no install
+- `src-tauri/target/release/bundle/nsis/Hook_<version>_x64-setup.exe` — installer,
+  ~28 MB (the release workflow copies it to `release/Hook-<version>-setup.exe`)
+- `release/Hook-<version>-portable.zip` — `Hook.exe` + `resources\pi-runtime`, no install
 
 The engine (Node + pi) is ~104 MB of binaries and is not in git; `pnpm engine`
 copies it from the pinned `@earendil-works/pi-coding-agent` dev dependency.
 `scripts/fetch-pi-runtime.mjs` also proves the copy can load Hook's guard before
 anything gets packaged.
 
+`pnpm version:bump patch|minor|major` is the only way to change the version (see
+[Updates](#updates)); hand-editing one of the four files makes the app and the
+installer disagree.
+
 `harness.config.toml` is gitignored so a local developer can keep a custom
 provider. The Windows release workflow copies the committed
 `harness.config.ci.toml` (hookcode.io proxy, no secrets) into that slot before
 building.
+
+## Updates
+
+Installed copies check `GET /api/releases` at startup and every four hours. The
+response is public and lists the newest version, the oldest supported version
+(`minimumVersion` in `release.config.json`, deployed with the website), and the
+recent releases with their sizes, checksums and dates. What Hook does with it:
+
+- **Current** — nothing.
+- **Behind, above the floor** — a dismissible banner above the chat offers the
+  new version. "Later" hides it until the next launch.
+- **Below the floor** — a blocking dialog. This is the security lever: raise
+  `minimumVersion` and older builds stop working as soon as the website deploys,
+  without rebuilding the app. The server clamps a floor above the newest
+  published build to that build, so a typo cannot brick everyone.
+
+"Update now" downloads the installer with the signed-in token, checks it against
+the published SHA-256, and hands it to the NSIS installer in passive update mode
+(`/P /UPDATE /R`). The installer replaces Hook and starts it again; chats,
+projects and the coding engine stay on disk. There is no signing key to manage
+and no separate update channel: the same account gate that protects the download
+protects the update. The installer lands in `%TEMP%\hook-update\<version>\` and is
+replaced by the next update.
+
+A signed-out build still checks for updates (the index is public). Installing
+asks for sign-in first, because the installer download requires an approved
+account. Builds older than 0.1.1 predate the updater, so the first move to this
+release is still a manual download; everything after it is one click. `release.config.json` is the only file to edit to force updates:
+
+```json
+{ "minimumVersion": "0.1.0" }
+```
+
+`0.0.0` never forces an update. The public history lives at
+`https://hookcode.io/api/releases`; the website's signed-in download uses the
+same data, and `/api/download/windows?version=` pins an exact build.
 
 ## Where the data lives
 
@@ -430,6 +495,9 @@ building.
                            the agents wrote, collected each second
   hook-guard.mjs           the guard loaded into every coding agent
 ```
+
+In-app updates download installers to `%TEMP%\hook-update\`; nothing else is
+written outside this folder.
 
 The app keeps no local database and no sync. Conversations never leave the
 machine; the account service sees the request metadata described above (token
@@ -616,6 +684,7 @@ src-tauri/src/
                 wakes, stop-chat
   runtime.rs    locate the bundled engine, write its models.json
   guard.rs      the guard extension, materialized from the binary
+  update.rs     release index, update policy, checksum-checked installer
   settings.rs   projects folder
   projects.rs   folder scanning, descriptions, path containment
   commands.rs   the IPC surface
@@ -644,9 +713,10 @@ Details worth knowing:
 ## Tests
 
 ```bash
-cd src-tauri
-cargo test                      # unit tests + two zero-cost integration checks
-cargo test --lib -- --ignored   # live tests against `pnpm mock`
+cd src-tauri && cargo test                      # unit tests + two zero-cost integration checks
+cd src-tauri && cargo test --lib -- --ignored   # live tests against `pnpm mock`
+pnpm waitlist:test                              # API, device login, proxy, download, release index
+pnpm test:release                               # "does this push need a Windows build?"
 ```
 
 `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
@@ -655,7 +725,9 @@ path containment, the project and agent stores, progress batching, the chat-agen
 tool loop, the guard policy (a Node harness feeds it bad `bash` calls and the
 checklist tool), the RPC handshake (spawns the real engine, asks `get_state`,
 never calls a model) and a full agent lifecycle against a fake one that speaks
-the protocol. Tests skip themselves when the engine or `node` is missing.
+the protocol, and the update policy (version ordering, the minimum floor, and a
+manifest whose floor is ahead of its newest build). Tests skip themselves when the
+engine or `node` is missing.
 
 ## A note on packaged builds
 

@@ -36,6 +36,9 @@ jobs:
       - name: Run API regression tests
         run: pnpm waitlist:test
 
+      - name: Test the release gate
+        run: pnpm test:release
+
       # waitlist:build runs `tsc --noEmit` (whole project) before vite build.
       - name: Build landing page
         run: pnpm waitlist:build

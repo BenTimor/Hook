@@ -348,7 +348,8 @@ export function ApprovedScreen({
         </button>
       )}
       <p className="download-note">
-        This link always points at the latest build. Re-download it to update.
+        This link always points at the newest build. Once Hook is installed it
+        updates itself from inside the app — no re-downloading, no re-installing.
         If the button says a build is being prepared, check back in a few minutes.
       </p>
 

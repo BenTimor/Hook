@@ -2,7 +2,7 @@ import { Router } from "express";
 import { createWaitlistApi } from "./api.mjs";
 import { createAuthRouter } from "./auth.mjs";
 import { createProxyRouter } from "./deepseek.mjs";
-import { createDownloadRouter } from "./download.mjs";
+import { createDownloadRouter, publicReleaseInfo } from "./download.mjs";
 
 /**
  * The whole hookcode.io API: existing waitlist routes, desktop device login,
@@ -23,6 +23,14 @@ export function createPlatform(env) {
   });
 
   router.use("/waitlist", waitlist.router);
+
+  // Version history is public: the desktop app checks it before it has a
+  // session, and the installer it then asks for still needs an approved
+  // account. Keeping it outside the OAuth branch means a database-less local
+  // preview can still answer honestly (`releases: []`).
+  router.get("/releases", (_req, res) => {
+    res.json(publicReleaseInfo(env));
+  });
 
   if (!waitlist.db) {
     // Local development without Google credentials keeps the landing page

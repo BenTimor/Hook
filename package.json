@@ -1,7 +1,7 @@
 {
   "name": "hook",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Hook \u00e2\u20ac\u201d a local, single-provider AI chat harness",
   "scripts": {
@@ -10,14 +10,16 @@
     "typecheck": "tsc --noEmit",
     "waitlist:dev": "vite --config waitlist.vite.config.mjs",
     "waitlist:build": "tsc --noEmit && vite build --config waitlist.vite.config.mjs",
-    "waitlist:test": "node --test server/api.test.mjs server/platform.test.mjs",
+    "waitlist:test": "node --test server/api.test.mjs server/platform.test.mjs server/releases.test.mjs",
+    "test:release": "node --test scripts/release-gate.test.mjs scripts/merge-release-index.test.mjs",
     "waitlist:start": "node --env-file-if-exists=.env.waitlist.local server/waitlist.mjs",
     "mock": "node dev/mock-provider.mjs",
     "tauri": "node scripts/tauri.mjs",
     "app": "node scripts/tauri.mjs dev",
     "app:build": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build",
     "app:portable": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build --no-bundle && node scripts/make-portable.mjs",
-    "engine": "node scripts/fetch-pi-runtime.mjs"
+    "engine": "node scripts/fetch-pi-runtime.mjs",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",
