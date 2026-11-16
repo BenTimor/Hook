@@ -56,6 +56,30 @@ test("a legacy published entry survives until it is pruned", () => {
   assert.equal(index.latest, "0.1.1");
 });
 
+test("a public entry without a file name is reconstructed", () => {
+  // Older deployments omitted `file`; without it the version would be dropped
+  // from the merged index (and its installer pruned).
+  const index = mergeReleaseIndex(
+    [
+      {
+        version: "0.1.0",
+        url: "/api/download/windows?version=0.1.0",
+        sha256: "old",
+      },
+    ],
+    manifest("0.1.1"),
+  );
+  assert.equal(index.releases["0.1.0"].file, "Hook-0.1.0-setup.exe");
+});
+
+test("a legacy entry without a versioned URL keeps the single-slot name", () => {
+  const index = mergeReleaseIndex(
+    [{ version: "0.1.0", url: "/api/download/windows", sha256: "old" }],
+    manifest("0.1.1"),
+  );
+  assert.equal(index.releases["0.1.0"].file, "Hook-setup.exe");
+});
+
 test("the newest version sorts numerically, not lexicographically", () => {
   const index = mergeReleaseIndex(
     [{ version: "0.9.0", file: "Hook-0.9.0-setup.exe" }],

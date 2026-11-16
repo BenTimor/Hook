@@ -84,6 +84,9 @@ export function publicReleaseInfo(env) {
     // list is public so the app can check for updates before signing in.
     releases: index.releases.map((release) => ({
       version: release.version,
+      // The release tooling merges the published history back into a new
+      // index; without the file name it cannot keep old installers.
+      file: release.file,
       size: release.size,
       sha256: release.sha256,
       commit: release.commit,

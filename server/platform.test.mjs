@@ -301,6 +301,9 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       assert.equal(index.latest, "1.2.3");
       assert.equal(index.minimum, "1.0.0");
       assert.equal(index.releases[0].version, "1.2.3");
+      // The merge tool needs the file name to preserve history; it is not a
+      // secret, only the download itself is gated.
+      assert.equal(index.releases[0].file, "Hook-setup.exe");
       // The installer URL stays behind the account gate even though the
       // version list does not.
       assert.equal(index.releases[0].url, "/api/download/windows");

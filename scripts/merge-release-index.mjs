@@ -22,10 +22,22 @@ import { compareVersions } from "../server/releases.mjs";
  * Pure merge: the new build becomes `latest`, older entries are kept (newest
  * first) up to `keep`, and the result matches what `server/releases.mjs` reads.
  */
+function installerName(release) {
+  if (typeof release.file === "string") return release.file;
+  // Older deployments omitted `file` from the public index. The legacy slot
+  // has no version in its URL; everything else is named after its version.
+  if (typeof release.url !== "string" || !release.url.includes("version=")) {
+    return "Hook-setup.exe";
+  }
+  return `Hook-${release.version}-setup.exe`;
+}
+
 export function mergeReleaseIndex(published, manifest, keep = 5) {
   const releases = {};
   for (const release of published) {
-    if (release?.version) releases[release.version] = release;
+    if (release?.version) {
+      releases[release.version] = { ...release, file: installerName(release) };
+    }
   }
   releases[manifest.version] = {
     file: manifest.file,
