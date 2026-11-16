@@ -7,7 +7,7 @@ on every deploy — edit it *here*, not on the server.
 | File | Lives on the server at | Purpose |
 |------|------------------------|---------|
 | `docker-compose.yml` | `/opt/hook-web/docker-compose.yml` | `hook-waitlist` container (built from `/opt/hook-web/app`), joins `scout_default`, SQLite bind-mounted from `/opt/hook-web/data` |
-| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, download, release index) to the container, `www` → apex redirect |
+| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, private git, conversation sync, download, release index) to the container, `www` → apex redirect |
 
 `release.config.json` (repo root) is copied into the image by the Dockerfile. It
 holds the direct channel's `minimumVersion` (oldest build allowed to keep
@@ -36,11 +36,38 @@ is still gated to signed-in, approved accounts. A bad `releases.json` never take
 downloads down: entries whose installer file is missing are ignored, and the old
 index keeps serving the previous version until the swap.
 
+## Private git and conversation sync
+
+The desktop app stores every project in one bare repository on the same volume,
+so a user can continue on another computer. Two more folders appear under
+`/opt/hook-web/data` the first time a signed-in account syncs:
+
+| Path | Container path | Purpose |
+|------|----------------|---------|
+| `data/git/<hashed account>/<project id>.git` | `/data/git` (`GIT_ROOT`) | one bare repository per project; served by `git http-backend` at `/api/git/<project id>.git` |
+| `data/sync/media/<hashed account>/<sha256>` | `/data/sync` (`SYNC_ROOT`) | chat pictures, content-addressed; the index and quota live in SQLite |
+
+Conversation bodies are gzipped JSON rows in `signups.sqlite` (`sync_chats`,
+`sync_projects`, `sync_media`, `sync_state`); the cursor lives in
+`sync_state.next_seq`. Back up the whole `data/` directory together — the
+repositories, the pictures and the database reference each other.
+
+The runtime image installs `git` (`apt-get install git`) and runs a `pre-receive`
+hook on every repository. It rejects a push that would take a project over
+200 MB or an account over 1 GB, before anything is written. Both limits are
+server constants (`server/git.mjs`); the hook lives at
+`server/git-policy.mjs`. A daily `git gc --auto` runs in the background after a
+push, at most once an hour per repository.
+
+The account's storage is removed by `DELETE /api/sync/account` (app token), which
+drops the chat/project/media rows for that account and deletes both hashed
+folders. Use it for account-deletion requests.
+
 Not in this directory because it must **never** be committed:
 
 | File | Lives on the server at | Contents |
 |------|------------------------|----------|
-| `.env` | `/opt/hook-web/.env` (chmod 600) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WAITLIST_SESSION_SECRET`, `WAITLIST_ORIGIN`, `WAITLIST_DB_PATH`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_API_KEY`, `HOOK_MODEL_ID`, `DOWNLOAD_DIR`, `PORT` |
+| `.env` | `/opt/hook-web/.env` (chmod 600) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WAITLIST_SESSION_SECRET`, `WAITLIST_ORIGIN`, `WAITLIST_DB_PATH`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_API_KEY`, `HOOK_MODEL_ID`, `DOWNLOAD_DIR`, `GIT_ROOT`, `SYNC_ROOT`, `PORT` |
 
 ## Two hand edits to `/opt/scout` (outside this repo)
 

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { json, Router } from "express";
-import { apiUser, bearerToken, hashToken } from "./tokens.mjs";
+import { apiUser, bearerToken, deviceId, hashToken } from "./tokens.mjs";
 
 const DEVICE_TTL_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_SECONDS = 2;
@@ -150,9 +150,14 @@ export function createAuthRouter({ db, auth }) {
         return res.json({ status: "claimed" });
       }
       db.prepare(
-        `INSERT INTO api_tokens (token_hash, google_subject, label)
-         VALUES (?, ?, ?)`,
-      ).run(hashToken(token), row.google_subject, "Hook desktop");
+        `INSERT INTO api_tokens (token_hash, google_subject, label, scope, device_id)
+         VALUES (?, ?, ?, 'app', ?)`,
+      ).run(
+        hashToken(token),
+        row.google_subject,
+        "Hook desktop",
+        deviceId(req),
+      );
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
@@ -208,15 +213,71 @@ export function createAuthRouter({ db, auth }) {
     res.json({ authenticated: true, user: publicUser(result.row) });
   });
 
+  /**
+   * Mint a git-only token for this install. The app token can spend model
+   * credits and read conversations; a repository or a leaked agent environment
+   * must never carry that. One git token per device is kept: minting a new one
+   * revokes the previous one for the same install.
+   */
+  router.post("/git-token", (req, res) => {
+    if (!db) return res.status(503).json({ error: "unavailable" });
+    const result = apiUser(db, req, "app");
+    if (!result.row)
+      return res.status(result.status).json({
+        error: {
+          message: result.message,
+          type: "invalid_request_error",
+          code: result.code,
+        },
+      });
+    const device = deviceId(req);
+    const label =
+      typeof req.body?.label === "string" && req.body.label.trim()
+        ? req.body.label.trim().slice(0, 80)
+        : "Hook git";
+    const token = `hk_git_${randomBytes(32).toString("base64url")}`;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (device)
+        db.prepare(
+          `UPDATE api_tokens SET revoked_at = ?
+           WHERE google_subject = ? AND scope = 'git' AND device_id = ?
+             AND revoked_at IS NULL`,
+        ).run(nowIso(), result.row.google_subject, device);
+      db.prepare(
+        `INSERT INTO api_tokens (token_hash, google_subject, label, scope, device_id)
+         VALUES (?, ?, ?, 'git', ?)`,
+      ).run(hashToken(token), result.row.google_subject, label, device);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    res.json({ token, device });
+  });
+
   /** Signing out of the desktop app revokes just that token. */
   router.post("/token/logout", (req, res) => {
     if (!db) return res.status(503).json({ error: "unavailable" });
     const token = bearerToken(req);
     if (!token) return res.status(401).json({ error: "missing_token" });
+    const row = db
+      .prepare(
+        "SELECT google_subject, device_id FROM api_tokens WHERE token_hash = ?",
+      )
+      .get(hashToken(token));
     db.prepare(
       `UPDATE api_tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        WHERE token_hash = ? AND revoked_at IS NULL`,
     ).run(hashToken(token));
+    // The install that signed out must not leave a usable git credential
+    // behind, but other computers on the same account stay signed in.
+    if (row?.device_id)
+      db.prepare(
+        `UPDATE api_tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE google_subject = ? AND device_id = ? AND scope = 'git'
+           AND revoked_at IS NULL`,
+      ).run(row.google_subject, row.device_id);
     res.json({ ok: true });
   });
 

@@ -15,3 +15,7 @@ harness.config.toml
 
 # Bundled coding engine (see scripts/fetch-pi-runtime.mjs)
 src-tauri/resources/pi-runtime/
+
+# Bundled git for coding agents (see scripts/fetch-git.mjs)
+src-tauri/resources/git/
+.git-runtime-cache/

@@ -13,14 +13,51 @@ export function bearerToken(req) {
 }
 
 /**
+ * Git cannot send a bearer header without a little help, so it may also use
+ * HTTP Basic. The password (or the username when the password is empty) is
+ * the opaque token; the username is ignored.
+ */
+function basicToken(req) {
+  const header = req.get("authorization");
+  if (!header) return null;
+  const match = /^Basic\s+([A-Za-z0-9+/=]+)$/i.exec(header.trim());
+  if (!match) return null;
+  let raw = "";
+  try {
+    raw = Buffer.from(match[1], "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+  const separator = raw.indexOf(":");
+  const password = separator >= 0 ? raw.slice(separator + 1) : raw;
+  const token = password || raw;
+  return /^[A-Za-z0-9_-]{20,200}$/.test(token) ? token : null;
+}
+
+/** The opaque token on a request, from either auth scheme. */
+export function requestToken(req) {
+  return bearerToken(req) ?? basicToken(req);
+}
+
+/**
+ * A per-install identifier the desktop sends on sync and token requests. It is
+ * not a secret; it lets one install rotate its own git token without touching
+ * other computers signed in to the same account.
+ */
+export function deviceId(req) {
+  const value = req.get("x-hook-device") ?? "";
+  return /^[A-Za-z0-9_-]{8,64}$/.test(value) ? value : null;
+}
+
+/**
  * Resolve a bearer token to an approved waitlist account.
  *
  * Returns `{ row }` on success, or `{ status, code, message }` describing why
  * the request must be refused. Approval is part of the query, not a cached
  * claim, so revoking someone from the admin script stops their next request.
  */
-export function apiUser(db, req) {
-  const token = bearerToken(req);
+export function apiUser(db, req, scope = "app") {
+  const token = requestToken(req);
   if (!token) {
     return {
       status: 401,
@@ -33,9 +70,9 @@ export function apiUser(db, req) {
       `SELECT s.*, t.token_hash, t.revoked_at AS token_revoked_at
        FROM api_tokens t
        JOIN waitlist_signups s ON s.google_subject = t.google_subject
-       WHERE t.token_hash = ?`,
+       WHERE t.token_hash = ? AND t.scope = ?`,
     )
-    .get(hashToken(token));
+    .get(hashToken(token), scope);
   if (!row) {
     return {
       status: 401,
@@ -61,9 +98,14 @@ export function apiUser(db, req) {
   return { row };
 }
 
+/** The approved account behind a git request. Git tokens cannot be used anywhere else. */
+export function gitUser(db, req) {
+  return apiUser(db, req, "git");
+}
+
 /** Express-friendly wrapper: sends the refusal and returns null. */
-export function requireApiUser(db, req, res) {
-  const result = apiUser(db, req);
+export function requireApiUser(db, req, res, scope = "app") {
+  const result = apiUser(db, req, scope);
   if (!result.row) {
     res.status(result.status).json({
       error: {

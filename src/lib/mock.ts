@@ -15,6 +15,7 @@ import type {
   SearchHit,
   SettingsView,
   StreamEvent,
+  SyncView,
   UpdateInfo,
 } from "./types";
 
@@ -86,31 +87,31 @@ const PREVIEW_HTML = `<!doctype html>
   .eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #736d60; }
   h1 { margin: 8px 0 6px; font-size: 34px; letter-spacing: -.03em; }
   p.lede { margin: 0 0 30px; color: #5f5a51; max-width: 44ch; }
-  .plans { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-  .plan {
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .card {
     background: #fffdf9; border: 1px solid rgba(63,57,43,.1); border-radius: 18px;
     padding: 20px 18px; box-shadow: 0 1px 2px rgba(63,57,43,.04), 0 10px 28px -16px rgba(63,57,43,.22);
   }
-  .plan.dark { background: #283b31; color: #f5efe5; border-color: transparent; }
+  .card.dark { background: #283b31; color: #f5efe5; border-color: transparent; }
   .name { font-weight: 600; font-size: 13px; }
-  .price { margin: 14px 0 2px; font-size: 30px; letter-spacing: -.04em; }
-  .price small { font-size: 12px; font-weight: 400; opacity: .6; }
-  .plan ul { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-  .plan li { font-size: 12.5px; color: #5f5a51; }
-  .plan li::before { content: "✓"; color: #526457; margin-right: 7px; }
-  .plan.dark li { color: rgba(245,239,229,.8); }
-  .plan.dark li::before { color: #cbd4c2; }
+  .card p { margin: 8px 0 0; font-size: 12.5px; color: #5f5a51; }
+  .card.dark p { color: rgba(245,239,229,.78); }
+  .cta {
+    display: inline-block; margin-top: 26px; padding: 10px 16px; border-radius: 10px;
+    background: #283b31; color: #f5efe5; font-size: 13px; font-weight: 500;
+  }
 </style>
 </head>
 <body>
-  <div class="eyebrow">Pricing</div>
-  <h1>Simple plans, no surprises.</h1>
+  <div class="eyebrow">New release</div>
+  <h1>A calmer way to ship.</h1>
   <p class="lede">A live preview of the page the coding agent is building. Every save in the project refreshes this frame.</p>
-  <div class="plans">
-    <div class="plan"><div class="name">Starter</div><div class="price">$0<small> / forever</small></div><ul><li>One project</li><li>Community support</li></ul></div>
-    <div class="plan dark"><div class="name">Pro</div><div class="price">$19<small> / month</small></div><ul><li>Unlimited projects</li><li>Preview every branch</li><li>Priority support</li></ul></div>
-    <div class="plan"><div class="name">Studio</div><div class="price">$49<small> / month</small></div><ul><li>Everything in Pro</li><li>Shared workspaces</li></ul></div>
+  <div class="cards">
+    <div class="card"><div class="name">Plan in plain language</div><p>The agent turns a brief into a short checklist you can watch and steer.</p></div>
+    <div class="card dark"><div class="name">See it as it is built</div><p>The page reloads on every save, so the work is visible before it is finished.</p></div>
+    <div class="card"><div class="name">Keep it on your machine</div><p>Projects, conversations and the coding engine stay on your PC.</p></div>
   </div>
+  <span class="cta">See what's new</span>
 </body>
 </html>`;
 
@@ -144,6 +145,11 @@ function build(): Record<string, Chat> {
       messages,
     };
   };
+
+  add("c8", "Build the launch page", now - 4 * 60_000, false, [
+    msg("user", "Build a launch page for the new release, then show me what it looks like.", now - 5 * 60_000),
+    msg("assistant", "I'll set up the project, build the page and put a live preview on the right as it comes together.", now - 4 * 60_000),
+  ]);
 
   add(
     "c1",
@@ -205,7 +211,7 @@ function build(): Record<string, Chat> {
 let chats = build();
 const trashed: Record<string, Chat> = {};
 const cancelled = new Set<string>();
-const info: AppInfo = { version: "0.1.0" };
+const info: AppInfo = { version: "0.1.2" };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -533,6 +539,7 @@ export const mock = {
       projectsDir: "C:/Users/you/Documents/Hook",
       projects: [
         {
+          id: "pj_mock_invoice",
           name: "invoice-parser",
           path: "C:/Users/you/Documents/Hook/invoice-parser",
           description:
@@ -542,6 +549,7 @@ export const mock = {
           isGit: true,
         },
         {
+          id: "pj_mock_site",
           name: "site",
           path: "C:/Users/you/Documents/Hook/site",
           description: "Personal site: Astro, Tailwind, Cloudflare Pages.",
@@ -584,7 +592,7 @@ export const mock = {
     });
     const plan: PlanStep[] = [
       step("Setting things up", "done", 0, 18_000),
-      step("Designing the pricing page", "done", 18_000, 74_000),
+      step("Designing the launch page", "done", 18_000, 74_000),
       step(
         "Connecting it to the real services",
         finished ? "done" : "active",
@@ -610,8 +618,8 @@ export const mock = {
       agents: [
         {
           id: "ag_demo",
-          chatId: "c1",
-          title: "Build the pricing page",
+          chatId: "c8",
+          title: "Build the launch page",
           project: "site",
           state: finished ? "idle" : waiting ? "needs_input" : "running",
           steps: 18,
@@ -629,6 +637,19 @@ export const mock = {
     return { working: 0, live: 0, agents: [] };
   },
 
+  async syncStatus(): Promise<SyncView> {
+    return {
+      enabled: false,
+      state: "off",
+      cursor: 0,
+      pending: 0,
+      lastSyncAt: 0,
+      message: null,
+    };
+  },
+
+  async syncNow(): Promise<void> {},
+
   async previewState(): Promise<PreviewView | null> {
     // Design-time preview: `?preview=1` opens the panel with a sample page,
     // `?preview=waiting` shows the state before the coding agent writes it and
@@ -639,10 +660,10 @@ export const mock = {
     const live = demo !== "done";
     return {
       active: true,
-      chatId: "c1",
+      chatId: "c8",
       project: "site",
-      file: "dist/pricing.html",
-      title: "Pricing page",
+      file: "dist/index.html",
+      title: "Launch page",
       url: waiting ? undefined : PREVIEW_URL,
       version: 1,
       open: true,

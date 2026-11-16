@@ -1,7 +1,7 @@
 {
   "name": "hook",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "module",
   "description": "Hook â€” a local, single-provider AI chat harness",
   "scripts": {
@@ -10,17 +10,18 @@
     "typecheck": "tsc --noEmit",
     "waitlist:dev": "vite --config waitlist.vite.config.mjs",
     "waitlist:build": "tsc --noEmit && vite build --config waitlist.vite.config.mjs",
-    "waitlist:test": "node --test server/api.test.mjs server/platform.test.mjs server/releases.test.mjs",
+    "waitlist:test": "node --test server/api.test.mjs server/platform.test.mjs server/releases.test.mjs server/git.test.mjs server/sync.test.mjs",
     "test:release": "node --test scripts/release-gate.test.mjs scripts/merge-release-index.test.mjs",
     "waitlist:start": "node --env-file-if-exists=.env.waitlist.local server/waitlist.mjs",
     "mock": "node dev/mock-provider.mjs",
     "tauri": "node scripts/tauri.mjs",
     "app": "node scripts/tauri.mjs dev",
-    "app:build": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build",
-    "app:portable": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build --no-bundle && node scripts/make-portable.mjs",
+    "app:build": "node scripts/fetch-git.mjs && node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build",
+    "app:portable": "node scripts/fetch-git.mjs && node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build --no-bundle && node scripts/make-portable.mjs",
     "engine": "node scripts/fetch-pi-runtime.mjs",
+    "git": "node scripts/fetch-git.mjs",
     "version:bump": "node scripts/bump-version.mjs",
-    "app:msix": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build --no-bundle && node scripts/build-msix.mjs"
+    "app:msix": "node scripts/fetch-git.mjs && node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build --no-bundle && node scripts/build-msix.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",

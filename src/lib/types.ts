@@ -21,6 +21,8 @@ export interface Attachment {
   bytes: number;
   /** "user" or "screenshot" — purely cosmetic in the UI. */
   kind?: string;
+  /** Content address used by the sync service. */
+  sha256?: string;
 }
 
 /** A picture the user has staged in the composer, before sending. */
@@ -112,6 +114,22 @@ export interface ReportRequest {
   transcript: ReportMessage[] | null;
 }
 
+/** Conversation and project sync, as shown in Settings. */
+export interface SyncView {
+  enabled: boolean;
+  state: "off" | "idle" | "syncing" | "error";
+  cursor: number;
+  pending: number;
+  lastSyncAt: number;
+  message: string | null;
+}
+
+export interface SyncEvent {
+  chats: boolean;
+  projects: boolean;
+  at: number;
+}
+
 /** Download progress for an in-app update. */
 export interface UpdateEvent {
   phase: "downloading" | "installing";
@@ -131,6 +149,8 @@ export interface AuthView {
 }
 
 export interface Project {
+  /** Stable account id; the folder name and path are local to this machine. */
+  id: string;
   name: string;
   path: string;
   description: string;

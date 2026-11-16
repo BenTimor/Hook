@@ -27,7 +27,7 @@ cp harness.config.ci.toml harness.config.toml  # required before any cargo build
 pnpm dev           # UI in a plain browser, in-memory mock backend — fastest UI loop
 pnpm app           # real Tauri window with hot reload
 pnpm typecheck     # tsc --noEmit across src/ + waitlist/ (the only static gate)
-pnpm app:build     # NSIS installer (fetches the pi runtime first)
+pnpm app:build     # NSIS installer (fetches the pi runtime and git first)
 pnpm app:msix      # unsigned Microsoft Store MSIX (same exe, package identity)
 pnpm version:bump patch   # patch|minor|major — never edit a version by hand
 cd src-tauri && cargo test                       # no engine or network needed
@@ -41,6 +41,9 @@ pnpm waitlist:build
 # Release pipeline (Node only, no install needed)
 pnpm test:release   # the "needs a Windows build?" gate + index merge
 
+# Bundled git for coding agents (pinned MinGit, ~93 MB extracted)
+pnpm git
+
 # Offline chat against a fake OpenAI-compatible endpoint on :8787
 pnpm mock
 ```
@@ -53,7 +56,17 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
   system prompt, streaming and cancellation. Largest, most delicate file.
 - `src-tauri/src/tools.rs` — chat-agent tool schemas and implementations.
 - `src-tauri/src/agent.rs` — supervisor for `pi` subprocesses over RPC: spawn,
-  states, plans, progress batching, wakes, stop.
+  states, plans, progress batching, wakes, stop. It also points agents at the
+  bundled git and the managed `agent-home/gitconfig`.
+- `src-tauri/src/git.rs` — locate bundled MinGit, write the scoped git config,
+  prepare a project repository/remote, take the first snapshot, push/pull.
+- `src-tauri/src/sync.rs` — background conversation, picture and project-metadata
+  sync: cursor, pending queue, account quarantine, `hook://sync` events.
+- `server/git.mjs` — `/api/git/<project id>.git` smart HTTP via `git http-backend`;
+  one bare repo per project under `/data/git`. `server/git-policy.mjs` is the
+  pre-receive size hook installed into every repo.
+- `server/sync.mjs` — `/api/sync/*`: monotonic cursor, server-side chat merge,
+  project identity, content-addressed media, quotas and account deletion.
 - `src-tauri/resources/hook-guard.mjs` — the guard extension injected into
   every coding agent (bash timeouts, `update_plan`, `show_preview`,
   `web_search`). `guard.rs` embeds it via `include_str!`; edit the `.mjs`.
@@ -78,6 +91,7 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 - `release.config.json` — the direct and Store floors, and the Store's latest.
 - `msix/identity.json` — Partner Center identity + the MSIX manifest template.
 - `scripts/build-msix.mjs` — packages Hook.exe + the engine as an unsigned MSIX.
+- `scripts/fetch-git.mjs` — pinned MinGit into `src-tauri/resources/git/`.
 - `scripts/app-source-hash.mjs` — what counts as a change to the desktop app.
 - `scripts/release-gate.mjs` — decides whether a push needs a Windows build.
 - `scripts/merge-release-index.mjs` — folds a build into `releases.json`.
@@ -95,6 +109,12 @@ Changing one side of a boundary is the most common way to break this repo.
   if it calls back into Rust; then `src-tauri/tests/guard_policy.rs` +
   `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`
   built-ins — it is copied into the user's data folder where nothing resolves.
+- **Git/sync behavior:** `server/sync.mjs` + `server/git.mjs` (limits, merge
+  rules, endpoints) → `src-tauri/src/sync.rs` / `git.rs` → `agent.rs` (env,
+  managed config) → `hook-guard.mjs` (`sync_pull`/`sync_push`) → `turn.rs`
+  (what the chat agent tells the coding agent) → Settings status → README
+  **Sync between computers** and `infra/README.md`. Add to `server/sync.test.mjs`
+  / `server/git.test.mjs` and the sync unit tests in `sync.rs`.
 - **New landing-page route or field:** `server/*.mjs` router → `waitlist/` UI →
   `server/*.test.mjs`. Keep old rows readable — tests deliberately seed an
   older schema.
@@ -119,9 +139,22 @@ Changing one side of a boundary is the most common way to break this repo.
 - `harness.config.toml` is gitignored and `include_str!`d into the binary — a
   missing file is a compile error. Never commit it or a real provider key. The
   key lives server-side; the renderer must never see a secret.
+- **Git credentials are scoped.** The desktop mints `scope='git'` tokens; the app
+  token (`scope='app'`) is what reads chats and spends model credits. Never put
+  the app token in a project, URL or agent environment. The git token lives in
+  `agent-home/gitconfig` and is rotated per `device.json` id.
+- **Sync is account-scoped and automatic.** Chats/pictures/projects push and pull
+  in the background while signed in; the server merges, never the client. A chat
+  that is streaming is never uploaded or overwritten. A different account on the
+  same machine quarantines the previous chats under `accounts/<id>/`; never
+  upload one account's history to another.
+- **Git quotas are server-side.** 200 MB per project, 1 GB per account, 50 MB per
+  push (`server/git.mjs` + `server/git-policy.mjs`). Do not remove the pre-receive
+  hook; a push must be rejected before anything is written.
 - Never edit generated or bundled trees: `src-tauri/target/`, `src-tauri/gen/`,
-  `src-tauri/resources/pi-runtime/` (restored by `pnpm engine`), `dist/`,
-  `dist-waitlist/`, `release/`.
+  `src-tauri/resources/pi-runtime/` (restored by `pnpm engine`),
+  `src-tauri/resources/git/` (restored by `pnpm git`), `dist/`, `dist-waitlist/`,
+  `release/`.
 - **A push to `main` deploys production.** `deploy-waitlist.yml` ships
   hookcode.io on every push; `release-app.yml` publishes a Windows build when the
   application source changed. Do not push unless the user asked.

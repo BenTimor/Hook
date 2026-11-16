@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#f5efe5" />
-    <meta name="description" content="How Hook handles your early-access waitlist profile, model requests and usage statistics." />
+    <meta name="description" content="How Hook handles your early-access waitlist profile, saved workspace, model requests and usage statistics." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/legal.css" />
     <title>Privacy · Hook</title>
@@ -18,13 +18,13 @@
       </div>
 
       <h1>Privacy policy</h1>
-      <p class="updated">Last updated 15 November 2026</p>
+      <p class="updated">Last updated 16 November 2026</p>
 
       <p>
         Hook is an early-access desktop app for working with AI. This policy covers
         <strong>hookcode.io</strong> — the landing page, the early-access waitlist, desktop sign-in,
-        and the model relay the app uses — and nothing else. Your conversations themselves stay on
-        your computer.
+        your saved workspace, and the model relay the app uses. Conversations and project code are
+        stored locally and, so you can continue on another computer, in your Hook account.
       </p>
 
       <h2>What we collect</h2>
@@ -50,11 +50,32 @@
         on our server, and it stops working when you sign out, when your access is revoked, or when
         you ask us to delete your account.
       </p>
+      <h2>Your saved workspace</h2>
       <p>
-        Your conversations and pictures are stored locally by the app. When you send a message or a
-        coding agent makes a model request, the request is sent to our relay at hookcode.io and
-        forwarded to our model provider. We do not store the text, pictures, tool definitions, or
-        model replies. We do store the metadata needed to run and measure the service:
+        Hook saves your conversations, their pictures, and each project's source code to your account
+        so the same work is available on every computer you sign in to. Conversations and pictures are
+        kept as JSON and image files in our database and storage volume; project code is kept as a
+        private git repository per project. The app does this automatically while you are signed in;
+        there is no separate upload step.
+      </p>
+      <p>
+        Project repositories contain the files the coding agent saved, which may include configuration
+        files and secrets such as <code>.env</code> files if they are part of the project. Do not put
+        files in a project folder that you would not want stored with your account. The service applies
+        storage limits (currently 200 MB per project and 1 GB per account) and keeps the most recent
+        version of each conversation rather than every edit.
+      </p>
+      <p>
+        Signing out stops sync on that computer but leaves the account's saved workspace in place.
+        Deleting a conversation or picture in Hook removes it from the account on the next sync; the
+        local undo trash is not uploaded. See <a href="#removing">Removing your data</a> to have the
+        whole saved workspace deleted.
+      </p>
+      <p>
+        When you send a message or a coding agent makes a model request, the request is sent to our
+        relay at hookcode.io and forwarded to our model provider. Apart from the saved workspace
+        described above, we do not store the text, pictures, tool definitions, or model replies for
+        model requests. We do store the metadata needed to run and measure the service:
       </p>
       <ul>
         <li>your account identifier and the request time;</li>
@@ -141,8 +162,10 @@
 
       <h2>Where it lives</h2>
       <p>
-        The waitlist, account status, access tokens and usage metadata are stored in a single SQLite
-        database on a server we operate. Model requests are relayed to our provider, currently
+        The waitlist, account status, access tokens, saved conversations, project metadata, picture
+        index and usage metadata are stored in a single SQLite database on a server we operate;
+        pictures and project repositories are stored in folders beside it. Model requests are relayed
+        to our provider, currently
         DeepSeek; its handling of request content is governed by its own policy. Google's sign-in
         itself is covered by <a href="https://policies.google.com/privacy" rel="noreferrer">Google's
         privacy policy</a>. The Meta Pixel is operated by Meta, and the information it collects from
@@ -161,8 +184,9 @@
       <p>
         Email <a href="mailto:nsgi3111@gmail.com?subject=Remove%20me%20from%20the%20Hook%20waitlist">nsgi3111@gmail.com</a>
         from the address you signed up with and we will delete your waitlist entry, revoke your app
-        token, and remove your usage metadata. You can also sign out in Hook, which revokes that
-        token immediately.
+        token, remove your usage metadata, and delete your saved conversations, pictures and project
+        repositories. You can also sign out in Hook, which revokes that token immediately; sign-out
+        on its own does not delete the saved workspace, so ask us if you want it removed.
       </p>
 
       <h2>Your rights</h2>

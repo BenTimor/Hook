@@ -14,7 +14,7 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "list_projects",
-                "description": "List every project on this machine with its description and whether it is a git repo. Call this before deciding where a task belongs.",
+                "description": "List every project on the user's account with its description and whether it is a git repo. Call this before deciding where a task belongs.",
                 "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
             }
         },
@@ -54,7 +54,7 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "start_coding_agent",
-                "description": "Launch a coding agent in a project folder, only for work the user asked for in their own message. It runs pi with full permissions inside that folder and can read, edit and run code. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. When the work has something to look at, tell the agent to build and keep an HTML preview page current and to call its show_preview tool early (see the preview panel instructions). Returns immediately - you are notified when it settles or asks a question. Never start work just because a coding-agent update arrived.",
+                "description": "Launch a coding agent in a project folder, only for work the user asked for in their own message. It runs pi with full permissions inside that folder and can read, edit and run code. The agent pulls the latest version from the user's account before it starts (the folder may be empty because the work began on another computer) and saves its work when it finishes. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. When the work has something to look at, tell the agent to build and keep an HTML preview page current and to call its show_preview tool early (see the preview panel instructions). Returns immediately - you are notified when it settles or asks a question. Never start work just because a coding-agent update arrived.",
                 "parameters": {
                     "type": "object",
                     "properties": {

@@ -27,6 +27,8 @@ pub struct AppState {
     pub cfg: Arc<config::HarnessConfig>,
     /// The signed-in account and its API token.
     pub auth: Arc<AuthStore>,
+    /// Background conversation and project sync.
+    pub sync: Arc<crate::sync::SyncEngine>,
     /// Whether the model can see images, taken from its `/models` card.
     pub vision: Arc<std::sync::atomic::AtomicBool>,
     /// Set when the endpoint rejects image parts anyway, so later turns stop
@@ -42,6 +44,17 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub version: String,
+}
+
+#[tauri::command]
+pub fn sync_status(state: State<'_, Arc<AppState>>) -> crate::sync::SyncView {
+    state.sync.status()
+}
+
+/// Run a sync cycle now instead of waiting for the next tick.
+#[tauri::command]
+pub fn sync_now(state: State<'_, Arc<AppState>>) {
+    state.sync.wake();
 }
 
 #[tauri::command]
@@ -132,6 +145,7 @@ pub async fn auth_login(
                 // Show the app as soon as the token is stored; the model-card
                 // probe can finish in the background.
                 emit_auth(&poll_app, &poll_state.auth.view());
+                poll_state.sync.wake();
                 refresh_capabilities(&poll_state).await;
             }
             LoginOutcome::Cancelled => {
@@ -168,6 +182,7 @@ pub async fn auth_refresh(
     match state.auth.refresh().await {
         RefreshOutcome::Valid => {
             refresh_capabilities(&state).await;
+            state.sync.wake();
             Ok(state.auth.view())
         }
         RefreshOutcome::Revoked(message) => {
@@ -231,7 +246,9 @@ pub fn rename_chat(
     chat_id: String,
     title: String,
 ) -> Result<ChatMeta, String> {
-    state.store.rename(&chat_id, &title)
+    let meta = state.store.rename(&chat_id, &title)?;
+    state.sync.wake();
+    Ok(meta)
 }
 
 #[tauri::command]
@@ -240,7 +257,9 @@ pub fn set_pinned(
     chat_id: String,
     pinned: bool,
 ) -> Result<ChatMeta, String> {
-    state.store.set_pinned(&chat_id, pinned)
+    let meta = state.store.set_pinned(&chat_id, pinned)?;
+    state.sync.wake();
+    Ok(meta)
 }
 
 #[tauri::command]
@@ -251,12 +270,16 @@ pub fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(
         }
     }
     state.preview.stop_chat(&chat_id);
-    state.store.delete(&chat_id)
+    state.store.delete(&chat_id)?;
+    state.sync.wake();
+    Ok(())
 }
 
 #[tauri::command]
 pub fn restore_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<ChatMeta, String> {
-    state.store.restore(&chat_id)
+    let meta = state.store.restore(&chat_id)?;
+    state.sync.wake();
+    Ok(meta)
 }
 
 #[tauri::command]
@@ -317,6 +340,7 @@ pub fn send_message(
     }
     chat.messages.push(message);
     state.store.save(&mut chat)?;
+    state.sync.wake();
 
     turn::kick(state.inner().clone(), chat.meta.id.clone());
     Ok(chat.meta.id)
@@ -347,6 +371,7 @@ pub fn regenerate(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<()
     }
     chat.meta.updated_at = now_ms();
     state.store.save(&mut chat)?;
+    state.sync.wake();
 
     turn::kick(state.inner().clone(), chat_id);
     Ok(())
@@ -381,6 +406,7 @@ pub fn edit_message(
     chat.messages.push(user);
     chat.meta.updated_at = now_ms();
     state.store.save(&mut chat)?;
+    state.sync.wake();
 
     turn::kick(state.inner().clone(), chat_id);
     Ok(())

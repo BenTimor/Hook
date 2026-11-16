@@ -6,8 +6,9 @@ A local AI chat app with an approved account gate. Tauri 2 (Rust) + React 19
 One model, one thinking level — baked in at build time. Sign in with the Google
 account that was approved on the waiting list, and the same session unlocks the
 chat window, the coding agents, and a model proxy that keeps the provider key
-server-side. Conversations stay on your machine; the account service only sees
-token counts and cache statistics.
+server-side. Chats, pictures and project code are saved to the account so the
+same work continues on another computer; the provider key never leaves the
+server.
 
 > Working on the code? Start with [AGENTS.md](AGENTS.md) — commands, repo map,
 > and the constraints that are not obvious from the tree.
@@ -63,8 +64,8 @@ again. The CSP in
 `server/waitlist.mjs` and `infra/hookcode.caddy` allows the pixel's script and beacon
 domains, and `public/privacy.html` documents the pixel and its cookies.
 
-Run `pnpm waitlist:test` for the API, device-login, proxy, usage and download
-regression checks.
+Run `pnpm waitlist:test` for the API, device-login, proxy, usage, download,
+private-git and conversation-sync regression checks.
 
 ### Production
 
@@ -130,6 +131,8 @@ Required environment (local `.env.waitlist.local`, server `/opt/hook-web/.env`):
 | `HOOK_MODEL_ID` | Model id the app and its coding engine see, default `hook`; must match `[model] name` in `harness.config.toml`. |
 | `HOOK_CONTEXT_WINDOW` / `HOOK_MAX_OUTPUT_TOKENS` | Optional limits advertised to the app; default `1048576` / `393216`. Keep `[coding]` in `harness.config.ci.toml` in step. |
 | `DOWNLOAD_DIR` | Installer directory, `/data/releases` in the container. |
+| `GIT_ROOT` | Bare project repositories, `/data/git` in the container; persisted under `/opt/hook-web/data`. |
+| `SYNC_ROOT` | Chat pictures, `/data/sync` in the container; the index and quota are in SQLite. |
 | `PORT` | Listener port, default `5173`. |
 
 The `waitlist_signups` table stores each Google subject, verified email, optional
@@ -417,8 +420,9 @@ Restore the production config afterwards (`cp harness.config.ci.toml harness.con
 
 ```bash
 pnpm engine        # fetch the coding engine into src-tauri/resources/pi-runtime
-pnpm app:build     # NSIS installer (runs `pnpm engine` first)
-pnpm app:portable  # portable folder, zipped (runs `pnpm engine` first)
+pnpm git           # fetch the bundled git for coding agents
+pnpm app:build     # NSIS installer (runs `pnpm engine` and `pnpm git` first)
+pnpm app:portable  # portable folder, zipped (runs `pnpm engine` and `pnpm git` first)
 ```
 
 Outputs:
@@ -487,7 +491,7 @@ Every completed assistant reply has a **Report** action. The dialog sends the
 reply, a reason, an optional note, and — only when “Include the whole
 conversation” is ticked — the current chat's messages, to `POST /api/reports`
 with the signed-in token. Reports are stored in the `ai_reports` table and the
-privacy policy documents the exception to “conversations stay on your machine”.
+privacy policy records exactly what a report contains.
 
 Review and resolve them on the server:
 
@@ -577,18 +581,102 @@ always included, so the dialog warns against reporting secrets.
 
 ### Store listing draft
 
-> HookCode is a local AI chat app with coding agents. Chat with one powerful
-> model and hand real work to agents that read, edit and run projects on your
-> PC. Conversations, projects and the coding engine stay on your machine; an
-> approved account unlocks the model.
+**Short description** (256 characters max):
+
+> HookCode is the Microsoft Store edition of Hook, an AI chat app with coding
+> agents for Windows. Chat with one model, hand real coding work to agents that
+> edit and run projects, and keep your conversations and code in step across
+> your computers.
+
+**Full description:**
+
+> HookCode is the Microsoft Store edition of Hook, an AI chat app with
+> coding agents for Windows.
 >
-> HookCode uses live generative AI: every reply and every coding-agent step is
-> produced by an AI model in response to what you type. AI output can be wrong
-> or inappropriate — verify important results, and use the Report action on any
-> reply to send it to us for review.
+> Chat with one model, then hand real work to coding agents that can read, edit
+> and run projects in a folder you choose. HookCode saves your conversations,
+> pictures and project code to your account so the same work continues on
+> another computer; the coding engine runs on your PC. An approved Hook account
+> unlocks the model through Hook's relay.
 >
-> Sign in with an approved Google account. Windows 10 (2004) or Windows 11 with
-> the WebView2 Runtime.
+> WHAT YOU CAN DO
+>
+> • Ask anything in a clean, focused chat.
+> • Create projects and brief a coding agent in plain language.
+> • Watch the agent's plan while it works, steer it mid-run, and stop it at any
+>   time.
+> • See a live preview of the page or report the agent is building.
+> • Attach screenshots and images and ask questions about them when the model
+>   supports vision.
+> • Keep every conversation in readable files on your machine, with search,
+>   pinning and undoable deletion; the account copy keeps your computers in
+>   step.
+> • Update HookCode from inside the app — the Store handles the download and
+>   restart.
+>
+> YOUR WORK, ON EVERY COMPUTER
+>
+> Your chats, pictures and project code are saved to your Hook account. That is
+> how a conversation or a project started on one computer continues on another.
+> The saved workspace is stored on hookcode.io and removed when you delete it
+> there or ask us to delete your account. Model requests are relayed through
+> hookcode.io to our model provider; apart from the saved workspace, we do not
+> store the text, pictures, tool definitions or replies — except when you
+> deliberately send a report (see below). We store the metadata needed to run
+> and measure the service (account identifier, token counts, cache statistics
+> and request status). See the privacy policy for the full picture.
+>
+> LIVE GENERATIVE AI
+>
+> HookCode uses live generative AI. Every reply and every coding-agent step is
+> produced by an AI model in response to what you type. AI output can be wrong,
+> incomplete or inappropriate — check important results before relying on them.
+> Use the Report action on any reply to send it to us for review; you can
+> optionally include the whole conversation.
+>
+> BUILT FOR CODING
+>
+> Coding agents work inside a project folder with a bundled Node runtime, the
+> pi coding agent and git. They can read and edit files, run commands with timeouts,
+> search the web and show you a live preview. They run as child processes of
+> HookCode and stop when you close the app.
+>
+> REQUIREMENTS
+>
+> • Windows 10 version 2004 (build 19041) or later, or Windows 11.
+> • Microsoft Edge WebView2 Runtime (preinstalled on Windows 11 and on Windows 10
+>   with Edge).
+> • An approved Hook account. HookCode is in early access: sign in with the
+>   Google account that was approved for Hook. If you do not have access yet,
+>   join the waitlist at https://hookcode.io.
+> • An internet connection for model requests.
+>
+> HookCode is free to download. Model access is included with an approved
+> early-access account; there are no per-message charges.
+>
+> Support: https://hookcode.io
+> Privacy: https://hookcode.io/privacy
+> Terms: https://hookcode.io/terms
+
+**Feature bullets** (optional; each under 200 characters):
+
+> • Your work follows you: chats, pictures and projects are saved to your account and available on every computer.
+> • Coding agents that read, edit and run real projects.
+> • A live plan and progress while an agent works; steer or stop it at any time.
+> • A live preview of the page or report being built.
+> • One-click updates through the Microsoft Store.
+> • Search, pin and undoably delete conversations.
+> • Image attachments, with vision when the model supports it.
+> • Report inappropriate AI output from inside the app.
+
+**What's new in this version:**
+
+> First Microsoft Store release. Adds Store-managed updates, an in-app Report
+> action for AI output, and keeps chats and sign-in when moving from the direct
+> installer.
+
+**Search terms:** AI chat, coding agent, local AI, developer tools, AI assistant,
+code assistant, privacy.
 
 ### Submit
 
@@ -649,9 +737,15 @@ Keep one channel installed at a time: both builds write the same
   projects.json            the notes the chat agent keeps about projects
   agents.json              coding-agent runs and their states
   auth.json                the opaque API token from the approved Google account
+  device.json              this installation's id (git tokens rotate per device)
+  sync.json                the sync cursor, pending uploads and account owner
+  accounts\<id>\           conversations moved aside when a different account
+                           signs in on this machine (never uploaded)
   agent-sessions\          coding-engine session files (resumable)
   agent-home\              the engine's own config: models.json (endpoint,
-                           model and `$HOOK_*` header references), settings.json
+                           model and `$HOOK_*` header references), gitconfig
+                           (managed git identity and the scoped git token),
+                           settings.json
   updates\<agent id>\      progress notes, checklist updates and preview pointers
                            the agents wrote, collected each second
   hook-guard.mjs           the guard loaded into every coding agent
@@ -662,12 +756,42 @@ folder: its manifest opts out of AppData virtualization so Store and direct
 installs share chats and sign-in. In-app updates download installers to
 `%TEMP%\hook-update\`; nothing else is written outside this folder.
 
-The app keeps no local database and no sync. Conversations never leave the
-machine — except when you deliberately send an AI report (see **Reporting AI
-output**) — and the account service sees the request metadata described above (token
-counts, cache hits, a chat id and a coding-agent run id) and stores it next to the
-account. Deleting the folder resets the local app; revoke the account on the
-server to remove access.
+## Sync between computers
+
+A signed-in account keeps the whole workspace in step without a button. Two
+independent mechanisms are at work:
+
+- **Conversations.** Each device pushes changed chats to `/api/sync/chats` and
+  pulls everything newer than its cursor from `/api/sync/changes`. The server is
+  the only merger, so every machine converges on the same answer: messages are
+  unioned by id (a finished copy beats a stale in-flight one), titles and pins
+  follow the newer chat, a deletion is a tombstone, and an explicit restore
+  revives it. A chat that is streaming is never uploaded or overwritten until its
+  turn ends. Pictures travel by SHA-256 through `/api/sync/media`, so the same
+  screenshot is stored once. The desktop polls every 15 seconds and immediately
+  after sign-in, window focus, a finished turn or a coding-agent note; there is
+  no sync button, though Settings has a small status line and a manual nudge for
+  support.
+- **Code.** Every project is a real git repository whose remote is Hook's
+  service (`/api/git/<project id>.git`). Coding agents pull before they start
+  and push when they finish, so a project started on one computer arrives on
+  the next one. The account stores one bare repository per project; a pre-receive
+  hook rejects pushes that would take a project over 200 MB or an account over
+  1 GB.
+
+Quotas: 250 MB of conversation JSON, 250 MB of chat pictures, 5,000 chats and
+200 projects per account. Limits are server constants in `server/sync.mjs` and
+`server/git.mjs`. Deleting the local folder only resets the device; sign-out
+leaves the account's data in place. `DELETE /api/sync/account` (app token)
+removes the account's chats, pictures and repositories.
+
+Signing a different account in on the same machine moves the previous account's
+conversations to `accounts\<id>\` instead of uploading them anywhere. Project
+folders are the user's own files and stay where they are.
+
+An AI report (see **Reporting AI output**) is the one deliberate exception to
+"sync everything": it contains what the user chose to send, never the whole
+account.
 
 ## Coding agents
 
@@ -678,6 +802,21 @@ conversation while you keep chatting.
   Settings sheet. Every chat can use every project. Each project carries a short
   description the chat agent maintains — that description is how it finds the
   right project later.
+- **Projects are shared across computers.** Each project has an account id;
+  the local folder name and path are per-machine. A project created here is a
+  git repository with Hook's service as its `hook` remote, and an existing
+  project gets one initial snapshot the first time it joins the account. On a
+  second computer the folder is created and pulled automatically. Coding agents
+  are told to call `sync_pull` before they start (the folder may be empty because
+  the work began elsewhere) and `sync_push` when they finish, are blocked or
+  stop early. The guard blocks force-pushes, branch deletion and mirroring, so a
+  shared project cannot lose another computer's history.
+- **Git ships with Hook.** `scripts/fetch-git.mjs` installs a pinned MinGit into
+  `src-tauri/resources/git` like the coding engine (its GPL `LICENSE.txt` ships
+  with it). Agents get it on `PATH` and a managed `gitconfig` in `agent-home`;
+  the account's git token is scoped to `/api/git/*` and cannot read chats or
+  spend model credits. The token lives in that config, never in a project or a
+  remote URL.
 - **The chat agent never touches files.** Its tools are `list_projects`,
   `create_project`, `update_project_description`, `start_coding_agent`,
   `list_agents`, `agent_status`, `steer_agent`, `answer_agent`, `stop_agent`
@@ -850,7 +989,9 @@ src-tauri/src/
   guard.rs      the guard extension, materialized from the binary
   update.rs     release index, update policy, checksum-checked installer
   settings.rs   projects folder
-  projects.rs   folder scanning, descriptions, path containment
+  projects.rs   folder scanning, stable account ids, descriptions, containment
+  git.rs        bundled git, managed config, repository preparation
+  sync.rs       background chat/picture/project sync, server-side merge cursor
   commands.rs   the IPC surface
 src/
   lib/bridge.ts  typed invoke wrappers + app-wide event bus
@@ -859,6 +1000,12 @@ src/
                  AgentPill…
   styles/        design tokens, glass surfaces, prose styles
 ```
+
+The account service holds two more modules that the desktop talks to:
+`server/git.mjs` (smart HTTP over `git http-backend`, one bare repo per project,
+the `git-policy.mjs` size hook) and `server/sync.mjs` (cursor, chat merge,
+project metadata, content-addressed media). Both are mounted under `/api`; git
+is mounted before any JSON parser because pushes are binary streams.
 
 Details worth knowing:
 
@@ -886,10 +1033,12 @@ pnpm test:release                               # "does this push need a Windows
 `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
 shapes thinking-mode APIs reject), image parts and the base64/header helpers,
 path containment, the project and agent stores, progress batching, the chat-agent
-tool loop, the guard policy (a Node harness feeds it bad `bash` calls and the
-checklist tool), the RPC handshake (spawns the real engine, asks `get_state`,
-never calls a model) and a full agent lifecycle against a fake one that speaks
-the protocol, and the update policy (version ordering, the minimum floor, and a
+tool loop, the guard policy (a Node harness feeds it bad `bash` calls, force-push
+commands and the checklist/sync tools), the sync engine against a local HTTP
+server (push+merge, pull+announce), a second machine's git clone/push, the git
+size hook, the RPC handshake (spawns the real engine, asks `get_state`, never
+calls a model) and a full agent lifecycle against a fake one that speaks the
+protocol, and the update policy (version ordering, the minimum floor, and a
 manifest whose floor is ahead of its newest build). Tests skip themselves when the
 engine or `node` is missing.
 

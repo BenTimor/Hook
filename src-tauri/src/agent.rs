@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::auth::AuthStore;
 use crate::config::CodingConfig;
+use crate::git::{self, GitRuntime};
 use crate::projects::ProjectsStore;
 use crate::config::HarnessConfig;
 use crate::runtime::PiRuntime;
@@ -256,6 +257,9 @@ pub struct AgentManager {
     /// `new` installs a local-preview (always signed in) store; production
     /// replaces it with the real one via `with_auth`.
     auth: Arc<AuthStore>,
+    /// The bundled git, when present. Agents get it on PATH together with a
+    /// managed global config that carries the git-scoped token.
+    git: Option<GitRuntime>,
 }
 
 impl AgentManager {
@@ -312,12 +316,19 @@ impl AgentManager {
             projects,
             signal_tx,
             auth: Arc::new(AuthStore::new(data_dir, "https://hookcode.io", false, "")),
+            git: None,
         }
     }
 
     /// Use the real account store instead of the local-preview placeholder.
     pub fn with_auth(mut self, auth: Arc<AuthStore>) -> Self {
         self.auth = auth;
+        self
+    }
+
+    /// Provide the bundled git (or a developer fallback).
+    pub fn with_git(mut self, git: Option<GitRuntime>) -> Self {
+        self.git = git;
         self
     }
 
@@ -627,6 +638,10 @@ impl AgentManager {
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| project_ref.to_string());
+        // The account id is what names the project's repository. Listing first
+        // also assigns ids to folders that predate sync.
+        let _ = self.projects.list(&root);
+        let project_id = self.projects.id_for_path(&project_path).unwrap_or_default();
 
         let max = self.coding.max_concurrent.max(1);
         if self.working_count() >= max {
@@ -708,6 +723,34 @@ impl AgentManager {
             .map(std::process::Stdio::from)
             .unwrap_or_else(|_| std::process::Stdio::null());
 
+        // The managed git config carries the account's git-scoped token. It is
+        // rewritten every start so a refreshed token is picked up, and the
+        // token never lands in a project or a remote URL.
+        let git_config = self
+            .data_dir
+            .join("agent-home")
+            .join("gitconfig");
+        if let Some(git) = &self.git {
+            if let Err(error) = crate::git::write_agent_config(
+                &self.data_dir.join("agent-home"),
+                &self.cfg.auth.base_url,
+                self.auth.git_token().as_deref(),
+            ) {
+                eprintln!("hook: git config unavailable: {error}");
+            }
+            if !project_id.is_empty() {
+                if let Err(error) = git::prepare_project(
+                    git,
+                    &git_config,
+                    &project_path,
+                    &self.cfg.auth.base_url,
+                    &project_id,
+                ) {
+                    eprintln!("hook: could not prepare the project repository: {error}");
+                }
+            }
+        }
+
         let mut command = build_command(&engine, &args);
         command
             .current_dir(&project_path)
@@ -728,6 +771,14 @@ impl AgentManager {
             .env("HOOK_UPDATES_DIR", &updates_dir)
             .env("PI_BASH_MAX_TIMEOUT", self.coding.bash_max_timeout.to_string())
             .env("PI_BASH_MIN_TIMEOUT", self.coding.bash_min_timeout.to_string());
+        if let Some(git) = &self.git {
+            // `git` resolves to Hook's own copy, and GIT_CONFIG_GLOBAL points
+            // at the managed file so a project cannot inherit the user's git
+            // identity, remotes or credential helper.
+            for (key, value) in git::env(git, &git_config) {
+                command.env(key, value);
+            }
+        }
         if self.cfg.auth.required {
             // The guard's web_search tool calls Hook's account service, which
             // owns the provider key. Standalone/mock builds do not get it.

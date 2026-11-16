@@ -71,6 +71,29 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     assert_eq!(value["ok"].is_null(), true, "a valid timeout should pass");
     assert_eq!(value["nonBash"].is_null(), true, "other tools are untouched");
 
+    // A shared project must never lose another computer's history.
+    for blocked in ["forcePush", "forcePushLease", "deleteBranch"] {
+        assert_eq!(value[blocked]["block"], true, "{blocked} should be blocked");
+        assert!(
+            value[blocked]["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("BLOCKED by Hook guard"),
+            "{blocked} must explain itself"
+        );
+    }
+    assert_eq!(
+        value["normalPush"].is_null(),
+        true,
+        "an ordinary push is left alone"
+    );
+
+    // The sync tools exist exactly when Hook gave the agent a managed git
+    // config, and the prompt tells it to pull first and save at the end.
+    assert_eq!(value["sync"]["toolsRegistered"], true);
+    assert_eq!(value["sync"]["guidanceExplainsPull"], true);
+    assert_eq!(value["sync"]["guidanceExplainsSave"], true);
+
     // The checklist the user watches: the tool is offered, it writes a plan
     // Hook can harvest, and the coding agent is told the plain-language rule.
     let plan = &value["plan"];

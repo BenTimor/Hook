@@ -3,12 +3,15 @@ import { createWaitlistApi } from "./api.mjs";
 import { createAuthRouter } from "./auth.mjs";
 import { createProxyRouter } from "./deepseek.mjs";
 import { createDownloadRouter, publicReleaseInfo } from "./download.mjs";
+import { createGitRouter } from "./git.mjs";
 import { createReportsRouter } from "./reports.mjs";
+import { createSyncRouter } from "./sync.mjs";
 
 /**
- * The whole hookcode.io API: existing waitlist routes, desktop device login,
- * the approval-gated Windows download, and the DeepSeek proxy. Everything is
- * mounted under `/api` so Caddy has one upstream rule.
+ * The whole hookcode.io API: waitlist routes, desktop device login, private git
+ * for coding agents, conversation sync, the approval-gated Windows download and
+ * the DeepSeek proxy. Everything is mounted under `/api` so Caddy has one
+ * upstream rule.
  */
 export function createPlatform(env) {
   const waitlist = createWaitlistApi(env);
@@ -39,11 +42,19 @@ export function createPlatform(env) {
     const unavailable = (_req, res) => res.status(503).json({ error: "unavailable" });
     router.use("/auth", unavailable);
     router.use("/download", unavailable);
+    router.use("/git", unavailable);
+    router.use("/sync", unavailable);
     router.use("/v1", unavailable);
   } else {
     router.use(
       "/auth",
       createAuthRouter({ db: waitlist.db, auth: waitlist.auth }),
+    );
+    // Git is mounted before any JSON body parser: pushes are binary streams.
+    router.use("/git", createGitRouter({ env, db: waitlist.db }));
+    router.use(
+      "/sync",
+      createSyncRouter({ env, db: waitlist.db }),
     );
     router.use(
       "/download",

@@ -26,6 +26,7 @@ on:
       - "scripts/build-release-manifest.mjs"
       - "scripts/merge-release-index.mjs"
       - "scripts/fetch-pi-runtime.mjs"
+      - "scripts/fetch-git.mjs"
       - ".github/workflows/release-app.yml"
   workflow_dispatch:
     inputs:

@@ -108,8 +108,13 @@ export function PreviewPanel() {
   if (!rendered || !shown) return null;
 
   const waiting = shown.waiting || !shown.url;
+  // A data: URL has no query string to bust; appending `?v=` would become part
+  // of the rendered page. Remount the iframe instead (the mock preview case).
+  const isData = Boolean(shown.url?.startsWith("data:"));
   const src = shown.url
-    ? `${shown.url}${shown.url.includes("?") ? "&" : "?"}v=${shown.version}-${reloads}`
+    ? isData
+      ? shown.url
+      : `${shown.url}${shown.url.includes("?") ? "&" : "?"}v=${shown.version}-${reloads}`
     : "";
 
   const commitWidth = (next: number) => {
@@ -256,7 +261,7 @@ export function PreviewPanel() {
           </div>
         ) : (
           <iframe
-            key={shown.url}
+            key={isData ? `${shown.url}-${shown.version}-${reloads}` : shown.url}
             className="preview-frame"
             title={shown.title ?? "Preview"}
             src={src}

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -87,6 +88,10 @@ pub struct Attachment {
     /// What the picture is, when known: "screenshot", "user", ...
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// Content address used by the sync service. Computed on the first upload,
+    /// then kept so every device can recognise the same picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -215,6 +220,14 @@ pub fn truncate(s: &str, max_chars: usize) -> String {
 pub struct Store {
     root: PathBuf,
     cache: Mutex<Option<Vec<ChatMeta>>>,
+    /// Chats changed since the last upload, plus the ones the user restored.
+    dirty: Mutex<Dirty>,
+}
+
+#[derive(Default)]
+struct Dirty {
+    chats: HashSet<String>,
+    restored: HashSet<String>,
 }
 
 impl Store {
@@ -225,11 +238,99 @@ impl Store {
         Ok(Self {
             root,
             cache: Mutex::new(None),
+            dirty: Mutex::new(Dirty::default()),
         })
     }
 
     fn guard(&self) -> MutexGuard<'_, Option<Vec<ChatMeta>>> {
         self.cache.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn mark_dirty(&self, id: &str) {
+        self.dirty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .chats
+            .insert(id.to_string());
+    }
+
+    /// Ids changed since the last upload. The caller re-reads each chat; one
+    /// that no longer loads is a deletion. Peeking instead of draining keeps a
+    /// failed upload queued.
+    pub fn dirty_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .dirty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .chats
+            .iter()
+            .cloned()
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Forget one id after the account accepted it.
+    pub fn clear_dirty(&self, id: &str) {
+        self.dirty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .chats
+            .remove(id);
+    }
+
+    /// Forget one id once its version reached the account. The version guard
+    /// means a save that happened mid-upload stays queued.
+    pub fn clear_dirty_if(&self, id: &str, version: i64) {
+        let current = self.load(id).map(|chat| chat.meta.updated_at);
+        let unchanged = current.map(|value| value == version).unwrap_or(true);
+        if unchanged {
+            self.dirty
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .chats
+                .remove(id);
+        }
+    }
+
+    /// Chats the user explicitly restored; the server keeps a tombstone and
+    /// needs to be told that this push is a revival, not a stale copy.
+    pub fn restored_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .dirty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .restored
+            .iter()
+            .cloned()
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    pub fn clear_restored(&self, ids: &[String]) {
+        let mut dirty = self.dirty.lock().unwrap_or_else(|e| e.into_inner());
+        for id in ids {
+            dirty.restored.remove(id);
+        }
+    }
+
+    pub fn mark_all_dirty(&self) {
+        if let Ok(metas) = self.list() {
+            let mut dirty = self.dirty.lock().unwrap_or_else(|e| e.into_inner());
+            for meta in metas {
+                dirty.chats.insert(meta.id);
+            }
+        }
+    }
+
+    /// Number of chats waiting to upload (used by the status line).
+    pub fn dirty_count(&self) -> usize {
+        self.dirty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .chats
+            .len()
     }
 
     fn chat_path(&self, id: &str) -> PathBuf {
@@ -277,6 +378,16 @@ impl Store {
     }
 
     pub fn save(&self, chat: &mut Chat) -> Result<(), String> {
+        self.save_inner(chat, true)
+    }
+
+    /// Write a version that arrived from the account. It is already the
+    /// canonical one, so it must not be queued for upload again.
+    pub fn save_remote(&self, chat: &mut Chat) -> Result<(), String> {
+        self.save_inner(chat, false)
+    }
+
+    fn save_inner(&self, chat: &mut Chat, dirty: bool) -> Result<(), String> {
         chat.refresh_meta();
         let path = self.chat_path(&chat.meta.id);
         let bytes = serde_json::to_vec_pretty(chat).map_err(|e| e.to_string())?;
@@ -290,12 +401,88 @@ impl Store {
             }
             sort_metas(metas);
         }
+        drop(guard);
+        if dirty {
+            self.mark_dirty(&chat.meta.id);
+        }
         Ok(())
     }
 
     /// Folder holding the pictures of one chat.
     pub fn image_dir(&self, chat_id: &str) -> PathBuf {
         self.root.join("images").join(chat_id)
+    }
+
+    /// True when the picture's bytes are already on this machine.
+    pub fn image_exists(&self, chat_id: &str, attachment_id: &str) -> bool {
+        self.image_file(chat_id, attachment_id).is_ok()
+    }
+
+    /// Store bytes that arrived from the account under the attachment's own
+    /// file name. The mime decides the extension when the record has none.
+    pub fn write_remote_image(
+        &self,
+        chat_id: &str,
+        attachment: &Attachment,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        if !is_safe_id(chat_id) || !is_safe_id(&attachment.id) {
+            return Err("Invalid image id".into());
+        }
+        if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+            return Err("The synced picture has an unusable size.".into());
+        }
+        let file = if is_safe_file(&attachment.file) {
+            attachment.file.clone()
+        } else {
+            format!(
+                "{}.{}",
+                attachment.id,
+                extension_for(&attachment.mime).unwrap_or("png")
+            )
+        };
+        let dir = self.image_dir(chat_id);
+        fs::create_dir_all(&dir).map_err(|e| format!("create image dir: {e}"))?;
+        write_atomic(&dir.join(file), bytes)
+    }
+
+    /// Remove a chat because the account says it was deleted elsewhere. No
+    /// trash entry: a restore from this device would revive it for everyone.
+    pub fn remove_synced(&self, id: &str) {
+        if !is_safe_id(id) {
+            return;
+        }
+        let _ = fs::remove_file(self.chat_path(id));
+        let _ = fs::remove_dir_all(self.image_dir(id));
+        let mut guard = self.guard();
+        if let Some(metas) = guard.as_mut() {
+            metas.retain(|m| m.id != id);
+        }
+        drop(guard);
+        self.dirty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .chats
+            .remove(id);
+    }
+
+    /// Move every conversation that belongs to the previous account aside.
+    /// Project folders are left alone; they are the user's own files.
+    pub fn quarantine(&self, dest: &Path) -> Result<(), String> {
+        fs::create_dir_all(dest).map_err(|e| format!("create account folder: {e}"))?;
+        for name in ["chats", "trash", "images"] {
+            let from = self.root.join(name);
+            let to = dest.join(name);
+            if !from.is_dir() {
+                continue;
+            }
+            let _ = fs::remove_dir_all(&to);
+            fs::rename(&from, &to).map_err(|e| format!("move {name}: {e}"))?;
+            fs::create_dir_all(&from).map_err(|e| format!("recreate {name}: {e}"))?;
+        }
+        *self.guard() = Some(Vec::new());
+        *self.dirty.lock().unwrap_or_else(|e| e.into_inner()) = Dirty::default();
+        Ok(())
     }
 
     /// Store encoded bytes as a picture that belongs to `chat_id`.
@@ -337,6 +524,7 @@ impl Store {
             height,
             bytes: data.len() as u64,
             kind: kind.map(str::to_string),
+            sha256: None,
         })
     }
 
@@ -398,6 +586,7 @@ impl Store {
         } else {
             truncate(title, 120)
         };
+        chat.meta.updated_at = now_ms();
         self.save(&mut chat)?;
         Ok(chat.meta)
     }
@@ -406,6 +595,7 @@ impl Store {
         let mut chat = self.load(id)?;
         chat.meta.pinned = pinned;
         chat.meta.pinned_at = if pinned { Some(now_ms()) } else { None };
+        chat.meta.updated_at = now_ms();
         self.save(&mut chat)?;
         Ok(chat.meta)
     }
@@ -421,6 +611,8 @@ impl Store {
         if let Some(metas) = guard.as_mut() {
             metas.retain(|m| m.id != id);
         }
+        drop(guard);
+        self.mark_dirty(id);
         Ok(())
     }
 
@@ -431,7 +623,9 @@ impl Store {
         let from = self.root.join("trash").join(format!("{id}.json"));
         let to = self.chat_path(id);
         fs::rename(&from, &to).map_err(|e| format!("restore chat: {e}"))?;
-        let chat = self.load(id)?;
+        let mut chat = self.load(id)?;
+        chat.meta.updated_at = now_ms();
+        self.save_remote(&mut chat)?;
         let mut guard = self.guard();
         if let Some(metas) = guard.as_mut() {
             if !metas.iter().any(|m| m.id == chat.meta.id) {
@@ -439,6 +633,13 @@ impl Store {
             }
             sort_metas(metas);
         }
+        drop(guard);
+        self.mark_dirty(id);
+        self.dirty
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .restored
+            .insert(id.to_string());
         Ok(chat.meta)
     }
 
@@ -478,6 +679,16 @@ impl Store {
         }
         Ok(hits)
     }
+}
+
+fn is_safe_file(file: &str) -> bool {
+    !file.is_empty()
+        && file.len() <= 128
+        && file
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        && !file.starts_with('.')
+        && !file.contains("..")
 }
 
 fn is_safe_id(id: &str) -> bool {
@@ -618,7 +829,7 @@ pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, bytes).map_err(|e| format!("write: {e}"))?;
     fs::rename(&tmp, path).map_err(|e| format!("commit: {e}"))?;

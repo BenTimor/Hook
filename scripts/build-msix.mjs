@@ -53,11 +53,15 @@ if (!identity.identityName?.trim() || !identity.publisher?.trim()) {
 
 const exe = join(root, "src-tauri/target/release/Hook.exe");
 const runtime = join(root, "src-tauri/resources/pi-runtime");
+const git = join(root, "src-tauri/resources/git");
 if (!existsSync(exe)) {
   throw new Error("Hook.exe is missing; run `pnpm app:build` (or `pnpm app`) first.");
 }
 if (!existsSync(join(runtime, "node.exe"))) {
   throw new Error("the coding engine is missing; run `pnpm engine` first.");
+}
+if (!existsSync(join(git, "cmd", "git.exe"))) {
+  throw new Error("git is missing; run `pnpm git` first.");
 }
 
 const stage = join(root, ".tmp/msix", pkg.version);
@@ -68,6 +72,8 @@ await cp(exe, join(stage, "Hook.exe"));
 // 104 MB of Node + pi. runtime.rs finds it at <package>/resources/pi-runtime
 // (via resource_dir, the exe directory, or their `resources` children).
 await cp(runtime, join(stage, "resources", "pi-runtime"), { recursive: true });
+// MinGit: the coding agents pull and push their project with it.
+await cp(git, join(stage, "resources", "git"), { recursive: true });
 
 const icons = [
   "StoreLogo.png",

@@ -16,6 +16,8 @@ import type {
   SearchHit,
   SettingsView,
   StreamEvent,
+  SyncEvent,
+  SyncView,
   UpdateEvent,
   UpdateInfo,
 } from "./types";
@@ -28,12 +30,14 @@ type AgentsListener = (overview: AgentsOverview) => void;
 type PreviewListener = (preview: PreviewEvent) => void;
 type AuthListener = (view: AuthView) => void;
 type UpdateListener = (event: UpdateEvent) => void;
+type SyncListener = (event: SyncEvent) => void;
 
 const chatListeners = new Set<ChatListener>();
 const agentsListeners = new Set<AgentsListener>();
 const previewListeners = new Set<PreviewListener>();
 const authListeners = new Set<AuthListener>();
 const updateListeners = new Set<UpdateListener>();
+const syncListeners = new Set<SyncListener>();
 
 function dispatch(chatId: string, event: StreamEvent) {
   for (const listener of chatListeners) listener(chatId, event);
@@ -117,6 +121,29 @@ export function onAuthEvent(listener: AuthListener): () => void {
   let off: (() => void) | null = null;
   let cancelled = false;
   void listen<AuthView>("hook://auth", (event) => listener(event.payload)).then(
+    (unlisten) => {
+      if (cancelled) unlisten();
+      else off = unlisten;
+    },
+  );
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
+/**
+ * The background sync applied something from the account. `chats` means the
+ * list or a conversation changed; `projects` means a project was created here.
+ */
+export function onSyncEvent(listener: SyncListener): () => void {
+  if (!isTauri()) {
+    syncListeners.add(listener);
+    return () => syncListeners.delete(listener);
+  }
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void listen<SyncEvent>("hook://sync", (event) => listener(event.payload)).then(
     (unlisten) => {
       if (cancelled) unlisten();
       else off = unlisten;
@@ -283,6 +310,12 @@ export const api = {
     isTauri()
       ? invoke<PreviewView | null>("preview_state")
       : mock.previewState(),
+
+  syncStatus: (): Promise<SyncView> =>
+    isTauri() ? invoke<SyncView>("sync_status") : mock.syncStatus(),
+
+  syncNow: (): Promise<void> =>
+    isTauri() ? invoke<void>("sync_now") : mock.syncNow(),
 
 
   stopChatAgents: (chatId: string): Promise<AgentsOverview> =>

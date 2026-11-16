@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpCircle,
+  Cloud,
   FolderOpen,
   GitBranch,
   LogOut,
@@ -10,8 +11,71 @@ import {
 } from "lucide-react";
 
 import { api, openExternal } from "../lib/bridge";
+import type { SyncView } from "../lib/types";
 import { useChatStore } from "../store/useChatStore";
 import { useUpdateStore } from "../store/useUpdateStore";
+
+/**
+ * One quiet line about where the work lives. Syncing itself is automatic; this
+ * is only here so a curious user (or support) can see that it is working.
+ */
+function SyncRow() {
+  const [status, setStatus] = useState<SyncView | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      void api
+        .syncStatus()
+        .then((value) => {
+          if (alive) setStatus(value);
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  if (!status?.enabled) return null;
+  const title =
+    status.state === "syncing"
+      ? "Saving your latest changes…"
+      : status.state === "error"
+        ? "Sync is paused"
+        : "Saved to your account";
+  return (
+    <section className="sheet-section">
+      <div className="sheet-label">
+        <span>Sync</span>
+      </div>
+      <div className="account-row">
+        <span className="account-badge" aria-hidden="true">
+          <Cloud strokeWidth={1.8} />
+        </span>
+        <div className="account-identity">
+          <strong>{title}</strong>
+          <span>
+            {status.message ??
+              "Your chats and projects are available on every computer signed in to this account."}
+          </span>
+        </div>
+        <button
+          className="btn btn-ghost"
+          onClick={() => void api.syncNow()}
+          disabled={status.state === "syncing"}
+          title="Sync now"
+        >
+          <RefreshCw strokeWidth={1.9} />
+          Sync now
+        </button>
+      </div>
+    </section>
+  );
+}
 
 export function SettingsSheet() {
   const open = useChatStore((s) => s.settingsOpen);
@@ -92,6 +156,8 @@ export function SettingsSheet() {
               .
             </p>
           </section>
+
+          <SyncRow />
 
           <section className="sheet-section">
             <div className="sheet-label">

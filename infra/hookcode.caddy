@@ -20,9 +20,10 @@ hookcode.io {
 	# (try_files takes no matcher, so it cannot be scoped away). Inside `route`
 	# the handlers run exactly in the order written here.
 	route {
-		# Waitlist, desktop device login, the model proxy and the auth-gated
-		# download all live under /api. flush_interval -1 keeps the model's SSE
-		# stream flowing token by token instead of waiting for a buffer to fill.
+		# Waitlist, desktop device login, the model proxy, private git, chat sync
+		# and the auth-gated download all live under /api. flush_interval -1 keeps
+		# the model's SSE stream flowing token by token instead of buffering, and
+		# lets git push/fetch stream their packfiles.
 		@api path /api/*
 		reverse_proxy @api hook-waitlist:5173 {
 			flush_interval -1

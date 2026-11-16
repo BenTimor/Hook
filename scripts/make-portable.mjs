@@ -31,16 +31,22 @@ if (!existsSync(exe)) {
 }
 
 // Tauri copies resources under `resources/` for a no-bundle build.
-const candidates = [join(release, "resources", "pi-runtime"), join(release, "pi-runtime")];
-const runtime = candidates.find((path) => existsSync(path));
-if (!runtime) {
-  throw new Error("the coding engine was not copied next to the executable — run scripts/fetch-pi-runtime.mjs, then rebuild");
+function resource(name) {
+  const candidates = [join(release, "resources", name), join(release, name)];
+  const found = candidates.find((path) => existsSync(path));
+  if (!found) {
+    throw new Error(`resources/${name} was not copied next to the executable — fetch it, then rebuild`);
+  }
+  return found;
 }
+const runtime = resource("pi-runtime");
+const git = resource("git");
 
 await rm(stage, { recursive: true, force: true });
 await mkdir(join(stage, "resources"), { recursive: true });
 await cp(exe, join(stage, "Hook.exe"));
 await cp(runtime, join(stage, "resources", "pi-runtime"), { recursive: true });
+await cp(git, join(stage, "resources", "git"), { recursive: true });
 
 // A note, because a folder with an exe in it deserves one.
 await writeFile(

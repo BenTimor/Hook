@@ -33,6 +33,32 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// One stable id per installation, kept across sign-ins. It lets this computer
+/// rotate its own git token without touching the account's other devices.
+fn load_or_create_device(data_dir: &Path) -> String {
+    let path = data_dir.join("device.json");
+    if let Ok(raw) = fs::read_to_string(&path) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+                let valid = (8..=64).contains(&id.len())
+                    && id
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+                if valid {
+                    return id.to_string();
+                }
+            }
+        }
+    }
+    let id = format!("dev_{}", uuid::Uuid::new_v4().simple());
+    let _ = fs::create_dir_all(data_dir);
+    let _ = fs::write(
+        &path,
+        serde_json::json!({ "id": id }).to_string(),
+    );
+    id
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
@@ -42,6 +68,11 @@ pub struct StoredSession {
     pub name: Option<String>,
     pub subject: String,
     pub signed_in_at: i64,
+    /// A git-only token minted from `token`. It can read and write this
+    /// account's project repositories and nothing else, so it is the one
+    /// credential that may reach a coding agent's environment.
+    #[serde(default)]
+    pub git_token: Option<String>,
 }
 
 /// What the window needs to draw the login screen or the account section.
@@ -102,6 +133,8 @@ pub enum RefreshOutcome {
 pub struct AuthStore {
     path: PathBuf,
     base_url: String,
+    /// Stable identifier for this installation. Not a secret.
+    device: String,
     /// When false (local mock builds) the app is always "signed in" and never
     /// talks to hookcode.io.
     required: bool,
@@ -109,6 +142,11 @@ pub struct AuthStore {
     pending: Mutex<Option<Pending>>,
     generation: AtomicU64,
     client: reqwest::Client,
+}
+
+#[derive(Deserialize)]
+struct GitTokenResponse {
+    token: String,
 }
 
 #[derive(Deserialize)]
@@ -182,10 +220,12 @@ impl AuthStore {
                 name: Some("Local preview".into()),
                 subject: "local-preview".into(),
                 signed_in_at: 0,
+                git_token: None,
             })
         };
         Self {
             path,
+            device: load_or_create_device(data_dir),
             base_url: base_url.trim_end_matches('/').to_string(),
             required,
             session: Mutex::new(session),
@@ -199,9 +239,62 @@ impl AuthStore {
         }
     }
 
-    #[cfg(test)]
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// The account's opaque subject, when signed in. Sync keys everything by it.
+    pub fn subject(&self) -> Option<String> {
+        lock(&self.session).as_ref().map(|s| s.subject.clone())
+    }
+
+    /// Local preview builds never talk to an account service.
+    pub fn required(&self) -> bool {
+        self.required
+    }
+
+    /// Stable identifier for this installation. Not a secret.
+    pub fn device_id(&self) -> &str {
+        &self.device
+    }
+
+    pub fn git_token(&self) -> Option<String> {
+        lock(&self.session)
+            .as_ref()
+            .and_then(|s| s.git_token.clone())
+    }
+
+    /// Fetch (or reuse) the git-only token. Refreshed lazily so a token revoked
+    /// server-side heals without a new sign-in.
+    pub async fn ensure_git_token(&self) -> Option<String> {
+        if !self.required {
+            return None;
+        }
+        if let Some(token) = self.git_token() {
+            return Some(token);
+        }
+        let token = self.token()?;
+        let response = self
+            .client
+            .post(format!("{}/api/auth/git-token", self.base_url))
+            .bearer_auth(token)
+            .header("x-hook-device", self.device_id())
+            .json(&serde_json::json!({ "label": "Hook desktop" }))
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            eprintln!("hook: could not mint a git token ({})", response.status());
+            return None;
+        }
+        let body: GitTokenResponse = response.json().await.ok()?;
+        let mut session = self.session()?;
+        session.git_token = Some(body.token.clone());
+        if let Err(error) = self.save_session(&session) {
+            eprintln!("hook: could not save the git token: {error}");
+            return None;
+        }
+        Some(body.token)
     }
 
     pub fn token(&self) -> Option<String> {
@@ -321,6 +414,7 @@ impl AuthStore {
             let response = match self
                 .client
                 .post(format!("{}/api/auth/device/poll", self.base_url))
+                .header("x-hook-device", self.device_id())
                 .json(&serde_json::json!({ "deviceCode": device_code }))
                 .send()
                 .await
@@ -376,6 +470,7 @@ impl AuthStore {
                         name: user.name,
                         subject: user.subject,
                         signed_in_at: now_ms(),
+                        git_token: None,
                     };
                     if let Err(error) = self.save_session(&session) {
                         return LoginOutcome::Failed(error);
@@ -554,6 +649,7 @@ mod tests {
             name: Some("Member".into()),
             subject: "subject-1".into(),
             signed_in_at: 1,
+            git_token: None,
         };
         auth.save_session(&session).unwrap();
         let reopened = AuthStore::new(&dir, "https://hookcode.io", true, "");

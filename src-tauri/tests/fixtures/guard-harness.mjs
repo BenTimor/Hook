@@ -10,6 +10,7 @@ const guardPath = process.argv[2];
 // The guard reads its mailbox at import time, so the folder has to exist first.
 const updatesDir = mkdtempSync(join(tmpdir(), "hook-guard-"));
 process.env.HOOK_UPDATES_DIR = updatesDir;
+process.env.GIT_CONFIG_GLOBAL = join(updatesDir, "gitconfig");
 writeFileSync(
   join(updatesDir, "plan.json"),
   JSON.stringify({
@@ -82,6 +83,13 @@ const results = {
   wrongType: await bash({ command: "ls -la", timeout: "30" }),
   ok: await bash({ command: "ls -la", timeout: 30 }),
   nonBash: await handlers.tool_call[0]({ toolName: "read", input: {} }, {}),
+  forcePush: await bash({ command: "git push --force origin main", timeout: 30 }),
+  forcePushLease: await bash({
+    command: "git push --force-with-lease origin main",
+    timeout: 30,
+  }),
+  deleteBranch: await bash({ command: "git push origin --delete main", timeout: 30 }),
+  normalPush: await bash({ command: "git push origin main", timeout: 30 }),
   preview: {
     toolsRegistered: Boolean(tools.show_preview),
     guidanceExplainsOptional: /optional/i.test(before?.systemPrompt ?? ""),
@@ -91,6 +99,11 @@ const results = {
     written: previewWritten
       ? { file: previewWritten.file, title: previewWritten.title }
       : null,
+  },
+  sync: {
+    toolsRegistered: Boolean(tools.sync_pull && tools.sync_push),
+    guidanceExplainsPull: /sync_pull/.test(before?.systemPrompt ?? ""),
+    guidanceExplainsSave: /sync_push/.test(before?.systemPrompt ?? ""),
   },
   plan: {
     toolsRegistered: Boolean(tools.report_progress && tools.update_plan),

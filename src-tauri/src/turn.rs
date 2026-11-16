@@ -19,6 +19,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 
 ## Projects
 - A project is a folder in the user-s projects directory. Every chat can use every project.
+- Projects are saved to the user-s account and can be worked on from several computers. The folder a coding agent starts in may be empty because the work so far lives on another computer; the agent pulls the latest version first and saves its own work at the end. Never tell the user files are missing before the agent has had that chance.
 - Each project carries a short description that you maintain. Call list_projects whenever the task might match existing work; those descriptions are your index.
 - You cannot read or edit project files yourself. create_project and update_project_description are your only direct project tools; anything about a project-s contents comes from a coding agent.
 
@@ -29,7 +30,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - Search more than once when the question genuinely needs different angles, but keep it to what the question asks.
 
 ## Coding agents
-- start_coding_agent runs pi inside a project folder with full permissions, sandboxed to that folder. Write a complete brief: the goal, the constraints, anything the user said that matters, and how to verify success.
+- start_coding_agent runs pi inside a project folder with full permissions, sandboxed to that folder. Write a complete brief: the goal, the constraints, anything the user said that matters, and how to verify success. The agent pulls the latest saved work before it starts and saves (pushes) when it finishes; do not describe that mechanics to the user.
 - Always pass a `plan`: three to six short steps in plain, everyday language, in the order they will happen. This is the checklist the user watches at the bottom of the chat while the agent works, so it must read like 'Setting things up', 'Designing the front page', 'Integrating the real service' - never file names, tool names, package names or jargon. Same language the user writes in.
 - Runs are asynchronous. After starting one you may end your turn. You will be woken with a note when it settles, fails, or asks a question.
 - agent_status shows progress, steer_agent redirects a live run, answer_agent unblocks a question it is stuck on, stop_agent kills it, and start_coding_agent with resume_session_id continues earlier work (see list_coding_sessions).
@@ -545,6 +546,9 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
 
 fn finish(state: &Arc<AppState>, chat_id: &str) {
     lock(&state.streams).remove(chat_id);
+    // Make the finished turn visible on the other computers without waiting
+    // for the next poll.
+    state.sync.wake();
     if state.turns.release(chat_id) {
         // Something arrived while this turn was running.
         let state = state.clone();
@@ -1144,6 +1148,7 @@ mod tests {
             height: 800,
             bytes: 32,
             kind: Some("user".into()),
+            sha256: None,
         }
     }
 

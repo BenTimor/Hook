@@ -18,6 +18,11 @@ RUN pnpm waitlist:build
 FROM node:24-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
+# git runs Hook's private project repositories (git http-backend + hooks).
+# The repositories live under the persisted /data volume.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
@@ -33,7 +38,9 @@ USER node
 
 ENV PORT=5173 \
     WAITLIST_DB_PATH=/data/signups.sqlite \
-    DOWNLOAD_DIR=/data/releases
+    DOWNLOAD_DIR=/data/releases \
+    GIT_ROOT=/data/git \
+    SYNC_ROOT=/data/sync
 EXPOSE 5173
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

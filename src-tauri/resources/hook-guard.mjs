@@ -40,6 +40,7 @@
  * Plain ESM on purpose: only Node built-ins, nothing that can fail to resolve.
  */
 
+import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -51,6 +52,49 @@ function clampLabel(v) {
   if (v >= 3600) return `${Math.round(v / 3600)}h`;
   if (v >= 60) return `${Math.round(v / 60)}min`;
   return `${v}s`;
+}
+
+// ── Project sync (Hook cloud) ─────────────────────────────────────────────
+// The project is stored in the user's account. These two tools are the only
+// supported way to touch the network: the git credential lives in Hook's
+// managed global config, never in the project or the remote URL.
+const SYNC_ENABLED = Boolean(process.env.GIT_CONFIG_GLOBAL);
+const GIT_TIMEOUT_MS = 180_000;
+
+function runGit(args, timeoutMs = GIT_TIMEOUT_MS) {
+  try {
+    const out = execFileSync("git", args, {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: timeoutMs,
+      maxBuffer: 32 * 1024 * 1024,
+      windowsHide: true,
+    });
+    return { ok: true, out, err: "" };
+  } catch (error) {
+    if (error?.code === "ENOENT")
+      return { ok: false, out: "", err: "git is not available on this machine" };
+    return {
+      ok: false,
+      out: String(error?.stdout ?? ""),
+      err: String(error?.stderr || error?.message || "git failed"),
+    };
+  }
+}
+
+function syncGuidance() {
+  if (!SYNC_ENABLED) return "";
+  return `
+
+## Project sync (Hook cloud)
+This project is stored in the user's Hook account and can be worked on from any of their computers. The folder you start in may be empty because the work was started somewhere else.
+- Before doing anything else, call \`sync_pull\`. It fetches and applies the latest saved version. If it reports that nothing has been saved yet, that is normal for a new project: carry on.
+- When you finish - and also when you are blocked or stopping early - call \`sync_push\` with a short message describing what changed. Never leave finished work only on this computer.
+- If pulling reports conflicts, edit the listed files to resolve them, then call \`sync_push\`.
+- Never force-push, never rewrite history that is already saved, and never delete a branch on the account. The guard blocks those commands.
+- Keep the repository small: do not commit node_modules, virtualenvs, build output, caches or large binaries. Hook rejects projects over its storage limit.`;
 }
 
 
@@ -222,11 +266,33 @@ export default function (pi) {
         (event.systemPrompt ?? "") +
         guideline +
         webSearchGuidance() +
-        (UPDATES_DIR ? planGuidance() + previewGuidance() : ""),
+        (UPDATES_DIR ? planGuidance() + previewGuidance() : "") +
+        syncGuidance(),
     };
   });
 
   pi.on("tool_call", async (event) => {
+    // A force-push on a shared project destroys the other computers' history.
+    // It is never the right move; a pull and rebase is.
+    if (event.toolName === "bash") {
+      const command = String(event.input?.command ?? "");
+      if (/\bgit\s+push\b/.test(command)) {
+        const destructive =
+          /(^|\s)(--force(-with-lease)?|-f)(\s|$)/.test(command) ||
+          /--mirror(\s|$)/.test(command) ||
+          /(^|\s)(--delete|-d)(\s|$)/.test(command) ||
+          /\bgit\s+push\s+\S+\s+:/.test(command) ||
+          /\bgit\s+push\b[^\n]*\s\+\S+/.test(command);
+        if (destructive) {
+          return {
+            block: true,
+            reason:
+              "BLOCKED by Hook guard: this project is shared with the user's other computers, so force-pushing, deleting a branch or mirroring would destroy their work. Run `sync_pull` first (it rebases your changes), resolve any conflicts, then `sync_push`.",
+          };
+        }
+      }
+    }
+
     // The checklist first. A long run that never moves it leaves the user
     // watching a step that finished ten minutes ago, so one call is refused and
     // the model is sent back to `update_plan`. The counter resets either way:
@@ -513,6 +579,186 @@ export default function (pi) {
             },
           ],
           details: { steps: steps.length, done },
+        };
+      },
+    });
+  }
+
+  // ── Project sync tools ────────────────────────────────────────────────
+  if (SYNC_ENABLED) {
+    pi.registerTool({
+      name: "sync_pull",
+      label: "Pull latest work",
+      description:
+        "Fetch and apply the latest version of this project saved in the user's Hook account. Call it before doing anything else: this folder may be empty because the project was started on another computer. A new project with nothing saved yet reports that normally.",
+      promptGuidelines: [
+        "Call `sync_pull` as your first action in this project. It is how work from the user's other computers reaches this folder.",
+        "If it reports conflicts, resolve the listed files and then call `sync_push`.",
+        "Do not run `git pull` or `git push` yourself; use these tools so the account's credentials are applied correctly.",
+      ],
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+      async execute() {
+        const fetched = runGit(["fetch", "hook", "--prune"], 120_000);
+        if (!fetched.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Could not reach the user's account. Continue with the files already here and call sync_pull again later. Details: ${fetched.err.slice(0, 400)}`,
+              },
+            ],
+            isError: true,
+            details: {},
+          };
+        }
+        const pulled = runGit(["pull", "--rebase", "--autostash", "hook", "main"]);
+        if (pulled.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Pulled the latest version from the user's account.\n${pulled.out.trim() || "Already up to date."}`,
+              },
+            ],
+            details: {},
+          };
+        }
+        if (/couldn't find remote ref|no such ref|not found/i.test(pulled.err)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Nothing has been saved to the user's account for this project yet. This is normal for a new project; start working, then call sync_push when you finish.",
+              },
+            ],
+            details: {},
+          };
+        }
+        if (/CONFLICT|Automatic merge failed|needs merge|unmerged|Resolve all conflicts/i.test(pulled.err)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Pulling produced conflicts. Resolve these files by editing them, then call sync_push:\n${pulled.err.slice(0, 1200)}`,
+              },
+            ],
+            isError: true,
+            details: {},
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Could not pull the latest version: ${pulled.err.slice(0, 800)}`,
+            },
+          ],
+          isError: true,
+          details: {},
+        };
+      },
+    });
+
+    pi.registerTool({
+      name: "sync_push",
+      label: "Save work to the account",
+      description:
+        "Commit every change in this project and save it to the user's Hook account so another computer can continue. Call it when you finish, and also when you are blocked or stopping early.",
+      promptGuidelines: [
+        "Call `sync_push` once at the end of a run, with a short message about what changed. The user does not see the message, so keep it factual.",
+        "Never force-push. If a push is rejected, pull (or run `sync_pull`), resolve conflicts, then call sync_push again.",
+        "Do not leave finished work only on this computer: saving it is what makes it available everywhere.",
+      ],
+      parameters: {
+        type: "object",
+        properties: {
+          message: {
+            type: "string",
+            description: "One short line describing what changed, e.g. 'Add invoice totals'.",
+          },
+        },
+        required: ["message"],
+        additionalProperties: false,
+      },
+      async execute(_callId, params) {
+        const message =
+          String(params?.message ?? "").replace(/\s+/g, " ").trim().slice(0, 200) ||
+          "Update from Hook";
+        const status = runGit(["status", "--porcelain"], 30_000);
+        if (!status.ok) {
+          return {
+            content: [{ type: "text", text: `Could not inspect the project: ${status.err.slice(0, 400)}` }],
+            isError: true,
+            details: {},
+          };
+        }
+        if (status.out.trim()) {
+          const added = runGit(["add", "-A"], 120_000);
+          if (!added.ok) {
+            return {
+              content: [{ type: "text", text: `Could not stage the changes: ${added.err.slice(0, 400)}` }],
+              isError: true,
+              details: {},
+            };
+          }
+          const committed = runGit(["commit", "-m", message, "--no-verify"]);
+          if (!committed.ok && !/nothing to commit|no changes added/i.test(committed.err)) {
+            return {
+              content: [{ type: "text", text: `Could not commit the changes: ${committed.err.slice(0, 800)}` }],
+              isError: true,
+              details: {},
+            };
+          }
+        }
+        let pushed = runGit(["push", "-u", "hook", "HEAD:main"]);
+        if (!pushed.ok && /rejected|non-fast-forward|fetch first/i.test(pushed.err)) {
+          const rebased = runGit(["pull", "--rebase", "--autostash", "hook", "main"]);
+          if (!rebased.ok) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Saving needs a conflict resolved first. Edit these files, then call sync_push again:\n${rebased.err.slice(0, 1200)}`,
+                },
+              ],
+              isError: true,
+              details: {},
+            };
+          }
+          pushed = runGit(["push", "-u", "hook", "HEAD:main"]);
+        }
+        if (!pushed.ok) {
+          if (/src refspec .* does not match any|nothing to push/i.test(pushed.err)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "There is nothing to save yet: the project has no commits. Make the first change and call sync_push again.",
+                },
+              ],
+              details: {},
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Could not save to the user's account: ${pushed.err.slice(0, 1200)}`,
+              },
+            ],
+            isError: true,
+            details: {},
+          };
+        }
+        const head = runGit(["rev-parse", "--short", "HEAD"], 10_000);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Saved this project to the user's account${head.ok && head.out.trim() ? ` at ${head.out.trim()}` : ""}. It is available on the user's other computers now.`,
+            },
+          ],
+          details: {},
         };
       },
     });

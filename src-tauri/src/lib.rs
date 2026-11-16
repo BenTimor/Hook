@@ -2,6 +2,7 @@ mod agent;
 mod auth;
 mod commands;
 mod config;
+mod git;
 mod guard;
 mod projects;
 mod preview;
@@ -10,6 +11,7 @@ mod provider;
 mod runtime;
 mod settings;
 mod store;
+mod sync;
 mod tools;
 mod turn;
 mod update;
@@ -58,6 +60,14 @@ pub fn run() {
                 cfg.auth.required,
                 &cfg.provider.api_key,
             ));
+            // Mint the git-only token at launch so the first coding agent does
+            // not have to wait for a sync cycle.
+            {
+                let auth = auth.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = auth.ensure_git_token().await;
+                });
+            }
             // Written before each run instead of once here: a coding agent's
             // model config carries its own run id and the current token.
             // Capabilities come from the model card, not from the build: the
@@ -65,6 +75,12 @@ pub fn run() {
             // answer simply reports nothing.
             let vision = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let engine = runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir);
+            let git_runtime = git::resolve(app.path().resource_dir().ok().as_deref(), &data_dir);
+            if let Some(git) = &git_runtime {
+                eprintln!("hook: git at {}", git.program.display());
+            } else {
+                eprintln!("hook: git is missing; project sync is unavailable");
+            }
 
             let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
             let agents = Arc::new(
@@ -77,7 +93,8 @@ pub fn run() {
                     projects.clone(),
                     signal_tx,
                 )
-                .with_auth(auth.clone()),
+                .with_auth(auth.clone())
+                .with_git(git_runtime.clone()),
             );
 
             let preview_emit: preview::Emitter = {
@@ -86,6 +103,22 @@ pub fn run() {
                     let _ = app.emit("hook://preview", event);
                 })
             };
+
+            let sync_emit: sync::Emitter = {
+                let app = app.handle().clone();
+                Arc::new(move |event, payload| {
+                    let _ = app.emit(event, payload);
+                })
+            };
+            let sync = Arc::new(sync::SyncEngine::new(
+                sync_emit,
+                &data_dir,
+                auth.clone(),
+                store.clone(),
+                projects.clone(),
+                settings.clone(),
+                git_runtime,
+            ));
 
             let state = Arc::new(AppState {
                 app: app.handle().clone(),
@@ -98,10 +131,12 @@ pub fn run() {
                 turns: turn::TurnState::default(),
                 cfg: cfg.clone(),
                 auth: auth.clone(),
+                sync: sync.clone(),
                 vision: vision.clone(),
                 vision_off: Arc::new(Default::default()),
             });
             app.manage(state.clone());
+            sync.spawn();
 
             // One request tells us what the model can see. If the card says
             // images, the chat may send them and the engine is told so before
@@ -122,6 +157,7 @@ pub fn run() {
                         Signal::Changed => emit_agents(&supervisor),
                         Signal::Wake(wake) => {
                             emit_agents(&supervisor);
+                            supervisor.sync.wake();
                             if let Some(info) = supervisor.agents.get(&wake.agent_id) {
                                 turn::on_agent_event(supervisor.clone(), info);
                             }
@@ -209,6 +245,8 @@ pub fn run() {
             commands::agents_overview,
             commands::stop_chat_agents,
             commands::preview_state,
+            commands::sync_status,
+            commands::sync_now,
             commands::check_update,
             commands::install_update,
             commands::open_store_update,

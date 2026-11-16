@@ -630,7 +630,6 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
     ) STRICT;
     CREATE INDEX IF NOT EXISTS api_token_owner
       ON api_tokens (google_subject);
-
     -- One row per proxied model request. Headers supplied by Hook identify the
     -- chat and coding-agent run so usage can be analysed per conversation.
     CREATE TABLE IF NOT EXISTS usage_events (
@@ -676,6 +675,78 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       ON ai_reports (status, created_at);
     CREATE INDEX IF NOT EXISTS ai_report_owner
       ON ai_reports (google_subject, created_at);`);
+
+    // Scoped tokens: the desktop's app token can mint a git-only token, so a
+    // repository (or an agent reading one) never holds a credential that can
+    // spend model credits. The device id lets one install rotate its own git
+    // tokens on sign-out without disturbing the account's other computers.
+    const tokenColumns = new Set(
+      db
+        .prepare("PRAGMA table_info(api_tokens)")
+        .all()
+        .map((column) => column.name),
+    );
+    if (!tokenColumns.has("scope"))
+      db.exec(
+        "ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'app'",
+      );
+    if (!tokenColumns.has("device_id"))
+      db.exec("ALTER TABLE api_tokens ADD COLUMN device_id TEXT");
+
+    db.exec(`
+    -- A per-account monotonic cursor. Every accepted change bumps it, so one
+    -- integer tells a device everything it has not seen yet.
+    CREATE TABLE IF NOT EXISTS sync_state (
+      google_subject TEXT PRIMARY KEY NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      next_seq INTEGER NOT NULL DEFAULT 0
+    ) STRICT;
+
+    -- One row per conversation. The body is gzipped JSON; the hash lets an
+    -- unchanged push become a no-op instead of a new revision.
+    CREATE TABLE IF NOT EXISTS sync_chats (
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      chat_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      hash TEXT NOT NULL,
+      body BLOB,
+      PRIMARY KEY (google_subject, chat_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS sync_chat_seq
+      ON sync_chats (google_subject, seq);
+
+    -- Project identity and the description the chat agent maintains. The
+    -- repository itself lives on disk (GIT_ROOT), keyed by the project id.
+    CREATE TABLE IF NOT EXISTS sync_projects (
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      project_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      name TEXT NOT NULL,
+      name_key TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (google_subject, project_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS sync_project_seq
+      ON sync_projects (google_subject, seq);
+    CREATE INDEX IF NOT EXISTS sync_project_name
+      ON sync_projects (google_subject, name_key);
+
+    -- Pictures and other chat attachments, content-addressed by SHA-256. The
+    -- bytes are files next to the database; this table is the index and quota.
+    CREATE TABLE IF NOT EXISTS sync_media (
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      sha256 TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      mime TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (${NOW}),
+      PRIMARY KEY (google_subject, sha256)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS sync_media_owner
+      ON sync_media (google_subject);`);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

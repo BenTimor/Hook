@@ -41,6 +41,7 @@ export const APP_INPUTS = [
   "src-tauri/src",
   "src-tauri/resources/hook-guard.mjs",
   "scripts/fetch-pi-runtime.mjs",
+  "scripts/fetch-git.mjs",
 ];
 
 function walk(root, target, out) {

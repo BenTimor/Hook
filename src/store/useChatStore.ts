@@ -7,6 +7,7 @@ import {
   onAuthEvent,
   onChatEvent,
   onPreviewEvent,
+  onSyncEvent,
 } from "../lib/bridge";
 import type {
   AgentsOverview,
@@ -106,6 +107,7 @@ let rafId = 0;
 let booting = false;
 let unsubscribe: (() => void) | null = null;
 let unsubscribeAuth: (() => void) | null = null;
+let unsubscribeSync: (() => void) | null = null;
 
 export const useChatStore = create<ChatStore>((set, get) => {
   /** Load everything that belongs to the signed-in window. */
@@ -276,6 +278,33 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubscribe = onChatEvent(handleEvent);
       unsubscribeAuth?.();
       unsubscribeAuth = onAuthEvent(handleAuth);
+      unsubscribeSync?.();
+      unsubscribeSync = onSyncEvent((event) => {
+        if (event.projects) void get().refreshSettings();
+        if (!event.chats) return;
+        const activeId = get().activeId;
+        void api
+          .listChats()
+          .then((chats) => {
+            set({ chats: sortMetas(chats) });
+            if (!activeId || get().streams[activeId]) return;
+            void api
+              .getChat(activeId)
+              .then((chat) => {
+                if (get().activeId === activeId && !get().streams[activeId])
+                  set({ messages: chat.messages });
+              })
+              .catch(() => {
+                // It was deleted on another computer.
+                if (get().activeId === activeId)
+                  set({ activeId: null, messages: [] });
+              });
+          })
+          .catch(() => {});
+      });
+      // Returning to the window is a good moment to catch up: the other
+      // computer may have written while this one was in the background.
+      window.addEventListener("focus", () => void api.syncNow());
       onAgentsEvent((overview) => set({ agents: overview }));
       onPreviewEvent((preview) => {
         if (!preview.active) {
