@@ -119,8 +119,11 @@ function legacyRelease(env) {
   };
 }
 
-function readMinimum(env, latest) {
-  const config = readJson(resolve(env.RELEASE_CONFIG || RELEASE_CONFIG)) ?? {};
+function readConfig(env) {
+  return readJson(resolve(env.RELEASE_CONFIG || RELEASE_CONFIG)) ?? {};
+}
+
+function readMinimum(config, latest) {
   const configured =
     typeof config.minimumVersion === "string" ? config.minimumVersion : null;
   if (!configured || !parseVersion(configured)) return "0.0.0";
@@ -128,6 +131,31 @@ function readMinimum(env, latest) {
   // the newest build (or ahead of every build), the newest build is the floor.
   if (latest && compareVersions(configured, latest.version) > 0) return latest.version;
   return configured;
+}
+
+/**
+ * The Store channel moves on its own schedule: a direct build can ship days
+ * before Microsoft certifies the same version. Store builds only see updates
+ * once `store.latest` names a version that is actually live in the Store.
+ */
+function readStore(config) {
+  const storeConfig =
+    config.store && typeof config.store === "object" ? config.store : {};
+  const latest =
+    typeof storeConfig.latest === "string" && parseVersion(storeConfig.latest)
+      ? storeConfig.latest
+      : null;
+  if (!latest) return { latest: null, minimum: null };
+
+  let minimum =
+    typeof storeConfig.minimumVersion === "string" &&
+    parseVersion(storeConfig.minimumVersion)
+      ? storeConfig.minimumVersion
+      : "0.0.0";
+  // Same rule as the direct channel: never force a version the Store does not
+  // have. Raising the Store floor past its newest release falls back to it.
+  if (compareVersions(minimum, latest) > 0) minimum = latest;
+  return { latest, minimum };
 }
 
 /**
@@ -139,6 +167,7 @@ function readMinimum(env, latest) {
  */
 export function releaseIndex(env) {
   const dir = releaseDir(env);
+  const config = readConfig(env);
   const index = readJson(join(dir, RELEASE_INDEX));
 
   let releases = [];
@@ -167,7 +196,8 @@ export function releaseIndex(env) {
 
   return {
     latest: latest?.version ?? null,
-    minimum: readMinimum(env, latest),
+    minimum: readMinimum(config, latest),
+    store: readStore(config),
     updatedAt:
       index && typeof index.updatedAt === "string"
         ? index.updatedAt

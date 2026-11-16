@@ -59,6 +59,12 @@ reasoning_echo = "auto"
 base_url = "https://hookcode.io"
 required = true
 
+[update]
+# Microsoft Store product id (for example "9NBLGGH4R315"). The packaged (MSIX)
+# build sends "Update from Microsoft Store" here. Empty opens the Store's
+# downloads & updates page. The direct NSIS build ignores this.
+store_id = ""
+
 [model]
 name = "gpt-5.1"
 

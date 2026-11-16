@@ -28,6 +28,7 @@ pnpm dev           # UI in a plain browser, in-memory mock backend — fastest U
 pnpm app           # real Tauri window with hot reload
 pnpm typecheck     # tsc --noEmit across src/ + waitlist/ (the only static gate)
 pnpm app:build     # NSIS installer (fetches the pi runtime first)
+pnpm app:msix      # unsigned Microsoft Store MSIX (same exe, package identity)
 pnpm version:bump patch   # patch|minor|major — never edit a version by hand
 cd src-tauri && cargo test                       # no engine or network needed
 cd src-tauri && cargo test --lib -- --ignored    # live tests; run `pnpm mock` first
@@ -58,6 +59,8 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
   `web_search`). `guard.rs` embeds it via `include_str!`; edit the `.mjs`.
 - `src-tauri/src/update.rs` — public release index, the required/optional
   decision, checksum-checked download, NSIS hand-off.
+- `src-tauri/src/reports.rs` — in-app reports of inappropriate AI output;
+  `server/reports.mjs` stores them and `scripts/ai-reports.sh` reviews them.
 - `src-tauri/src/{provider,store,config,runtime,preview,projects,settings,auth}.rs`
   — SSE client, atomic JSON persistence, compiled TOML, engine lookup, loopback
   preview server, projects store, projects-folder setting, device login.
@@ -72,7 +75,9 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 - `server/platform.mjs` — mounts waitlist, device login, download and model
   proxy under `/api`.
 - `infra/` — reference server config, uploaded by `scripts/deploy-waitlist.sh`.
-- `release.config.json` — the oldest version allowed to keep working.
+- `release.config.json` — the direct and Store floors, and the Store's latest.
+- `msix/identity.json` — Partner Center identity + the MSIX manifest template.
+- `scripts/build-msix.mjs` — packages Hook.exe + the engine as an unsigned MSIX.
 - `scripts/app-source-hash.mjs` — what counts as a change to the desktop app.
 - `scripts/release-gate.mjs` — decides whether a push needs a Windows build.
 - `scripts/merge-release-index.mjs` — folds a build into `releases.json`.
@@ -95,11 +100,19 @@ Changing one side of a boundary is the most common way to break this repo.
   older schema.
 - **New visual token:** `src/styles/index.css`. The window is frameless and the
   glass is pure CSS, not an OS backdrop material.
+- **AI reporting / Store policy 11.16:** `ReportDialog.tsx` + `MessageItem.tsx`
+  → `bridge.ts`/`types.ts` → `commands::report_message` → `reports.rs` →
+  `server/reports.mjs` → the `ai_reports` table → `scripts/ai-reports.sh`.
+  Keep the “include the whole conversation” toggle opt-in.
 - **New release/update behavior:** `server/releases.mjs` → `server/download.mjs`
   → `src-tauri/src/update.rs` → `src/lib/types.ts` → `bridge.ts` → the update
   store/component → `server/releases.test.mjs` and the `update.rs` tests. The
   release pipeline lives in `.github/workflows/release-app.yml` plus
   `scripts/release-gate.mjs` and `scripts/merge-release-index.mjs`.
+- **Store/update channel changes:** `msix/AppxManifest.xml` +
+  `msix/identity.json` → `scripts/build-msix.mjs` → `update.rs` channel
+  detection/`store_url` → the Store branches in `UpdatePrompt` and the update
+  store → `release.config.json` `store` fields → README **Microsoft Store**.
 
 ## Hard constraints
 
@@ -119,6 +132,19 @@ Changing one side of a boundary is the most common way to break this repo.
 - **Publishing must stay non-breaking.** Installers are immutable and versioned;
   `releases.json` is swapped last. Never delete or overwrite the installer the
   current index points at.
+- **The Store channel is separate.** A packaged (MSIX) build must never run the
+  direct installer: it updates through the Store. `store.latest` is set only
+  after Microsoft certifies that version. Store submissions are uploaded
+  unsigned (`makeappx` without a cert). The MSIX manifest opts out of AppData
+  virtualization for `%APPDATA%\app.hook.chat`; keep that so the two channels
+  share data instead of forking it. The Store product name is **HookCode** (the
+  manifest display name); the app UI stays Hook.
+- **Store policy 11.16 is mandatory.** Live generative AI needs: the Report
+  action on assistant replies, the AI disclosure in the listing, the Partner
+  Center declaration, and a way to review reports (`scripts/ai-reports.sh`).
+- **Never add a signing certificate or secret to the repo.** MSIX packages are
+  re-signed by Microsoft; direct Windows signing, when added, belongs in CI
+  secrets.
 - Persistence is atomic on purpose (temp file + rename). Go through `store.rs`.
 - Preview serving is loopback-only and path-contained (`preview.rs`); keep that
   when adding routes or file kinds.
@@ -134,6 +160,9 @@ Changing one side of a boundary is the most common way to break this repo.
 - Config keys and what is compiled in → **Configure**
 - Version bumping, release gate, in-app updates → **Updates** and
   **Automatic Windows builds**
+- AI reporting for users and reviewers → **Reporting AI output**
+- Microsoft Store setup/submission, MSIX, Store update cadence →
+  **Microsoft Store (MSIX)**
 - Local data layout (`%APPDATA%\app.hook.chat`) → **Where the data lives**
 - Landing page, OAuth, model proxy → **Web waitlist** + `infra/README.md`
 - Coverage → **Tests**

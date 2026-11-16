@@ -87,3 +87,21 @@ export function apiError(res, status, message, code = "proxy_error") {
     error: { message, type: "invalid_request_error", code },
   });
 }
+
+/**
+ * The approved account behind a request: the website's waitlist session cookie
+ * or the desktop app's bearer token. Returns `{ row }` or an error shape.
+ */
+export function approvedRequest({ req, db, auth }) {
+  const profile = auth?.profileFor?.(req);
+  if (profile) {
+    return profile.waitlist_status === "approved"
+      ? { row: profile }
+      : {
+          status: 403,
+          code: "not_approved",
+          message: "Hook is not enabled for this account yet.",
+        };
+  }
+  return apiUser(db, req);
+}

@@ -3,6 +3,7 @@ import { createWaitlistApi } from "./api.mjs";
 import { createAuthRouter } from "./auth.mjs";
 import { createProxyRouter } from "./deepseek.mjs";
 import { createDownloadRouter, publicReleaseInfo } from "./download.mjs";
+import { createReportsRouter } from "./reports.mjs";
 
 /**
  * The whole hookcode.io API: existing waitlist routes, desktop device login,
@@ -51,6 +52,10 @@ export function createPlatform(env) {
     router.use(
       "/v1",
       createProxyRouter({ env, db: waitlist.db }),
+    );
+    router.use(
+      "/reports",
+      createReportsRouter({ db: waitlist.db, auth: waitlist.auth }),
     );
   }
 

@@ -655,7 +655,27 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
     CREATE INDEX IF NOT EXISTS usage_event_chat
       ON usage_events (chat_id);
     CREATE INDEX IF NOT EXISTS usage_event_agent
-      ON usage_events (agent_id);`);
+      ON usage_events (agent_id);
+
+    -- In-app reports of inappropriate AI output (Microsoft Store policy 11.16).
+    CREATE TABLE IF NOT EXISTS ai_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      chat_id TEXT NOT NULL DEFAULT '',
+      message_id TEXT NOT NULL DEFAULT '',
+      reason TEXT NOT NULL,
+      note TEXT,
+      content TEXT NOT NULL,
+      transcript TEXT,
+      app_version TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL DEFAULT (${NOW}),
+      resolved_at TEXT
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS ai_report_status
+      ON ai_reports (status, created_at);
+    CREATE INDEX IF NOT EXISTS ai_report_owner
+      ON ai_reports (google_subject, created_at);`);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

@@ -77,6 +77,8 @@ export interface UpdateInfo {
   current: string;
   latest: string;
   minimum: string;
+  /** direct = Hook installs it; store = Microsoft Store installs it. */
+  channel: "direct" | "store";
   /** A newer build exists. */
   available: boolean;
   /** The running build is below the supported floor and must update. */
@@ -85,6 +87,29 @@ export interface UpdateInfo {
   builtAt: string | null;
   commit: string | null;
   size: number | null;
+}
+
+/** Reporting inappropriate AI output (Microsoft Store policy 11.16). */
+export type ReportReason =
+  | "harmful"
+  | "sexual"
+  | "violence"
+  | "hate"
+  | "other";
+
+export interface ReportMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ReportRequest {
+  chatId: string;
+  messageId: string;
+  reason: ReportReason;
+  note: string | null;
+  content: string;
+  /** Null unless the user ticks "include the whole conversation". */
+  transcript: ReportMessage[] | null;
 }
 
 /** Download progress for an in-app update. */

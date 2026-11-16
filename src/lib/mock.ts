@@ -261,13 +261,16 @@ export const mock = {
 
   async checkUpdate(): Promise<UpdateInfo> {
     // Design-time preview: `?update=1` shows the optional banner,
-    // `?update=required` shows the blocking dialog, `?update=installing`
-    // shows the progress state.
+    // `?update=required` the blocking dialog, `?update=store` the Store
+    // banner, and `?update=store-required` the Store dialog.
     const demo = new URLSearchParams(window.location.search).get("update");
+    const store = demo === "store" || demo === "store-required";
+    const requiredDemo = demo === "required" || demo === "store-required";
     const idle = {
       current: info.version,
       latest: info.version,
       minimum: "0.0.0",
+      channel: store ? ("store" as const) : ("direct" as const),
       available: false,
       required: false,
       notes: null,
@@ -279,9 +282,10 @@ export const mock = {
     return {
       ...idle,
       latest: "0.2.0",
-      minimum: demo === "required" ? "0.2.0" : "0.1.0",
+      minimum: requiredDemo ? "0.2.0" : "0.1.0",
+      channel: store ? ("store" as const) : ("direct" as const),
       available: true,
-      required: demo === "required",
+      required: requiredDemo,
       notes: "Updates install themselves now, and the task board keeps its place.",
       builtAt: new Date().toISOString(),
       commit: "abc1234",
@@ -293,6 +297,16 @@ export const mock = {
     // The desktop app exits and hands over to the installer; the browser
     // preview stops at the progress state (see useUpdateStore).
     await sleep(30_000);
+  },
+
+  async openStoreUpdate(): Promise<void> {
+    // Nothing to open outside the desktop shell; the preview only shows the
+    // Store button and its copy.
+  },
+
+  async reportMessage(): Promise<void> {
+    // The preview shows the dialog; sending it only needs a short pause.
+    await sleep(250);
   },
 
   async authStatus(): Promise<AuthView> {

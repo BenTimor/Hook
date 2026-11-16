@@ -5,6 +5,7 @@ mod config;
 mod guard;
 mod projects;
 mod preview;
+mod reports;
 mod provider;
 mod runtime;
 mod settings;
@@ -210,6 +211,8 @@ pub fn run() {
             commands::preview_state,
             commands::check_update,
             commands::install_update,
+            commands::open_store_update,
+            commands::report_message,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Hook")

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, Copy, Pencil, RefreshCw } from "lucide-react";
+import { AlertCircle, Check, Copy, Flag, Pencil, RefreshCw } from "lucide-react";
 
 import type { Message } from "../lib/types";
 import { copyText } from "../lib/utils";
+import { useChatStore } from "../store/useChatStore";
 import { Markdown } from "./Markdown";
 import { MessageImages } from "./MessageImages";
+import { ReportDialog } from "./ReportDialog";
 
 interface Props {
   message: Message;
@@ -36,6 +38,8 @@ export function MessageItem({
 }: Props) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  const chatId = useChatStore((s) => s.activeId);
   const [editText, setEditText] = useState(message.content);
   const timer = useRef<number | undefined>(undefined);
 
@@ -157,7 +161,21 @@ export function MessageItem({
             Regenerate
           </button>
         )}
+        {!streaming && message.content.trim() && chatId && (
+          <button className="mini-btn" onClick={() => setReporting(true)}>
+            <Flag strokeWidth={1.8} />
+            Report
+          </button>
+        )}
       </div>
+
+      {reporting && chatId ? (
+        <ReportDialog
+          chatId={chatId}
+          message={message}
+          onClose={() => setReporting(false)}
+        />
+      ) : null}
     </div>
   );
 }

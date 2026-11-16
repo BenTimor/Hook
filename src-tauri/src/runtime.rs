@@ -280,6 +280,7 @@ mod tests {
             auth: AuthConfig::default(),
             coding: CodingConfig::default(),
             agent: Default::default(),
+            update: Default::default(),
         }
     }
 

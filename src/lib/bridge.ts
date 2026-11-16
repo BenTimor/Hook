@@ -12,6 +12,7 @@ import type {
   ChatMeta,
   PreviewEvent,
   PreviewView,
+  ReportRequest,
   SearchHit,
   SettingsView,
   StreamEvent,
@@ -269,6 +270,14 @@ export const api = {
 
   installUpdate: (): Promise<void> =>
     isTauri() ? invoke<void>("install_update") : mock.installUpdate(),
+
+  openStoreUpdate: (): Promise<void> =>
+    isTauri() ? invoke<void>("open_store_update") : mock.openStoreUpdate(),
+
+  reportMessage: (payload: ReportRequest): Promise<void> =>
+    isTauri()
+      ? invoke<void>("report_message", { payload })
+      : mock.reportMessage(),
 
   previewState: (): Promise<PreviewView | null> =>
     isTauri()

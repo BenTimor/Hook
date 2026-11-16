@@ -571,6 +571,26 @@ pub async fn check_update(state: State<'_, Arc<AppState>>) -> Result<crate::upda
     crate::update::check(&state.cfg).await
 }
 
+/// Send an in-app report of inappropriate AI output (Store policy 11.16).
+#[tauri::command]
+pub async fn report_message(
+    state: State<'_, Arc<AppState>>,
+    mut payload: crate::reports::ReportRequest,
+) -> Result<(), String> {
+    let token = state
+        .auth
+        .token()
+        .ok_or("Sign in to report a message.")?;
+    payload.app_version = crate::update::current_version();
+    crate::reports::submit(&state.cfg, &token, &payload).await
+}
+
+/// Open the Microsoft Store's update surface for a packaged (MSIX) build.
+#[tauri::command]
+pub fn open_store_update(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    crate::update::open_store(&state.cfg)
+}
+
 /// Download the newest installer, verify it, launch it and exit Hook. The
 /// installer replaces this build and starts it again.
 #[tauri::command]

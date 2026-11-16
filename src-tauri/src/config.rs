@@ -18,6 +18,16 @@ pub struct HarnessConfig {
     /// Chat-agent behaviour. Optional section.
     #[serde(default)]
     pub agent: AgentConfig,
+    /// Update channel details. Optional section.
+    #[serde(default)]
+    pub update: UpdateConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UpdateConfig {
+    /// Microsoft Store product id. Empty opens the Store's update page.
+    #[serde(default)]
+    pub store_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

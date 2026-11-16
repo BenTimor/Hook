@@ -58,6 +58,12 @@ stream_usage = true
 base_url = "https://hookcode.io"
 required = true
 
+[update]
+# Microsoft Store product id (for example "9NBLGGH4R315"). The packaged (MSIX)
+# build sends "Update from Microsoft Store" here. Empty opens the Store's
+# downloads & updates page. The direct NSIS build ignores this.
+store_id = "9NX9J93HP25M"
+
 [model]
 # The single model id the proxy and the coding engine share. The proxy ignores
 # the name and forwards to the model configured on the server.

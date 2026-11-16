@@ -19,6 +19,8 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "release.config.json"
+      - "msix/**"
+      - "scripts/build-msix.mjs"
       - "scripts/app-source-hash.mjs"
       - "scripts/release-gate.mjs"
       - "scripts/build-release-manifest.mjs"
@@ -111,6 +113,11 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item $exe.FullName "release/Hook-${{ needs.check.outputs.version }}-setup.exe" -Force
           Write-Host "installer: $($exe.Name) ($([math]::Round($exe.Length / 1MB, 1)) MB)"
+
+      # Packages the same Hook.exe as an unsigned MSIX for Microsoft Store
+      # submission. Exits cleanly while msix/identity.json is unconfigured.
+      - name: Package Microsoft Store MSIX
+        run: node scripts/build-msix.mjs
 
       - name: Write version manifest
         env:

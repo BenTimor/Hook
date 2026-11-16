@@ -35,6 +35,9 @@ function fixture() {
     writeMinimum(version) {
       writeFileSync(config, JSON.stringify({ minimumVersion: version }));
     },
+    writeStore(store) {
+      writeFileSync(config, JSON.stringify({ minimumVersion: "0.1.0", store }));
+    },
   };
 }
 
@@ -121,6 +124,32 @@ test("the minimum comes from the committed config and never exceeds latest", (t)
   assert.equal(releaseIndex(f.env).minimum, "0.1.0");
   f.writeMinimum("garbage");
   assert.equal(releaseIndex(f.env).minimum, "0.0.0");
+});
+
+test("the Store channel has its own latest and floor", (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.directory, { recursive: true, force: true }));
+
+  f.writeInstaller("Hook-0.1.1-setup.exe");
+  f.writeIndex({ "0.1.1": { file: "Hook-0.1.1-setup.exe" } });
+
+  assert.deepEqual(releaseIndex(f.env).store, { latest: null, minimum: null });
+
+  f.writeStore({ latest: "0.1.0", minimumVersion: "0.1.0" });
+  assert.deepEqual(releaseIndex(f.env).store, {
+    latest: "0.1.0",
+    minimum: "0.1.0",
+  });
+
+  // A Store floor ahead of the newest Store build is clamped, never forced.
+  f.writeStore({ latest: "0.1.0", minimumVersion: "0.2.0" });
+  assert.deepEqual(releaseIndex(f.env).store, {
+    latest: "0.1.0",
+    minimum: "0.1.0",
+  });
+
+  // The direct channel is unaffected by the Store pair.
+  assert.equal(releaseIndex(f.env).latest, "0.1.1");
 });
 
 test("the legacy single-slot layout still works", (t) => {

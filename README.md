@@ -456,6 +456,10 @@ recent releases with their sizes, checksums and dates. What Hook does with it:
   without rebuilding the app. The server clamps a floor above the newest
   published build to that build, so a typo cannot brick everyone.
 
+A packaged Microsoft Store build uses its own pair (`store.latest` /
+`store.minimumVersion`) because certification lags behind direct releases; see
+**Microsoft Store (MSIX)** below.
+
 "Update now" downloads the installer with the signed-in token, checks it against
 the published SHA-256, and hands it to the NSIS installer in passive update mode
 (`/P /UPDATE /R`). The installer replaces Hook and starts it again; chats,
@@ -477,6 +481,163 @@ release is still a manual download; everything after it is one click. `release.c
 `https://hookcode.io/api/releases`; the website's signed-in download uses the
 same data, and `/api/download/windows?version=` pins an exact build.
 
+## Reporting AI output
+
+Every completed assistant reply has a **Report** action. The dialog sends the
+reply, a reason, an optional note, and — only when “Include the whole
+conversation” is ticked — the current chat's messages, to `POST /api/reports`
+with the signed-in token. Reports are stored in the `ai_reports` table and the
+privacy policy documents the exception to “conversations stay on your machine”.
+
+Review and resolve them on the server:
+
+```bash
+./scripts/ai-reports.sh --list
+./scripts/ai-reports.sh --show 12
+./scripts/ai-reports.sh --resolve 12
+```
+
+The Store requires this mechanism (policy 11.16); see **Microsoft Store
+(MSIX)** below.
+
+## Microsoft Store (MSIX)
+
+Hook also ships as an MSIX through the Microsoft Store. Microsoft signs that
+package with its own certificate, so Store installs never see a SmartScreen
+prompt even though the direct installer is unsigned. This is a second channel,
+not a replacement: the direct NSIS installer and the custom updater keep
+working, and the same source will later build macOS and Linux packages.
+
+### One-time setup (Partner Center)
+
+1. Create a free developer account at
+   [storedeveloper.microsoft.com](https://storedeveloper.microsoft.com). A
+   Company account needs a D-U-N-S number (or incorporation/registration
+   documents) and a business-domain email; an Individual account verifies with
+   an ID and selfie. Both are free.
+2. Partner Center → Apps and Games → New product → **MSIX or PWA app** → reserve
+   the name `HookCode`.
+3. On the product's **Package identity** page, copy the Identity Name (for
+   example `BenTimor.HookCode`), the Publisher (`CN=...`) and the Store ID
+   (`9N...`).
+4. Fill `msix/identity.json` with those values and a publisher display name.
+5. Put the Store ID in `harness.config.ci.toml`:
+
+   ```toml
+   [update]
+   store_id = "9N..."
+   ```
+
+The reserved product name is **HookCode**; the MSIX display name matches it, while
+the app's own window and chat UI stay branded **Hook**. Until step 4,
+`node scripts/build-msix.mjs` prints these instructions and exits without
+packaging, so a direct release is never blocked by an unconfigured Store
+identity.
+
+### Build the package
+
+```bash
+pnpm app:msix      # fetch the engine, build Hook.exe, package the MSIX
+```
+
+The result is `release/Hook-<version>-x64.msix` (about 43 MB). The release
+workflow runs the same packaging step after the NSIS build and keeps the `.msix`
+in the `hook-windows-release` artifact for 14 days. The package is deliberately
+unsigned: Partner Center re-signs Store submissions, and signing it yourself
+with a self-signed certificate only breaks the upload. For local sideload
+testing, pass `--sign dev.pfx --password …` to sign with a development
+certificate.
+
+The package contains `Hook.exe` plus `resources/pi-runtime` and declares
+`runFullTrust` (the coding agents spawn a bundled Node runtime and work in the
+user's project folders) and `unvirtualizedResources`. The latter opts
+`%APPDATA%\app.hook.chat` out of MSIX AppData virtualization, so the Store and
+direct builds share chats, sign-in and project notes — and uninstalling the
+Store app does not delete them. It needs the Evergreen WebView2 Runtime, which is
+preinstalled on Windows 11 and on Windows 10 machines with Edge; the Store
+listing states the requirement.
+
+### Store policy 11.16: live generative AI
+
+Hook replies and coding-agent steps are created live by a model, so the Store
+requires four things — all but the Partner Center declarations are handled by
+the app:
+
+| Requirement | Where |
+|---|---|
+| Disclose live generative AI in the listing | description draft below |
+| Declare it in Partner Center | Properties → “This product incorporates generative AI features” |
+| Let users report inappropriate output | **Report** on every assistant reply, with an optional “include the whole conversation” toggle |
+| Act on reports | `./scripts/ai-reports.sh --list`, `--show <id>`, `--resolve <id>` |
+
+The endpoint is `POST /api/reports` (approved accounts only). It stores the
+reported reply, reason, optional note, optional transcript, account and app
+version in the `ai_reports` table; the privacy policy documents it. The reply is
+always included, so the dialog warns against reporting secrets.
+
+### Store listing draft
+
+> HookCode is a local AI chat app with coding agents. Chat with one powerful
+> model and hand real work to agents that read, edit and run projects on your
+> PC. Conversations, projects and the coding engine stay on your machine; an
+> approved account unlocks the model.
+>
+> HookCode uses live generative AI: every reply and every coding-agent step is
+> produced by an AI model in response to what you type. AI output can be wrong
+> or inappropriate — verify important results, and use the Report action on any
+> reply to send it to us for review.
+>
+> Sign in with an approved Google account. Windows 10 (2004) or Windows 11 with
+> the WebView2 Runtime.
+
+### Submit
+
+1. Partner Center → your product → Submission → Packages → upload the `.msix`.
+2. Fill the listing: the description above (it contains the required AI
+   disclosure), at least one desktop screenshot at 1366×768 or larger (5–8
+   recommended), an optional 300×300 app tile icon, category, support contact,
+   the age-rating questionnaire, and privacy policy
+   `https://hookcode.io/privacy`.
+3. On **Properties**, tick “This product incorporates generative AI features”.
+4. **Notes for certification:** HookCode requires an approved account. Include
+   a test account whose email is approved (or approve the reviewer's), and
+   explain that **Sign in** opens a Google device-login page. Point testers at
+   the **Report** action on an assistant reply, and mention that
+   `unvirtualizedResources` keeps the existing desktop app data (chats, the
+   account token and coding-agent sessions) in `%APPDATA%\app.hook.chat`, so a
+   Store install continues an existing installation instead of starting blank.
+5. Before submitting, install the package on a clean Windows 11 VM and run the
+   **Windows App Certification Kit**. For sideload testing, sign the MSIX with a
+   development certificate whose subject matches the manifest `Publisher`
+   (`node scripts/build-msix.mjs --sign dev.pfx --password …`), trust that
+   certificate, then `Add-AppxPackage release\Hook-<version>-x64.msix`. WebView2
+   must be present; the listing states the requirement.
+6. Submit. The first review is typically about two days; updates are usually
+   under 24 hours.
+
+### Store updates move on their own schedule
+
+A direct build can ship days before Microsoft certifies the same version, so the
+Store channel has its own latest and floor in `release.config.json`:
+
+```json
+{
+  "minimumVersion": "0.1.0",
+  "store": { "latest": "0.1.2", "minimumVersion": "0.1.2" }
+}
+```
+
+A packaged build detects its MSIX identity at runtime and reads
+`store.latest` / `store.minimumVersion` instead of the direct pair. Nothing is
+shown until `store.latest` names a version that is actually live in the Store.
+After the Store submission is approved, set `store.latest` to that version and
+push: the website deploy updates the config, with no app rebuild.
+
+Direct updates are unchanged. The unpackaged build still downloads the NSIS
+installer with its account token, verifies the SHA-256 and installs it in place.
+Keep one channel installed at a time: both builds write the same
+`%APPDATA%\app.hook.chat` data folder.
+
 ## Where the data lives
 
 ```
@@ -496,11 +657,14 @@ same data, and `/api/download/windows?version=` pins an exact build.
   hook-guard.mjs           the guard loaded into every coding agent
 ```
 
-In-app updates download installers to `%TEMP%\hook-update\`; nothing else is
-written outside this folder.
+The Microsoft Store (MSIX) build writes to the same `%APPDATA%\app.hook.chat`
+folder: its manifest opts out of AppData virtualization so Store and direct
+installs share chats and sign-in. In-app updates download installers to
+`%TEMP%\hook-update\`; nothing else is written outside this folder.
 
 The app keeps no local database and no sync. Conversations never leave the
-machine; the account service sees the request metadata described above (token
+machine — except when you deliberately send an AI report (see **Reporting AI
+output**) — and the account service sees the request metadata described above (token
 counts, cache hits, a chat id and a coding-agent run id) and stores it next to the
 account. Deleting the folder resets the local app; revoke the account on the
 server to remove access.

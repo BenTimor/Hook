@@ -45,6 +45,9 @@ function UpdateProgress({
  * One optional banner plus one blocking dialog, driven by the same check.
  * Required updates cannot be dismissed; optional ones can wait until next
  * launch (the banner stays gone for the session, the check runs again later).
+ *
+ * The Store channel has no download or progress: the Microsoft Store owns the
+ * install, so the button opens the product page instead.
  */
 export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
   const info = useUpdateStore((s) => s.info);
@@ -61,7 +64,10 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
 
   if (!info?.available) return null;
 
-  if (info.required || installing) {
+  const store = info.channel === "store";
+  const required = info.required;
+
+  if (required || installing) {
     return (
       <div className="update-backdrop">
         <div
@@ -82,16 +88,22 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
             <h2 id="update-title">
               {installing
                 ? "Updating Hook"
-                : info.required
+                : required
                   ? "This version is out of date"
                   : `Hook ${info.latest} is ready`}
             </h2>
             <p>
               {installing
                 ? "Hook downloads the new version, checks it, and restarts itself. Your chats stay on this machine."
-                : info.required
-                  ? `Hook ${info.minimum} is now the oldest supported version. Updating keeps your account, chats and projects exactly where they are.`
-                  : `You're on ${info.current}. The new version is downloaded and installed here — no website, no manual setup.`}
+                : store
+                  ? required
+                    ? `Hook ${info.minimum} is now the oldest supported version. Update from the Microsoft Store to keep using Hook — your account, chats and projects stay exactly where they are.`
+                    : `You're on ${info.current}. The new version is delivered by the Microsoft Store and installs itself.`
+                  : !signedIn
+                    ? `Hook ${info.minimum} is now the oldest supported version. Sign in and Hook installs the update for you — your account, chats and projects stay exactly where they are.`
+                    : required
+                      ? `Hook ${info.minimum} is now the oldest supported version. Updating keeps your account, chats and projects exactly where they are.`
+                      : `You're on ${info.current}. The new version is downloaded and installed here — no website, no manual setup.`}
             </p>
             {info.notes && !installing ? (
               <p className="update-dialog-notes">{info.notes}</p>
@@ -111,7 +123,25 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
 
           {!installing ? (
             <div className="update-dialog-actions">
-              {!signedIn ? (
+              {store ? (
+                <>
+                  {required ? (
+                    <span className="update-reassure">
+                      This update is required to keep using Hook.
+                    </span>
+                  ) : (
+                    <button className="btn" onClick={dismiss}>
+                      Later
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => void install()}
+                  >
+                    Update from Microsoft Store
+                  </button>
+                </>
+              ) : !signedIn ? (
                 <>
                   <span className="update-reassure">
                     This update is required to keep using Hook.
@@ -126,7 +156,7 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
                 </>
               ) : (
                 <>
-                  {info.required ? (
+                  {required ? (
                     <span className="update-reassure">
                       This update is required to keep using Hook.
                     </span>
@@ -158,14 +188,21 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
         <ArrowUpCircle strokeWidth={1.8} />
       </span>
       <div className="update-banner-copy">
-        <strong>Hook {info.latest} is ready</strong>
+        <strong>
+          {store
+            ? `Hook ${info.latest} is in the Microsoft Store`
+            : `Hook ${info.latest} is ready`}
+        </strong>
         <span>
-          {info.notes ?? `You're on ${info.current}.`}
-          {info.size ? ` · ${formatSize(info.size)}` : ""}
+          {info.notes ??
+            (store
+              ? `You're on ${info.current}. The Store installs it for you.`
+              : `You're on ${info.current}.`)}
+          {!store && info.size ? ` · ${formatSize(info.size)}` : ""}
         </span>
       </div>
       <button className="btn btn-primary" onClick={() => void install()}>
-        Update now
+        {store ? "Open Microsoft Store" : "Update now"}
       </button>
       <button className="icon-btn" onClick={dismiss} title="Later">
         <X strokeWidth={2} />

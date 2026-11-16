@@ -10,9 +10,12 @@ on every deploy — edit it *here*, not on the server.
 | `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, download, release index) to the container, `www` → apex redirect |
 
 `release.config.json` (repo root) is copied into the image by the Dockerfile. It
-holds `minimumVersion`, the oldest desktop build allowed to keep working; raising
-it forces older installs to update on their next check, without rebuilding the
-app. It is shipped by `deploy-waitlist.sh` like any other tracked file.
+holds the direct channel's `minimumVersion` (oldest build allowed to keep
+working) and the Microsoft Store channel's own `store.latest` /
+`store.minimumVersion`. Raising a floor forces older installs to update on their
+next check, without rebuilding the app, and `store.latest` is set only after a
+Store submission is certified. It is shipped by `deploy-waitlist.sh` like any
+other tracked file.
 
 ## Release slot
 
@@ -73,6 +76,17 @@ the model proxy and the installer download), and the VPS has no Node runtime, so
 the API runs as a container. Caddy still
 serves the static build itself, which means a rebuild of the API or a missing
 `/opt/hook-web/.env` never takes the marketing page down.
+
+## AI content reports
+
+`ai_reports` in the same SQLite database holds in-app reports of inappropriate
+AI output (Microsoft Store policy 11.16). Review them from the dev machine:
+
+```bash
+./scripts/ai-reports.sh --list
+./scripts/ai-reports.sh --show 12
+./scripts/ai-reports.sh --resolve 12
+```
 
 ## Common commands
 

@@ -67,6 +67,17 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
 
   install: async () => {
     if (get().installing) return;
+
+    // The Store owns the install for packaged builds: open its product page.
+    if (get().info?.channel === "store") {
+      try {
+        await api.openStoreUpdate();
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+      return;
+    }
+
     set({ installing: true, phase: "downloading", progress: null, error: null });
 
     if (!isTauri()) {

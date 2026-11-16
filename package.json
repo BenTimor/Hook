@@ -1,9 +1,9 @@
 {
   "name": "hook",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
-  "description": "Hook \u00e2\u20ac\u201d a local, single-provider AI chat harness",
+  "description": "Hook â€” a local, single-provider AI chat harness",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -19,7 +19,8 @@
     "app:build": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build",
     "app:portable": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build --no-bundle && node scripts/make-portable.mjs",
     "engine": "node scripts/fetch-pi-runtime.mjs",
-    "version:bump": "node scripts/bump-version.mjs"
+    "version:bump": "node scripts/bump-version.mjs",
+    "app:msix": "node scripts/fetch-pi-runtime.mjs && node scripts/tauri.mjs build --no-bundle && node scripts/build-msix.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",

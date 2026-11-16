@@ -300,6 +300,7 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       const index = await response.json();
       assert.equal(index.latest, "1.2.3");
       assert.equal(index.minimum, "1.0.0");
+      assert.deepEqual(index.store, { latest: null, minimum: null });
       assert.equal(index.releases[0].version, "1.2.3");
       // The merge tool needs the file name to preserve history; it is not a
       // secret, only the download itself is gated.
@@ -340,6 +341,81 @@ test("approved users can sign in a device, use the proxy, see usage, download an
 
       const denied = await request("/download/info", { cookie: waitingCookie });
       assert.equal(denied.status, 403);
+    });
+
+    await t.test("an approved user can report AI output, with the conversation if opted in", async () => {
+      const transcript = [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "inappropriate reply" },
+      ];
+      const response = await request("/reports", {
+        method: "POST",
+        token,
+        body: {
+          chatId: "chat_1",
+          messageId: "msg_1",
+          reason: "harmful",
+          note: "This is not acceptable.",
+          content: "inappropriate reply",
+          transcript,
+          appVersion: "0.1.2",
+        },
+      });
+      assert.equal(response.status, 201);
+      assert.deepEqual(await response.json(), { ok: true });
+
+      const report = db
+        .prepare("SELECT * FROM ai_reports ORDER BY id DESC LIMIT 1")
+        .get();
+      assert.equal(report.google_subject, "approved-1");
+      assert.equal(report.chat_id, "chat_1");
+      assert.equal(report.reason, "harmful");
+      assert.equal(report.content, "inappropriate reply");
+      assert.equal(report.transcript, JSON.stringify(transcript));
+      assert.equal(report.app_version, "0.1.2");
+      assert.equal(report.status, "open");
+    });
+
+    await t.test("a report without the transcript stores only the reported reply", async () => {
+      const response = await request("/reports", {
+        method: "POST",
+        token,
+        body: {
+          chatId: "chat_1",
+          messageId: "msg_2",
+          reason: "other",
+          content: "another reply",
+        },
+      });
+      assert.equal(response.status, 201);
+      const report = db
+        .prepare("SELECT * FROM ai_reports ORDER BY id DESC LIMIT 1")
+        .get();
+      assert.equal(report.transcript, null);
+      assert.equal(report.note, null);
+    });
+
+    await t.test("reports are rejected without an approved account or a valid reason", async () => {
+      const anonymous = await request("/reports", {
+        method: "POST",
+        body: { reason: "harmful", content: "reply" },
+      });
+      assert.equal(anonymous.status, 401);
+
+      const waiting = await request("/reports", {
+        method: "POST",
+        cookie: waitingCookie,
+        body: { reason: "harmful", content: "reply" },
+      });
+      assert.equal(waiting.status, 403);
+
+      const invalid = await request("/reports", {
+        method: "POST",
+        token,
+        body: { reason: "not-a-reason", content: "reply" },
+      });
+      assert.equal(invalid.status, 400);
+      assert.equal((await invalid.json()).error, "invalid_reason");
     });
 
     await t.test("a bad server-side provider key is a 502, not a revoked client session", async () => {

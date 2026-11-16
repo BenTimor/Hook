@@ -55,6 +55,26 @@ pub struct ReleaseIndex {
     pub minimum: Option<String>,
     #[serde(default)]
     pub releases: Vec<ReleaseEntry>,
+    /// The Store channel's own latest/floor, updated after certification.
+    #[serde(default)]
+    pub store: Option<StoreIndex>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreIndex {
+    #[serde(default)]
+    pub latest: Option<String>,
+    #[serde(default)]
+    pub minimum: Option<String>,
+}
+
+/// How this build receives updates. A packaged MSIX cannot run an installer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    Direct,
+    Store,
 }
 
 /// What the window needs to draw the banner, the blocking dialog, or nothing.
@@ -64,6 +84,8 @@ pub struct UpdateInfo {
     pub current: String,
     pub latest: String,
     pub minimum: String,
+    /// `direct` (Hook installs it) or `store` (Microsoft Store installs it).
+    pub channel: UpdateChannel,
     /// A newer build exists.
     pub available: bool,
     /// The running build is below the supported floor and must update.
@@ -124,11 +146,12 @@ pub fn compare_versions(left: &str, right: &str) -> Ordering {
         })
 }
 
-fn idle(current: &str) -> UpdateInfo {
+fn idle(current: &str, channel: UpdateChannel) -> UpdateInfo {
     UpdateInfo {
         current: current.to_string(),
         latest: current.to_string(),
         minimum: "0.0.0".into(),
+        channel,
         available: false,
         required: false,
         notes: None,
@@ -139,39 +162,133 @@ fn idle(current: &str) -> UpdateInfo {
 }
 
 /// Pure mapping from the published index to what this build should do.
-pub fn build_info(index: &ReleaseIndex, current: &str) -> Option<UpdateInfo> {
-    let latest = index.latest.clone().or_else(|| {
-        index
-            .releases
-            .iter()
-            .max_by(|left, right| compare_versions(&left.version, &right.version))
-            .map(|entry| entry.version.clone())
-    })?;
-    let entry = index
-        .releases
-        .iter()
-        .find(|entry| entry.version == latest)?;
-    let minimum = index
-        .minimum
-        .clone()
-        .filter(|value| parse_version(value).is_some())
-        .unwrap_or_else(|| "0.0.0".into());
+///
+/// Direct builds read `latest`/`minimum`; a packaged MSIX reads the Store's own
+/// pair, which only moves after Microsoft certifies a release.
+pub fn build_info(
+    index: &ReleaseIndex,
+    current: &str,
+    channel: UpdateChannel,
+) -> Option<UpdateInfo> {
+    let (latest, minimum) = match channel {
+        UpdateChannel::Direct => {
+            let latest = index.latest.clone().or_else(|| {
+                index
+                    .releases
+                    .iter()
+                    .max_by(|left, right| compare_versions(&left.version, &right.version))
+                    .map(|entry| entry.version.clone())
+            })?;
+            let minimum = index
+                .minimum
+                .clone()
+                .filter(|value| parse_version(value).is_some())
+                .unwrap_or_else(|| "0.0.0".into());
+            (latest, minimum)
+        }
+        UpdateChannel::Store => {
+            let store = index.store.as_ref()?;
+            let latest = store
+                .latest
+                .clone()
+                .filter(|value| parse_version(value).is_some())?;
+            let minimum = store
+                .minimum
+                .clone()
+                .filter(|value| parse_version(value).is_some())
+                .unwrap_or_else(|| "0.0.0".into());
+            // A Store floor above the newest Store build cannot be satisfied,
+            // so it falls back to that build instead of forcing the impossible.
+            let minimum = if compare_versions(&minimum, &latest) == Ordering::Greater {
+                latest.clone()
+            } else {
+                minimum
+            };
+            (latest, minimum)
+        }
+    };
+
+    let entry = index.releases.iter().find(|entry| entry.version == latest);
+    // A direct update without an installer cannot be installed; a Store update
+    // is fetched by the Store itself and does not need a release entry.
+    if channel == UpdateChannel::Direct && entry.is_none() {
+        return None;
+    }
 
     let behind_latest = compare_versions(current, &latest) == Ordering::Less;
-    // A floor above the newest build cannot be satisfied, so it never forces.
     let below_minimum = compare_versions(current, &minimum) == Ordering::Less;
 
     Some(UpdateInfo {
         current: current.to_string(),
         latest,
         minimum,
+        channel,
         available: behind_latest,
         required: behind_latest && below_minimum,
-        notes: entry.notes.clone(),
-        built_at: entry.built_at.clone(),
-        commit: entry.commit.clone(),
-        size: entry.size,
+        notes: entry.and_then(|entry| entry.notes.clone()),
+        built_at: entry.and_then(|entry| entry.built_at.clone()),
+        commit: entry.and_then(|entry| entry.commit.clone()),
+        size: entry.and_then(|entry| entry.size),
     })
+}
+
+/// Whether this process runs from an MSIX package.
+#[cfg(windows)]
+fn packaged() -> bool {
+    const APPMODEL_ERROR_NO_PACKAGE: i32 = 15700;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentPackageFullName(length: *mut u32, name: *mut u16) -> i32;
+    }
+    let mut length = 0u32;
+    let result = unsafe { GetCurrentPackageFullName(&mut length, std::ptr::null_mut()) };
+    result != APPMODEL_ERROR_NO_PACKAGE
+}
+
+#[cfg(not(windows))]
+fn packaged() -> bool {
+    false
+}
+
+pub fn current_channel() -> UpdateChannel {
+    if packaged() {
+        UpdateChannel::Store
+    } else {
+        UpdateChannel::Direct
+    }
+}
+
+/// The Store page to open for a packaged build.
+pub fn store_url(cfg: &HarnessConfig) -> String {
+    store_url_for(cfg.update.store_id.as_deref())
+}
+
+fn store_url_for(store_id: Option<&str>) -> String {
+    match store_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => format!("ms-windows-store://pdp/?productid={id}"),
+        None => "ms-windows-store://downloadsandupdates".to_string(),
+    }
+}
+
+/// Open the Store's update surface. Store apps never download an installer.
+pub fn open_store(cfg: &HarnessConfig) -> Result<(), String> {
+    let url = store_url(cfg);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("cmd.exe")
+            .args(["/C", "start", "", &url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| format!("Could not open the Microsoft Store: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
+        Err("The Microsoft Store is available on Windows only.".into())
+    }
 }
 
 fn base(cfg: &HarnessConfig) -> &str {
@@ -213,12 +330,13 @@ async fn fetch_index(cfg: &HarnessConfig) -> Result<ReleaseIndex, String> {
 /// Read the published index and compare it with this build.
 pub async fn check(cfg: &HarnessConfig) -> Result<UpdateInfo, String> {
     let current = current_version();
+    let channel = current_channel();
     if !cfg.auth.required {
         // Local mock builds never talk to hookcode.io.
-        return Ok(idle(&current));
+        return Ok(idle(&current, channel));
     }
     let index = fetch_index(cfg).await?;
-    Ok(build_info(&index, &current).unwrap_or_else(|| idle(&current)))
+    Ok(build_info(&index, &current, channel).unwrap_or_else(|| idle(&current, channel)))
 }
 
 fn safe_version(value: &str) -> bool {
@@ -254,9 +372,12 @@ async fn install_inner(
     if !cfg.auth.required {
         return Err("This build does not install updates.".into());
     }
+    if current_channel() == UpdateChannel::Store {
+        return Err("This build updates through the Microsoft Store.".into());
+    }
 
     let index = fetch_index(cfg).await?;
-    let info = build_info(&index, &current_version())
+    let info = build_info(&index, &current_version(), UpdateChannel::Direct)
         .ok_or("The update service did not describe a downloadable version.")?;
     if !info.available {
         return Err("Hook is already up to date.".into());
@@ -440,7 +561,7 @@ mod tests {
                 ]
             }"#,
         );
-        let info = build_info(&index, "0.2.0").unwrap();
+        let info = build_info(&index, "0.2.0", UpdateChannel::Direct).unwrap();
         assert_eq!(info.latest, "0.3.0");
         assert!(info.available);
         assert!(!info.required);
@@ -456,7 +577,7 @@ mod tests {
                 "releases": [{ "version": "0.3.0", "sha256": "abc" }]
             }"#,
         );
-        let info = build_info(&index, "0.1.0").unwrap();
+        let info = build_info(&index, "0.1.0", UpdateChannel::Direct).unwrap();
         assert!(info.available);
         assert!(info.required);
         assert_eq!(info.minimum, "0.2.0");
@@ -467,7 +588,7 @@ mod tests {
         let index = index(
             r#"{ "latest": "0.3.0", "minimum": "0.3.0", "releases": [{ "version": "0.3.0" }] }"#,
         );
-        let info = build_info(&index, "0.3.0").unwrap();
+        let info = build_info(&index, "0.3.0", UpdateChannel::Direct).unwrap();
         assert!(!info.available);
         assert!(!info.required);
     }
@@ -477,7 +598,7 @@ mod tests {
         let index = index(
             r#"{ "latest": "0.3.0", "minimum": "9.0.0", "releases": [{ "version": "0.3.0" }] }"#,
         );
-        let info = build_info(&index, "0.3.0").unwrap();
+        let info = build_info(&index, "0.3.0", UpdateChannel::Direct).unwrap();
         // The newest build is the real floor; a config mistake cannot brick it.
         assert!(!info.available);
         assert!(!info.required);
@@ -494,13 +615,85 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(build_info(&index, "0.1.0").unwrap().latest, "0.2.0");
+        assert_eq!(build_info(&index, "0.1.0", UpdateChannel::Direct).unwrap().latest, "0.2.0");
     }
 
     #[test]
     fn an_empty_index_is_not_an_update() {
         let index = index(r#"{ "latest": null, "releases": [] }"#);
-        assert!(build_info(&index, "0.1.0").is_none());
+        assert!(build_info(&index, "0.1.0", UpdateChannel::Direct).is_none());
+    }
+
+    #[test]
+    fn a_store_build_reads_the_store_fields_not_the_direct_ones() {
+        let index = index(
+            r#"{
+                "latest": "0.5.0",
+                "minimum": "0.5.0",
+                "store": { "latest": "0.4.0", "minimum": "0.3.0" },
+                "releases": [{ "version": "0.5.0" }, { "version": "0.4.0" }]
+            }"#,
+        );
+        let info = build_info(&index, "0.3.0", UpdateChannel::Store).unwrap();
+        assert_eq!(info.channel, UpdateChannel::Store);
+        assert_eq!(info.latest, "0.4.0");
+        assert_eq!(info.minimum, "0.3.0");
+        assert!(info.available);
+        assert!(!info.required);
+    }
+
+    #[test]
+    fn a_store_without_a_published_version_never_prompts() {
+        let index = index(
+            r#"{
+                "latest": "0.5.0",
+                "store": { "latest": null, "minimum": null },
+                "releases": [{ "version": "0.5.0" }]
+            }"#,
+        );
+        assert!(build_info(&index, "0.1.0", UpdateChannel::Store).is_none());
+    }
+
+    #[test]
+    fn a_store_floor_above_its_latest_is_clamped() {
+        let index = index(
+            r#"{
+                "store": { "latest": "0.4.0", "minimum": "9.0.0" },
+                "releases": []
+            }"#,
+        );
+        let info = build_info(&index, "0.4.0", UpdateChannel::Store).unwrap();
+        assert_eq!(info.minimum, "0.4.0");
+        assert!(!info.required);
+    }
+
+    #[test]
+    fn a_store_update_does_not_need_a_direct_installer_entry() {
+        let index = index(
+            r#"{
+                "store": { "latest": "0.4.0", "minimum": "0.0.0" },
+                "releases": []
+            }"#,
+        );
+        let info = build_info(&index, "0.3.0", UpdateChannel::Store).unwrap();
+        assert!(info.available);
+        assert!(info.notes.is_none());
+    }
+
+    #[test]
+    fn the_store_url_prefers_the_product_page() {
+        assert_eq!(
+            store_url_for(Some("9NBLGGH4R315")),
+            "ms-windows-store://pdp/?productid=9NBLGGH4R315"
+        );
+        assert_eq!(
+            store_url_for(Some("  ")),
+            "ms-windows-store://downloadsandupdates"
+        );
+        assert_eq!(
+            store_url_for(None),
+            "ms-windows-store://downloadsandupdates"
+        );
     }
 
     #[test]

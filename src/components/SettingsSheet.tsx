@@ -167,7 +167,11 @@ export function SettingsSheet() {
                   disabled={installing}
                 >
                   <ArrowUpCircle strokeWidth={1.9} />
-                  {installing ? "Updating…" : "Update now"}
+                  {installing
+                    ? "Updating…"
+                    : update?.channel === "store"
+                      ? "Open Microsoft Store"
+                      : "Update now"}
                 </button>
               ) : (
                 <button
@@ -181,8 +185,9 @@ export function SettingsSheet() {
               )}
             </div>
             <p className="sheet-help">
-              Updates install from inside Hook and restart it. Your chats and
-              projects stay where they are.
+              {update?.channel === "store"
+                ? "Updates are delivered by the Microsoft Store. Your chats and projects stay where they are."
+                : "Updates install from inside Hook and restart it. Your chats and projects stay where they are."}
               {update && update.minimum !== "0.0.0" ? (
                 <> Hook {update.minimum} is the oldest supported version.</>
               ) : null}

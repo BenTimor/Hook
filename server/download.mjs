@@ -1,22 +1,6 @@
 import { Router } from "express";
 import { releaseFile, releaseIndex, releaseInfo } from "./releases.mjs";
-import { apiUser } from "./tokens.mjs";
-
-function approvedAccount({ req, db, auth }) {
-  // The website download uses the waitlist session cookie; the desktop app
-  // uses its bearer token for the in-app update check and installer download.
-  const profile = auth.profileFor(req);
-  if (profile) {
-    return profile.waitlist_status === "approved"
-      ? { row: profile }
-      : {
-          status: 403,
-          code: "not_approved",
-          message: "Hook is not enabled for this account yet.",
-        };
-  }
-  return apiUser(db, req);
-}
+import { approvedRequest } from "./tokens.mjs";
 
 function refuse(res, account) {
   return res.status(account.status).json({
@@ -33,7 +17,7 @@ export function createDownloadRouter({ env, db, auth }) {
 
   router.get("/info", (req, res) => {
     if (!db) return res.status(503).json({ error: "unavailable" });
-    const account = approvedAccount({ req, db, auth });
+    const account = approvedRequest({ req, db, auth });
     if (!account.row) return refuse(res, account);
     res.json(releaseInfo(env));
   });
@@ -43,7 +27,7 @@ export function createDownloadRouter({ env, db, auth }) {
   // a missing build fails instead of quietly installing a different one.
   router.get("/windows", (req, res) => {
     if (!db) return res.status(503).json({ error: "unavailable" });
-    const account = approvedAccount({ req, db, auth });
+    const account = approvedRequest({ req, db, auth });
     if (!account.row) return refuse(res, account);
 
     const requested =
@@ -79,6 +63,9 @@ export function publicReleaseInfo(env) {
   return {
     latest: index.latest,
     minimum: index.minimum,
+    // The Microsoft Store channel has its own latest/floor because Store
+    // certification lags behind direct builds.
+    store: index.store,
     updatedAt: index.updatedAt,
     // The installer URL itself still requires an approved account; the version
     // list is public so the app can check for updates before signing in.
