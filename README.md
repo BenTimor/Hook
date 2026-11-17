@@ -566,6 +566,11 @@ with a self-signed certificate only breaks the upload. For local sideload
 testing, pass `--sign dev.pfx --password …` to sign with a development
 certificate.
 
+A package version has four numeric parts, so the script writes `<semver>.0`
+(0.2.1 → `0.2.1.0`) and the manifest is not edited by hand. Every Store
+submission needs a version higher than the one you published before it, which a
+`pnpm version:bump patch` per submission already gives you.
+
 The package contains `Hook.exe` plus `resources/pi-runtime` and `resources/git`,
 and declares `runFullTrust` (the coding agents spawn a bundled Node runtime and work in the
 user's project folders) and `unvirtualizedResources`. The latter opts
@@ -598,9 +603,8 @@ always included, so the dialog warns against reporting secrets.
 **Short description** (256 characters max, currently 235):
 
 > HookCode is the Microsoft Store edition of Hook, an AI chat app with coding
-> agents for Windows. Hand real work to agents that edit and run projects, and
-> pick up the same conversations and code on any computer signed in to your
-> account.
+> agents for Windows. Hand real work to agents that edit and run projects, bring
+> your ChatGPT or Claude history with you, and continue on any signed-in computer.
 
 **Full description:**
 
@@ -625,6 +629,10 @@ always included, so the dialog warns against reporting secrets.
 > • Keep every conversation in readable files on your machine, with search,
 >   pinning and undoable deletion — and an account copy that keeps your
 >   computers in step.
+> • Bring your ChatGPT or Claude history with you: import the export those
+>   services already give you, and it becomes ordinary Hook conversations you
+>   can search and continue. Re-importing picks up whatever is new without
+>   duplicating anything.
 > • Start a conversation or a project on one PC and pick it up on another,
 >   without exporting or transferring anything.
 > • Update HookCode from inside the app — the Store handles the download and
@@ -684,6 +692,7 @@ always included, so the dialog warns against reporting secrets.
 **Feature bullets** (optional; each under 200 characters):
 
 > • Your work follows you: chats, pictures and projects are saved to your account and available on every computer.
+> • Bring your ChatGPT or Claude history with you in one import, and re-import whenever you want.
 > • Projects are backed by private git, so agents continue from the latest saved work.
 > • Coding agents that read, edit and run real projects.
 > • A live plan and progress while an agent works; steer or stop it at any time.
@@ -693,31 +702,29 @@ always included, so the dialog warns against reporting secrets.
 > • Image attachments, with vision when the model supports it.
 > • Report inappropriate AI output from inside the app.
 
-**What's new in 0.2.0** (Partner Center "What's new in this version", 1,042 characters):
+**What's new in 0.2.1** (Partner Center "What's new in this version", 876 characters):
 
-> HookCode 0.2.0 makes your work follow you between computers while the coding
-> agents keep running on your PC.
+> HookCode 0.2.1 makes it easy to bring your history over, and fixes project
+> saving.
 >
-> • Your chats, pictures and projects now sync to your Hook account
->   automatically. Start on one PC, continue on another.
-> • Every project is a private git repository. Coding agents pull the latest
->   saved work before they begin — even when the project was started on another
->   computer — and save it when they finish.
-> • Projects have stable identities, so a project created on one computer
->   appears on your others with its description and code.
-> • HookCode now bundles git for its coding agents. Force-pushes and branch
->   deletion are blocked, so a shared project cannot lose another computer's
->   history.
-> • Settings has a new Sync row: see whether your work is saved, and run a sync
->   manually if you want.
-> • Chat sync merges work from several computers: messages are combined,
->   deletions carry across, and a reply that is still being written is never
->   uploaded.
-> • The privacy policy now explains what is saved to your account and how to
->   remove it.
+> • Import your ChatGPT or Claude history: Settings › Import history, choose the
+>   archive those services already give you, and the conversations appear as
+>   normal chats — searchable, syncable and ready to continue.
+> • Re-import whenever you have new conversations. What is already here is
+>   updated in place instead of duplicated, and anything you have written in
+>   Hook since keeps your version.
+> • The import runs entirely on your PC. Nothing signs in to ChatGPT or Claude:
+>   the file you downloaded is what gets read.
+> • Settings now opens with Import history, followed by Sync.
+> • Fixed: an account with more than ten projects could fail to save project
+>   metadata. Projects now sync in batches, as chats already did.
+> • Transcripts arrive as text. Pictures and files inside an export stay where
+>   they are.
 
 **Search terms:** AI chat, coding agent, AI assistant, code assistant, developer
-tools, cross-device sync, project sync.
+tools, cross-device sync, project sync. ("ChatGPT import" is tempting but it is
+someone else's trademark in a keyword field — leave it out unless you want to
+argue about it.)
 
 ## Where the data lives
 
