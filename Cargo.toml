@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/hook-core", "apps/chat/src-tauri"]
+
+# Every product is a release build; keep the installer small and reproducible.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

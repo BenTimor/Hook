@@ -4,6 +4,7 @@ import { defineConfig, loadEnv } from "vite";
 
 const repo = fileURLToPath(new URL(".", import.meta.url));
 const root = fileURLToPath(new URL("./waitlist", import.meta.url));
+const ui = fileURLToPath(new URL("./packages/ui/src", import.meta.url));
 
 export default defineConfig(({ command }) => {
   const env = {
@@ -16,6 +17,10 @@ export default defineConfig(({ command }) => {
     root,
     envDir: repo,
     publicDir: "../public",
+    resolve: {
+      // The landing page shares the mark with the desktop apps.
+      alias: { "@hook/ui": `${ui}/index.ts` },
+    },
     plugins: [
       react(),
       {
@@ -45,7 +50,7 @@ export default defineConfig(({ command }) => {
       host: "localhost",
       port: 5173,
       strictPort: true,
-      fs: { allow: [root, `${repo}src/components`, `${repo}node_modules`] },
+      fs: { allow: [root, ui, `${repo}node_modules`] },
     },
     define: {
       "import.meta.env.VITE_WAITLIST_DEV_MODE":

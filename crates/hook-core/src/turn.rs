@@ -210,6 +210,23 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 list.retain(|tool| tool["function"]["name"] != "no_update");
             }
         }
+        // Only advertise tools this product can actually honour.
+        if let Some(list) = set.as_array_mut() {
+            if !state.capabilities.coding_agents {
+                const AGENT_TOOLS: [&str; 7] = [
+                    "start_coding_agent",
+                    "list_agents",
+                    "agent_status",
+                    "steer_agent",
+                    "answer_agent",
+                    "stop_agent",
+                    "list_coding_sessions",
+                ];
+                list.retain(|tool| {
+                    !AGENT_TOOLS.contains(&tool["function"]["name"].as_str().unwrap_or(""))
+                });
+            }
+        }
         set
     });
 
@@ -568,7 +585,7 @@ fn system_message(
     state: &AppState,
     chat_id: &str,
 ) -> String {
-    let mut text = system_prompt(cfg);
+    let mut text = system_prompt(cfg, state.capabilities);
     for note in system_notes(chat, exclude_id) {
         text.push_str("\n\n");
         text.push_str(&note);
@@ -636,11 +653,41 @@ fn system_notes(chat: &Chat, exclude_id: &str) -> Vec<String> {
         .collect()
 }
 
-fn system_prompt(cfg: &config::HarnessConfig) -> String {
-    cfg.agent
+fn system_prompt(cfg: &config::HarnessConfig, caps: crate::Capabilities) -> String {
+    let mut text = cfg
+        .agent
         .custom_prompt()
         .map(str::to_string)
-        .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())
+        .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string());
+    // A product only advertises what it actually has. Hook Workspace embeds the
+    // same chat without a preview panel, so telling the agent about one would
+    // produce instructions the user can never see happen.
+    if !caps.preview {
+        text = without_section(text, "## Preview panel");
+    }
+    if !caps.coding_agents {
+        text = without_section(text, "## Coding agents");
+        text = without_section(text, "## Steering a running agent");
+        text = without_section(text, "## Progress");
+    }
+    text
+}
+
+/// Remove one `## Heading` section from the prompt, up to the next `## `.
+fn without_section(prompt: String, heading: &str) -> String {
+    let Some(start) = prompt.find(heading) else {
+        return prompt;
+    };
+    let after = start + heading.len();
+    let end = prompt[after..]
+        .find("
+## ")
+        .map(|offset| after + offset + 1)
+        .unwrap_or(prompt.len());
+    let mut out = String::with_capacity(prompt.len());
+    out.push_str(&prompt[..start]);
+    out.push_str(&prompt[end..]);
+    out
 }
 
 fn non_empty(value: String) -> Option<String> {

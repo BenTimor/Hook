@@ -7,7 +7,7 @@
  * git-for-Windows distribution: `cmd/git.exe`, the core commands and the HTTPS
  * transport, without bash, Perl or the Unix tools Hook does not need.
  *
- *   node scripts/fetch-git.mjs
+ *   node scripts/fetch-git.mjs [app-dir]      (default: apps/chat)
  *
  * The archive is cached under `.git-runtime-cache/` and checked by SHA-256
  * before anything is extracted. `pnpm app:build` runs this automatically.
@@ -37,7 +37,9 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const out = join(root, "src-tauri", "resources", "git");
+// The app directory to populate: `node scripts/fetch-git.mjs apps/chat`.
+const app = resolve(process.cwd(), process.argv[2] ?? "apps/chat");
+const out = join(app, "resources", "git");
 const cache = join(root, ".git-runtime-cache");
 
 const VERSION = "2.56.1";

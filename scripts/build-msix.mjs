@@ -1,36 +1,29 @@
 #!/usr/bin/env node
 /**
- * Package Hook as an unsigned MSIX for Microsoft Store submission.
+ * Package a product executable plus its runtime as an unsigned MSIX for the
+ * Microsoft Store.
  *
- *   pnpm app:msix                     # build the app, then package
- *   node scripts/build-msix.mjs       # package an existing build
+ *   node scripts/build-msix.mjs --product chat
+ *   node scripts/build-msix.mjs --product chat --arch arm64
+ *   node scripts/build-msix.mjs --product chat --sign <cert.pfx> --password …
  *
- * Microsoft re-signs Store submissions, so the package is written unsigned
- * (`makeappx /nv`). Fill msix/identity.json with the values from Partner Center
- * first; until then this exits 0 with instructions, so a direct release is
- * never blocked by an unconfigured Store identity.
- *
- * The package layout mirrors the portable build: Hook.exe next to
- * resources/pi-runtime, which runtime.rs already searches.
- *
- * Local sideload testing only:
- *   node scripts/build-msix.mjs --sign dev.pfx --password <password>
+ * Store packages are uploaded unsigned (Microsoft re-signs them); `--sign` is
+ * only for sideload testing. Each product has its own Partner Center identity
+ * under `msix/<product>/`, and the script exits cleanly while that identity is
+ * still empty.
  */
-import { execFile } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-const run = promisify(execFile);
-const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+import { productFromArgs, root, targetDir } from "./products.mjs";
 
-/** Partner Center → product → Package identity. */
-const identity = JSON.parse(
-  await readFile(join(root, "msix/identity.json"), "utf8"),
-);
-const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+const run = promisify(execFile);
+
+const product = productFromArgs();
+const msixDir = join(root, product.msix);
 
 const archIndex = process.argv.indexOf("--arch");
 const arch = archIndex >= 0 ? process.argv[archIndex + 1] : "x64";
@@ -38,24 +31,39 @@ if (!["x64", "arm64"].includes(arch)) {
   throw new Error(`unsupported architecture: ${arch}`);
 }
 
+if (!existsSync(join(msixDir, "identity.json"))) {
+  console.log(`MSIX is not configured for ${product.name} — nothing to package.`);
+  console.log(`  1. Reserve ${product.name} in Partner Center (MSIX or PWA app).`);
+  console.log(`  2. Copy Identity Name and Publisher into ${product.msix}/identity.json.`);
+  console.log("  3. Put the Store product id in harness.config.ci.toml.");
+  process.exit(0);
+}
+
+/** Partner Center → product → Package identity. */
+const identity = JSON.parse(await readFile(join(msixDir, "identity.json"), "utf8"));
+const pkg = JSON.parse(
+  await readFile(join(root, product.dir, "package.json"), "utf8"),
+);
+
 // MSIX versions have four numeric parts; semver prerelease suffixes do not
 // belong in a Store package version.
 const version = `${pkg.version.split("-")[0]}.0`;
 
 if (!identity.identityName?.trim() || !identity.publisher?.trim()) {
   console.log("MSIX is not configured yet — nothing to package.");
-  console.log("  1. Reserve Hook in Partner Center (MSIX or PWA app).");
-  console.log("  2. Copy Identity Name and Publisher into msix/identity.json.");
+  console.log(`  1. Reserve ${product.name} in Partner Center (MSIX or PWA app).`);
+  console.log(`  2. Copy Identity Name and Publisher into ${product.msix}/identity.json.`);
   console.log("  3. Put the Store product id in harness.config.ci.toml [update] store_id.");
   console.log("  4. Run `pnpm app:msix` again (or use the release workflow artifact).");
   process.exit(0);
 }
 
-const exe = join(root, "src-tauri/target/release/Hook.exe");
-const runtime = join(root, "src-tauri/resources/pi-runtime");
-const git = join(root, "src-tauri/resources/git");
+const appDir = join(root, product.dir);
+const exe = join(targetDir, "release", `${product.binary}.exe`);
+const runtime = join(appDir, "src-tauri/resources/pi-runtime");
+const git = join(appDir, "src-tauri/resources/git");
 if (!existsSync(exe)) {
-  throw new Error("Hook.exe is missing; run `pnpm app:build` (or `pnpm app`) first.");
+  throw new Error(`${product.binary}.exe is missing; run \`pnpm app:build\` (or \`pnpm app\`) first.`);
 }
 if (!existsSync(join(runtime, "node.exe"))) {
   throw new Error("the coding engine is missing; run `pnpm engine` first.");
@@ -64,11 +72,12 @@ if (!existsSync(join(git, "cmd", "git.exe"))) {
   throw new Error("git is missing; run `pnpm git` first.");
 }
 
-const stage = join(root, ".tmp/msix", pkg.version);
+const stage = join(root, ".tmp/msix", `${product.id}-${pkg.version}`);
 await rm(stage, { recursive: true, force: true });
 await mkdir(join(stage, "Assets"), { recursive: true });
 
-await cp(exe, join(stage, "Hook.exe"));
+const exeName = `${product.binary}.exe`;
+await cp(exe, join(stage, exeName));
 // 104 MB of Node + pi. runtime.rs finds it at <package>/resources/pi-runtime
 // (via resource_dir, the exe directory, or their `resources` children).
 await cp(runtime, join(stage, "resources", "pi-runtime"), { recursive: true });
@@ -82,21 +91,25 @@ const icons = [
   "Square150x150Logo.png",
 ];
 for (const icon of icons) {
-  await cp(join(root, "src-tauri/icons", icon), join(stage, "Assets", icon));
+  await cp(join(appDir, "src-tauri/icons", icon), join(stage, "Assets", icon));
 }
 
-const manifest = await readFile(join(root, "msix/AppxManifest.xml"), "utf8");
+const manifest = await readFile(join(msixDir, "AppxManifest.xml"), "utf8");
 const filled = manifest
   .replaceAll("{{IDENTITY_NAME}}", identity.identityName.trim())
   .replaceAll("{{PUBLISHER}}", identity.publisher.trim())
-  .replaceAll("{{PUBLISHER_DISPLAY_NAME}}", (identity.publisherDisplayName || "Hook").trim())
+  .replaceAll("{{PUBLISHER_DISPLAY_NAME}}", (identity.publisherDisplayName || product.name).trim())
+  .replaceAll("{{DISPLAY_NAME}}", product.name)
+  .replaceAll("{{EXECUTABLE}}", exeName)
+  .replaceAll("{{DATA_FOLDER}}", product.identifier)
   .replaceAll("{{VERSION}}", version)
   .replaceAll("{{ARCH}}", arch);
 await writeFile(join(stage, "AppxManifest.xml"), filled);
 
 const release = join(root, "release");
 await mkdir(release, { recursive: true });
-const output = join(release, `Hook-${pkg.version}-${arch}.msix`);
+const slug = product.binary.replaceAll(" ", "-");
+const output = join(release, `${slug}-${pkg.version}-${arch}.msix`);
 await rm(output, { force: true });
 // makeappx prints one line per payload file; the default execFile buffer is
 // only 1 MB, which a 130 MB package easily exceeds.

@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { HookMark } from "../src/components/HookMark";
+import { HookMark } from "@hook/ui";
 import { interests } from "./interests";
 
 const positions = [

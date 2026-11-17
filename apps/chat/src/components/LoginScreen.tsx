@@ -2,7 +2,7 @@ import { ArrowRight, ExternalLink, LogIn, ShieldCheck } from "lucide-react";
 
 import { openExternal } from "../lib/bridge";
 import { useChatStore } from "../store/useChatStore";
-import { HookMark } from "./HookMark";
+import { HookMark } from "@hook/ui";
 import { WindowControls } from "./WindowControls";
 
 /**

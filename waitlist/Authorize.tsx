@@ -9,7 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
-import { HookMark } from "../src/components/HookMark";
+import { HookMark } from "@hook/ui";
 import type { Profile, ReleaseInfo } from "./onboarding";
 import "./styles.css";
 import "./onboarding.css";

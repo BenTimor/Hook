@@ -17,7 +17,12 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["vite/client"]
-  },
-  "include": ["src", "waitlist", "vite.config.ts"]
+    "types": ["vite/client"],
+    "paths": {
+      "@hook/ui": ["./packages/ui/src/index.ts"],
+      "@hook/ui/*": ["./packages/ui/src/*"],
+      "@hook/chat": ["./packages/chat/src/index.ts"],
+      "@hook/chat/*": ["./packages/chat/src/*"]
+    }
+  }
 }

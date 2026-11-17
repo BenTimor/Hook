@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Template for the Microsoft Store MSIX identity. scripts/build-msix.mjs fills
-  the five placeholders from msix/identity.json and package.json.
+  the placeholders from msix/<product>/identity.json and package.json.
 
   Identity.Name and Identity.Publisher must match the values Partner Center
   shows on the product's Package identity page, character for character.
@@ -37,7 +37,7 @@
     <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
     <virtualization:FileSystemWriteVirtualization>
       <virtualization:ExcludedDirectories>
-        <virtualization:ExcludedDirectory>$(KnownFolder:RoamingAppData)\app.hook.chat</virtualization:ExcludedDirectory>
+        <virtualization:ExcludedDirectory>$(KnownFolder:RoamingAppData)\{{DATA_FOLDER}}</virtualization:ExcludedDirectory>
       </virtualization:ExcludedDirectories>
     </virtualization:FileSystemWriteVirtualization>
   </Properties>
@@ -61,7 +61,7 @@
   </Resources>
 
   <Applications>
-    <Application Id="Hook" Executable="Hook.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="Hook" Executable="{{EXECUTABLE}}" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="HookCode"
         Description="HookCode — a local AI chat harness with coding agents."

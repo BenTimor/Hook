@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ArrowUp, Check, CircleCheck, Pause, Play } from "lucide-react";
-import { HookMark } from "../src/components/HookMark";
+import { HookMark } from "@hook/ui";
 import { AppResult, StudyResult, VideoResult, WebsiteResult } from "./PreviewResults";
 import "./preview.css";
 

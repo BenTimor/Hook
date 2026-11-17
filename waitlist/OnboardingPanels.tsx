@@ -9,7 +9,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { HookMark } from "../src/components/HookMark";
+import { HookMark } from "@hook/ui";
 import { FloatingVisualStage } from "./FloatingVisualStage";
 import { interests } from "./interests";
 import content from "./content.json";

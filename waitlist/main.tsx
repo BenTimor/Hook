@@ -14,7 +14,7 @@ import {
   UserRoundPlus,
 } from "lucide-react";
 import "@fontsource-variable/inter/wght.css";
-import { HookMark } from "../src/components/HookMark";
+import { HookMark } from "@hook/ui";
 import { ProductPreview } from "./ProductPreview";
 import { OnboardingTransition } from "./OnboardingTransition";
 import {

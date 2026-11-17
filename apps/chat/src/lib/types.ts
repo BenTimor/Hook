@@ -78,6 +78,8 @@ export interface SearchHit {
 
 export interface AppInfo {
   version: string;
+  /** Which desktop product this backend serves: "chat" or "workspace". */
+  product?: "chat" | "workspace";
 }
 
 /** What the release index says about this build. */

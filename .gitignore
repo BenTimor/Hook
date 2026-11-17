@@ -7,15 +7,17 @@ release/
 .tmp/
 *.local
 .DS_Store
-src-tauri/target/
-src-tauri/gen/
+
+# Cargo workspace output (shared by every product)
+target/
+apps/*/src-tauri/gen/
 
 # Build-time secrets — never committed
 harness.config.toml
 
 # Bundled coding engine (see scripts/fetch-pi-runtime.mjs)
-src-tauri/resources/pi-runtime/
+apps/*/src-tauri/resources/pi-runtime/
 
 # Bundled git for coding agents (see scripts/fetch-git.mjs)
-src-tauri/resources/git/
+apps/*/src-tauri/resources/git/
 .git-runtime-cache/

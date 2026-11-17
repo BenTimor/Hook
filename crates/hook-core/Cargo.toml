@@ -1,17 +1,10 @@
 [package]
-name = "hook"
+name = "hook-core"
 version = "0.2.1"
-description = "Hook — a local, single-provider AI chat harness"
-authors = ["you"]
 edition = "2021"
 rust-version = "1.77"
-
-[lib]
-name = "hook_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-[build-dependencies]
-tauri-build = { version = "2", features = [] }
+publish = false
+description = "The backend every Hook desktop product links: account, chats, sync, coding agents, previews and the chat turn"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -31,9 +24,3 @@ sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2.0.0-rc.8"
-
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = "s"
-strip = true

@@ -37,6 +37,10 @@ pub struct AppState {
     /// Scanned ChatGPT / Claude exports, kept between the preview and the
     /// confirmation so a large archive is parsed once.
     pub imports: Arc<crate::import::Importer>,
+    /// Which desktop product this backend is serving.
+    pub product: crate::Product,
+    /// What this product's chat agent may do (see `Capabilities`).
+    pub capabilities: crate::Capabilities,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -47,6 +51,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub version: String,
+    /// "chat" or "workspace" — which product this backend is serving.
+    pub product: &'static str,
 }
 
 #[tauri::command]
@@ -102,12 +108,16 @@ pub async fn import_apply(
 }
 
 #[tauri::command]
-pub fn app_info() -> Result<AppInfo, String> {
+pub fn app_info(state: State<'_, Arc<AppState>>) -> Result<AppInfo, String> {
     // Validate the embedded config up front so a broken build fails loudly here
     // instead of on the first message.
     config::get()?;
     Ok(AppInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        product: match state.product {
+            crate::Product::Chat => "chat",
+            crate::Product::Workspace => "workspace",
+        },
     })
 }
 

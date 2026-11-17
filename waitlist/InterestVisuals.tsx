@@ -8,7 +8,7 @@ import {
   MousePointer2,
   Workflow,
 } from "lucide-react";
-import { HookMark } from "../src/components/HookMark";
+import { HookMark } from "@hook/ui";
 
 export function DesignPreview() {
   return (

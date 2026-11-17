@@ -9,7 +9,7 @@
  * The binaries are ~110 MB, so they are not in git. Run this once after
  * cloning (or when bumping pi):
  *
- *    node scripts/fetch-pi-runtime.mjs [--pi <path-to-pi-package>]
+ *    node scripts/fetch-pi-runtime.mjs [app-dir] [--pi <path-to-pi-package>]
  *
  * Layout it produces:
  *
@@ -28,7 +28,9 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const out = join(root, "src-tauri", "resources", "pi-runtime");
+// The app directory to populate: `node scripts/fetch-pi-runtime.mjs apps/chat`.
+const app = resolve(process.cwd(), process.argv[2] ?? "apps/chat");
+const out = join(app, "resources", "pi-runtime");
 
 const PACKAGE = "@earendil-works/pi-coding-agent";
 

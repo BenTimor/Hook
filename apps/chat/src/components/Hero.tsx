@@ -3,7 +3,7 @@ import { Code2, FileText, Lightbulb, Sparkles } from "lucide-react";
 import { greeting } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 import { Composer } from "./Composer";
-import { HookMark } from "./HookMark";
+import { HookMark } from "@hook/ui";
 
 const SUGGESTIONS = [
   { icon: Lightbulb, label: "Explain a tricky concept simply" },

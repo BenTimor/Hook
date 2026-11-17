@@ -7,7 +7,7 @@ import { groupChats, modKey } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 import { isLiveAgent } from "../lib/agents";
 import { ChatRow } from "./ChatRow";
-import { HookMark } from "./HookMark";
+import { HookMark } from "@hook/ui";
 
 export function Sidebar() {
   const chats = useChatStore((s) => s.chats);

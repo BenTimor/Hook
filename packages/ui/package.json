@@ -1,0 +1,24 @@
+{
+  "name": "@hook/ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Hook's shared design system: tokens, window chrome, primitives and the mark",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

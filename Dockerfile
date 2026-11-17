@@ -10,9 +10,10 @@
 FROM node:24-slim AS build
 WORKDIR /app
 RUN npm install -g pnpm@10
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+# The repo is a pnpm workspace (apps/* + packages/*), so the member manifests
+# have to be present before install resolves the root lockfile.
 COPY . .
+RUN pnpm install --frozen-lockfile
 RUN pnpm waitlist:build
 
 FROM node:24-slim AS runtime
@@ -24,7 +25,9 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 RUN npm install -g pnpm@10
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps ./apps
+COPY packages ./packages
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 COPY server ./server
 COPY waitlist/content.json ./waitlist/content.json

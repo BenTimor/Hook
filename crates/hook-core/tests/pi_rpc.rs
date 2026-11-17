@@ -43,14 +43,14 @@ fn rpc_handshake_returns_state_without_calling_a_model() {
     std::fs::create_dir_all(&base).unwrap();
 
     let guard = base.join("hook-guard.mjs");
-    std::fs::write(&guard, hook_lib::guard_source()).unwrap();
+    std::fs::write(&guard, hook_core::guard_source()).unwrap();
     let sessions = base.join("sessions");
     let project = base.join("project");
     std::fs::create_dir_all(&sessions).unwrap();
     std::fs::create_dir_all(&project).unwrap();
 
     // Empty model: this test must never depend on a configured provider.
-    let args = hook_lib::agent_args(&sessions, "handshake01", "handshake", &guard, "", None);
+    let args = hook_core::agent_args(&sessions, "handshake01", "handshake", &guard, "", None);
 
     let mut child = Command::new(&program)
         .args(&prefix)

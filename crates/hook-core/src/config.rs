@@ -196,7 +196,7 @@ fn default_true() -> bool {
     true
 }
 
-const RAW: &str = include_str!("../../harness.config.toml");
+const RAW: &str = include_str!("../../../harness.config.toml");
 
 static CONFIG: OnceLock<Result<HarnessConfig, String>> = OnceLock::new();
 

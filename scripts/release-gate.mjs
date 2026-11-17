@@ -10,27 +10,29 @@
  *   - changed source, higher version               -> build and publish
  *   - published index unreachable                  -> build (never silently skip)
  *
- *   node scripts/release-gate.mjs [--force] [--server https://hookcode.io]
+ *   node scripts/release-gate.mjs [--product chat|workspace] [--force]
+ *                                 [--server https://hookcode.io]
  *
  * Writes `publish`, `version` and `source_hash` to $GITHUB_OUTPUT when set.
  */
 import { appendFileSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { appSourceHash } from "./app-source-hash.mjs";
+import { productFromArgs, root } from "./products.mjs";
 import { compareVersions, parseVersion } from "../server/releases.mjs";
 
-const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-
 /** The app reports Cargo's version and the installer is named after Tauri's. */
-export function readRepoVersion() {
-  const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version;
+export function readRepoVersion(product = productFromArgs([])) {
+  const pkg = JSON.parse(
+    readFileSync(join(root, product.dir, "package.json"), "utf8"),
+  ).version;
   const tauri = JSON.parse(
-    readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf8"),
+    readFileSync(join(root, product.dir, "src-tauri/tauri.conf.json"), "utf8"),
   ).version;
   const cargo = /\[package\][\s\S]*?\r?\nversion\s*=\s*"([^"]+)"/.exec(
-    readFileSync(resolve(root, "src-tauri/Cargo.toml"), "utf8"),
+    readFileSync(join(root, product.dir, "src-tauri/Cargo.toml"), "utf8"),
   )?.[1];
   const versions = { "package.json": pkg, "tauri.conf.json": tauri, "Cargo.toml": cargo };
   const unique = new Set(Object.values(versions));
@@ -61,7 +63,7 @@ export function decide({ version, sourceHash, published }) {
   if (latestEntry.sourceHash && latestEntry.sourceHash === sourceHash) {
     return {
       publish: false,
-      reason: `application source is identical to the published Hook ${latestEntry.version}`,
+      reason: `application source is identical to the published ${latestEntry.version}`,
     };
   }
 
@@ -69,7 +71,7 @@ export function decide({ version, sourceHash, published }) {
     return {
       publish: false,
       error:
-        `Hook ${version} is already published but the application source changed. ` +
+        `${version} is already published but the application source changed. ` +
         `Run \`pnpm version:bump patch\` (or minor/major), commit and push again.`,
       reason: "source changed without a version bump",
     };
@@ -78,7 +80,7 @@ export function decide({ version, sourceHash, published }) {
   if (compareVersions(version, latestEntry.version) < 0) {
     return {
       publish: false,
-      error: `Hook ${version} is older than the published Hook ${latestEntry.version}; refusing to downgrade.`,
+      error: `${version} is older than the published ${latestEntry.version}; refusing to downgrade.`,
       reason: "downgrade",
     };
   }
@@ -89,12 +91,17 @@ export function decide({ version, sourceHash, published }) {
   };
 }
 
-async function fetchPublished(server) {
-  const url = `${server.replace(/\/+$/, "")}/api/releases`;
+/** Each product owns a release index; the chat app keeps its historical URL. */
+async function fetchPublished(server, product) {
+  const suffix = product.id === "chat" ? "/api/releases" : `/api/releases/${product.id}`;
+  const url = `${server.replace(/\/+$/, "")}${suffix}`;
   const response = await fetch(url, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(8_000),
   });
+  // A product with no published build yet answers 404: that is "no release",
+  // not a reason to fail the gate.
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
   return response.json();
 }
@@ -110,20 +117,21 @@ function writeOutput(values) {
 async function main() {
   const args = process.argv.slice(2);
   const force = args.includes("--force");
+  const product = productFromArgs(args);
   const serverArg = args.indexOf("--server");
   const server =
     (serverArg >= 0 ? args[serverArg + 1] : null) ||
     process.env.HOOK_RELEASES_URL ||
     "https://hookcode.io";
 
-  const version = readRepoVersion();
-  const sourceHash = appSourceHash();
-  console.log(`Hook ${version}  source ${sourceHash.slice(0, 19)}…`);
+  const version = readRepoVersion(product);
+  const sourceHash = appSourceHash({ product });
+  console.log(`${product.name} ${version}  source ${sourceHash.slice(0, 19)}…`);
 
   let published = null;
   let lookupError = null;
   try {
-    published = await fetchPublished(server);
+    published = await fetchPublished(server, product);
   } catch (error) {
     lookupError = error instanceof Error ? error.message : String(error);
   }
@@ -138,16 +146,21 @@ async function main() {
       : decide({ version, sourceHash, published });
 
   if (lookupError) console.warn(`warning: ${lookupError}`);
-  if (published?.latest) console.log(`published: Hook ${published.latest}`);
+  if (published?.latest) console.log(`published: ${product.name} ${published.latest}`);
   if (result.error) {
     console.error(`::error::${result.error}`);
   } else {
     console.log(`${result.publish ? "build" : "skip"}: ${result.reason}`);
-    if (result.publish) console.log(`::notice::Publishing Hook ${version}`);
+    if (result.publish) console.log(`::notice::Publishing ${product.name} ${version}`);
     else console.log(`::notice::No application change; skipping the Windows build`);
   }
 
-  writeOutput({ publish: String(result.publish && !result.error), version, source_hash: sourceHash });
+  writeOutput({
+    publish: String(result.publish && !result.error),
+    version,
+    source_hash: sourceHash,
+    product: product.id,
+  });
   if (result.error) process.exit(1);
 }
 

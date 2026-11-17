@@ -1,0 +1,43 @@
+{
+  "name": "@hook/chat-app",
+  "private": true,
+  "version": "0.2.1",
+  "type": "module",
+  "description": "Hook \u2014 a local AI chat harness",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "app": "node ../../scripts/tauri.mjs dev",
+    "app:build": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build",
+    "app:portable": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/make-portable.mjs --product chat",
+    "app:msix": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/build-msix.mjs --product chat"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "catalog:",
+    "@fontsource-variable/jetbrains-mono": "catalog:",
+    "@hook/ui": "workspace:*",
+    "@radix-ui/react-dropdown-menu": "catalog:",
+    "@tauri-apps/api": "catalog:",
+    "@tauri-apps/plugin-dialog": "catalog:",
+    "@tauri-apps/plugin-opener": "catalog:",
+    "lucide-react": "catalog:",
+    "motion": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-markdown": "catalog:",
+    "remark-gfm": "catalog:",
+    "shiki": "catalog:",
+    "sonner": "catalog:",
+    "zustand": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}
