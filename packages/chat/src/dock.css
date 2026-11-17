@@ -130,11 +130,59 @@
 .dock-thread {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 6px 14px 10px;
+  padding: 4px 14px 10px;
+}
+
+/* The thread and the composer come from the shared chat surface; these are
+   only the changes a 380px column needs. Higher specificity than the shared
+   rules, so load order does not matter. */
+.dock .thread-inner {
+  max-width: none;
+  padding: 4px 0 12px;
+  gap: 20px;
+}
+
+.dock .bubble {
+  max-width: 86%;
+  font-size: 13px;
+  padding: 8px 11px 9px;
+  border-radius: 14px 14px 5px 14px;
+}
+
+.dock .md {
+  font-size: 13px;
+}
+
+.dock .msg-actions {
+  bottom: -19px;
+  height: 20px;
+}
+
+.dock .mini-btn {
+  height: 20px;
+  padding: 0 5px;
+  font-size: 11px;
+  gap: 4px;
+}
+
+.dock .mini-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.dock .edit-area {
+  max-width: 88%;
+  padding: 8px 10px;
+}
+
+.dock .edit-area textarea {
+  font-size: 13px;
+  min-height: 38px;
+}
+
+.dock-empty-wrap {
   display: flex;
   flex-direction: column;
-  gap: 10px;
 }
 
 .dock-empty {
@@ -157,50 +205,6 @@
   color: var(--ink-3);
 }
 
-.dock-message {
-  max-width: 100%;
-}
-
-.dock-message[data-role="user"] {
-  align-self: flex-end;
-  max-width: 86%;
-}
-
-.dock-user-text {
-  margin: 0;
-  padding: 8px 11px;
-  border-radius: 12px 12px 3px 12px;
-  background: rgba(var(--accent-rgb), 0.09);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--ink);
-  white-space: pre-wrap;
-}
-
-.dock-message .md {
-  font-size: 13px;
-}
-
-.dock-thinking {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  color: var(--ink-4);
-}
-
-.dock-spin {
-  width: 13px;
-  height: 13px;
-  animation: dock-spin 1s linear infinite;
-}
-
-@keyframes dock-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .dock-error {
   margin: 0 12px 6px;
   padding: 7px 9px;
@@ -211,74 +215,59 @@
 }
 
 .dock-composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  margin: 0 10px 10px;
-  padding: 6px 6px 6px 10px;
+  flex: 0 0 auto;
+  padding: 0 10px 10px;
+}
+
+.dock .composer-wrap {
+  max-width: none;
+}
+
+.dock .composer {
   border-radius: 14px;
-  border: 1px solid var(--line);
   background: var(--ivory);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
 }
 
-.dock-composer:focus-within {
-  border-color: rgba(var(--accent-rgb), 0.35);
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.07);
+.dock .composer-row {
+  padding: 5px 5px 5px 6px;
 }
 
-.dock-input {
-  flex: 1;
-  min-width: 0;
-  max-height: 140px;
-  padding: 4px 0;
-  border: none;
-  background: transparent;
-  font-family: var(--font-sans);
+.dock .composer-row textarea {
+  min-height: 32px;
+  padding: 7px 2px;
   font-size: 13px;
-  line-height: 1.5;
-  color: var(--ink);
-  outline: none;
-  resize: none;
+  max-height: 140px;
 }
 
-.dock-input::placeholder {
-  color: var(--ink-4);
+.dock .composer-row .send-btn,
+.dock .attach-btn {
+  width: 26px;
+  height: 26px;
+  margin-bottom: 1px;
 }
 
-.dock-send {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--ivory);
-  transition: background 120ms, opacity 120ms;
+.dock .send-btn svg {
+  width: 13px;
+  height: 13px;
 }
 
-.dock-send svg {
-  width: 14px;
-  height: 14px;
+.dock .attach-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
-.dock-send:hover {
-  background: var(--accent-hover);
+.dock .composer-hint {
+  display: none;
 }
 
-.dock-send:disabled {
-  opacity: 0.35;
-  pointer-events: none;
+.dock .composer-images {
+  padding: 8px 8px 0;
 }
 
-@media (max-width: 1080px) {
-  .dock {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 25;
-    box-shadow: var(--shadow-lg);
-  }
+.dock .composer-image {
+  width: 58px;
+  height: 58px;
 }

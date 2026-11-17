@@ -1,19 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, Check, Copy, Flag, Pencil, RefreshCw } from "lucide-react";
 
-import type { Message } from "../lib/types";
-import { copyText } from "../lib/utils";
-import { useChatStore } from "../store/useChatStore";
-import { Markdown } from "@hook/chat";
-import { MessageImages } from "./MessageImages";
-import { ReportDialog } from "./ReportDialog";
+import { copyText } from "./clipboard";
+import { Markdown } from "./Markdown";
+import type { ChatMessage } from "./types";
+import "./chat.css";
 
-interface Props {
-  message: Message;
+export interface MessageItemProps<M extends ChatMessage> {
+  message: M;
+  /** The text of a reply that is still arriving, if this is the one streaming. */
   streamText?: string;
-  isLastAssistant: boolean;
-  onRegenerate: () => void;
-  onEdit: (id: string, text: string) => void;
+  isLastAssistant?: boolean;
+  onRegenerate?: () => void;
+  onEdit?: (id: string, text: string) => void;
+  onReport?: (message: M) => void;
+  /**
+   * Pictures and anything else a product renders around the text. It is called
+   * once per message, in the place attachments belong for that role.
+   */
+  renderExtras?: (message: M) => ReactNode;
 }
 
 function ThinkingDots() {
@@ -29,17 +34,22 @@ function ThinkingDots() {
   );
 }
 
-export function MessageItem({
+/**
+ * One message: a bubble for what you said, Markdown for what Hook said, and the
+ * actions that belong to each. It knows nothing about a store or a transport —
+ * a product decides what Regenerate and Report mean, or omits them.
+ */
+export function MessageItem<M extends ChatMessage>({
   message,
   streamText,
   isLastAssistant,
   onRegenerate,
   onEdit,
-}: Props) {
+  onReport,
+  renderExtras,
+}: MessageItemProps<M>) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [reporting, setReporting] = useState(false);
-  const chatId = useChatStore((s) => s.activeId);
   const [editText, setEditText] = useState(message.content);
   const timer = useRef<number | undefined>(undefined);
 
@@ -72,7 +82,7 @@ export function MessageItem({
                   event.preventDefault();
                   if (editText.trim()) {
                     setEditing(false);
-                    onEdit(message.id, editText.trim());
+                    onEdit?.(message.id, editText.trim());
                   }
                 } else if (event.key === "Escape") {
                   event.preventDefault();
@@ -97,7 +107,7 @@ export function MessageItem({
                 disabled={!editText.trim()}
                 onClick={() => {
                   setEditing(false);
-                  onEdit(message.id, editText.trim());
+                  onEdit?.(message.id, editText.trim());
                 }}
               >
                 Send
@@ -110,23 +120,25 @@ export function MessageItem({
 
     return (
       <div className="msg" data-role="user">
-        <MessageImages message={message} />
+        {renderExtras?.(message)}
         {message.content.trim() && <div className="bubble">{message.content}</div>}
         <div className="msg-actions">
           <button className="mini-btn" onClick={() => void copy()}>
             {copied ? <Check strokeWidth={2.2} /> : <Copy strokeWidth={1.9} />}
             {copied ? "Copied" : "Copy"}
           </button>
-          <button
-            className="mini-btn"
-            onClick={() => {
-              setEditText(message.content);
-              setEditing(true);
-            }}
-          >
-            <Pencil strokeWidth={1.8} />
-            Edit
-          </button>
+          {onEdit && (
+            <button
+              className="mini-btn"
+              onClick={() => {
+                setEditText(message.content);
+                setEditing(true);
+              }}
+            >
+              <Pencil strokeWidth={1.8} />
+              Edit
+            </button>
+          )}
         </div>
       </div>
     );
@@ -134,13 +146,9 @@ export function MessageItem({
 
   return (
     <div className="msg" data-role="assistant">
-      {empty ? (
-        <ThinkingDots />
-      ) : (
-        <Markdown content={body} streaming={streaming} />
-      )}
+      {empty ? <ThinkingDots /> : <Markdown content={body} streaming={streaming} />}
 
-      <MessageImages message={message} />
+      {renderExtras?.(message)}
 
       {message.status === "error" && message.error && (
         <div className="msg-error">
@@ -155,27 +163,19 @@ export function MessageItem({
           {copied ? <Check strokeWidth={2.2} /> : <Copy strokeWidth={1.9} />}
           {copied ? "Copied" : "Copy"}
         </button>
-        {isLastAssistant && !streaming && (
+        {isLastAssistant && !streaming && onRegenerate && (
           <button className="mini-btn" onClick={onRegenerate}>
             <RefreshCw strokeWidth={1.8} />
             Regenerate
           </button>
         )}
-        {!streaming && message.content.trim() && chatId && (
-          <button className="mini-btn" onClick={() => setReporting(true)}>
+        {!streaming && message.content.trim() && onReport && (
+          <button className="mini-btn" onClick={() => onReport(message)}>
             <Flag strokeWidth={1.8} />
             Report
           </button>
         )}
       </div>
-
-      {reporting && chatId ? (
-        <ReportDialog
-          chatId={chatId}
-          message={message}
-          onClose={() => setReporting(false)}
-        />
-      ) : null}
     </div>
   );
 }

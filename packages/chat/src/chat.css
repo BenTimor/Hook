@@ -1,0 +1,456 @@
+/*
+ * The chat surface: one thread, one message, one composer, shared by every
+ * product that embeds Hook. Tokens come from @hook/ui/tokens.css, so both the
+ * chat window and a docked panel look like the same product.
+ */
+
+/* ── Thread ────────────────────────────────────────────────────────────── */
+
+.thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.thread-inner {
+  max-width: 764px;
+  margin: 0 auto;
+  padding: 18px 28px 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 29px;
+}
+
+/* ── Messages ──────────────────────────────────────────────────────────── */
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.msg[data-role="user"] {
+  align-items: flex-end;
+}
+
+.bubble {
+  position: relative;
+  max-width: 82%;
+  padding: 9px 14px 10px;
+  border-radius: 18px 18px 6px 18px;
+  background: var(--accent);
+  border: 1px solid var(--line-soft);
+  box-shadow: var(--shadow-xs);
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ivory);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.bubble::selection {
+  color: var(--ink);
+}
+
+.msg-actions {
+  position: absolute;
+  bottom: -21px;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  opacity: 0;
+  transition: opacity 130ms;
+  z-index: 2;
+}
+
+.msg:hover .msg-actions,
+.msg-actions:focus-within {
+  opacity: 1;
+}
+
+.msg[data-role="user"] .msg-actions {
+  left: auto;
+  right: 0;
+  flex-direction: row-reverse;
+}
+
+.mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  transition: background 110ms, color 110ms;
+}
+
+.mini-btn:hover {
+  background: rgba(var(--ink-rgb), 0.055);
+  color: var(--ink);
+}
+
+.mini-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.edit-area {
+  width: 100%;
+  max-width: 82%;
+  border-radius: 18px 18px 6px 18px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-sm);
+  padding: 10px 12px;
+}
+
+.edit-area textarea {
+  width: 100%;
+  resize: none;
+  font-size: 14.5px;
+  line-height: 1.55;
+  min-height: 44px;
+  max-height: 220px;
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pill-btn {
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: rgba(var(--ink-rgb), 0.05);
+  transition: background 110ms, color 110ms;
+}
+
+.pill-btn:hover {
+  background: rgba(var(--ink-rgb), 0.09);
+  color: var(--ink);
+}
+
+.pill-btn[data-primary="true"] {
+  background: var(--accent);
+  color: var(--ivory);
+}
+
+.pill-btn[data-primary="true"]:hover {
+  background: var(--accent-hover);
+}
+
+.pill-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* streaming caret */
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  background: var(--ink);
+  opacity: 0.55;
+  animation: caretBlink 1.05s steps(2, start) infinite;
+}
+
+@keyframes caretBlink {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.06;
+  }
+}
+
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--ink-3);
+  padding: 2px 0;
+}
+
+.thinking-dot {
+  display: flex;
+  gap: 3px;
+}
+
+.thinking-dot i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  animation: thinkBounce 1.15s var(--ease) infinite;
+}
+
+.thinking-dot i:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.thinking-dot i:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes thinkBounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+.msg-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: rgba(192, 57, 43, 0.055);
+  border: 1px solid rgba(192, 57, 43, 0.14);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #8f3225;
+  user-select: text;
+}
+
+.msg-error svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 1.5px;
+  flex: 0 0 14px;
+}
+
+.aborted-note {
+  font-size: 11.5px;
+  color: var(--ink-4);
+  margin-top: 2px;
+}
+
+/* ── Composer ──────────────────────────────────────────────────────────── */
+
+
+.composer-wrap {
+  width: 100%;
+  max-width: 764px;
+  margin: 0 auto;
+}
+
+.composer {
+  position: relative;
+  border-radius: var(--radius-composer);
+  background: var(--panel-strong);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md);
+  transition: box-shadow 180ms var(--ease), border-color 180ms var(--ease),
+    background 180ms var(--ease);
+}
+
+.composer:focus-within {
+  border-color: rgba(var(--accent-rgb), 0.3);
+  box-shadow: var(--shadow-lg), 0 0 0 3px rgba(var(--accent-rgb), 0.07);
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 54px;
+  padding: 15px 58px 15px 18px;
+  font-size: 14.8px;
+  line-height: 1.55;
+  resize: none;
+  overflow-y: auto;
+  max-height: 260px;
+  color: var(--ink);
+}
+
+.composer textarea::placeholder {
+  color: var(--ink-4);
+}
+
+.send-btn {
+  position: absolute;
+  right: 10px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--ivory);
+  transition: background 140ms, transform 140ms var(--ease), opacity 140ms;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.send-btn:active:not(:disabled) {
+  transform: scale(0.93);
+}
+
+.send-btn:disabled {
+  background: rgba(var(--ink-rgb), 0.09);
+  color: var(--ink-4);
+  cursor: default;
+}
+
+.send-btn[data-stop="true"] {
+  background: rgba(var(--ink-rgb), 0.1);
+  color: var(--ink);
+}
+
+.send-btn[data-stop="true"]:hover {
+  background: rgba(var(--ink-rgb), 0.16);
+}
+
+.send-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.send-btn[data-stop="true"] svg {
+  width: 13px;
+  height: 13px;
+}
+
+
+/* ── Composer: attachments ───────────────────────────────────────────────── */
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 8px 10px 10px;
+}
+
+.composer-row textarea {
+  flex: 1 1 auto;
+  min-height: 38px;
+  padding: 9px 6px 8px;
+  font-size: 14.8px;
+  line-height: 1.55;
+  background: transparent;
+  border: 0;
+  resize: none;
+  overflow-y: auto;
+  max-height: 260px;
+  color: var(--ink);
+}
+
+.composer-row .send-btn {
+  position: static;
+  flex: 0 0 auto;
+  margin-bottom: 2px;
+}
+
+.attach-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-bottom: 2px;
+  border-radius: 50%;
+  color: var(--ink-3);
+  transition: background 140ms, color 140ms;
+}
+
+.attach-btn:hover:not(:disabled) {
+  background: rgba(var(--ink-rgb), 0.06);
+  color: var(--ink);
+}
+
+.attach-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.attach-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.composer[data-dragging="true"] {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-lg), 0 0 0 3px rgba(var(--accent-rgb), 0.14);
+}
+
+.composer-images {
+  display: flex;
+  gap: 8px;
+  padding: 12px 12px 0;
+  overflow-x: auto;
+}
+
+.composer-image {
+  position: relative;
+  flex: 0 0 auto;
+  width: 78px;
+  height: 78px;
+  margin: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: rgba(var(--ink-rgb), 0.04);
+}
+
+.composer-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.composer-image-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(12, 12, 10, 0.62);
+  color: #fff;
+  backdrop-filter: blur(6px);
+  transition: background 140ms;
+}
+
+.composer-image-x:hover {
+  background: rgba(12, 12, 10, 0.8);
+}
+
+.composer-image-x svg {
+  width: 11px;
+  height: 11px;
+}

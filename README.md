@@ -747,7 +747,7 @@ argue about it.)
 ## Hook Workspace
 
 The second product. A project holds boards of tasks, Markdown documents and the
-people they are shared with; folders only organize them. It is its own installer
+people they are shared with; folders organize them, and can nest. It is its own installer
 (`apps/workspace`, identifier `app.hook.workspace`) with the same window chrome,
 the same account and the same chat beside it.
 
@@ -783,6 +783,12 @@ that it is permanent and cannot be undone.
 - **Previews.** `workspace_preview` puts a task, board or document in the preview
   panel. It is a second kind of preview next to the HTML page a coding agent can
   show, and the panel renders it directly instead of in an iframe.
+- **Folders are rows, not a client feature.** A folder carries a name, an
+  optional parent and a position; a board or a document carries a `folderId`.
+  Deleting a folder is a tombstone like anything else, and whatever was inside
+  it stays in the project at the top level — the tree is organization, never a
+  container that can swallow work. Two people see the same tree because it is
+  the project's, not theirs.
 - **The window is online-first.** The server is the source of truth, so the app
   keeps an in-memory copy and applies `/api/ws/changes` every five seconds while
   visible (and on focus). Nothing on disk can drift from the account, and there
@@ -790,7 +796,9 @@ that it is permanent and cannot be undone.
   here.
 - **The chat sits beside the work.** A collapsible right-hand panel embeds the
   same conversations as Hook (`packages/chat`), collapsed by default with its
-  conversation list collapsed as well. It has no preview panel; a preview is a
+  conversation list collapsed as well. The thread, the messages and the composer
+  are the ones the chat window renders — the dock only restyles them for a 380px
+  column, so there is one chat surface to fix, not two. It has no preview panel; a preview is a
   wide, page-shaped thing, and the dock is deliberately narrow. The window tells
   the backend what it is showing — project, board, open task, selected text — and
   that rides on the next request as context, so "summarise this board" means the
@@ -1197,8 +1205,9 @@ The workspace suite (`server/workspace.test.mjs`) drives the real router against
 temporary SQLite file: the role table, an invitation accepted in the product,
 viewer/editor/manager limits, ownership transfer and its permanence, a removed
 member's tombstone in the changes feed, typed task columns, an agent comment that
-carries the conversation it came from, and a stale document write that is refused
-with the current copy. `server/releases.test.mjs` covers the second product's
+carries the conversation it came from, a stale document write that is refused
+with the current copy, folder nesting and deletion that keeps its contents, and
+account deletion that removes owned projects but not other people's. `server/releases.test.mjs` covers the second product's
 index and its "not published yet" answer.
 
 ## A note on packaged builds

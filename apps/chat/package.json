@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.3.0",
   "type": "module",
-  "description": "Hook — a local AI chat harness",
+  "description": "Hook \u2014 a local AI chat harness",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
@@ -16,6 +16,7 @@
   "dependencies": {
     "@fontsource-variable/inter": "catalog:",
     "@fontsource-variable/jetbrains-mono": "catalog:",
+    "@hook/chat": "workspace:*",
     "@hook/ui": "workspace:*",
     "@radix-ui/react-dropdown-menu": "catalog:",
     "@tauri-apps/api": "catalog:",

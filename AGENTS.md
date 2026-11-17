@@ -22,10 +22,8 @@ Shared, and the reason the products look and behave alike:
 crates/hook-core/    the backend every product links: account, chats + sync,
                      coding agents, preview, the assistant turn, the IPC surface
 packages/ui/         tokens.css, window chrome, buttons/inputs, dialogs, the mark
-packages/chat/       Markdown, CodeBlock, highlight, and the ChatDock panel;
-                     Thread/MessageItem/Composer are still in apps/chat — moving
-                     them is the next extraction, and the dock currently uses
-                     its own lighter message view
+packages/chat/       the chat surface: Markdown, CodeBlock, Thread, MessageItem,
+                     Composer, and the ChatDock panel every product embeds
 ```
 
 `server/` and `waitlist/` deliberately stay at the repo root: they are one deploy
@@ -90,9 +88,15 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 - `crates/hook-core/src/{provider,import,update,reports}.rs` — SSE client, the
   ChatGPT/Claude export readers, the release index and update policy, AI reports.
 - `crates/hook-core/src/commands.rs` — the whole IPC surface.
+- `packages/chat/src/{Thread,MessageItem,Composer}.tsx` — the conversation and
+  the input, prop-driven and store-free. `apps/chat/src/components/{Thread,
+  Composer}.tsx` are the thin store adapters; a product supplies the pictures
+  (`renderExtras`) and what Report means (`onReport`). `chat.css` holds their
+  styles and `dock.css` the 380px overrides, so both apps look the same.
 - `packages/chat/src/ChatDock.tsx` — the collapsible chat panel every product
-  embeds. It takes a `ChatTransport`, so it knows nothing about which app it is
-  running in; `apps/workspace/src/lib/chatTransport.ts` is that adapter.
+  embeds, built from those same pieces. It takes a `ChatTransport`, so it knows
+  nothing about which app it is running in;
+  `apps/workspace/src/lib/chatTransport.ts` is that adapter.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
   `hook://sync`, `hook://import`, `hook://update`).
@@ -121,6 +125,10 @@ Changing one side of a boundary is the most common way to break this repo.
 - **New IPC command:** `crates/hook-core/src/commands.rs` → `generate_handler!` in
   `crates/hook-core/src/lib.rs` → the product's `bridge.ts` wrapper → `types.ts`
   → the `mock.ts` fallback → store/component. Both `isTauri()` branches must work.
+- **Chat surface change:** `packages/chat/src` (component + `chat.css`) → check
+  it at both sizes (the chat window and the 380px dock) → the adapters in
+  `apps/chat/src/components` if the store gains a prop. Never fork a component
+  into one app: the dock and the window are meant to be the same thing.
 - **New chat-agent tool:** schema + impl in `tools.rs`, dispatch in `turn.rs`,
   and the prompt in `turn.rs` (`system_prompt`) if the agent must know about it.
   Gate it on `Capabilities` when only some products have it.

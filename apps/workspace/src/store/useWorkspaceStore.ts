@@ -49,7 +49,8 @@ interface WorkspaceState {
   deleteProject: (id: string) => Promise<void>;
 
   openBoard: (id: string | null) => Promise<void>;
-  createBoard: (projectId: string, name: string) => Promise<Board | null>;
+  createBoard: (projectId: string, name: string, folderId?: string | null) => Promise<Board | null>;
+  moveBoard: (id: string, folderId: string | null) => Promise<void>;
   deleteBoard: (id: string) => Promise<void>;
 
   openTask: (id: string | null) => Promise<void>;
@@ -61,12 +62,25 @@ interface WorkspaceState {
 
   openDocument: (id: string | null) => Promise<void>;
   loadDocument: (id: string) => Promise<DocumentMeta | null>;
-  createDocument: (projectId: string, title: string) => Promise<DocumentMeta | null>;
+  createDocument: (
+    projectId: string,
+    title: string,
+    folderId?: string | null,
+  ) => Promise<DocumentMeta | null>;
+  moveDocument: (id: string, folderId: string | null) => Promise<void>;
   saveDocument: (
     id: string,
-    patch: { title?: string; markdown?: string; baseRev?: number },
+    patch: { title?: string; markdown?: string; baseRev?: number; folderId?: string | null },
   ) => Promise<{ document: DocumentMeta | null; conflict: DocumentMeta | null }>;
   deleteDocument: (id: string) => Promise<void>;
+
+  createFolder: (
+    projectId: string,
+    name: string,
+    parentId?: string | null,
+  ) => Promise<Folder | null>;
+  renameFolder: (projectId: string, id: string, name: string) => Promise<void>;
+  deleteFolder: (projectId: string, id: string) => Promise<void>;
 
   refreshMembers: (projectId: string) => Promise<void>;
   invite: (projectId: string, email: string, role: string) => Promise<void>;
@@ -219,9 +233,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async createBoard(projectId, name) {
+  async createBoard(projectId, name, folderId = null) {
     try {
-      const created = await api.createBoard(projectId, name);
+      const created = await api.createBoard(projectId, name, folderId);
       set((state) => ({
         boards: {
           ...state.boards,
@@ -232,6 +246,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: message(error) });
       return null;
+    }
+  },
+
+  async moveBoard(id, folderId) {
+    try {
+      const updated = await api.updateBoard(id, { folderId });
+      set((state) => ({
+        boards: {
+          ...state.boards,
+          [updated.board.projectId]: sortByPosition(
+            upsert(state.boards[updated.board.projectId] ?? [], updated.board),
+          ),
+        },
+      }));
+    } catch (error) {
+      set({ error: message(error) });
     }
   },
 
@@ -368,9 +398,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async createDocument(projectId, title) {
+  async createDocument(projectId, title, folderId = null) {
     try {
-      const created = await api.createDocument(projectId, { title });
+      const created = await api.createDocument(projectId, { title, folderId });
       set((state) => ({
         documents: {
           ...state.documents,
@@ -383,6 +413,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ error: message(error) });
       return null;
     }
+  },
+
+  async moveDocument(id, folderId) {
+    const document = findDocument(get(), id);
+    if (!document) return;
+    // Only the folder moves; the editor's buffer and revision are untouched.
+    const result = await get().saveDocument(id, { folderId });
+    if (!result.document) return;
   },
 
   async saveDocument(id, patch) {
@@ -405,6 +443,64 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: message(error) });
       return { document: null, conflict: null };
+    }
+  },
+
+  async createFolder(projectId, name, parentId = null) {
+    try {
+      const created = await api.createFolder(projectId, name, parentId);
+      set((state) => ({
+        folders: {
+          ...state.folders,
+          [projectId]: sortByPosition([...(state.folders[projectId] ?? []), created.folder]),
+        },
+      }));
+      return created.folder;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async renameFolder(projectId, id, name) {
+    try {
+      const updated = await api.updateFolder(id, { name });
+      set((state) => ({
+        folders: {
+          ...state.folders,
+          [projectId]: sortByPosition(upsert(state.folders[projectId] ?? [], updated.folder)),
+        },
+      }));
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  async deleteFolder(projectId, id) {
+    try {
+      await api.deleteFolder(id);
+      // The server leaves the contents alone, and a board or document whose
+      // folder is gone belongs at the top level rather than nowhere.
+      set((state) => ({
+        folders: {
+          ...state.folders,
+          [projectId]: (state.folders[projectId] ?? []).filter((folder) => folder.id !== id),
+        },
+        boards: {
+          ...state.boards,
+          [projectId]: (state.boards[projectId] ?? []).map((board) =>
+            board.folderId === id ? { ...board, folderId: null } : board,
+          ),
+        },
+        documents: {
+          ...state.documents,
+          [projectId]: (state.documents[projectId] ?? []).map((document) =>
+            document.folderId === id ? { ...document, folderId: null } : document,
+          ),
+        },
+      }));
+    } catch (error) {
+      set({ error: message(error) });
     }
   },
 
@@ -493,6 +589,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 function message(error: unknown): string {
   if (error instanceof Error) return error.message;
   return typeof error === "string" ? error : "Something went wrong.";
+}
+
+function findDocument(state: WorkspaceState, id: string): DocumentMeta | null {
+  for (const documents of Object.values(state.documents)) {
+    const document = documents.find((candidate) => candidate.id === id);
+    if (document) return document;
+  }
+  return null;
 }
 
 function findTask(state: WorkspaceState, id: string): Task | null {

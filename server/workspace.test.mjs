@@ -438,3 +438,69 @@ test("deleting the account removes its projects and its memberships elsewhere", 
   const feed = await request("/changes?since=0", { token: OWNER });
   assert.equal(feed.body.changes.length, 0);
 });
+
+test("folders organize boards and documents, and deleting one keeps its contents", async (t) => {
+  const { request } = await setup(t);
+  const { body: created } = await request("/projects", {
+    method: "POST",
+    body: { name: "Filed" },
+  });
+  const project = created.project;
+
+  const design = await request(`/projects/${project.id}/folders`, {
+    method: "POST",
+    body: { name: "Design" },
+  });
+  assert.equal(design.status, 201);
+  // A folder can hold a folder.
+  const nested = await request(`/projects/${project.id}/folders`, {
+    method: "POST",
+    body: { name: "Screens", parentId: design.body.folder.id },
+  });
+  assert.equal(nested.status, 201);
+  assert.equal(nested.body.folder.parentId, design.body.folder.id);
+
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Sprint", folderId: design.body.folder.id },
+  });
+  assert.equal(board.body.board.folderId, design.body.folder.id);
+  const document = await request(`/projects/${project.id}/documents`, {
+    method: "POST",
+    body: { title: "Brief", folderId: nested.body.folder.id },
+  });
+  assert.equal(document.body.document.folderId, nested.body.folder.id);
+
+  const renamed = await request(`/folders/${design.body.folder.id}`, {
+    method: "PATCH",
+    body: { name: "Brand" },
+  });
+  assert.equal(renamed.body.folder.name, "Brand");
+
+  // Moving out is a PATCH with a null folder, which is different from omitting it.
+  const moved = await request(`/boards/${board.body.board.id}`, {
+    method: "PATCH",
+    body: { folderId: null },
+  });
+  assert.equal(moved.body.board.folderId, null);
+
+  await request(`/folders/${design.body.folder.id}`, { method: "DELETE" });
+  const folders = await request(`/projects/${project.id}/folders`);
+  assert.deepEqual(
+    folders.body.folders.map((folder) => folder.name),
+    ["Screens"],
+  );
+
+  // The folder is gone; the document inside it is not.
+  const documents = await request(`/projects/${project.id}/documents`);
+  assert.deepEqual(
+    documents.body.documents.map((entry) => entry.title),
+    ["Brief"],
+  );
+
+  const changes = await request("/changes?since=0&limit=200");
+  const tombstone = changes.body.changes.find(
+    (change) => change.kind === "folder" && change.deleted && change.id === design.body.folder.id,
+  );
+  assert.ok(tombstone, "the changes feed must carry the folder deletion");
+});

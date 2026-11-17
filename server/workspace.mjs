@@ -712,7 +712,7 @@ export function createWorkspaceRouter({ db, env = {} }) {
       name,
       position: Number.isSafeInteger(req.body?.position) ? req.body.position : 0,
     });
-    res.status(201).json({ folder: row });
+    res.status(201).json({ folder: shapeFolder(row) });
   });
 
   router.patch("/folders/:id", (req, res) => {
@@ -732,7 +732,7 @@ export function createWorkspaceRouter({ db, env = {} }) {
       fields.parent_id = req.body.parentId ?? null;
     }
     if (Number.isSafeInteger(req.body?.position)) fields.position = req.body.position;
-    res.json({ folder: update(db, "folders", req.params.id, fields) });
+    res.json({ folder: shapeFolder(update(db, "folders", req.params.id, fields)) });
   });
 
   router.delete("/folders/:id", (req, res) => {
@@ -1180,6 +1180,7 @@ function list(db, kind, projectId) {
   const rows = db
     .prepare(`SELECT * FROM ws_${kind} WHERE project_id = ? AND deleted_at IS NULL ORDER BY ${order}`)
     .all(projectId);
+  if (kind === "folders") return rows.map(shapeFolder);
   return kind === "documents" ? rows.map(shapeDocumentMeta) : rows;
 }
 
@@ -1233,6 +1234,19 @@ function listMembers(db, projectId) {
                 m.joined_at`,
     )
     .all(projectId);
+}
+
+/** Folders are the one table whose rows are not shaped by hand anywhere else. */
+function shapeFolder(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    parentId: row.parent_id,
+    name: row.name,
+    position: row.position,
+    updatedAt: row.updated_at,
+    seq: row.seq,
+  };
 }
 
 function shapeProject(row) {

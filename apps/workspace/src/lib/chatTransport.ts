@@ -23,7 +23,7 @@ interface Chat {
  */
 export const chatTransport: ChatTransport = {
   async listChats(): Promise<DockChat[]> {
-    if (!isTauri()) return demoChats;
+    if (!isTauri()) return demoList;
     const chats = await invoke<ChatMeta[]>("list_chats");
     return chats.map((chat) => ({
       id: chat.id,
@@ -33,13 +33,13 @@ export const chatTransport: ChatTransport = {
   },
 
   async getChat(id: string): Promise<{ messages: DockMessage[] }> {
-    if (!isTauri()) return { messages: [] };
+    if (!isTauri()) return { messages: demoMessages.get(id) ?? [] };
     const chat = await invoke<Chat>("get_chat", { chatId: id });
     return { messages: chat.messages };
   },
 
   async send(chatId: string | null, text: string): Promise<string> {
-    if (!isTauri()) return "chat-demo";
+    if (!isTauri()) return demoReply(chatId, text);
     return invoke<string>("send_message", { chatId, text });
   },
 
@@ -49,7 +49,10 @@ export const chatTransport: ChatTransport = {
   },
 
   subscribe(listener: (chatId: string, event: DockEvent) => void): () => void {
-    if (!isTauri()) return () => {};
+    if (!isTauri()) {
+      demoListeners.add(listener);
+      return () => demoListeners.delete(listener);
+    }
     const pending = listen<{ chatId: string; event: DockEvent }>("hook://chat", (event) =>
       listener(event.payload.chatId, event.payload.event),
     );
@@ -59,7 +62,59 @@ export const chatTransport: ChatTransport = {
   },
 };
 
-const demoChats: DockChat[] = [];
+// A browser preview has no Rust behind it, so the dock answers with a canned
+// reply. It is the same event shape the backend sends, so the panel is being
+// exercised properly rather than faked at the last moment.
+const demoListeners = new Set<(chatId: string, event: DockEvent) => void>();
+const demoMessages = new Map<string, DockMessage[]>();
+const demoList: DockChat[] = [];
+let demoSeq = 0;
+
+function demoEmit(chatId: string, event: DockEvent): void {
+  for (const listener of demoListeners) listener(chatId, event);
+}
+
+function demoReply(chatId: string | null, text: string): string {
+  const id = chatId ?? `chat-demo-${(demoSeq += 1)}`;
+  const history = demoMessages.get(id) ?? [];
+  const user: DockMessage = {
+    id: `m${(demoSeq += 1)}`,
+    role: "user",
+    content: text,
+  };
+  const reply: DockMessage = {
+    id: `m${(demoSeq += 1)}`,
+    role: "assistant",
+    content: "",
+    status: "streaming",
+  };
+  const next = [...history, user, reply];
+  demoMessages.set(id, next);
+  if (!demoList.some((chat) => chat.id === id)) {
+    demoList.unshift({
+      id,
+      title: text.slice(0, 40) || "New chat",
+      updatedAt: Date.now(),
+    });
+  }
+  demoEmit(id, { kind: "started", messages: next.map((message) => ({ ...message })) });
+
+  const words = "This is the browser preview — the real answer comes from Hook.".split(" ");
+  words.forEach((word, index) => {
+    setTimeout(
+      () => demoEmit(id, { kind: "delta", text: index === 0 ? word : ` ${word}` }),
+      120 + index * 40,
+    );
+  });
+  setTimeout(() => {
+    const done: DockMessage = { ...reply, content: words.join(" "), status: "done" };
+    const settled = [...next];
+    settled[settled.length - 1] = done;
+    demoMessages.set(id, settled);
+    demoEmit(id, { kind: "done", messages: settled });
+  }, 160 + words.length * 40);
+  return id;
+}
 
 /**
  * Tell the backend what the window is showing. It rides on the next chat

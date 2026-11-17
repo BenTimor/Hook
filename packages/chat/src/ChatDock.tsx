@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { List, Loader2, Send, Square, SquarePen, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { List, SquarePen, X } from "lucide-react";
 
-import { Markdown } from "./Markdown";
+import { Composer } from "./Composer";
+import { Thread } from "./Thread";
+import type { ChatMessage } from "./types";
 import "./dock.css";
 
 export interface DockChat {
@@ -10,12 +12,8 @@ export interface DockChat {
   updatedAt: number;
 }
 
-export interface DockMessage {
-  id: string;
+export interface DockMessage extends ChatMessage {
   role: "user" | "assistant" | "system" | "tool";
-  content: string;
-  status?: string;
-  hidden?: boolean;
 }
 
 export interface DockEvent {
@@ -46,6 +44,9 @@ export interface ChatTransport {
  * No preview: a docked panel is too narrow for a page, and every product will
  * eventually offer its own way to look at things. The conversation list is
  * collapsed too — you are here to ask one question, not to browse history.
+ *
+ * The thread and the composer are the ones from `@hook/chat`, so what arrives
+ * here looks exactly like what arrives in the chat window.
  */
 export function ChatDock({
   transport,
@@ -66,7 +67,6 @@ export function ChatDock({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const scroller = useRef<HTMLDivElement>(null);
   const pending = useRef("");
   const frame = useRef<number | null>(null);
   const activeRef = useRef<string | null>(null);
@@ -140,12 +140,6 @@ export function ChatDock({
     };
   }, [open, transport, refreshChats]);
 
-  useEffect(() => {
-    const node = scroller.current;
-    if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, [messages, busy]);
-
   const openChat = async (id: string) => {
     setHistoryOpen(false);
     setError(null);
@@ -191,6 +185,28 @@ export function ChatDock({
       setError(String(failure));
     }
   };
+
+  // While the reply is on its way but no text has landed yet, show the same
+  // "Thinking" state the chat window shows: a placeholder reply on the end.
+  const rendered = useMemo(() => {
+    const thinking =
+      busy && messages.length > 0 && messages[messages.length - 1]?.role === "user";
+    return thinking
+      ? [
+          ...messages,
+          {
+            id: "dock-thinking",
+            role: "assistant" as const,
+            content: "",
+            status: "streaming",
+          },
+        ]
+      : messages.map((message) =>
+          busy && message === messages[messages.length - 1]
+            ? { ...message, status: "streaming" }
+            : message,
+        );
+  }, [busy, messages]);
 
   if (!open) return null;
 
@@ -239,8 +255,8 @@ export function ChatDock({
         </div>
       )}
 
-      <div className="dock-thread" ref={scroller}>
-        {messages.length === 0 ? (
+      {messages.length === 0 ? (
+        <div className="dock-thread dock-empty-wrap">
           <div className="dock-empty">
             <p>Ask about what you are looking at.</p>
             <span>
@@ -248,32 +264,10 @@ export function ChatDock({
               them for you.
             </span>
           </div>
-        ) : (
-          messages.map((message) => (
-            <article
-              key={message.id}
-              className="dock-message"
-              data-role={message.role}
-              data-streaming={message.status === "streaming" ? "true" : undefined}
-            >
-              {message.role === "user" ? (
-                <p className="dock-user-text">{message.content}</p>
-              ) : (
-                <Markdown
-                  content={message.content}
-                  streaming={message.status === "streaming"}
-                />
-              )}
-            </article>
-          ))
-        )}
-        {busy && messages[messages.length - 1]?.role === "user" && (
-          <div className="dock-thinking">
-            <Loader2 className="dock-spin" />
-            Thinking
-          </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <Thread className="dock-thread" messages={rendered} />
+      )}
 
       {error && (
         <div className="dock-error" role="alert">
@@ -282,39 +276,17 @@ export function ChatDock({
       )}
 
       <div className="dock-composer">
-        <textarea
-          className="dock-input"
-          rows={1}
+        <Composer
           value={draft}
-          placeholder="Ask Hook…"
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void send();
-            }
+          onChange={setDraft}
+          onSend={() => void send()}
+          onStop={() => {
+            if (activeId) void transport.stop(activeId);
           }}
+          busy={busy}
+          placeholder="Ask Hook…"
+          focusKey={activeId ?? "new"}
         />
-        {busy ? (
-          <button
-            className="dock-send"
-            title="Stop"
-            onClick={() => {
-              if (activeId) void transport.stop(activeId);
-            }}
-          >
-            <Square strokeWidth={2} />
-          </button>
-        ) : (
-          <button
-            className="dock-send"
-            title="Send"
-            disabled={!draft.trim()}
-            onClick={() => void send()}
-          >
-            <Send strokeWidth={1.9} />
-          </button>
-        )}
       </div>
     </aside>
   );
