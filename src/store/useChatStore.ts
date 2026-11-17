@@ -78,6 +78,8 @@ interface ChatStore {
   openSettings: () => Promise<void>;
   closeSettings: () => void;
   refreshSettings: () => Promise<void>;
+  /** Reload the sidebar after something wrote chats outside a turn. */
+  refreshChats: () => Promise<void>;
   chooseProjectsDir: () => Promise<void>;
   /** Stop every coding agent working in the active chat, right now. */
   stopChatAgents: () => Promise<void>;
@@ -584,6 +586,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
       try {
         const settings = await api.getSettings();
         set({ settings });
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
+    refreshChats: async () => {
+      try {
+        const chats = await api.listChats();
+        set({ chats: sortMetas(chats) });
       } catch (error) {
         toast.error(textOf(error));
       }

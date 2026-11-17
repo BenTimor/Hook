@@ -58,6 +58,12 @@ export interface ChatMeta {
   pinnedAt?: number;
   messageCount: number;
   preview: string;
+  /** "chatgpt" or "claude" when this chat came from an import. */
+  source?: string;
+  /** The conversation id at the source. */
+  sourceId?: string;
+  /** The source's own updatedAt at the last import. */
+  sourceUpdatedAt?: number;
 }
 
 export interface Chat {
@@ -236,4 +242,47 @@ export type StreamEvent =
 export interface ChatEvent {
   chatId: string;
   event: StreamEvent;
+}
+
+/**
+ * Importing a conversation export downloaded from ChatGPT or Claude. The file
+ * is read once to preview the counts, then again from a cache to write it.
+ */
+export interface ImportPreview {
+  source: string;
+  /** "ChatGPT" or "Claude", for the confirmation line. */
+  vendor: string;
+  file: string;
+  conversations: number;
+  /** Chats this import would add. */
+  new: number;
+  /** Already imported, with a newer version in this file. */
+  updated: number;
+  /** Already imported and identical. */
+  unchanged: number;
+  /** Already imported and edited in Hook since. Left alone. */
+  keptLocal: number;
+  messages: number;
+  warnings: string[];
+}
+
+export interface ImportSummary {
+  source: string;
+  vendor: string;
+  imported: number;
+  updated: number;
+  unchanged: number;
+  keptLocal: number;
+  messages: number;
+  /** Chats that were written, newest first. */
+  chatIds: string[];
+  warnings: string[];
+}
+
+/** Progress while the conversations are written; emitted as `hook://import`. */
+export interface ImportProgress {
+  phase: "importing" | "done";
+  source: string;
+  done: number;
+  total: number;
 }

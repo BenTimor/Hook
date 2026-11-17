@@ -10,6 +10,9 @@ import type {
   Chat,
   ChatEvent,
   ChatMeta,
+  ImportPreview,
+  ImportProgress,
+  ImportSummary,
   PreviewEvent,
   PreviewView,
   ReportRequest,
@@ -31,6 +34,7 @@ type PreviewListener = (preview: PreviewEvent) => void;
 type AuthListener = (view: AuthView) => void;
 type UpdateListener = (event: UpdateEvent) => void;
 type SyncListener = (event: SyncEvent) => void;
+type ImportListener = (event: ImportProgress) => void;
 
 const chatListeners = new Set<ChatListener>();
 const agentsListeners = new Set<AgentsListener>();
@@ -38,6 +42,7 @@ const previewListeners = new Set<PreviewListener>();
 const authListeners = new Set<AuthListener>();
 const updateListeners = new Set<UpdateListener>();
 const syncListeners = new Set<SyncListener>();
+const importListeners = new Set<ImportListener>();
 
 function dispatch(chatId: string, event: StreamEvent) {
   for (const listener of chatListeners) listener(chatId, event);
@@ -149,6 +154,29 @@ export function onSyncEvent(listener: SyncListener): () => void {
       else off = unlisten;
     },
   );
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
+/**
+ * How far an import has got. One event per hundred conversations, plus a final
+ * `done`, so a big export does not flood the window.
+ */
+export function onImportEvent(listener: ImportListener): () => void {
+  if (!isTauri()) {
+    importListeners.add(listener);
+    return () => importListeners.delete(listener);
+  }
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void listen<ImportProgress>("hook://import", (event) =>
+    listener(event.payload),
+  ).then((unlisten) => {
+    if (cancelled) unlisten();
+    else off = unlisten;
+  });
   return () => {
     cancelled = true;
     off?.();
@@ -322,6 +350,30 @@ export const api = {
     isTauri()
       ? invoke<AgentsOverview>("stop_chat_agents", { chatId })
       : mock.stopChatAgents(),
+
+  /** Read an export and report what importing it would do. Writes nothing. */
+  importScan: (path: string): Promise<ImportPreview> =>
+    isTauri()
+      ? invoke<ImportPreview>("import_scan", { path })
+      : mock.importScan(path),
+
+  /** Write the conversations a scan counted. */
+  importApply: (path: string): Promise<ImportSummary> =>
+    isTauri()
+      ? invoke<ImportSummary>("import_apply", { path })
+      : mock.importApply(path),
+
+  async pickImportFile(vendor: "chatgpt" | "claude"): Promise<string | null> {
+    if (!isTauri()) return `${vendor}-export.zip`;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      multiple: false,
+      directory: false,
+      title: "Choose the export you downloaded",
+      filters: [{ name: "Conversation export", extensions: ["zip", "json"] }],
+    });
+    return typeof picked === "string" ? picked : null;
+  },
 
   async pickFolder(): Promise<string | null> {
     if (!isTauri()) return null;

@@ -1,6 +1,6 @@
 [package]
 name = "hook"
-version = "0.2.0"
+version = "0.2.1"
 description = "Hook — a local, single-provider AI chat harness"
 authors = ["you"]
 edition = "2021"
@@ -28,6 +28,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2.0.0-rc.8"
 

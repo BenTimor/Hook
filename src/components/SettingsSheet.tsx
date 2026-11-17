@@ -14,6 +14,7 @@ import { api, openExternal } from "../lib/bridge";
 import type { SyncView } from "../lib/types";
 import { useChatStore } from "../store/useChatStore";
 import { useUpdateStore } from "../store/useUpdateStore";
+import { ImportSection } from "./ImportSection";
 
 /**
  * One quiet line about where the work lives. Syncing itself is automatic; this
@@ -156,6 +157,8 @@ export function SettingsSheet() {
               .
             </p>
           </section>
+
+          <ImportSection />
 
           <SyncRow />
 

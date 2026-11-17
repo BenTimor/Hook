@@ -4,6 +4,7 @@ mod commands;
 mod config;
 mod git;
 mod guard;
+mod import;
 mod projects;
 mod preview;
 mod reports;
@@ -134,6 +135,7 @@ pub fn run() {
                 sync: sync.clone(),
                 vision: vision.clone(),
                 vision_off: Arc::new(Default::default()),
+                imports: Arc::new(import::Importer::new()),
             });
             app.manage(state.clone());
             sync.spawn();
@@ -247,6 +249,8 @@ pub fn run() {
             commands::preview_state,
             commands::sync_status,
             commands::sync_now,
+            commands::import_scan,
+            commands::import_apply,
             commands::check_update,
             commands::install_update,
             commands::open_store_update,

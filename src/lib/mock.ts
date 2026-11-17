@@ -9,6 +9,8 @@ import type {
   AuthView,
   Chat,
   ChatMeta,
+  ImportPreview,
+  ImportSummary,
   Message,
   PlanStep,
   PreviewView,
@@ -649,6 +651,41 @@ export const mock = {
   },
 
   async syncNow(): Promise<void> {},
+
+  /**
+   * Design-time preview: the browser has no file system, so the same import card
+   * shows a plausible answer instead of a native picker.
+   */
+  async importScan(path: string): Promise<ImportPreview> {
+    const source = path.toLowerCase().includes("claude") ? "claude" : "chatgpt";
+    return {
+      source,
+      vendor: source === "claude" ? "Claude" : "ChatGPT",
+      file: path,
+      conversations: 412,
+      new: 380,
+      updated: 24,
+      unchanged: 8,
+      keptLocal: 0,
+      messages: 3184,
+      warnings: [],
+    };
+  },
+
+  async importApply(path: string): Promise<ImportSummary> {
+    const source = path.toLowerCase().includes("claude") ? "claude" : "chatgpt";
+    return {
+      source,
+      vendor: source === "claude" ? "Claude" : "ChatGPT",
+      imported: 380,
+      updated: 24,
+      unchanged: 8,
+      keptLocal: 0,
+      messages: 3184,
+      chatIds: [],
+      warnings: [],
+    };
+  },
 
   async previewState(): Promise<PreviewView | null> {
     // Design-time preview: `?preview=1` opens the panel with a sample page,

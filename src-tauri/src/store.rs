@@ -138,6 +138,21 @@ pub struct ChatMeta {
     pub message_count: usize,
     #[serde(default)]
     pub preview: String,
+    /// Where an imported conversation came from: "chatgpt" or "claude".
+    /// Absent on chats written in Hook (and on chats imported by a build that
+    /// predates import); the id is still derived from the source, so a re-import
+    /// finds the same chat either way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// The conversation id at the source, so a re-import can tell that this
+    /// chat is the same one the export is describing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// The source's own `updated_at` at the moment of the last import. Equal to
+    /// `updated_at` while nobody has touched the chat since, which is how a
+    /// re-import knows it may replace the contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_updated_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +182,9 @@ impl Chat {
                 pinned_at: None,
                 message_count: 0,
                 preview: String::new(),
+                source: None,
+                source_id: None,
+                source_updated_at: None,
             },
             messages: Vec::new(),
         }

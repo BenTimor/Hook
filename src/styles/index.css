@@ -3503,6 +3503,161 @@ body[data-preview-dragging="true"] iframe {
   color: var(--ink-3);
 }
 
+/* Import from another assistant: two vendor rows, one confirmation. */
+.import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.import-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.import-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.import-card-head strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--ink);
+}
+
+.import-help {
+  margin: 0;
+  font-size: 12.2px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.import-mark {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  color: var(--ink-3);
+}
+
+.import-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.import-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  border-radius: 12px;
+  background: rgba(var(--accent-rgb), 0.045);
+}
+
+.import-confirm-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.import-confirm-head strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--ink);
+}
+
+.import-confirm-head span {
+  max-width: 45%;
+  flex: none;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12.4px;
+  color: var(--ink-2);
+}
+
+.import-counts b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.import-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.import-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+.import-warning svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  margin-top: 1px;
+  color: var(--danger);
+}
+
+.import-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.import-done {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 10px;
+  font-size: 12.4px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.import-done svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--accent);
+}
+
+.import-done .inline-link {
+  font-size: 12.4px;
+}
+
 .update-error {
   margin: 0;
   font-size: 12.4px;

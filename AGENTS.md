@@ -72,6 +72,9 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
   `web_search`). `guard.rs` embeds it via `include_str!`; edit the `.mjs`.
 - `src-tauri/src/update.rs` — public release index, the required/optional
   decision, checksum-checked download, NSIS hand-off.
+- `src-tauri/src/import.rs` — the ChatGPT and Claude export readers: branch
+  flattening, derived ids and the re-import rules. `ImportSection.tsx` is the
+  Settings card that drives it.
 - `src-tauri/src/reports.rs` — in-app reports of inappropriate AI output;
   `server/reports.mjs` stores them and `scripts/ai-reports.sh` reviews them.
 - `src-tauri/src/{provider,store,config,runtime,preview,projects,settings,auth}.rs`
@@ -109,6 +112,11 @@ Changing one side of a boundary is the most common way to break this repo.
   if it calls back into Rust; then `src-tauri/tests/guard_policy.rs` +
   `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`
   built-ins — it is copied into the user's data folder where nothing resolves.
+- **New import format:** a reader in `import.rs` returning `Parsed` (plus a unit
+  test in that file) → `commands.rs` (`import_scan` / `import_apply`) →
+  `generate_handler!` → `bridge.ts` / `types.ts` → `mock.ts` → `ImportSection.tsx`.
+  Ids must stay derived from the source's own ids, or a re-import duplicates
+  every conversation instead of updating it.
 - **Git/sync behavior:** `server/sync.mjs` + `server/git.mjs` (limits, merge
   rules, endpoints) → `src-tauri/src/sync.rs` / `git.rs` → `agent.rs` (env,
   managed config) → `hook-guard.mjs` (`sync_pull`/`sync_push`) → `turn.rs`

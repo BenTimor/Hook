@@ -34,6 +34,9 @@ pub struct AppState {
     /// Set when the endpoint rejects image parts anyway, so later turns stop
     /// trying. A card can promise more than the endpoint delivers.
     pub vision_off: Arc<std::sync::atomic::AtomicBool>,
+    /// Scanned ChatGPT / Claude exports, kept between the preview and the
+    /// confirmation so a large archive is parsed once.
+    pub imports: Arc<crate::import::Importer>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -55,6 +58,47 @@ pub fn sync_status(state: State<'_, Arc<AppState>>) -> crate::sync::SyncView {
 #[tauri::command]
 pub fn sync_now(state: State<'_, Arc<AppState>>) {
     state.sync.wake();
+}
+
+/// Read a ChatGPT or Claude export and report what importing it would do.
+/// Nothing is written: the UI shows the counts and asks first.
+#[tauri::command]
+pub async fn import_scan(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<crate::import::ImportPreview, String> {
+    let store = state.store.clone();
+    let imports = state.imports.clone();
+    // Parsing a few hundred megabytes of JSON must not block the window.
+    tauri::async_runtime::spawn_blocking(move || {
+        imports.scan(&store, std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| format!("The export could not be read: {e}"))?
+}
+
+/// Write the conversations a scan counted. Progress arrives on `hook://import`.
+#[tauri::command]
+pub async fn import_apply(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<crate::import::ImportSummary, String> {
+    let store = state.store.clone();
+    let imports = state.imports.clone();
+    let app = state.app.clone();
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        let emit = |progress: crate::import::ImportProgress| {
+            let _ = app.emit("hook://import", progress);
+        };
+        imports.apply(&store, std::path::Path::new(&path), &emit)
+    })
+    .await
+    .map_err(|e| format!("The import did not finish: {e}"))?;
+
+    // Imported chats are marked for upload by the store; this saves them the
+    // wait for the next cycle.
+    state.sync.wake();
+    outcome
 }
 
 #[tauri::command]
