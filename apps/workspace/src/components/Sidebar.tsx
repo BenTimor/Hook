@@ -155,12 +155,28 @@ export function Sidebar({
     setCreating({ kind, projectId, folderId });
   };
 
+  /**
+   * Where a folder really sits.
+   *
+   * A row can point at a folder that no longer exists — another device removed
+   * it, or this one did before the server learned to move its contents. Such a
+   * row belongs at the top level: the tree must never hide work because of a
+   * tidy-up, so an unknown parent is treated as none.
+   */
+  const parentOf = (projectId: string, folderId: string | null): string | null => {
+    if (!folderId) return null;
+    const known = (folders[projectId] ?? []).some((folder) => folder.id === folderId);
+    return known ? folderId : null;
+  };
+
   /** Every folder of a project, flattened in tree order for a "Move to" list. */
   const folderOptions = (projectId: string): Array<{ folder: Folder; depth: number }> => {
     const list = folders[projectId] ?? [];
     const out: Array<{ folder: Folder; depth: number }> = [];
     const walk = (parent: string | null, depth: number) => {
-      for (const folder of list.filter((candidate) => (candidate.parentId ?? null) === parent)) {
+      for (const folder of list.filter(
+        (candidate) => parentOf(projectId, candidate.parentId) === parent,
+      )) {
         out.push({ folder, depth });
         walk(folder.id, depth + 1);
       }
@@ -469,7 +485,7 @@ export function Sidebar({
   ): ReactNode[] => {
     const items: ReactNode[] = [];
     for (const board of (boards[project.id] ?? []).filter(
-      (candidate) => (candidate.folderId ?? null) === parentId,
+      (candidate) => parentOf(project.id, candidate.folderId) === parentId,
     )) {
       items.push(
         row({
@@ -486,7 +502,7 @@ export function Sidebar({
       );
     }
     for (const document of (documents[project.id] ?? []).filter(
-      (candidate) => (candidate.folderId ?? null) === parentId,
+      (candidate) => parentOf(project.id, candidate.folderId) === parentId,
     )) {
       items.push(
         row({
@@ -507,7 +523,7 @@ export function Sidebar({
 
   const folderRows = (project: Project, parentId: string | null, depth: number): ReactNode[] =>
     (folders[project.id] ?? [])
-      .filter((folder) => (folder.parentId ?? null) === parentId)
+      .filter((folder) => parentOf(project.id, folder.parentId) === parentId)
       .flatMap((folder) => {
         const loaded = boards[project.id] !== undefined;
         const open = expanded[folder.id] ?? false;

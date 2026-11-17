@@ -407,6 +407,48 @@ test("the changes feed is one cursor, filtered by membership, tombstones include
   assert.equal(tombstone.deleted, true);
 });
 
+test("deleting a folder moves what was inside it up a level", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+  const outer = await request(`/projects/${project.id}/folders`, {
+    method: "POST",
+    body: { name: "Outer" },
+  });
+  const inner = await request(`/projects/${project.id}/folders`, {
+    method: "POST",
+    body: { name: "Inner", parentId: outer.body.folder.id },
+  });
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Inside", folderId: inner.body.folder.id },
+  });
+  const document = await request(`/projects/${project.id}/documents`, {
+    method: "POST",
+    body: { title: "Inside too", folderId: inner.body.folder.id },
+  });
+
+  const before = await request("/changes?since=0");
+  const deleted = await request(`/folders/${inner.body.folder.id}`, { method: "DELETE" });
+  assert.equal(deleted.status, 200);
+
+  // Both moved up to the outer folder, not to nowhere and not out of the tree.
+  const boards = await request(`/projects/${project.id}/boards`);
+  const moved = boards.body.boards.find((item) => item.id === board.body.board.id);
+  assert.equal(moved.folderId, outer.body.folder.id);
+  const documents = await request(`/projects/${project.id}/documents`);
+  const movedDocument = documents.body.documents.find(
+    (item) => item.id === document.body.document.id,
+  );
+  assert.equal(movedDocument.folderId, outer.body.folder.id);
+
+  // And the feed says so, or another device would keep showing the old place.
+  const after = await request(`/changes?since=${before.body.cursor}`);
+  const change = after.body.changes.find(
+    (item) => item.kind === "board" && item.id === board.body.board.id,
+  );
+  assert.equal(change.folderId, outer.body.folder.id);
+});
+
 test("deleting the account removes its projects and its memberships elsewhere", async (t) => {
   const { request } = await setup(t);
   const mine = await sharedProject(request);

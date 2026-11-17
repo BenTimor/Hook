@@ -739,6 +739,30 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const projectId = projectIdOf(req, res, "ws_folders", req.params.id);
     if (!projectId) return;
     if (!actor(req, res, projectId, "write")) return;
+    const folder = db.prepare("SELECT parent_id FROM ws_folders WHERE id = ?").get(req.params.id);
+    // Contents move up one level. A board must never disappear from the tree
+    // because the folder that held it was tidied away; each moved row needs a
+    // new seq so the feed carries the new place to every device.
+    const parentId = folder?.parent_id ?? null;
+    const children = [
+      ...db
+        .prepare("SELECT id FROM ws_boards WHERE folder_id = ? AND deleted_at IS NULL")
+        .all(req.params.id)
+        .map((row) => ({ table: "ws_boards", column: "folder_id", id: row.id })),
+      ...db
+        .prepare("SELECT id FROM ws_documents WHERE folder_id = ? AND deleted_at IS NULL")
+        .all(req.params.id)
+        .map((row) => ({ table: "ws_documents", column: "folder_id", id: row.id })),
+      ...db
+        .prepare("SELECT id FROM ws_folders WHERE parent_id = ? AND deleted_at IS NULL")
+        .all(req.params.id)
+        .map((row) => ({ table: "ws_folders", column: "parent_id", id: row.id })),
+    ];
+    for (const child of children) {
+      db.prepare(
+        `UPDATE ${child.table} SET ${child.column} = ?, updated_at = ?, seq = ? WHERE id = ?`,
+      ).run(parentId, now(), nextSeq(db), child.id);
+    }
     remove(db, "folders", req.params.id);
     res.json({ ok: true });
   });

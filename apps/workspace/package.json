@@ -1,7 +1,7 @@
 {
   "name": "@hook/workspace-app",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "description": "Hook Workspace — projects, boards, tasks and documents, with Hook's chat beside them",
   "scripts": {

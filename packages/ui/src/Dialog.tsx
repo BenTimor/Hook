@@ -28,6 +28,11 @@ export function Dialog({
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const restore = useRef<HTMLElement | null>(null);
+  // The callback is read through a ref so that a parent re-render (a poll, a
+  // keystroke) cannot re-run this effect: it used to focus the close button and
+  // restore the old focus on every render, which stole the caret from the input.
+  const close = useRef(onClose);
+  close.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -35,19 +40,21 @@ export function Dialog({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        close.current();
       }
     };
     document.addEventListener("keydown", onKey);
-    const focusable = panel.current?.querySelector<HTMLElement>(
-      "input, textarea, select, button",
-    );
+    // The field first, not the header's close button.
+    const focusable =
+      panel.current?.querySelector<HTMLElement>(
+        ".dlg-body input, .dlg-body textarea, .dlg-body select",
+      ) ?? panel.current?.querySelector<HTMLElement>("input, textarea, select, button");
     focusable?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
       restore.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
