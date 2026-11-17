@@ -70,12 +70,3 @@ export async function copyText(text: string): Promise<boolean> {
 export function isModKey(event: KeyboardEvent | React.KeyboardEvent): boolean {
   return event.metaKey || event.ctrlKey;
 }
-
-export function greeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 4) return "Still up?";
-  if (hour < 12) return "Good morning";
-  if (hour < 18) return "Good afternoon";
-  if (hour < 23) return "Good evening";
-  return "Still up?";
-}

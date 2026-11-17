@@ -1,12 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  ArrowLeft,
-  Mail,
-  PanelRight,
-  Plus,
-  Settings,
-  X,
-} from "lucide-react";
+import { ArrowLeft, PanelRight, X } from "lucide-react";
 import { HookMark, TextFieldDialog, WindowControls, useWindowState } from "@hook/ui";
 import { ChatDock } from "@hook/chat";
 
@@ -14,10 +7,11 @@ import { api, onAuthEvent, openExternal, type AuthView } from "./lib/bridge";
 import { chatTransport, setChatContext } from "./lib/chatTransport";
 import type { DocumentMeta } from "./lib/types";
 import { useWorkspaceStore } from "./store/useWorkspaceStore";
-import { BoardView, TaskPanel } from "./components/BoardView";
+import { BoardPage, TaskPanel } from "./components/BoardView";
 import { DocumentEditor } from "./components/DocumentEditor";
 import { InvitesPanel } from "./components/MembersPanel";
 import { ProjectHome } from "./components/ProjectHome";
+import { Sidebar } from "./components/Sidebar";
 
 export default function App() {
   const maximized = useWindowState();
@@ -37,6 +31,8 @@ export default function App() {
   return <Workspace auth={auth} setAuth={setAuth} maximized={maximized} />;
 }
 
+const EMPTY: never[] = [];
+
 function Workspace({
   auth,
   setAuth,
@@ -48,7 +44,6 @@ function Workspace({
 }) {
   const bootstrap = useWorkspaceStore((state) => state.bootstrap);
   const projects = useWorkspaceStore((state) => state.projects);
-  const invites = useWorkspaceStore((state) => state.invites);
   const error = useWorkspaceStore((state) => state.error);
   const dismissError = useWorkspaceStore((state) => state.dismissError);
   const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
@@ -58,6 +53,9 @@ function Workspace({
   const boards = useWorkspaceStore((state) =>
     state.activeProjectId ? (state.boards[state.activeProjectId] ?? EMPTY) : EMPTY,
   );
+  const documents = useWorkspaceStore((state) =>
+    state.activeProjectId ? (state.documents[state.activeProjectId] ?? EMPTY) : EMPTY,
+  );
   const tasks = useWorkspaceStore((state) =>
     state.activeBoardId ? (state.tasks[state.activeBoardId] ?? EMPTY) : EMPTY,
   );
@@ -66,7 +64,7 @@ function Workspace({
   const openDocument = useWorkspaceStore((state) => state.openDocument);
   const createProject = useWorkspaceStore((state) => state.createProject);
 
-  const [view, setView] = useState<"projects" | "invites">("projects");
+  const [invitesOpen, setInvitesOpen] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -83,10 +81,19 @@ function Workspace({
     () => boards.find((candidate) => candidate.id === activeBoardId) ?? null,
     [boards, activeBoardId],
   );
+  const documentMeta = useMemo(
+    () => documents.find((candidate) => candidate.id === activeDocumentId) ?? null,
+    [documents, activeDocumentId],
+  );
   const task = useMemo(
     () => tasks.find((candidate) => candidate.id === activeTaskId) ?? null,
     [tasks, activeTaskId],
   );
+
+  // Picking something in the tree leaves the invites list behind.
+  useEffect(() => {
+    if (activeProjectId) setInvitesOpen(false);
+  }, [activeProjectId, activeBoardId, activeDocumentId]);
 
   // The chat agent should know what "this" is. While the dock is open the
   // summary is refreshed on a slow tick, because a text selection is not a
@@ -101,7 +108,7 @@ function Workspace({
       if (project) lines.push(`Project: ${project.name}`);
       if (board) lines.push(`Board: ${board.name}`);
       if (task) lines.push(`Open task: ${task.title}`);
-      if (activeDocumentId) lines.push("A document is open in the editor.");
+      if (activeDocumentId) lines.push(`Document: ${documentMeta?.title || "Untitled"}`);
       const selection = window.getSelection()?.toString().trim();
       if (selection) lines.push(`Selected text: "${selection.slice(0, 800)}"`);
       void setChatContext(lines.join("\n"));
@@ -109,100 +116,85 @@ function Workspace({
     push();
     const timer = window.setInterval(push, 1500);
     return () => window.clearInterval(timer);
-  }, [dockOpen, project, board, task, activeDocumentId]);
+  }, [dockOpen, project, board, task, activeDocumentId, documentMeta]);
 
+  const suggestions = board
+    ? [
+        "Plan the next tasks on this board",
+        "Which task should I do first?",
+        "Summarise what is on this board",
+      ]
+    : activeDocumentId
+      ? [
+          "Summarise this document",
+          "Tighten this document's opening",
+          "Turn this into a task list",
+        ]
+      : [
+          "Create a board for this project",
+          "What should we work on next?",
+          "Invite someone to this project",
+        ];
+
+  const crumbs: Array<{ label: string; onClick?: () => void }> = invitesOpen
+    ? [{ label: "Invites" }]
+    : project
+      ? [
+          { label: project.name, onClick: () => void openProject(project.id) },
+          ...(board
+            ? [{ label: board.name }]
+            : documentMeta
+              ? [{ label: documentMeta.title || "Untitled" }]
+              : []),
+        ]
+      : [{ label: "Projects" }];
+
+  const back = Boolean(board || activeDocumentId);
 
   return (
     <div className="shell" data-maximized={maximized}>
-      <aside className="ws-rail" data-tauri-drag-region>
-        <div className="ws-wordmark">
-          <HookMark />
-          <span>Workspace</span>
-        </div>
-
-        <button
-          className="ws-new"
-          onClick={() => {
-            setView("projects");
-            setNewProject(true);
-          }}
-        >
-          <Plus strokeWidth={1.9} />
-          New project
-        </button>
-
-        <nav className="ws-nav">
-          {projects.map((entry) => (
-            <button
-              key={entry.id}
-              className="ws-nav-row"
-              data-active={entry.id === activeProjectId && view === "projects"}
-              onClick={() => {
-                setView("projects");
-                void openProject(entry.id);
-              }}
-              title={entry.name}
-            >
-              <span className="ws-project-dot" aria-hidden="true" />
-              <span className="ws-nav-label">{entry.name}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="ws-rail-foot">
-          <button
-            className="ws-nav-row"
-            data-active={view === "invites"}
-            onClick={() => setView("invites")}
-          >
-            <Mail />
-            <span className="ws-nav-label">Invites</span>
-            {invites.length > 0 && <span className="ws-badge">{invites.length}</span>}
-          </button>
-          <button className="ws-nav-row" onClick={() => void api.authLogout().then(setAuth)}>
-            <Settings />
-            <span className="ws-account" title={auth.email ?? undefined}>
-              {auth.email}
-            </span>
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        email={auth.email ?? null}
+        invitesActive={invitesOpen}
+        onNewProject={() => {
+          setInvitesOpen(false);
+          setNewProject(true);
+        }}
+        onOpenInvites={() => setInvitesOpen(true)}
+        onLogout={() => void api.authLogout().then(setAuth)}
+      />
 
       <main className="ws-pane" data-dock={dockOpen}>
         <header className="ws-head" data-tauri-drag-region>
           <div className="ws-head-left" data-tauri-drag-region>
-            {project && view === "projects" ? (
+            {back && project ? (
               <button
-                className="icon-btn"
-                title="Back to projects"
-                onClick={() => {
-                  void openBoard(null);
-                  void openDocument(null);
-                }}
+                className="icon-btn ws-back"
+                title="Back to the project"
+                aria-label="Back to the project"
+                onClick={() => void openProject(project.id)}
               >
                 <ArrowLeft strokeWidth={1.8} />
               </button>
             ) : null}
-            <span className="ws-crumb">
-              {view === "invites"
-                ? "Invites"
-                : board
-                  ? `${project?.name ?? ""} / ${board.name}`
-                  : activeDocumentId
-                    ? `${project?.name ?? ""} / document`
-                    : (project?.name ?? "Projects")}
-            </span>
+            <nav className="ws-crumbs" aria-label="Location">
+              {crumbs.map((crumb, index) => (
+                <span className="ws-crumb" key={`${crumb.label}-${index}`}>
+                  {index > 0 ? <span className="ws-crumb-sep">/</span> : null}
+                  {crumb.onClick ? (
+                    <button className="ws-crumb-link" onClick={crumb.onClick} title={crumb.label}>
+                      {crumb.label}
+                    </button>
+                  ) : (
+                    <span className="ws-crumb-now" title={crumb.label}>
+                      {crumb.label}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </nav>
           </div>
           <div className="ws-head-right">
-            {project && !board && !activeDocumentId && view === "projects" && (
-              <button
-                className="btn btn-ghost"
-                onClick={() => void openProject(project.id)}
-                title="Refresh"
-              >
-                Refresh
-              </button>
-            )}
             <button
               className="icon-btn"
               title={dockOpen ? "Hide Hook" : "Ask Hook"}
@@ -225,7 +217,7 @@ function Workspace({
         ) : null}
 
         <div className="ws-body">
-          {view === "invites" ? (
+          {invitesOpen ? (
             <InvitesPanel />
           ) : !project ? (
             <section className="ws-empty">
@@ -235,29 +227,25 @@ function Workspace({
                 own boards, documents and people.
               </p>
               <button className="btn btn-primary" onClick={() => setNewProject(true)}>
-                <Plus /> New project
+                New project
               </button>
             </section>
           ) : activeDocumentId ? (
             <DocumentPage
               id={activeDocumentId}
               project={project}
-              onBack={() => void openDocument(null)}
+              onBack={() => void openProject(project.id)}
             />
           ) : board ? (
-            <BoardView board={board} tasks={tasks} />
+            <BoardPage board={board} tasks={tasks} />
           ) : (
             <ProjectHome
               project={project}
-              onOpenBoard={(id) => {
-                void openBoard(id);
-                void openDocument(null);
-              }}
-              onOpenDocument={(id) => void openDocument(id)}
+              onOpenBoard={(id) => void openBoard(id, project.id)}
+              onOpenDocument={(id) => void openDocument(id, project.id)}
             />
           )}
         </div>
-
       </main>
 
       {task ? <TaskPanel task={task} /> : null}
@@ -265,6 +253,7 @@ function Workspace({
       <ChatDock
         transport={chatTransport}
         open={dockOpen}
+        suggestions={suggestions}
         onClose={() => setDockOpen(false)}
       />
 
@@ -284,7 +273,7 @@ function Workspace({
           void createProject(name);
           setProjectName("");
           setNewProject(false);
-          setView("projects");
+          setInvitesOpen(false);
         }}
       />
     </div>
@@ -292,8 +281,6 @@ function Workspace({
 }
 
 type Project = ReturnType<typeof useWorkspaceStore.getState>["projects"][number];
-
-const EMPTY: never[] = [];
 
 
 /** A document: title, raw toggle, save state, and the conflict choice. */
@@ -317,6 +304,11 @@ function DocumentPage({
   const [title, setTitle] = useState("");
   const [epoch, setEpoch] = useState(0);
   const [forceSave, setForceSave] = useState(0);
+  // A rename from the tree is a save like any other; follow it here too, unless
+  // the title field is the thing being typed in.
+  const meta = useWorkspaceStore((state) =>
+    (state.documents[project.id] ?? EMPTY).find((candidate) => candidate.id === id),
+  );
 
   // The revision every write is based on. It moves forward on each accepted
   // save, and jumps when the user chooses to keep their text over someone
@@ -335,6 +327,12 @@ function DocumentPage({
       alive = false;
     };
   }, [id, loadDocument]);
+
+  useEffect(() => {
+    if (!meta) return;
+    if (document.activeElement?.classList.contains("ws-document-title")) return;
+    setTitle(meta.title);
+  }, [meta?.title]);
 
   if (!loaded) {
     return <section className="ws-empty">Opening…</section>;

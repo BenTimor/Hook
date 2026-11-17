@@ -762,6 +762,14 @@ people they are shared with; folders organize them, and can nest. It is its own 
 (`apps/workspace`, identifier `app.hook.workspace`) with the same window chrome,
 the same account and the same chat beside it.
 
+One rail, one tree: projects read as special folders (they are the unit of
+sharing), and everything inside one — nested folders, boards, documents — is a
+row under it. Nothing lives in a second column. Right-click anything in the
+tree to rename, delete, create inside it, or move it to another folder; the
+same menu opens from the plus on a project or folder. A board opens as a table
+with one task per row, the board's own columns across, and a grip to reorder
+the rows (the kanban is the second tab, not the only view).
+
 The important structural decision: **the workspace service is the product; the
 window is a client.** `server/workspace.mjs` owns projects, memberships,
 invitations, folders, boards, tasks, comments and documents, and enforces roles
@@ -806,10 +814,13 @@ that it is permanent and cannot be undone.
   is no merge to get wrong. Offline work is the next step, not a promise made
   here.
 - **The chat sits beside the work.** A collapsible right-hand panel embeds the
-  same conversations as Hook (`packages/chat`), collapsed by default with its
-  conversation list collapsed as well. The thread, the messages and the composer
-  are the ones the chat window renders — the dock only restyles them for a 380px
-  column, so there is one chat surface to fix, not two. It has no preview panel; a preview is a
+  same conversations as Hook (`packages/chat`). It is the chat window at 380px,
+  not a reduced panel: the same greeting and suggestions on an empty
+  conversation, the same thread and composer, and one button that covers the
+  column with the conversation list — search and new chat included — because a
+  panel inside a panel cannot show both. The thread, the messages and the
+  composer are the ones the chat window renders, so there is one chat surface
+  to fix, not two. It has no preview panel; a preview is a
   wide, page-shaped thing, and the dock is deliberately narrow. The window tells
   the backend what it is showing — project, board, open task, selected text — and
   that rides on the next request as context, so "summarise this board" means the

@@ -1,6 +1,6 @@
 import { Code2, FileText, Lightbulb, Sparkles } from "lucide-react";
 
-import { greeting } from "../lib/utils";
+import { greeting } from "@hook/chat";
 import { useChatStore } from "../store/useChatStore";
 import { Composer } from "./Composer";
 import { HookMark } from "@hook/ui";

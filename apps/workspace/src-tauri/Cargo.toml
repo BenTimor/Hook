@@ -1,6 +1,6 @@
 [package]
 name = "hook-workspace"
-version = "0.1.5"
+version = "0.1.6"
 description = "Hook Workspace — projects, boards, tasks and documents"
 authors = ["you"]
 edition = "2021"

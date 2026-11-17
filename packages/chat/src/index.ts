@@ -8,6 +8,7 @@ export { Thread } from "./Thread";
 export { Composer } from "./Composer";
 export { ReportDialog } from "./ReportDialog";
 export { ChatDock } from "./ChatDock";
+export { greeting } from "./greeting";
 export type { MessageItemProps } from "./MessageItem";
 export type { ThreadProps } from "./Thread";
 export type { ComposerProps } from "./Composer";

@@ -44,6 +44,22 @@ export const chatTransport: ChatTransport = {
     return { messages: chat.messages };
   },
 
+  async searchChats(query: string): Promise<DockChat[]> {
+    if (!isTauri()) {
+      const needle = query.trim().toLowerCase();
+      return demoList.filter((chat) => chat.title.toLowerCase().includes(needle));
+    }
+    const hits = await invoke<Array<{ chat: { id: string; title: string; updatedAt: number } }>>(
+      "search_chats",
+      { query },
+    );
+    return hits.map((hit) => ({
+      id: hit.chat.id,
+      title: hit.chat.title,
+      updatedAt: hit.chat.updatedAt,
+    }));
+  },
+
   async send(chatId: string | null, text: string): Promise<string> {
     if (!isTauri()) return demoReply(chatId, text);
     return invoke<string>("send_message", { chatId, text });
@@ -91,8 +107,22 @@ export const chatTransport: ChatTransport = {
 // exercised properly rather than faked at the last moment.
 const demoListeners = new Set<(chatId: string, event: DockEvent) => void>();
 const demoMessages = new Map<string, DockMessage[]>();
-const demoList: DockChat[] = [];
 let demoSeq = 0;
+
+// Two conversations so the browser preview has a history worth opening.
+const demoList: DockChat[] = [
+  { id: "chat-demo-a", title: "Plan the Hook Roadmap board", updatedAt: Date.now() - 40 * 60_000 },
+  { id: "chat-demo-b", title: "Summarise the brand brief", updatedAt: Date.now() - 26 * 3_600_000 },
+];
+demoMessages.set("chat-demo-a", [
+  { id: "a1", role: "user", content: "Plan the Hook Roadmap board" },
+  {
+    id: "a2",
+    role: "assistant",
+    content:
+      "A first pass: **To do** holds the browser and affiliate work, **In progress** holds ads, and design sits in review.",
+  },
+]);
 
 function demoEmit(chatId: string, event: DockEvent): void {
   for (const listener of demoListeners) listener(chatId, event);

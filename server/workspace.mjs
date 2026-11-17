@@ -1106,9 +1106,22 @@ export function createWorkspaceRouter({ db, env = {} }) {
     // time, so a device never sees a row for a project it left.
     const rows = [
       ...db
-        .prepare(`SELECT * FROM ws_projects WHERE seq > ? AND id IN (${mine})`)
-        .all(since, subject)
-        .map((row) => ({ kind: "project", ...row })),
+        // The feed carries the project's own row, so it also carries the
+        // reader's role and whether they own it: without those the client
+        // would lose the ability to write after its first poll.
+        .prepare(
+          `SELECT p.*, m.role AS member_role, (p.owner_subject = ?) AS is_mine
+             FROM ws_projects p
+             JOIN ws_members m ON m.project_id = p.id AND m.subject = ? AND m.deleted_at IS NULL
+            WHERE p.seq > ?`,
+        )
+        .all(subject, subject, since)
+        .map((row) => ({
+          kind: "project",
+          ...row,
+          role: row.member_role,
+          mine: Boolean(row.is_mine),
+        })),
       ...db
         .prepare(`SELECT * FROM ws_folders WHERE seq > ? AND project_id IN (${mine})`)
         .all(since, subject)
@@ -1360,6 +1373,10 @@ function shapeChange(row) {
   switch (row.kind) {
     case "project":
       Object.assign(change, shapeProject(row));
+      // The feed selects these alongside the row; the window needs them to
+      // know what it may do with the project it is looking at.
+      if (row.member_role) change.role = row.member_role;
+      if (row.is_mine !== undefined) change.mine = Boolean(row.is_mine);
       break;
     case "folder":
       Object.assign(change, {

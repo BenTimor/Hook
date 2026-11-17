@@ -314,10 +314,8 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         .unwrap_or(false);
 
     trace("tools prepared");
-    let mut rounds = 0usize;
 
     loop {
-        rounds += 1;
         let Ok(mut chat) = state.store.load(&chat_id) else {
             trace("chat could not be loaded; giving up");
             break;
@@ -605,7 +603,6 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     chat.messages.retain(|m| m.id != assistant_id);
                     chat.meta.updated_at = now_ms();
                     let _ = state.store.save(&mut chat);
-                    rounds -= 1;
                     continue;
                 }
                 let entry = &mut chat.messages[index];

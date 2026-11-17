@@ -44,23 +44,28 @@ interface WorkspaceState {
   dismissError: () => void;
 
   openProject: (id: string | null) => Promise<void>;
+  /** Boards, documents, folders and people of a project, without opening it. */
+  loadProjectContents: (projectId: string) => Promise<void>;
   createProject: (name: string) => Promise<void>;
   renameProject: (id: string, name: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
 
-  openBoard: (id: string | null) => Promise<void>;
+  openBoard: (id: string | null, projectId?: string) => Promise<void>;
   createBoard: (projectId: string, name: string, folderId?: string | null) => Promise<Board | null>;
+  renameBoard: (id: string, name: string) => Promise<void>;
   moveBoard: (id: string, folderId: string | null) => Promise<void>;
   deleteBoard: (id: string) => Promise<void>;
 
   openTask: (id: string | null) => Promise<void>;
   createTask: (boardId: string, status: string) => Promise<Task | null>;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
+  /** Rows are ordered by hand: position becomes the index in this list. */
+  reorderTasks: (boardId: string, orderedIds: string[]) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   addComment: (taskId: string, body: string) => Promise<void>;
   deleteComment: (taskId: string, id: string) => Promise<void>;
 
-  openDocument: (id: string | null) => Promise<void>;
+  openDocument: (id: string | null, projectId?: string) => Promise<void>;
   loadDocument: (id: string) => Promise<DocumentMeta | null>;
   createDocument: (
     projectId: string,
@@ -68,6 +73,7 @@ interface WorkspaceState {
     folderId?: string | null,
   ) => Promise<DocumentMeta | null>;
   moveDocument: (id: string, folderId: string | null) => Promise<void>;
+  renameDocument: (id: string, title: string) => Promise<void>;
   saveDocument: (
     id: string,
     patch: { title?: string; markdown?: string; baseRev?: number; folderId?: string | null },
@@ -80,6 +86,8 @@ interface WorkspaceState {
     parentId?: string | null,
   ) => Promise<Folder | null>;
   renameFolder: (projectId: string, id: string, name: string) => Promise<void>;
+  /** A folder can sit inside another one; `null` puts it at the top. */
+  moveFolder: (projectId: string, id: string, parentId: string | null) => Promise<void>;
   deleteFolder: (projectId: string, id: string) => Promise<void>;
 
   refreshMembers: (projectId: string) => Promise<void>;
@@ -169,18 +177,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async openProject(id) {
     set({ activeProjectId: id, activeBoardId: null, activeTaskId: null, activeDocumentId: null });
     if (!id) return;
+    await get().loadProjectContents(id);
+  },
+
+  async loadProjectContents(projectId) {
     try {
       const [boards, documents, members, folders] = await Promise.all([
-        api.boards(id),
-        api.documents(id),
-        api.members(id),
-        api.folders(id),
+        api.boards(projectId),
+        api.documents(projectId),
+        api.members(projectId),
+        api.folders(projectId),
       ]);
       set((state) => ({
-        boards: { ...state.boards, [id]: boards.boards },
-        documents: { ...state.documents, [id]: documents.documents },
-        members: { ...state.members, [id]: members.members },
-        folders: { ...state.folders, [id]: folders.folders },
+        boards: { ...state.boards, [projectId]: sortByPosition(boards.boards) },
+        documents: { ...state.documents, [projectId]: documents.documents },
+        members: { ...state.members, [projectId]: members.members },
+        folders: { ...state.folders, [projectId]: sortByPosition(folders.folders) },
       }));
     } catch (error) {
       set({ error: message(error) });
@@ -222,8 +234,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async openBoard(id) {
-    set({ activeBoardId: id, activeTaskId: null });
+  async openBoard(id, projectId) {
+    set({
+      activeBoardId: id,
+      activeTaskId: null,
+      activeDocumentId: null,
+      ...(projectId ? { activeProjectId: projectId } : {}),
+    });
     if (!id) return;
     try {
       const tasks = await api.tasks(id);
@@ -252,6 +269,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async moveBoard(id, folderId) {
     try {
       const updated = await api.updateBoard(id, { folderId });
+      set((state) => ({
+        boards: {
+          ...state.boards,
+          [updated.board.projectId]: sortByPosition(
+            upsert(state.boards[updated.board.projectId] ?? [], updated.board),
+          ),
+        },
+      }));
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  async renameBoard(id, name) {
+    try {
+      const updated = await api.updateBoard(id, { name });
       set((state) => ({
         boards: {
           ...state.boards,
@@ -330,6 +363,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  async reorderTasks(boardId, orderedIds) {
+    const current = get().tasks[boardId] ?? [];
+    const byId = new Map(current.map((task) => [task.id, task]));
+    const next = orderedIds
+      .map((id, position) => {
+        const task = byId.get(id);
+        return task ? { ...task, position } : null;
+      })
+      .filter((task): task is Task => task !== null);
+    // Optimistic: the rows move under the pointer before the round-trip.
+    set((state) => ({ tasks: { ...state.tasks, [boardId]: next } }));
+    const moved = next.filter((task) => byId.get(task.id)?.position !== task.position);
+    if (moved.length === 0) return;
+    try {
+      await Promise.all(moved.map((task) => api.updateTask(task.id, { position: task.position })));
+      const fresh = await api.tasks(boardId);
+      set((state) => ({
+        tasks: { ...state.tasks, [boardId]: sortByPosition(fresh.tasks) },
+      }));
+    } catch (error) {
+      set((state) => ({ error: message(error), tasks: { ...state.tasks, [boardId]: current } }));
+    }
+  },
+
   async deleteTask(id) {
     try {
       await api.deleteTask(id);
@@ -376,8 +433,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async openDocument(id) {
-    set({ activeDocumentId: id });
+  async openDocument(id, projectId) {
+    set({
+      activeDocumentId: id,
+      activeBoardId: null,
+      activeTaskId: null,
+      ...(projectId ? { activeProjectId: projectId } : {}),
+    });
     if (id) await get().loadDocument(id);
   },
 
@@ -423,6 +485,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!result.document) return;
   },
 
+  async renameDocument(id, title) {
+    try {
+      // The title is part of the document, so a rename is an ordinary save
+      // without touching the Markdown or claiming a revision.
+      const result = await api.saveDocument(id, { title });
+      if (!result.document) return;
+      const projectId = result.document.projectId;
+      set((state) => ({
+        documents: {
+          ...state.documents,
+          [projectId]: upsert(state.documents[projectId] ?? [], {
+            ...result.document!,
+            markdown: undefined,
+          }),
+        },
+      }));
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
   async saveDocument(id, patch) {
     try {
       const result = await api.saveDocument(id, patch);
@@ -465,6 +548,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async renameFolder(projectId, id, name) {
     try {
       const updated = await api.updateFolder(id, { name });
+      set((state) => ({
+        folders: {
+          ...state.folders,
+          [projectId]: sortByPosition(upsert(state.folders[projectId] ?? [], updated.folder)),
+        },
+      }));
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  async moveFolder(projectId, id, parentId) {
+    // A folder cannot live inside itself, nor inside anything below it.
+    const folders = get().folders[projectId] ?? [];
+    const descendants = new Set<string>();
+    const walk = (parent: string) => {
+      for (const folder of folders) {
+        if (folder.parentId !== parent || descendants.has(folder.id)) continue;
+        descendants.add(folder.id);
+        walk(folder.id);
+      }
+    };
+    walk(id);
+    if (parentId === id || (parentId !== null && descendants.has(parentId))) return;
+    try {
+      const updated = await api.updateFolder(id, { parentId });
       set((state) => ({
         folders: {
           ...state.folders,
@@ -617,10 +726,22 @@ function applyChange(
   switch (change.kind) {
     case "project": {
       const project = change as unknown as Project;
+      // `role` and `mine` are about the reader, not the project, so a feed row
+      // from an older server may not carry them. Keep what the sign-in loaded.
+      const existing = state.projects.find((candidate) => candidate.id === change.id);
+      const merged = {
+        ...(existing ?? project),
+        ...project,
+        seq: change.seq,
+      };
+      if (existing) {
+        if (!project.role && existing.role) merged.role = existing.role;
+        if (project.mine === undefined) merged.mine = existing.mine;
+      }
       set({
         projects: change.deleted
           ? state.projects.filter((candidate) => candidate.id !== change.id)
-          : upsert(state.projects, { ...project, seq: change.seq }),
+          : upsert(state.projects, merged),
         activeProjectId:
           change.deleted && state.activeProjectId === change.id ? null : state.activeProjectId,
       });

@@ -387,6 +387,12 @@ test("the changes feed is one cursor, filtered by membership, tombstones include
     assert.ok(kinds.has(kind), `missing ${kind}`);
   }
 
+  // The project row carries the reader's role: the window cannot decide what
+  // it may write from a row that does not say.
+  const feedProject = pull.body.changes.find((change) => change.kind === "project");
+  assert.equal(feedProject.role, "owner");
+  assert.equal(feedProject.mine, true);
+
   // Someone who is not a member of anything sees nothing and keeps the cursor.
   const outsider = await request("/changes?since=0", { token: OUTSIDER });
   assert.equal(outsider.body.changes.length, 0);

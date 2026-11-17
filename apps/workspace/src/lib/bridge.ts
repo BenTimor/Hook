@@ -309,12 +309,13 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       demo.tasks = demo.tasks.filter((task) => task.boardId !== id);
       return { ok: true };
     }
-    if (method === "GET") {
-      return { board: demo.boards.find((board) => board.id === id) };
-    }
     if (resource === "tasks") {
       if (method === "GET") {
-        return { tasks: demo.tasks.filter((task) => task.boardId === id) };
+        return {
+          tasks: demo.tasks
+            .filter((task) => task.boardId === id)
+            .sort((left, right) => left.position - right.position || left.createdAt - right.createdAt),
+        };
       }
       const board = demo.boards.find((candidate) => candidate.id === id);
       const task: Task = {
@@ -326,7 +327,7 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         status: String(payload.status ?? "opt_todo"),
         assignee: (payload.assignee as string | null) ?? null,
         fields: {},
-        position: demoSeq,
+        position: demo.tasks.filter((task) => task.boardId === id).length,
         createdBy: "local-preview",
         createdAt: demoNow(),
         updatedAt: demoNow(),
@@ -334,6 +335,9 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       };
       demo.tasks = [...demo.tasks, task];
       return { task };
+    }
+    if (method === "GET") {
+      return { board: demo.boards.find((board) => board.id === id) };
     }
   }
 

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { LayoutList, Plus, Rows3 } from "lucide-react";
 
 import type { Board, Task } from "../lib/types";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { BoardTable } from "./BoardTable";
 
 /**
  * A board as its columns: one column per status option, cards in order.
@@ -11,7 +12,64 @@ import { useWorkspaceStore } from "../store/useWorkspaceStore";
  * a keyboard-accessible select beats a drag for the first version. The card
  * opens the task panel, where everything else is edited.
  */
-export function BoardView({ board, tasks }: { board: Board; tasks: Task[] }) {
+export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
+  const createTask = useWorkspaceStore((state) => state.createTask);
+  const [mode, setMode] = useState<"table" | "board">("table");
+  const [adding, setAdding] = useState(false);
+  const status = board.columns.find((column) => column.type === "status");
+
+  return (
+    <div className="ws-board-page">
+      <header className="ws-page-head">
+        <div className="ws-page-title">
+          <h1>{board.name}</h1>
+          {board.description ? <p>{board.description}</p> : null}
+        </div>
+        <div className="ws-page-actions">
+          <div className="ws-segment" role="tablist" aria-label="Board view">
+            <button
+              role="tab"
+              data-active={mode === "table"}
+              onClick={() => setMode("table")}
+              title="Table view"
+            >
+              <Rows3 strokeWidth={1.8} />
+              Table
+            </button>
+            <button
+              role="tab"
+              data-active={mode === "board"}
+              onClick={() => setMode("board")}
+              title="Board view"
+            >
+              <LayoutList strokeWidth={1.8} />
+              Board
+            </button>
+          </div>
+          <button
+            className="btn btn-primary"
+            disabled={adding}
+            onClick={async () => {
+              setAdding(true);
+              await createTask(board.id, status?.options?.[0]?.id ?? "");
+              setAdding(false);
+            }}
+          >
+            <Plus /> New task
+          </button>
+        </div>
+      </header>
+
+      {mode === "table" ? (
+        <BoardTable board={board} tasks={tasks} />
+      ) : (
+        <BoardColumns board={board} tasks={tasks} />
+      )}
+    </div>
+  );
+}
+
+export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) {
   const openTask = useWorkspaceStore((state) => state.openTask);
   const createTask = useWorkspaceStore((state) => state.createTask);
   const activeTaskId = useWorkspaceStore((state) => state.activeTaskId);
@@ -142,7 +200,12 @@ export function TaskPanel({ task }: { task: Task }) {
   }, [task.title]);
 
   const status = board?.columns.find((column) => column.type === "status");
-  const assigneeColumn = board?.columns.find((column) => column.type === "person");
+  // Every task has an assignee; only some boards give it a column of its own.
+  const assigneeColumn = board?.columns.find((column) => column.type === "person") ?? {
+    id: "assignee",
+    name: "Assignee",
+    type: "person" as const,
+  };
 
   return (
     <aside className="ws-task">
@@ -197,6 +260,9 @@ export function TaskPanel({ task }: { task: Task }) {
               }
             >
               <option value="">Unassigned</option>
+              {task.assignee && !members.some((member) => member.subject === task.assignee) ? (
+                <option value={task.assignee}>{task.assignee} (not in this project)</option>
+              ) : null}
               {members.map((member) => (
                 <option key={member.subject} value={member.subject}>
                   {member.name || member.email || member.subject}

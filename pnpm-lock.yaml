@@ -269,6 +269,9 @@ importers:
 
   packages/chat:
     dependencies:
+      '@hook/ui':
+        specifier: workspace:*
+        version: link:../ui
       '@tauri-apps/api':
         specifier: 'catalog:'
         version: 2.12.4
