@@ -582,39 +582,61 @@ impl SyncEngine {
         if sends.is_empty() {
             return Ok(());
         }
-        let body = json!({
-            "projects": sends.iter().map(|(id, _)| {
-                let project = projects.iter().find(|p| &p.id == id);
-                json!({
-                    "id": id,
-                    "name": project.map(|p| p.name.as_str()).unwrap_or_default(),
-                    "description": project.map(|p| p.description.as_str()).unwrap_or_default(),
-                    "createdAt": project.map(|p| p.created_at).unwrap_or(0),
-                    "updatedAt": project.map(|p| p.updated_at).unwrap_or(0),
-                })
-            }).collect::<Vec<_>>()
-        });
-        let response = self.post(token, "/api/sync/projects", body).await?;
-        if let Some(results) = response["results"].as_array() {
-            for result in results {
-                let Some(id) = result["id"].as_str() else {
-                    continue;
-                };
-                if result["ok"].as_bool() == Some(false) {
-                    eprintln!(
-                        "hook: project {id} was not accepted: {}",
-                        result["error"].as_str().unwrap_or("unknown")
-                    );
+
+        // The account takes ten at a time, the same cap as chats. Sending the
+        // whole list in one request was rejected outright, so a workspace with
+        // more than ten changed projects never synced at all — and because no
+        // fingerprint was recorded, it retried the same failing request forever.
+        let mut failure: Option<String> = None;
+        for batch in sends.chunks(MAX_BATCH) {
+            let body = json!({
+                "projects": batch.iter().map(|(id, _)| {
+                    let project = projects.iter().find(|p| &p.id == id);
+                    json!({
+                        "id": id,
+                        "name": project.map(|p| p.name.as_str()).unwrap_or_default(),
+                        "description": project.map(|p| p.description.as_str()).unwrap_or_default(),
+                        "createdAt": project.map(|p| p.created_at).unwrap_or(0),
+                        "updatedAt": project.map(|p| p.updated_at).unwrap_or(0),
+                    })
+                }).collect::<Vec<_>>()
+            });
+            match self.post(token, "/api/sync/projects", body).await {
+                Ok(response) => {
+                    if let Some(results) = response["results"].as_array() {
+                        for result in results {
+                            let Some(id) = result["id"].as_str() else {
+                                continue;
+                            };
+                            if result["ok"].as_bool() == Some(false) {
+                                eprintln!(
+                                    "hook: project {id} was not accepted: {}",
+                                    result["error"].as_str().unwrap_or("unknown")
+                                );
+                            }
+                            // Either way, stop retrying the same fingerprint every cycle.
+                            if let Some((_, fingerprint)) =
+                                batch.iter().find(|(entry, _)| entry == id)
+                            {
+                                lock(&self.state)
+                                    .project_versions
+                                    .insert(id.to_string(), fingerprint.clone());
+                            }
+                        }
+                    }
                 }
-                // Either way, stop retrying the same fingerprint every cycle.
-                if let Some((_, fingerprint)) = sends.iter().find(|(entry, _)| entry == id) {
-                    lock(&self.state)
-                        .project_versions
-                        .insert(id.to_string(), fingerprint.clone());
+                Err(error) => {
+                    failure = Some(error);
+                    break;
                 }
             }
         }
-        self.save_state()
+        // Batches that landed must not be sent again next cycle.
+        self.save_state()?;
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     // ── pull ────────────────────────────────────────────────────────────
@@ -1054,6 +1076,85 @@ mod tests {
                 .any(|(method, path, _)| method == "POST" && path == "/api/sync/chats"),
             "the local chat must reach the account"
         );
+        fs::remove_dir_all(&fixture.base).ok();
+    }
+
+    #[tokio::test]
+    async fn more_than_ten_changed_projects_are_pushed_in_batches() {
+        let (url, seen) = mock_server(|method, path, body| {
+            match (method, path.split('?').next()) {
+                ("POST", Some("/api/sync/projects")) => {
+                    let projects = body["projects"].as_array().cloned().unwrap_or_default();
+                    serde_json::json!({
+                        "results": projects
+                            .iter()
+                            .map(|project| serde_json::json!({
+                                "id": project["id"].clone(),
+                                "ok": true
+                            }))
+                            .collect::<Vec<_>>()
+                    })
+                }
+                ("POST", Some("/api/sync/chats")) => {
+                    serde_json::json!({ "results": [], "cursor": 0 })
+                }
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        let root = fixture.settings.projects_dir();
+        for index in 0..12 {
+            fixture
+                .projects
+                .create(&root, &format!("site-{index}"), "a site")
+                .unwrap();
+        }
+
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.cycle().await.expect("one cycle");
+
+        let posts: Vec<Value> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "POST" && path == "/api/sync/projects")
+            .map(|(_, _, body)| body.clone())
+            .collect();
+        assert!(
+            posts.len() >= 2,
+            "12 projects need more than one request, sent {}",
+            posts.len()
+        );
+        for post in &posts {
+            let count = post["projects"].as_array().map(|all| all.len()).unwrap_or(0);
+            assert!(
+                (1..=10).contains(&count),
+                "the account takes 1..=10 projects per request, got {count}"
+            );
+        }
+        let total: usize = posts
+            .iter()
+            .map(|post| post["projects"].as_array().map(|all| all.len()).unwrap_or(0))
+            .sum();
+        assert_eq!(total, 12, "every project must reach the account");
+
+        // The fingerprints from every batch are recorded, so a quiet cycle
+        // sends nothing at all.
+        seen.lock().unwrap().clear();
+        engine.cycle().await.expect("second cycle");
+        let again = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "POST" && path == "/api/sync/projects")
+            .count();
+        assert_eq!(again, 0, "an unchanged workspace must not re-send projects");
+
         fs::remove_dir_all(&fixture.base).ok();
     }
 
