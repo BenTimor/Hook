@@ -81,9 +81,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The pnpm version comes from package.json's `packageManager`; passing it
+      # here too makes the action fail with "multiple versions specified".
       - uses: pnpm/action-setup@v6
-        with:
-          version: "10"
 
       - uses: actions/setup-node@v7
         with:
