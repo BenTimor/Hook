@@ -691,3 +691,95 @@ textarea {
   background: var(--accent-hover);
   border-color: transparent;
 }
+
+/* ── Dialogs ────────────────────────────────────────────────────────────────
+   One backdrop, one panel, one header. Products pass a title and a footer;
+   they do not re-implement the modal contract.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.dlg-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(36, 36, 30, 0.18);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: dlg-fade 140ms var(--ease) both;
+}
+
+.dlg {
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--ivory);
+  box-shadow: var(--shadow-lg);
+  animation: dlg-rise 180ms var(--ease) both;
+}
+
+@keyframes dlg-fade {
+  from { opacity: 0; }
+}
+
+@keyframes dlg-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+.dlg-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 8px 20px;
+}
+
+.dlg-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 590;
+  letter-spacing: -0.016em;
+  color: var(--ink);
+}
+
+.dlg-description {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.dlg-body {
+  padding: 8px 20px 12px;
+  overflow: auto;
+}
+
+.dlg-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 18px;
+}
+
+.dlg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 540;
+  color: var(--ink-3);
+}
+
+.dlg-field .text-input {
+  flex: initial;
+  width: 100%;
+  height: 36px;
+}

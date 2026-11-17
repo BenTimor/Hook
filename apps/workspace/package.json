@@ -14,13 +14,19 @@
     "app:msix": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/build-msix.mjs --product workspace"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
     "@fontsource-variable/inter": "catalog:",
     "@fontsource-variable/jetbrains-mono": "catalog:",
     "@hook/ui": "workspace:*",
     "@tauri-apps/api": "catalog:",
     "lucide-react": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "zustand": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/vite": "catalog:",

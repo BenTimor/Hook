@@ -39,12 +39,15 @@ impl WorkspaceClient {
         }
     }
 
-    async fn call(
+    /// The HTTP status and the decoded body. Only transport failures are errors:
+    /// the workspace window needs the status (409 means "someone else edited
+    /// this"), while the tools only need the message.
+    pub async fn raw(
         &self,
         method: reqwest::Method,
         path: &str,
         body: Option<Value>,
-    ) -> Result<Value, String> {
+    ) -> Result<(u16, Value), String> {
         let token = self
             .auth
             .token()
@@ -61,12 +64,22 @@ impl WorkspaceClient {
             .send()
             .await
             .map_err(|e| format!("Could not reach the workspace service: {e}"))?;
-        let status = response.status();
+        let status = response.status().as_u16();
         let value = response
             .json::<Value>()
             .await
-            .map_err(|e| format!("The workspace service sent an unreadable answer: {e}"))?;
-        if status.is_success() {
+            .unwrap_or_else(|_| json!({}));
+        Ok((status, value))
+    }
+
+    async fn call(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value, String> {
+        let (status, value) = self.raw(method, path, body).await?;
+        if (200..300).contains(&status) {
             return Ok(value);
         }
         // The server's message is written for a person; hand it to the model

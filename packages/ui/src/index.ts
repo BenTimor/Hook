@@ -3,3 +3,4 @@
 export { HookMark } from "./HookMark";
 export { WindowControls } from "./WindowControls";
 export { isTauri, useWindowState, win } from "./window";
+export { Dialog, TextFieldDialog } from "./Dialog";

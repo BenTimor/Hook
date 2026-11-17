@@ -363,7 +363,10 @@ export function createWorkspaceRouter({ db, env = {} }) {
         id: row.id,
         name: row.name,
         description: row.description,
-        owner: row.owner_subject === subject,
+        // The account subject of the owner, plus whether that is the caller:
+        // clients show "you" without knowing their own subject.
+        owner: row.owner_subject,
+        mine: row.owner_subject === subject,
         role: row.role,
         createdAt: row.created_at,
         updatedAt: row.updated_at,

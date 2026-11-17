@@ -58,6 +58,39 @@ pub struct AppInfo {
     pub product: &'static str,
 }
 
+/// A pass-through to the workspace API for the Workspace window.
+///
+/// The renderer never holds a token, so every workspace call from the app is
+/// this one command. It can only reach `/api/ws`, and the server still decides
+/// what the signed-in account may do; the path check here is about keeping the
+/// IPC surface small, not about authorization.
+#[tauri::command]
+pub async fn ws_request(
+    state: State<'_, Arc<AppState>>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let allowed = path.starts_with('/')
+        && !path.contains("..")
+        && path.len() <= 512
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/_-:?=&.%".contains(c));
+    if !allowed {
+        return Err("Invalid workspace path.".into());
+    }
+    let method = match method.to_ascii_uppercase().as_str() {
+        "GET" => reqwest::Method::GET,
+        "POST" => reqwest::Method::POST,
+        "PATCH" => reqwest::Method::PATCH,
+        "DELETE" => reqwest::Method::DELETE,
+        other => return Err(format!("Unsupported method: {other}")),
+    };
+    let (status, body) = state.workspace.raw(method, &path, body).await?;
+    Ok(serde_json::json!({ "status": status, "body": body }))
+}
+
 #[tauri::command]
 pub fn sync_status(state: State<'_, Arc<AppState>>) -> crate::sync::SyncView {
     state.sync.status()

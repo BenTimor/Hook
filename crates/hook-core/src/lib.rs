@@ -134,6 +134,7 @@ pub fn builder(product: Product, capabilities: Capabilities) -> tauri::Builder<t
             commands::stop_chat_agents,
             commands::preview_state,
             commands::sync_status,
+            commands::ws_request,
             commands::sync_now,
             commands::import_scan,
             commands::import_apply,

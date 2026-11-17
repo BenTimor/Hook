@@ -128,7 +128,8 @@ test("a project is created with its owner and listed by role", async (t) => {
   const list = await request("/projects");
   assert.equal(list.body.projects.length, 1);
   assert.equal(list.body.projects[0].name, "Website redesign");
-  assert.equal(list.body.projects[0].owner, true);
+  assert.equal(list.body.projects[0].mine, true);
+  assert.equal(list.body.projects[0].owner, "ws-owner");
 
   // Someone else's account sees nothing.
   const other = await request("/projects", { token: OUTSIDER });
