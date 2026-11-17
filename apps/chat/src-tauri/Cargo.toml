@@ -1,6 +1,6 @@
 [package]
 name = "hook"
-version = "0.2.1"
+version = "0.3.0"
 description = "Hook — a local, single-provider AI chat harness"
 authors = ["you"]
 edition = "2021"

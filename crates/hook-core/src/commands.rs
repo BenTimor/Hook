@@ -40,6 +40,9 @@ pub struct AppState {
     /// Hook Workspace's data, reached over the account API. Shared with the
     /// chat agent's tools, which work without Workspace installed.
     pub workspace: Arc<crate::workspace::WorkspaceClient>,
+    /// What the user is looking at, written by the product's window. Ephemeral:
+    /// it rides on the next request only, and is never stored in a chat.
+    pub context: Arc<Mutex<Option<String>>>,
     /// Which desktop product this backend is serving.
     pub product: crate::Product,
     /// What this product's chat agent may do (see `Capabilities`).
@@ -89,6 +92,26 @@ pub async fn ws_request(
     };
     let (status, body) = state.workspace.raw(method, &path, body).await?;
     Ok(serde_json::json!({ "status": status, "body": body }))
+}
+
+/// The product's window says what the user is looking at (project, board,
+/// open document, selected text). The next chat request carries it as context.
+#[tauri::command]
+pub fn set_chat_context(state: State<'_, Arc<AppState>>, context: String) {
+    let trimmed = context.trim();
+    let value = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.chars().take(4000).collect::<String>())
+    };
+    *lock(&state.context) = value;
+}
+
+impl AppState {
+    /// The live context block, if the product set one.
+    pub fn chat_context(&self) -> Option<String> {
+        lock(&self.context).clone()
+    }
 }
 
 #[tauri::command]
@@ -684,7 +707,7 @@ pub fn preview_state(state: State<'_, Arc<AppState>>) -> Option<PreviewView> {
 /// signed-out window still learns that it is too old to sign in.
 #[tauri::command]
 pub async fn check_update(state: State<'_, Arc<AppState>>) -> Result<crate::update::UpdateInfo, String> {
-    crate::update::check(&state.cfg).await
+    crate::update::check(&state.cfg, state.product).await
 }
 
 /// Send an in-app report of inappropriate AI output (Store policy 11.16).
@@ -714,7 +737,7 @@ pub async fn install_update(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    crate::update::install(&app, &state.cfg, state.auth.token()).await
+    crate::update::install(&app, &state.cfg, state.product, state.auth.token()).await
 }
 
 fn derive_title(text: &str) -> String {

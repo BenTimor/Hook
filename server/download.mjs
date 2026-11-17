@@ -34,6 +34,7 @@ export function createDownloadRouter({ env, db, auth }) {
   // `?version=` pins an exact build; without it the newest one is served. The
   // version is resolved against the published index, so a request that names
   // a missing build fails instead of quietly installing a different one.
+  // `?product=` picks the product's index; the chat app keeps the bare URL.
   router.get("/windows", (req, res) => {
     if (!db) return res.status(503).json({ error: "unavailable" });
     const account = approvedRequest({ req, db, auth });
@@ -41,7 +42,9 @@ export function createDownloadRouter({ env, db, auth }) {
 
     const requested =
       typeof req.query.version === "string" ? req.query.version : null;
-    const file = releaseFile(env, requested);
+    const product =
+      typeof req.query.product === "string" ? req.query.product : "chat";
+    const file = releaseFile(env, requested, product);
     if (!file) {
       return res.status(404).json({
         error: {
@@ -55,7 +58,8 @@ export function createDownloadRouter({ env, db, auth }) {
     }
 
     // res.download handles Content-Length, ranges and HEAD for us.
-    res.download(file, "Hook-setup.exe", {
+    const name = product === "chat" ? "Hook-setup.exe" : `${product}-setup.exe`;
+    res.download(file, name, {
       headers: {
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",

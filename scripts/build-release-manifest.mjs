@@ -15,9 +15,11 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { appSourceHash } from "./app-source-hash.mjs";
+import { productFromArgs } from "./products.mjs";
 import { readRepoVersion } from "./release-gate.mjs";
 
 const [, , installerArg, manifestArg, versionArg] = process.argv;
+const product = productFromArgs();
 if (!installerArg || !manifestArg) {
   console.error(
     "usage: node scripts/build-release-manifest.mjs <installer> <manifest> [version]",
@@ -32,7 +34,7 @@ const info = await stat(installer);
 
 // A drift here ships an installer that reports a different version than the
 // one users were told about, and every later update check lies.
-const repoVersion = readRepoVersion();
+const repoVersion = readRepoVersion(product);
 const version = versionArg || process.env.HOOK_VERSION || repoVersion;
 if (version !== repoVersion) {
   throw new Error(
@@ -48,16 +50,26 @@ const payload = {
   version,
   commit: commit || null,
   builtAt: new Date().toISOString(),
-  file: `Hook-${version}-setup.exe`,
+  // The file name is what the download route serves and what the merge script
+  // keeps for old versions; every product has its own prefix.
+  file: `${
+    product.id === "chat" ? "Hook" : product.binary.replaceAll(" ", "-")
+  }-${version}-setup.exe`,
+  // The chat app keeps the historical route it already knows; a new product
+  // names itself explicitly so one download endpoint serves both.
+  url:
+    product.id === "chat"
+      ? `/api/download/windows?version=${encodeURIComponent(version)}`
+      : `/api/download/windows?product=${product.id}&version=${encodeURIComponent(version)}`,
   size: info.size,
   sha256: createHash("sha256").update(bytes).digest("hex"),
   // The gate runs on Linux and the build on Windows; use its hash so checkout
   // line endings can never make the same commit look like two releases.
-  sourceHash: process.env.HOOK_SOURCE_HASH || appSourceHash(),
+  sourceHash: process.env.HOOK_SOURCE_HASH || appSourceHash({ product }),
   notes,
 };
 
 await writeFile(manifest, `${JSON.stringify(payload, null, 2)}\n`);
 console.log(
-  `wrote ${manifest}: Hook ${payload.version} (${(payload.size / 1024 / 1024).toFixed(1)} MB) ${payload.sha256.slice(0, 12)}…`,
+  `wrote ${manifest}: ${product.name} ${payload.version} (${(payload.size / 1024 / 1024).toFixed(1)} MB) ${payload.sha256.slice(0, 12)}…`,
 );

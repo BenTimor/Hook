@@ -245,8 +245,8 @@ export function releaseInfo(env) {
  * Resolve a downloadable installer. `version` is matched against the index
  * (never turned into a path), so an unknown or malformed value simply misses.
  */
-export function releaseFile(env, version = null) {
-  const index = releaseIndex(env);
+export function releaseFile(env, version = null, product = "chat") {
+  const index = releaseIndex(env, product);
   const entry = version
     ? index.releases.find((release) => release.version === version)
     : index.releases[0];

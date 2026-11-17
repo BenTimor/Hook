@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
-import { highlight } from "../lib/highlight";
-import { copyText } from "../lib/utils";
+import { highlight } from "./highlight";
+import { copyText } from "./clipboard";
 
 interface Props {
   code: string;

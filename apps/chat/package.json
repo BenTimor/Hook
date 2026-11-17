@@ -1,9 +1,9 @@
 {
   "name": "@hook/chat-app",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
-  "description": "Hook \u2014 a local AI chat harness",
+  "description": "Hook — a local AI chat harness",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",

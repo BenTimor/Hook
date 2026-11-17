@@ -1,0 +1,284 @@
+/* The docked chat. Every product that embeds Hook gets this, so it is styled
+   once, from the same tokens as everything else. */
+
+.dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  flex: 0 0 380px;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel-strong);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  animation: dock-in 220ms var(--ease) both;
+}
+
+@keyframes dock-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+
+.dock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 0 8px 0 14px;
+  -webkit-app-region: drag;
+}
+
+.dock-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 540;
+  color: var(--ink-2);
+}
+
+.dock-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.dock-actions .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.dock-history {
+  position: absolute;
+  top: 42px;
+  right: 8px;
+  z-index: 30;
+  width: 300px;
+  max-height: 60%;
+  overflow: auto;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--ivory);
+  box-shadow: var(--shadow-lg);
+  animation: dock-menu 140ms var(--ease) both;
+}
+
+@keyframes dock-menu {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+.dock-history-head {
+  padding: 6px 8px 8px;
+  font-size: 10.5px;
+  font-weight: 620;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.dock-history-empty {
+  margin: 0;
+  padding: 6px 8px 10px;
+  font-size: 12px;
+  color: var(--ink-4);
+}
+
+.dock-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-align: left;
+}
+
+.dock-history-row span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dock-history-row time {
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+.dock-history-row:hover {
+  background: rgba(var(--ink-rgb), 0.05);
+}
+
+.dock-history-row[data-active="true"] {
+  background: rgba(var(--ink-rgb), 0.075);
+  color: var(--ink);
+}
+
+.dock-thread {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dock-empty {
+  margin: auto 0;
+  padding: 12px 4px 24px;
+  text-align: left;
+}
+
+.dock-empty p {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 540;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.dock-empty span {
+  font-size: 12.4px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+.dock-message {
+  max-width: 100%;
+}
+
+.dock-message[data-role="user"] {
+  align-self: flex-end;
+  max-width: 86%;
+}
+
+.dock-user-text {
+  margin: 0;
+  padding: 8px 11px;
+  border-radius: 12px 12px 3px 12px;
+  background: rgba(var(--accent-rgb), 0.09);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.dock-message .md {
+  font-size: 13px;
+}
+
+.dock-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink-4);
+}
+
+.dock-spin {
+  width: 13px;
+  height: 13px;
+  animation: dock-spin 1s linear infinite;
+}
+
+@keyframes dock-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.dock-error {
+  margin: 0 12px 6px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(192, 57, 43, 0.07);
+  font-size: 12px;
+  color: #8f2f24;
+}
+
+.dock-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 0 10px 10px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--ivory);
+}
+
+.dock-composer:focus-within {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.07);
+}
+
+.dock-input {
+  flex: 1;
+  min-width: 0;
+  max-height: 140px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  outline: none;
+  resize: none;
+}
+
+.dock-input::placeholder {
+  color: var(--ink-4);
+}
+
+.dock-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--ivory);
+  transition: background 120ms, opacity 120ms;
+}
+
+.dock-send svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dock-send:hover {
+  background: var(--accent-hover);
+}
+
+.dock-send:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+@media (max-width: 1080px) {
+  .dock {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 25;
+    box-shadow: var(--shadow-lg);
+  }
+}

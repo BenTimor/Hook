@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Hook Workspace — projects, boards, tasks and documents, with Hook's chat beside them",
+  "description": "Hook Workspace \u2014 projects, boards, tasks and documents, with Hook's chat beside them",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
@@ -21,6 +21,7 @@
     "@codemirror/view": "^6.43.15",
     "@fontsource-variable/inter": "catalog:",
     "@fontsource-variable/jetbrains-mono": "catalog:",
+    "@hook/chat": "workspace:*",
     "@hook/ui": "workspace:*",
     "@tauri-apps/api": "catalog:",
     "lucide-react": "catalog:",

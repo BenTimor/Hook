@@ -134,6 +134,7 @@ pub fn builder(product: Product, capabilities: Capabilities) -> tauri::Builder<t
             commands::stop_chat_agents,
             commands::preview_state,
             commands::sync_status,
+            commands::set_chat_context,
             commands::ws_request,
             commands::sync_now,
             commands::import_scan,
@@ -240,6 +241,7 @@ fn setup(
         vision_off: Arc::new(Default::default()),
         imports: Arc::new(import::Importer::new()),
         workspace,
+        context: Arc::new(Mutex::new(None)),
         product,
         capabilities,
     });

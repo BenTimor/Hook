@@ -4,7 +4,7 @@ import { AlertCircle, Check, Copy, Flag, Pencil, RefreshCw } from "lucide-react"
 import type { Message } from "../lib/types";
 import { copyText } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
-import { Markdown } from "./Markdown";
+import { Markdown } from "@hook/chat";
 import { MessageImages } from "./MessageImages";
 import { ReportDialog } from "./ReportDialog";
 

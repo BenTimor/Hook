@@ -306,8 +306,13 @@ fn http_client(timeout: Option<Duration>) -> Result<reqwest::Client, String> {
     builder.build().map_err(|error| error.to_string())
 }
 
-async fn fetch_index(cfg: &HarnessConfig) -> Result<ReleaseIndex, String> {
-    let url = format!("{}/api/releases", base(cfg));
+async fn fetch_index(cfg: &HarnessConfig, product: crate::Product) -> Result<ReleaseIndex, String> {
+    // The chat app keeps the historical URL every installed build already
+    // knows; every other product has its own index beside it.
+    let url = match product {
+        crate::Product::Chat => format!("{}/api/releases", base(cfg)),
+        crate::Product::Workspace => format!("{}/api/releases/workspace", base(cfg)),
+    };
     let client = http_client(Some(MANIFEST_TIMEOUT))?;
     let response = client
         .get(&url)
@@ -328,14 +333,14 @@ async fn fetch_index(cfg: &HarnessConfig) -> Result<ReleaseIndex, String> {
 }
 
 /// Read the published index and compare it with this build.
-pub async fn check(cfg: &HarnessConfig) -> Result<UpdateInfo, String> {
+pub async fn check(cfg: &HarnessConfig, product: crate::Product) -> Result<UpdateInfo, String> {
     let current = current_version();
     let channel = current_channel();
     if !cfg.auth.required {
         // Local mock builds never talk to hookcode.io.
         return Ok(idle(&current, channel));
     }
-    let index = fetch_index(cfg).await?;
+    let index = fetch_index(cfg, product).await?;
     Ok(build_info(&index, &current, channel).unwrap_or_else(|| idle(&current, channel)))
 }
 
@@ -351,12 +356,13 @@ fn safe_version(value: &str) -> bool {
 pub async fn install(
     app: &AppHandle,
     cfg: &HarnessConfig,
+    product: crate::Product,
     token: Option<String>,
 ) -> Result<(), String> {
     if INSTALLING.swap(true, AtomicOrdering::SeqCst) {
         return Err("An update is already being installed.".into());
     }
-    let result = install_inner(app, cfg, token).await;
+    let result = install_inner(app, cfg, product, token).await;
     if result.is_err() {
         INSTALLING.store(false, AtomicOrdering::SeqCst);
     }
@@ -366,6 +372,7 @@ pub async fn install(
 async fn install_inner(
     app: &AppHandle,
     cfg: &HarnessConfig,
+    product: crate::Product,
     token: Option<String>,
 ) -> Result<(), String> {
     let token = token.ok_or("Sign in to update Hook.")?;
@@ -376,7 +383,7 @@ async fn install_inner(
         return Err("This build updates through the Microsoft Store.".into());
     }
 
-    let index = fetch_index(cfg).await?;
+    let index = fetch_index(cfg, product).await?;
     let info = build_info(&index, &current_version(), UpdateChannel::Direct)
         .ok_or("The update service did not describe a downloadable version.")?;
     if !info.available {

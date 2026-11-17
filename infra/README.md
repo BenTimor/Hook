@@ -7,15 +7,31 @@ on every deploy — edit it *here*, not on the server.
 | File | Lives on the server at | Purpose |
 |------|------------------------|---------|
 | `docker-compose.yml` | `/opt/hook-web/docker-compose.yml` | `hook-waitlist` container (built from `/opt/hook-web/app`), joins `scout_default`, SQLite bind-mounted from `/opt/hook-web/data` |
-| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, private git, conversation sync, download, release index) to the container, `www` → apex redirect |
+| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, private git, conversation sync, workspace, download, release index) to the container, `www` → apex redirect |
 
 `release.config.json` (repo root) is copied into the image by the Dockerfile. It
-holds the direct channel's `minimumVersion` (oldest build allowed to keep
-working) and the Microsoft Store channel's own `store.latest` /
-`store.minimumVersion`. Raising a floor forces older installs to update on their
+holds each product's floor: the chat app's `minimumVersion` (oldest build allowed
+to keep working), its Microsoft Store channel's `store.latest` /
+`store.minimumVersion`, and the same pair under `products.workspace` for Hook
+Workspace. Raising a floor forces older installs to update on their
 next check, without rebuilding the app, and `store.latest` is set only after a
 Store submission is certified. It is shipped by `deploy-waitlist.sh` like any
 other tracked file.
+
+## Release slots (one per product)
+
+`DOWNLOAD_DIR` holds both products' installers side by side:
+
+| File | Product | Public route |
+|------|---------|--------------|
+| `releases.json` | Hook (chat) | `GET /api/releases` |
+| `Hook-<version>-setup.exe` | Hook (chat) | `GET /api/download/windows?version=…` |
+| `releases.workspace.json` | Hook Workspace | `GET /api/releases/workspace` |
+| `Hook-Workspace-<version>-setup.exe` | Hook Workspace | `GET /api/download/windows?product=workspace&version=…` |
+
+Each workflow only deletes installers its own index mentions (`Hook-[0-9]*.exe`
+versus `Hook-Workspace-*.exe`), so publishing one product cannot remove the
+other's download. The indexes are swapped last, after the installer is in place.
 
 ## Release slot
 
@@ -49,8 +65,14 @@ so a user can continue on another computer. Two more folders appear under
 
 Conversation bodies are gzipped JSON rows in `signups.sqlite` (`sync_chats`,
 `sync_projects`, `sync_media`, `sync_state`); the cursor lives in
-`sync_state.next_seq`. Back up the whole `data/` directory together — the
-repositories, the pictures and the database reference each other.
+`sync_state.next_seq`. Hook Workspace lives in the same database
+(`ws_projects`, `ws_members`, `ws_invites`, `ws_folders`, `ws_boards`,
+`ws_tasks`, `ws_comments`, `ws_documents`, `ws_seq`), with one global `seq`
+instead of a per-account cursor: `/api/ws/changes` filters by membership at read
+time, so a workspace row is written once and every member pulls it at their own
+pace. Access is per project, checked on every request; nothing is stored per
+device. Back up the whole `data/` directory together — the repositories, the
+pictures and the database reference each other.
 
 The runtime image installs `git` (`apt-get install git`) and runs a `pre-receive`
 hook on every repository. It rejects a push that would take a project over
@@ -59,9 +81,17 @@ server constants (`server/git.mjs`); the hook lives at
 `server/git-policy.mjs`. A daily `git gc --auto` runs in the background after a
 push, at most once an hour per repository.
 
+Workspace quotas are server constants in `server/workspace.mjs` (200 projects,
+100 members, 200 boards, 5,000 documents, 20,000 tasks per project, 512 KB per
+document, 16 KB per comment). Deleting a project is a tombstone the changes feed
+carries to every member; the rows stay in SQLite so a late pull cannot resurrect
+the project.
+
 The account's storage is removed by `DELETE /api/sync/account` (app token), which
-drops the chat/project/media rows for that account and deletes both hashed
-folders. Use it for account-deletion requests.
+drops the chat/project/media rows for that account, deletes both hashed folders,
+and removes Workspace: every project the account owns with everything in it, plus
+its memberships and invitations elsewhere. Other people's projects keep their
+boards and documents.
 
 Not in this directory because it must **never** be committed:
 

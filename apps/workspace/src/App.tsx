@@ -8,8 +8,10 @@ import {
   X,
 } from "lucide-react";
 import { HookMark, TextFieldDialog, WindowControls, useWindowState } from "@hook/ui";
+import { ChatDock } from "@hook/chat";
 
 import { api, onAuthEvent, openExternal, type AuthView } from "./lib/bridge";
+import { chatTransport, setChatContext } from "./lib/chatTransport";
 import type { DocumentMeta } from "./lib/types";
 import { useWorkspaceStore } from "./store/useWorkspaceStore";
 import { BoardView, TaskPanel } from "./components/BoardView";
@@ -85,6 +87,30 @@ function Workspace({
     () => tasks.find((candidate) => candidate.id === activeTaskId) ?? null,
     [tasks, activeTaskId],
   );
+
+  // The chat agent should know what "this" is. While the dock is open the
+  // summary is refreshed on a slow tick, because a text selection is not a
+  // React event; a string compare in Rust makes repeats free.
+  useEffect(() => {
+    if (!dockOpen) {
+      void setChatContext("");
+      return;
+    }
+    const push = () => {
+      const lines: string[] = [];
+      if (project) lines.push(`Project: ${project.name}`);
+      if (board) lines.push(`Board: ${board.name}`);
+      if (task) lines.push(`Open task: ${task.title}`);
+      if (activeDocumentId) lines.push("A document is open in the editor.");
+      const selection = window.getSelection()?.toString().trim();
+      if (selection) lines.push(`Selected text: "${selection.slice(0, 800)}"`);
+      void setChatContext(lines.join("\n"));
+    };
+    push();
+    const timer = window.setInterval(push, 1500);
+    return () => window.clearInterval(timer);
+  }, [dockOpen, project, board, task, activeDocumentId]);
+
 
   return (
     <div className="shell" data-maximized={maximized}>
@@ -236,28 +262,11 @@ function Workspace({
 
       {task ? <TaskPanel task={task} /> : null}
 
-      {dockOpen ? (
-        <aside className="ws-dock">
-          <header className="ws-dock-head" data-tauri-drag-region>
-            <HookMark />
-            <span>Hook</span>
-            <button
-              className="icon-btn"
-              title="Hide Hook"
-              aria-label="Hide Hook"
-              onClick={() => setDockOpen(false)}
-            >
-              <X />
-            </button>
-          </header>
-          <div className="ws-dock-body">
-            <p className="ws-dock-note">
-              The chat lands here: the same conversations as Hook, with the
-              project you are looking at as context.
-            </p>
-          </div>
-        </aside>
-      ) : null}
+      <ChatDock
+        transport={chatTransport}
+        open={dockOpen}
+        onClose={() => setDockOpen(false)}
+      />
 
       <TextFieldDialog
         open={newProject}

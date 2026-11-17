@@ -2,7 +2,7 @@ import { memo, useMemo, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { openExternal } from "../lib/bridge";
+import { openExternal } from "./open";
 import { CodeBlock } from "./CodeBlock";
 
 interface Props {

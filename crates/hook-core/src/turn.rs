@@ -611,6 +611,17 @@ fn system_message(
         text.push_str("\n\n");
         text.push_str(&hint);
     }
+    // What the user is looking at, from the product's window. It is here for
+    // this request only: "this board" has to mean the board on screen.
+    if let Some(context) = state.chat_context() {
+        text.push_str(
+            "\n\n## What the user is looking at right now\n",
+        );
+        text.push_str(&context);
+        text.push_str(
+            "\nUse it when the message is about \"this\" or \"that\"; do not recite it back.",
+        );
+    }
     text
 }
 

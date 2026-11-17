@@ -80,7 +80,6 @@ export function appInputs(product) {
     `${product.dir}/src-tauri/capabilities`,
     `${product.dir}/src-tauri/icons`,
     `${product.dir}/src-tauri/src`,
-    `${product.dir}/src-tauri/resources/hook-guard.mjs`,
     product.msix,
     "scripts/app-source-hash.mjs",
     "scripts/fetch-git.mjs",

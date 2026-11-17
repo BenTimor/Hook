@@ -211,7 +211,8 @@ jobs:
           # reports and what new downloads receive.
           mv releases.json.new releases.json
           # Keep exactly the installers the published index references.
-          for file in *.exe; do
+          # Only the chat app's installers: Hook Workspace shares this folder.
+          for file in Hook-[0-9]*.exe; do
             [ -e "$file" ] || continue
             case " $KEEP " in
               *" $file "*) ;;

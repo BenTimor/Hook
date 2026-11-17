@@ -223,6 +223,12 @@ test("each product publishes its own index, and an unpublished one is absent", (
   const workspace = publicReleaseInfo(f.env, "workspace");
   assert.equal(workspace.latest, "0.1.0");
   assert.equal(workspace.releases[0].version, "0.1.0");
+  assert.equal(workspace.releases[0].url, "/api/download/windows?version=0.1.0");
+  // The installer lookup follows the product, not the chat app's index.
+  assert.equal(
+    releaseFile(f.env, null, "workspace"),
+    join(f.releases, "Hook-Workspace-0.1.0-setup.exe"),
+  );
   // The chat app's index is untouched by the second product.
   assert.equal(releaseIndex(f.env).latest, null);
 });

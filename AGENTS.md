@@ -12,7 +12,7 @@ single pnpm + Cargo workspace.
 | Product | Code | Dev | Build | Deploy |
 | --- | --- | --- | --- | --- |
 | **Hook** (AI chat + coding agents) | `apps/chat/` | `pnpm app` | `pnpm app:build` / `pnpm app:portable` | `.github/workflows/release-app.yml` |
-| **Hook Workspace** (projects, boards, tasks, docs) | `apps/workspace/` | `pnpm workspace:app` | `pnpm workspace:app:build` | same workflow, `--product workspace` |
+| **Hook Workspace** (projects, boards, tasks, docs) | `apps/workspace/` | `pnpm workspace:app` | `pnpm workspace:app:build` | `.github/workflows/release-workspace.yml` |
 | Landing page | `waitlist/` | `pnpm waitlist:dev` → :5173 | `pnpm waitlist:build` → `dist-waitlist/` | `.github/workflows/deploy-waitlist.yml` |
 | Account service | `server/` | `pnpm waitlist:start` | Docker image | `scripts/deploy-waitlist.sh` |
 
@@ -21,8 +21,11 @@ Shared, and the reason the products look and behave alike:
 ```
 crates/hook-core/    the backend every product links: account, chats + sync,
                      coding agents, preview, the assistant turn, the IPC surface
-packages/ui/         tokens.css, window chrome, buttons/inputs, the mark
-packages/chat/       the chat surface (Thread, MessageItem, Markdown, Composer, dock)
+packages/ui/         tokens.css, window chrome, buttons/inputs, dialogs, the mark
+packages/chat/       Markdown, CodeBlock, highlight, and the ChatDock panel;
+                     Thread/MessageItem/Composer are still in apps/chat — moving
+                     them is the next extraction, and the dock currently uses
+                     its own lighter message view
 ```
 
 `server/` and `waitlist/` deliberately stay at the repo root: they are one deploy
@@ -87,6 +90,9 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 - `crates/hook-core/src/{provider,import,update,reports}.rs` — SSE client, the
   ChatGPT/Claude export readers, the release index and update policy, AI reports.
 - `crates/hook-core/src/commands.rs` — the whole IPC surface.
+- `packages/chat/src/ChatDock.tsx` — the collapsible chat panel every product
+  embeds. It takes a `ChatTransport`, so it knows nothing about which app it is
+  running in; `apps/workspace/src/lib/chatTransport.ts` is that adapter.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
   `hook://sync`, `hook://import`, `hook://update`).
@@ -121,7 +127,7 @@ Changing one side of a boundary is the most common way to break this repo.
 - **New product:** `apps/<id>/` (package.json, index.html, vite.config.ts,
   `src-tauri/` with its own identifier) → `Product` + `Capabilities` in
   `crates/hook-core/src/lib.rs` → an entry in `scripts/products.mjs` → root
-  scripts → its own `msix/<id>/` when it reaches the Store.
+  scripts → its own `msix/<id>/` and release workflow when it ships.
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
   `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`
   + `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`
@@ -138,9 +144,11 @@ Changing one side of a boundary is the most common way to break this repo.
   **Sync between computers** and `infra/README.md`. Add to `server/sync.test.mjs`
   / `server/git.test.mjs` and the sync unit tests in `sync.rs`.
 - **Workspace entity or permission change:** `server/workspace.mjs` +
-  `server/workspace.test.mjs` → the shared client in `crates/hook-core` →
-  the `workspace_*` tools in `tools.rs` → `apps/workspace/src` → README
-  **Hook Workspace**.
+  `server/workspace.test.mjs` → the shared client and tool family in
+  `crates/hook-core/src/workspace.rs` → the `ws_request` command →
+  `apps/workspace/src/lib/bridge.ts` → store/components → README
+  **Hook Workspace**. A new entity needs its own row in the changes feed, or a
+  device will never learn about it.
 - **New landing-page route or field:** `server/*.mjs` router → `waitlist/` UI →
   `server/*.test.mjs`. Keep old rows readable — tests deliberately seed an
   older schema.

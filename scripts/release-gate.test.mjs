@@ -86,3 +86,13 @@ test("the declared latest is used even when it is not first", () => {
   });
   assert.equal(result.publish, true);
 });
+
+test("every product's source inputs exist", async () => {
+  const { existsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { appInputs, PRODUCTS, root } = await import("./products.mjs");
+  for (const product of Object.values(PRODUCTS)) {
+    const missing = appInputs(product).filter((input) => !existsSync(join(root, input)));
+    assert.deepEqual(missing, [], `${product.id}: ${missing.join(", ")}`);
+  }
+});

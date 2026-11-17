@@ -3,5 +3,14 @@
   "store": {
     "latest": "0.2.0",
     "minimumVersion": "0.1.0"
+  },
+  "products": {
+    "workspace": {
+      "minimumVersion": "0.1.0",
+      "store": {
+        "latest": null,
+        "minimumVersion": "0.1.0"
+      }
+    }
   }
 }

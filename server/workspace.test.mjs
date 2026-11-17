@@ -58,7 +58,9 @@ async function setup(t) {
   db.close();
 
   async function request(path, { method = "GET", token = OWNER, body } = {}) {
-    const response = await fetch(`${origin}/api/ws${path}`, {
+    // `/api/...` is an absolute route (account deletion lives outside /ws).
+    const url = path.startsWith("/api/") ? `${origin}${path}` : `${origin}/api/ws${path}`;
+    const response = await fetch(url, {
       method,
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -397,4 +399,42 @@ test("the changes feed is one cursor, filtered by membership, tombstones include
     (change) => change.kind === "board" && change.id === board.body.board.id,
   );
   assert.equal(tombstone.deleted, true);
+});
+
+test("deleting the account removes its projects and its memberships elsewhere", async (t) => {
+  const { request } = await setup(t);
+  const mine = await sharedProject(request);
+
+  // A project owned by someone else, where this account is only a member.
+  const theirs = await request("/projects", {
+    method: "POST",
+    token: OUTSIDER,
+    body: { name: "Someone else's project" },
+  });
+  await request(`/projects/${theirs.body.project.id}/invites`, {
+    method: "POST",
+    token: OUTSIDER,
+    body: { email: "owner@example.test", role: "viewer" },
+  });
+  const inbox = await request("/invites");
+  await request(`/invites/${inbox.body.invites[0].id}/accept`, { method: "POST" });
+
+  const deleted = await request("/api/sync/account", { method: "DELETE" });
+  assert.equal(deleted.status, 200);
+
+  const after = await request("/projects", { token: OWNER });
+  assert.equal(after.body.projects.length, 0);
+
+  // The other owner keeps the project, minus this member.
+  const members = await request(`/projects/${theirs.body.project.id}/members`, {
+    token: OUTSIDER,
+  });
+  assert.equal(members.status, 200);
+  assert.deepEqual(
+    members.body.members.map((member) => member.email),
+    ["outsider@example.test"],
+  );
+
+  const feed = await request("/changes?since=0", { token: OWNER });
+  assert.equal(feed.body.changes.length, 0);
 });

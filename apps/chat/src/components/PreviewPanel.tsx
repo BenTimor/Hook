@@ -15,7 +15,7 @@ import type {
   WorkspaceTask,
 } from "../lib/types";
 import { useChatStore } from "../store/useChatStore";
-import { Markdown } from "./Markdown";
+import { Markdown } from "@hook/chat";
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 720;

@@ -290,8 +290,9 @@ until the new one is complete, and the index swap is a single `mv`. The last fiv
 versions stay downloadable.
 
 Bump the version with `pnpm version:bump patch` (or `minor`, `major`, or an
-explicit version). It updates `package.json`, `src-tauri/Cargo.toml`,
-`src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json` together: the app reports
+explicit version, add `--product workspace`). It updates that product's
+`package.json`, `src-tauri/Cargo.toml`, the workspace `Cargo.lock` and
+`src-tauri/tauri.conf.json` together: the app reports
 Cargo's version, the installer is named after Tauri's, and the release manifest
 refuses to publish if they disagree.
 
@@ -430,7 +431,7 @@ pnpm app:build     # the chat app's NSIS installer (runs `pnpm engine` and `pnpm
 pnpm app:portable  # portable folder for the chat app, zipped
 
 pnpm workspace:app         # Hook Workspace dev window
-pnpm workspace:app:build   # Hook Workspace NSIS installer
+pnpm workspace:app:build   # Hook Workspace NSIS installer (its own engine copy)
 ```
 
 Both apps share one Cargo workspace, so `cargo build` output lands in `target/`
@@ -444,7 +445,10 @@ Outputs for the chat app:
   `resources\git`, no install
 
 The same commands with `workspace:` in front produce Hook Workspace's installer
-and `release/Hook-Workspace-<version>-portable.zip`.
+(`target/release/bundle/nsis/Hook Workspace_<version>_x64-setup.exe`, published as
+`release/Hook-Workspace-<version>-setup.exe`) and
+`release/Hook-Workspace-<version>-portable.zip`. Two products, two installers,
+two source hashes, one `target/` directory.
 
 The engine (Node + pi) is ~104 MB of binaries and is not in git; `pnpm engine`
 copies it from the pinned `@earendil-works/pi-coding-agent` dev dependency.
@@ -551,7 +555,7 @@ working, and the same source will later build macOS and Linux packages.
 3. On the product's **Package identity** page, copy the Identity Name (for
    example `BenTimor.HookCode`), the Publisher (`CN=...`) and the Store ID
    (`9N...`).
-4. Fill `msix/identity.json` with those values and a publisher display name.
+4. Fill `msix/chat/identity.json` with those values and a publisher display name.
 5. Put the Store ID in `harness.config.ci.toml`:
 
    ```toml
@@ -779,6 +783,22 @@ that it is permanent and cannot be undone.
 - **Previews.** `workspace_preview` puts a task, board or document in the preview
   panel. It is a second kind of preview next to the HTML page a coding agent can
   show, and the panel renders it directly instead of in an iframe.
+- **The window is online-first.** The server is the source of truth, so the app
+  keeps an in-memory copy and applies `/api/ws/changes` every five seconds while
+  visible (and on focus). Nothing on disk can drift from the account, and there
+  is no merge to get wrong. Offline work is the next step, not a promise made
+  here.
+- **The chat sits beside the work.** A collapsible right-hand panel embeds the
+  same conversations as Hook (`packages/chat`), collapsed by default with its
+  conversation list collapsed as well. It has no preview panel; a preview is a
+  wide, page-shaped thing, and the dock is deliberately narrow. The window tells
+  the backend what it is showing — project, board, open task, selected text — and
+  that rides on the next request as context, so "summarise this board" means the
+  board on screen. The context is never stored in the chat.
+- **Its own download slot.** `/api/releases/workspace` and
+  `/api/download/windows?product=workspace` serve the Workspace installer; the
+  chat app keeps its historical URLs. Installers are uploaded under versioned
+  names and the index is swapped last, exactly like the chat app.
 
 ## One account, several products
 
@@ -936,7 +956,7 @@ conversation while you keep chatting.
   stop early. The guard blocks force-pushes, branch deletion and mirroring, so a
   shared project cannot lose another computer's history.
 - **Git ships with Hook.** `scripts/fetch-git.mjs` installs a pinned MinGit into
-  `src-tauri/resources/git` like the coding engine (its GPL `LICENSE.txt` ships
+  `src-tauri/resources/git` (per app, next to the engine) like the coding engine (its GPL `LICENSE.txt` ships
   with it). Agents get it on `PATH` and a managed `gitconfig` in `agent-home`;
   the account's git token is scoped to `/api/git/*` and cannot read chats or
   spend model credits. The token lives in that config, never in a project or a
@@ -1152,9 +1172,10 @@ Details worth knowing:
 ## Tests
 
 ```bash
-cd src-tauri && cargo test                      # unit tests + two zero-cost integration checks
-cd src-tauri && cargo test --lib -- --ignored   # live tests against `pnpm mock`
-pnpm waitlist:test                              # API, device login, proxy, download, release index
+cargo test                                      # the whole workspace: no engine, no network
+cargo test -p hook-core -- --ignored             # live tests against `pnpm mock`
+pnpm typecheck                                  # the only static gate: every package + the site
+pnpm waitlist:test                              # API, auth, proxy, download, sync, git, workspace
 pnpm test:release                               # "does this push need a Windows build?"
 ```
 
@@ -1171,6 +1192,14 @@ manifest whose floor is ahead of its newest build), and the two export readers
 (ChatGPT's `mapping` tree and Claude's parent chain, citations, hidden messages,
 RFC 3339 dates, and a re-import that updates, skips or keeps a locally edited
 chat). Tests skip themselves when the engine or `node` is missing.
+
+The workspace suite (`server/workspace.test.mjs`) drives the real router against a
+temporary SQLite file: the role table, an invitation accepted in the product,
+viewer/editor/manager limits, ownership transfer and its permanence, a removed
+member's tombstone in the changes feed, typed task columns, an agent comment that
+carries the conversation it came from, and a stale document write that is refused
+with the current copy. `server/releases.test.mjs` covers the second product's
+index and its "not published yet" answer.
 
 ## A note on packaged builds
 

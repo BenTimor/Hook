@@ -6,7 +6,7 @@
  *     --manifest release/latest.json \
  *     --out release/releases.json \
  *     --server https://hookcode.io \
- *     --keep 5
+ *     --keep 5 [--product workspace]
  *
  * The index is written last and swapped atomically on the server, so the
  * version users are downloading right now stays available until the new one
@@ -17,6 +17,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compareVersions } from "../server/releases.mjs";
+import { productFromArgs } from "./products.mjs";
 
 /**
  * Pure merge: the new build becomes `latest`, older entries are kept (newest
@@ -81,9 +82,12 @@ async function main() {
   const outPath = args.out;
   const server = (args.server || "https://hookcode.io").replace(/\/+$/, "");
   const keep = Number(args.keep || 5);
+  const product = productFromArgs(process.argv.slice(2));
+  const indexPath =
+    product.id === "chat" ? "/api/releases" : `/api/releases/${product.id}`;
   if (!manifestPath || !outPath) {
     console.error(
-      "usage: node scripts/merge-release-index.mjs --manifest <file> --out <file> [--server url] [--keep 5]",
+      "usage: node scripts/merge-release-index.mjs --manifest <file> --out <file> [--server url] [--keep 5] [--product id]",
     );
     process.exit(1);
   }
@@ -95,7 +99,7 @@ async function main() {
 
   let published = [];
   try {
-    const response = await fetch(`${server}/api/releases`, {
+    const response = await fetch(`${server}${indexPath}`, {
       headers: { accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
@@ -103,7 +107,7 @@ async function main() {
       // Older deployments predate /api/releases; the first versioned publish
       // still has to work before the website catches up.
       console.warn(
-        `warning: ${server}/api/releases does not exist yet; starting a fresh index`,
+        `warning: ${server}${indexPath} does not exist yet; starting a fresh index`,
       );
     } else {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -112,7 +116,7 @@ async function main() {
   } catch (error) {
     if (!args["allow-empty"]) {
       throw new Error(
-        `could not read ${server}/api/releases (${error.message}); refusing to replace the version history`,
+        `could not read ${server}${indexPath} (${error.message}); refusing to replace the version history`,
       );
     }
     console.warn(`warning: starting a fresh release index (${error.message})`);

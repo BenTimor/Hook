@@ -780,6 +780,19 @@ export function createSyncRouter({ env, db }) {
       db.prepare("DELETE FROM sync_projects WHERE google_subject = ?").run(subject);
       db.prepare("DELETE FROM sync_media WHERE google_subject = ?").run(subject);
       db.prepare("UPDATE sync_state SET next_seq = 0 WHERE google_subject = ?").run(subject);
+      // Hook Workspace belongs to the same account. The projects this account
+      // owns go with everything inside them; in projects owned by someone else
+      // only the membership, the invitations it sent and its own invites go,
+      // because other people's boards and documents must not move.
+      const owned = "SELECT id FROM ws_projects WHERE owner_subject = ?";
+      for (const table of ["comments", "tasks", "documents", "boards", "folders"]) {
+        db.prepare(`DELETE FROM ws_${table} WHERE project_id IN (${owned})`).run(subject);
+      }
+      db.prepare(`DELETE FROM ws_invites WHERE project_id IN (${owned})`).run(subject);
+      db.prepare(`DELETE FROM ws_members WHERE project_id IN (${owned})`).run(subject);
+      db.prepare(`DELETE FROM ws_projects WHERE owner_subject = ?`).run(subject);
+      db.prepare("DELETE FROM ws_members WHERE subject = ?").run(subject);
+      db.prepare("DELETE FROM ws_invites WHERE invited_by = ? OR email IN (SELECT lower(email) FROM waitlist_signups WHERE google_subject = ?)").run(subject, subject);
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
