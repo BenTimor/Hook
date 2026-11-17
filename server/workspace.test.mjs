@@ -393,6 +393,11 @@ test("the changes feed is one cursor, filtered by membership, tombstones include
   assert.equal(feedProject.role, "owner");
   assert.equal(feedProject.mine, true);
 
+  // A member row carries the account's profile, not just its subject: the
+  // window shows people, not account numbers.
+  const feedMember = pull.body.changes.find((change) => change.kind === "member");
+  assert.equal(feedMember.email, "owner@example.test");
+
   // Someone who is not a member of anything sees nothing and keeps the cursor.
   const outsider = await request("/changes?since=0", { token: OUTSIDER });
   assert.equal(outsider.body.changes.length, 0);

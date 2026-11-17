@@ -2,6 +2,7 @@ import { useState } from "react";
 import { GripVertical, Plus } from "lucide-react";
 
 import type { Board, Column, Task } from "../lib/types";
+import { personLabel, unknownPerson } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
 const EMPTY: never[] = [];
@@ -191,11 +192,11 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
                     >
                       <option value="">Unassigned</option>
                       {value && !members.some((member) => member.subject === value) ? (
-                        <option value={value}>{value} (not in this project)</option>
+                        <option value={value}>{unknownPerson(value)}</option>
                       ) : null}
                       {members.map((member) => (
                         <option key={member.subject} value={member.subject}>
-                          {member.name || member.email || member.subject}
+                          {personLabel(member)}
                         </option>
                       ))}
                     </select>

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { LayoutList, Plus, Rows3 } from "lucide-react";
 
-import type { Board, Task } from "../lib/types";
+import type { Board, Member, Task } from "../lib/types";
+import { personLabel, unknownPerson } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { BoardTable } from "./BoardTable";
 
@@ -261,11 +262,11 @@ export function TaskPanel({ task }: { task: Task }) {
             >
               <option value="">Unassigned</option>
               {task.assignee && !members.some((member) => member.subject === task.assignee) ? (
-                <option value={task.assignee}>{task.assignee} (not in this project)</option>
+                <option value={task.assignee}>{unknownPerson(task.assignee)}</option>
               ) : null}
               {members.map((member) => (
                 <option key={member.subject} value={member.subject}>
-                  {member.name || member.email || member.subject}
+                  {personLabel(member)}
                 </option>
               ))}
             </select>
@@ -358,10 +359,7 @@ export function TaskPanel({ task }: { task: Task }) {
   );
 }
 
-function authorName(
-  members: Array<{ subject: string; email: string | null; name: string | null }>,
-  subject: string,
-): string {
+function authorName(members: Member[], subject: string): string {
   const member = members.find((candidate) => candidate.subject === subject);
-  return member?.name || member?.email || subject;
+  return personLabel(member);
 }

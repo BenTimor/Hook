@@ -1184,7 +1184,14 @@ export function createWorkspaceRouter({ db, env = {} }) {
         .all(since, subject)
         .map((row) => ({ kind: "document", ...row })),
       ...db
-        .prepare(`SELECT * FROM ws_members WHERE seq > ? AND project_id IN (${mine})`)
+        // A member row without the account's name is just a subject number on
+        // screen, so the feed carries the same profile the members list does.
+        .prepare(
+          `SELECT m.*, s.email AS member_email, s.name AS member_name
+             FROM ws_members m
+             LEFT JOIN waitlist_signups s ON s.google_subject = m.subject
+            WHERE m.seq > ? AND m.project_id IN (${mine})`,
+        )
         .all(since, subject)
         .map((row) => ({ kind: "member", id: `${row.project_id}:${row.subject}`, ...row })),
       ...(email
@@ -1480,6 +1487,8 @@ function shapeChange(row) {
       break;
     case "member":
       Object.assign(change, { subject: row.subject, role: row.role });
+      if (row.member_email) change.email = row.member_email;
+      if (row.member_name) change.name = row.member_name;
       break;
     case "invite":
       Object.assign(change, {

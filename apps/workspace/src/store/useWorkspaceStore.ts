@@ -235,11 +235,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   async openBoard(id, projectId) {
+    const owner =
+      projectId ??
+      Object.values(get().boards)
+        .flat()
+        .find((board) => board.id === id)?.projectId;
     set({
       activeBoardId: id,
       activeTaskId: null,
       activeDocumentId: null,
-      ...(projectId ? { activeProjectId: projectId } : {}),
+      ...(owner ? { activeProjectId: owner } : {}),
     });
     if (!id) return;
     try {
@@ -248,6 +253,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: message(error) });
     }
+    // Opening a board from the tree must not skip the people: an assignee with
+    // no name to match against is a number in the table.
+    if (owner && !get().members[owner]) await get().loadProjectContents(owner);
   },
 
   async createBoard(projectId, name, folderId = null) {
@@ -447,7 +455,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeTaskId: null,
       ...(projectId ? { activeProjectId: projectId } : {}),
     });
-    if (id) await get().loadDocument(id);
+    if (!id) return;
+    const document = await get().loadDocument(id);
+    const owner = projectId ?? document?.projectId;
+    if (owner && document && !get().members[owner]) await get().loadProjectContents(owner);
   },
 
   async loadDocument(id) {
@@ -833,12 +844,24 @@ function applyChange(
       if (!projectId) return;
       const subject = change.subject as string | undefined;
       if (!subject) return;
+      // A feed row knows the role but not the profile, and an older server's
+      // row carries neither name nor email. Until this project's people have
+      // been listed, leave the map empty so opening a board loads them: a
+      // nameless placeholder would otherwise win and the table would show
+      // "Member" (or, before, the account number) forever.
+      if (!state.members[projectId]) return;
       set({
         members: {
           ...state.members,
           [projectId]: change.deleted
             ? (state.members[projectId] ?? []).filter((item) => item.subject !== subject)
-            : upsertMember(state.members[projectId] ?? [], subject, change.role as string),
+            : upsertMember(state.members[projectId] ?? [], {
+                subject,
+                role: change.role as string,
+                email: (change.email as string | null) ?? null,
+                name: (change.name as string | null) ?? null,
+                joinedAt: Number(change.joinedAt) || undefined,
+              }),
         },
       });
       return;
@@ -854,12 +877,47 @@ function applyChange(
   }
 }
 
-function upsertMember(members: Member[], subject: string, role: string): Member[] {
-  return members.some((member) => member.subject === subject)
-    ? members.map((member) =>
-        member.subject === subject ? { ...member, role: role as Member["role"] } : member,
-      )
-    : [...members, { subject, role: role as Member["role"], joinedAt: 0, email: null, name: null }];
+/**
+ * Apply a member row from the feed.
+ *
+ * The feed may know the role but not the profile; never let a missing name
+ * erase one the window already has, or the table starts calling people by
+ * their account number.
+ */
+function upsertMember(
+  members: Member[],
+  change: {
+    subject: string;
+    role: string;
+    email: string | null;
+    name: string | null;
+    joinedAt?: number;
+  },
+): Member[] {
+  const existing = members.find((member) => member.subject === change.subject);
+  if (existing) {
+    return members.map((member) =>
+      member.subject === change.subject
+        ? {
+            ...member,
+            role: change.role as Member["role"],
+            email: change.email ?? member.email,
+            name: change.name ?? member.name,
+            joinedAt: change.joinedAt ?? member.joinedAt,
+          }
+        : member,
+    );
+  }
+  return [
+    ...members,
+    {
+      subject: change.subject,
+      role: change.role as Member["role"],
+      joinedAt: change.joinedAt ?? 0,
+      email: change.email,
+      name: change.name,
+    },
+  ];
 }
 
 function startPolling() {

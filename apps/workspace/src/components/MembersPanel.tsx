@@ -4,6 +4,7 @@ import { Mail, UserPlus } from "lucide-react";
 import { Dialog } from "@hook/ui";
 
 import type { Project, Role } from "../lib/types";
+import { personLabel } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
 const EMPTY: never[] = [];
@@ -59,7 +60,7 @@ export function MembersPanel({ project }: { project: Project }) {
           // The API does not expose "who am I"; the owner row is the only
           // one we can label with confidence.
           const isMe = Boolean(project.mine) && member.role === "owner";
-          const label = member.name || member.email || member.subject;
+          const label = personLabel(member);
           const canChange =
             !isMe &&
             member.role !== "owner" &&
