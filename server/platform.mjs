@@ -6,6 +6,7 @@ import { createDownloadRouter, publicReleaseInfo } from "./download.mjs";
 import { createGitRouter } from "./git.mjs";
 import { createReportsRouter } from "./reports.mjs";
 import { createSyncRouter } from "./sync.mjs";
+import { createWorkspaceRouter } from "./workspace.mjs";
 
 /**
  * The whole hookcode.io API: waitlist routes, desktop device login, private git
@@ -65,6 +66,13 @@ export function createPlatform(env) {
     router.use(
       "/sync",
       createSyncRouter({ env, db: waitlist.db }),
+    );
+    // Hook Workspace: projects, boards, tasks, documents and their people. The
+    // chat agent talks to the same routes, so the product works without this
+    // app installed.
+    router.use(
+      "/ws",
+      createWorkspaceRouter({ env, db: waitlist.db }).router,
     );
     router.use(
       "/download",

@@ -71,8 +71,10 @@ export function publicReleaseInfo(env, product = "chat") {
   const name = productIndexName(product);
   if (!name) return null;
   // A product that has never shipped has no index: answer 404 rather than an
-  // empty release list that would look like "no update available".
-  if (!existsSync(join(releaseDir(env), name))) return null;
+  // empty release list that would look like "no update available". The chat app
+  // is the exception: its historical single-slot layout has no releases.json and
+  // still has to answer.
+  if (product !== "chat" && !existsSync(join(releaseDir(env), name))) return null;
   const index = releaseIndex(env, product);
   return {
     latest: index.latest,
