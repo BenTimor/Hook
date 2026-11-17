@@ -285,14 +285,23 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       return { folder: demo.folders.find((folder) => folder.id === id) };
     }
     if (method === "DELETE") {
-      demo.folders = demo.folders.filter((folder) => folder.id !== id);
-      // The server leaves the contents alone; an orphan belongs at the top.
-      demo.boards = demo.boards.map((board) =>
-        board.folderId === id ? { ...board, folderId: null } : board,
+      // A folder is a container: its subfolders, boards (with tasks) and
+      // documents go with it, exactly like the server's cascade.
+      const inside = new Set([String(id)]);
+      for (const folder of inside) {
+        for (const candidate of demo.folders) {
+          if (candidate.parentId === folder) inside.add(candidate.id);
+        }
+      }
+      const boards = new Set(
+        demo.boards.filter((board) => board.folderId && inside.has(board.folderId)).map((board) => board.id),
       );
-      demo.documents = demo.documents.map((document) =>
-        document.folderId === id ? { ...document, folderId: null } : document,
+      demo.tasks = demo.tasks.filter((task) => !boards.has(task.boardId));
+      demo.boards = demo.boards.filter((board) => !boards.has(board.id));
+      demo.documents = demo.documents.filter(
+        (document) => !(document.folderId && inside.has(document.folderId)),
       );
+      demo.folders = demo.folders.filter((folder) => !inside.has(folder.id));
       return { ok: true };
     }
   }
@@ -307,6 +316,7 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
     if (method === "DELETE") {
       demo.boards = demo.boards.filter((board) => board.id !== id);
       demo.tasks = demo.tasks.filter((task) => task.boardId !== id);
+      demo.comments = demo.comments.filter((comment) => comment.taskId !== undefined);
       return { ok: true };
     }
     if (resource === "tasks") {

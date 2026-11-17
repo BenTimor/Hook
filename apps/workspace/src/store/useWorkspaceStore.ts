@@ -301,7 +301,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async deleteBoard(id) {
     try {
       await api.deleteBoard(id);
+      const tasks = get().tasks[id] ?? [];
       set((state) => ({
+        tasks: Object.fromEntries(Object.entries(state.tasks).filter(([boardId]) => boardId !== id)),
+        comments: Object.fromEntries(
+          Object.entries(state.comments).filter(
+            ([taskId]) => !tasks.some((task) => task.id === taskId),
+          ),
+        ),
         boards: Object.fromEntries(
           Object.entries(state.boards).map(([project, boards]) => [
             project,
@@ -587,26 +594,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   async deleteFolder(projectId, id) {
     try {
+      const before = new Set((get().boards[projectId] ?? []).map((board) => board.id));
       await api.deleteFolder(id);
-      // The server leaves the contents alone, and a board or document whose
-      // folder is gone belongs at the top level rather than nowhere.
-      set((state) => ({
-        folders: {
-          ...state.folders,
-          [projectId]: (state.folders[projectId] ?? []).filter((folder) => folder.id !== id),
-        },
-        boards: {
-          ...state.boards,
-          [projectId]: (state.boards[projectId] ?? []).map((board) =>
-            board.folderId === id ? { ...board, folderId: null } : board,
-          ),
-        },
-        documents: {
-          ...state.documents,
-          [projectId]: (state.documents[projectId] ?? []).map((document) =>
-            document.folderId === id ? { ...document, folderId: null } : document,
-          ),
-        },
+      // A folder is a container: the server deletes what it held, so the
+      // window reloads the project rather than guessing the cascade.
+      await get().loadProjectContents(projectId);
+      const state = get();
+      const boards = state.boards[projectId] ?? [];
+      const documents = state.documents[projectId] ?? [];
+      const gone = new Set([...before].filter((boardId) => !boards.some((board) => board.id === boardId)));
+      const boardGone = state.activeBoardId !== null && gone.has(state.activeBoardId);
+      const documentGone =
+        state.activeDocumentId !== null &&
+        !documents.some((document) => document.id === state.activeDocumentId);
+      set((current) => ({
+        tasks: Object.fromEntries(
+          Object.entries(current.tasks).filter(([boardId]) => !gone.has(boardId)),
+        ),
+        activeBoardId: boardGone ? null : current.activeBoardId,
+        activeTaskId: boardGone ? null : current.activeTaskId,
+        activeDocumentId: documentGone ? null : current.activeDocumentId,
       }));
     } catch (error) {
       set({ error: message(error) });

@@ -739,31 +739,35 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const projectId = projectIdOf(req, res, "ws_folders", req.params.id);
     if (!projectId) return;
     if (!actor(req, res, projectId, "write")) return;
-    const folder = db.prepare("SELECT parent_id FROM ws_folders WHERE id = ?").get(req.params.id);
-    // Contents move up one level. A board must never disappear from the tree
-    // because the folder that held it was tidied away; each moved row needs a
-    // new seq so the feed carries the new place to every device.
-    const parentId = folder?.parent_id ?? null;
-    const children = [
-      ...db
-        .prepare("SELECT id FROM ws_boards WHERE folder_id = ? AND deleted_at IS NULL")
-        .all(req.params.id)
-        .map((row) => ({ table: "ws_boards", column: "folder_id", id: row.id })),
-      ...db
-        .prepare("SELECT id FROM ws_documents WHERE folder_id = ? AND deleted_at IS NULL")
-        .all(req.params.id)
-        .map((row) => ({ table: "ws_documents", column: "folder_id", id: row.id })),
-      ...db
-        .prepare("SELECT id FROM ws_folders WHERE parent_id = ? AND deleted_at IS NULL")
-        .all(req.params.id)
-        .map((row) => ({ table: "ws_folders", column: "parent_id", id: row.id })),
-    ];
-    for (const child of children) {
-      db.prepare(
-        `UPDATE ${child.table} SET ${child.column} = ?, updated_at = ?, seq = ? WHERE id = ?`,
-      ).run(parentId, now(), nextSeq(db), child.id);
+    // A folder is a container: deleting it deletes what it holds. Subfolders
+    // come too, with the boards inside them, their tasks and comments, and the
+    // documents. Every row is tombstoned separately so the feed pages safely.
+    const tree = db
+      .prepare("SELECT id, parent_id FROM ws_folders WHERE project_id = ? AND deleted_at IS NULL")
+      .all(projectId);
+    const folders = new Set([req.params.id]);
+    for (const folder of folders) {
+      for (const row of tree) if (row.parent_id === folder) folders.add(row.id);
     }
-    remove(db, "folders", req.params.id);
+    const ids = [...folders];
+    const marks = ids.map(() => "?").join(",");
+    transaction(db, () => {
+      const boardIds = tombstone(db, "ws_boards", `folder_id IN (${marks})`, ids);
+      if (boardIds.length > 0) {
+        const boardMarks = boardIds.map(() => "?").join(",");
+        const taskIds = tombstone(db, "ws_tasks", `board_id IN (${boardMarks})`, boardIds);
+        if (taskIds.length > 0) {
+          tombstone(
+            db,
+            "ws_comments",
+            `task_id IN (${taskIds.map(() => "?").join(",")})`,
+            taskIds,
+          );
+        }
+      }
+      tombstone(db, "ws_documents", `folder_id IN (${marks})`, ids);
+      tombstone(db, "ws_folders", `id IN (${marks})`, ids);
+    });
     res.json({ ok: true });
   });
 
@@ -849,7 +853,20 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const projectId = projectIdOf(req, res, "ws_boards", req.params.id);
     if (!projectId) return;
     if (!actor(req, res, projectId, "write")) return;
-    remove(db, "boards", req.params.id);
+    // The board's tasks and their comments go with it: nothing should outlive
+    // the only place that could ever show it.
+    transaction(db, () => {
+      const taskIds = tombstone(db, "ws_tasks", "board_id = ?", [req.params.id]);
+      if (taskIds.length > 0) {
+        tombstone(
+          db,
+          "ws_comments",
+          `task_id IN (${taskIds.map(() => "?").join(",")})`,
+          taskIds,
+        );
+      }
+      tombstone(db, "ws_boards", "id = ?", [req.params.id]);
+    });
     res.json({ ok: true });
   });
 
@@ -1250,6 +1267,20 @@ function update(db, kind, id, fields) {
   const values = [...keys.map((key) => fields[key]), now(), seq, id];
   db.prepare(`UPDATE ws_${kind} SET ${assignments.join(", ")} WHERE id = ?`).run(...values);
   return db.prepare(`SELECT * FROM ws_${kind} WHERE id = ?`).get(id);
+}
+
+/** Soft-delete rows and give each its own seq, so the feed can page safely. */
+function tombstone(db, table, where, params) {
+  const rows = db
+    .prepare(`SELECT id FROM ${table} WHERE ${where} AND deleted_at IS NULL`)
+    .all(...params);
+  if (rows.length === 0) return [];
+  const at = now();
+  const mark = db.prepare(
+    `UPDATE ${table} SET deleted_at = ?, updated_at = ?, seq = ? WHERE id = ?`,
+  );
+  for (const row of rows) mark.run(at, at, nextSeq(db), row.id);
+  return rows.map((row) => row.id);
 }
 
 function remove(db, kind, id) {

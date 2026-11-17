@@ -169,6 +169,25 @@ export function Sidebar({
     return known ? folderId : null;
   };
 
+  /** What a folder delete would take with it, for the dialog to say out loud. */
+  const countInside = (projectId: string, folderId: string) => {
+    const list = folders[projectId] ?? [];
+    const inside = new Set([folderId]);
+    for (const folder of inside) {
+      for (const candidate of list) {
+        if (candidate.parentId === folder) inside.add(candidate.id);
+      }
+    }
+    return {
+      boards: (boards[projectId] ?? []).filter(
+        (board) => board.folderId && inside.has(board.folderId),
+      ).length,
+      documents: (documents[projectId] ?? []).filter(
+        (document) => document.folderId && inside.has(document.folderId),
+      ).length,
+    };
+  };
+
   /** Every folder of a project, flattened in tree order for a "Move to" list. */
   const folderOptions = (projectId: string): Array<{ folder: Folder; depth: number }> => {
     const list = folders[projectId] ?? [];
@@ -601,11 +620,13 @@ export function Sidebar({
       };
     }
     if (removing.target.kind === "folder") {
+      const inner = countInside(removing.projectId, removing.target.id);
       return {
-        title: "Delete this folder?",
-        description:
-          "The boards and documents inside it stay in the project and move to the top level. Only the folder goes.",
-        confirm: "Delete folder",
+        title: "Delete this folder and everything in it?",
+        description: `The boards${inner.boards > 0 ? ` (${inner.boards})` : ""}${
+          inner.boards > 0 ? " with their tasks" : ""
+        }, its documents${inner.documents > 0 ? ` (${inner.documents})` : ""} and any folders inside it are deleted for everyone in the project. This cannot be undone.`,
+        confirm: "Delete everything",
       };
     }
     if (removing.target.kind === "board") {

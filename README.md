@@ -804,10 +804,10 @@ that it is permanent and cannot be undone.
   show, and the panel renders it directly instead of in an iframe.
 - **Folders are rows, not a client feature.** A folder carries a name, an
   optional parent and a position; a board or a document carries a `folderId`.
-  Deleting a folder is a tombstone like anything else, and whatever was inside
-  it stays in the project at the top level — the tree is organization, never a
-  container that can swallow work. Two people see the same tree because it is
-  the project's, not theirs.
+  Deleting a folder deletes what it holds — nested folders, boards with their
+  tasks and comments, documents — each row a tombstone of its own, and the
+  dialog counts what goes before it happens. Two people see the same tree
+  because it is the project's, not theirs.
 - **The window is online-first.** The server is the source of truth, so the app
   keeps an in-memory copy and applies `/api/ws/changes` every five seconds while
   visible (and on focus). Nothing on disk can drift from the account, and there

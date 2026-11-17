@@ -407,7 +407,7 @@ test("the changes feed is one cursor, filtered by membership, tombstones include
   assert.equal(tombstone.deleted, true);
 });
 
-test("deleting a folder moves what was inside it up a level", async (t) => {
+test("deleting a folder deletes everything inside it", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);
   const outer = await request(`/projects/${project.id}/folders`, {
@@ -422,6 +422,10 @@ test("deleting a folder moves what was inside it up a level", async (t) => {
     method: "POST",
     body: { name: "Inside", folderId: inner.body.folder.id },
   });
+  const task = await request(`/boards/${board.body.board.id}/tasks`, {
+    method: "POST",
+    body: { title: "A task in the folder" },
+  });
   const document = await request(`/projects/${project.id}/documents`, {
     method: "POST",
     body: { title: "Inside too", folderId: inner.body.folder.id },
@@ -431,22 +435,28 @@ test("deleting a folder moves what was inside it up a level", async (t) => {
   const deleted = await request(`/folders/${inner.body.folder.id}`, { method: "DELETE" });
   assert.equal(deleted.status, 200);
 
-  // Both moved up to the outer folder, not to nowhere and not out of the tree.
+  // The folder, the board it held and the document are all gone; the parent
+  // folder is untouched.
+  const folders = await request(`/projects/${project.id}/folders`);
+  assert.deepEqual(
+    folders.body.folders.map((folder) => folder.name),
+    ["Outer"],
+  );
   const boards = await request(`/projects/${project.id}/boards`);
-  const moved = boards.body.boards.find((item) => item.id === board.body.board.id);
-  assert.equal(moved.folderId, outer.body.folder.id);
+  assert.equal(boards.body.boards.length, 0);
   const documents = await request(`/projects/${project.id}/documents`);
-  const movedDocument = documents.body.documents.find(
-    (item) => item.id === document.body.document.id,
-  );
-  assert.equal(movedDocument.folderId, outer.body.folder.id);
+  assert.equal(documents.body.documents.length, 0);
+  const gone = await request(`/tasks/${task.body.task.id}`);
+  assert.equal(gone.status, 404);
 
-  // And the feed says so, or another device would keep showing the old place.
-  const after = await request(`/changes?since=${before.body.cursor}`);
-  const change = after.body.changes.find(
-    (item) => item.kind === "board" && item.id === board.body.board.id,
+  // The feed carries a tombstone for each of them, not just the folder.
+  const after = await request(`/changes?since=${before.body.cursor}&limit=200`);
+  const deletedKinds = new Set(
+    after.body.changes.filter((item) => item.deleted).map((item) => item.kind),
   );
-  assert.equal(change.folderId, outer.body.folder.id);
+  for (const kind of ["folder", "board", "task", "document"]) {
+    assert.ok(deletedKinds.has(kind), `the feed must carry the ${kind} tombstone`);
+  }
 });
 
 test("deleting the account removes its projects and its memberships elsewhere", async (t) => {
@@ -532,18 +542,18 @@ test("folders organize boards and documents, and deleting one keeps its contents
   });
   assert.equal(moved.body.board.folderId, null);
 
+  // Deleting the folder takes its contents: the nested folder and the document
+  // that lived in it.
   await request(`/folders/${design.body.folder.id}`, { method: "DELETE" });
   const folders = await request(`/projects/${project.id}/folders`);
   assert.deepEqual(
     folders.body.folders.map((folder) => folder.name),
-    ["Screens"],
+    [],
   );
-
-  // The folder is gone; the document inside it is not.
   const documents = await request(`/projects/${project.id}/documents`);
   assert.deepEqual(
     documents.body.documents.map((entry) => entry.title),
-    ["Brief"],
+    [],
   );
 
   const changes = await request("/changes?since=0&limit=200");
