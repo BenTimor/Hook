@@ -518,10 +518,13 @@ same data, and `/api/download/windows?version=` pins an exact build.
 
 ## Reporting AI output
 
-Every completed assistant reply has a **Report** action. The dialog sends the
-reply, a reason, an optional note, and — only when “Include the whole
-conversation” is ticked — the current chat's messages, to `POST /api/reports`
-with the signed-in token. Reports are stored in the `ai_reports` table and the
+Every completed assistant reply has a **Report** action, in the chat window and
+in a product's docked chat alike — the dialog and the action are part of
+`packages/chat`, and a product that shows generated text supplies the handler
+(`ChatTransport.report`); without one the action is hidden rather than shown and
+broken. The dialog sends the reply, a reason, an optional note, and — only when
+“Include the whole conversation” is ticked — the current chat's messages, to
+`POST /api/reports` with the signed-in token. Reports are stored in the `ai_reports` table and the
 privacy policy records exactly what a report contains.
 
 Review and resolve them on the server:
@@ -533,7 +536,8 @@ Review and resolve them on the server:
 ```
 
 The Store requires this mechanism (policy 11.16); see **Microsoft Store
-(MSIX)** below.
+(MSIX)** below. Workspace will need the same listing disclosure and Partner
+Center declaration before it can be submitted.
 
 ## Microsoft Store (MSIX)
 
@@ -1187,7 +1191,11 @@ pnpm waitlist:test                              # API, auth, proxy, download, sy
 pnpm test:release                               # "does this push need a Windows build?"
 ```
 
-`cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
+GitHub Actions runs on every pull request **and every push to `main`**: the
+landing-page tests and build, then `pnpm typecheck`, both window builds and
+`cargo test -p hook-core` on Windows (`ci.yml`). The release workflows run the
+typecheck and the Rust tests again before they build an installer, so a failing
+test cannot ship. `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
 shapes thinking-mode APIs reject), image parts and the base64/header helpers,
 path containment, the project and agent stores, progress batching, the chat-agent
 tool loop, the guard policy (a Node harness feeds it bad `bash` calls, force-push

@@ -1,9 +1,11 @@
 name: CI
 
-# Checks every pull request (and any manual run) without touching the server.
-# Deployment on main is in deploy-waitlist.yml.
+# Pull requests get everything; main gets the same checks on every push, next to
+# the deploy and release workflows. Nothing here touches the server.
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -42,3 +44,52 @@ jobs:
       # waitlist:build runs `tsc --noEmit` (whole project) before vite build.
       - name: Build landing page
         run: pnpm waitlist:build
+
+  desktop:
+    name: Desktop apps
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: "10"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # config.rs include_str!s this file, so every cargo command needs it.
+      - name: Use CI harness config
+        shell: pwsh
+        run: Copy-Item harness.config.ci.toml harness.config.toml -Force
+
+      # The only static gate: every workspace package plus the site.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # tsc per app is not enough: these catch a bad import that only shows up
+      # when Vite resolves the graph (a shared package not declared, for one).
+      - name: Build the chat window
+        run: pnpm build
+
+      - name: Build the Workspace window
+        run: pnpm workspace:build
+
+      # hook-core holds every test that matters (SSE framing, the tool loop,
+      # the guard policy, sync, the update policy). The app crates are covered
+      # by the release workflows, which fetch the runtime and bundle them.
+      - name: Rust tests
+        run: cargo test -p hook-core

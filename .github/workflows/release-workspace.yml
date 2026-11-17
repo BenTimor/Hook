@@ -106,6 +106,15 @@ jobs:
         shell: pwsh
         run: Copy-Item harness.config.ci.toml harness.config.toml -Force
 
+      - name: Typecheck every package
+        run: pnpm typecheck
+
+      # A broken test must not reach a published installer. Only hook-core is
+      # tested here: the app crates bundle the engine, which the build step
+      # fetches.
+      - name: Rust tests
+        run: cargo test -p hook-core
+
       - name: Build Hook Workspace
         run: pnpm workspace:app:build
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { List, SquarePen, X } from "lucide-react";
 
 import { Composer } from "./Composer";
+import { ReportDialog } from "./ReportDialog";
 import { Thread } from "./Thread";
 import type { ChatMessage } from "./types";
 import "./dock.css";
@@ -30,12 +31,27 @@ export interface DockEvent {
  * and talks to the same backend commands. The product supplies the transport,
  * so nothing here knows whether it is running inside Hook or Hook Workspace.
  */
+export interface DockReport {
+  chatId: string;
+  messageId: string;
+  reason: string;
+  note: string | null;
+  content: string;
+  transcript: { role: "user" | "assistant"; content: string }[] | null;
+}
+
 export interface ChatTransport {
   listChats(): Promise<DockChat[]>;
   getChat(id: string): Promise<{ messages: DockMessage[] }>;
   send(chatId: string | null, text: string): Promise<string>;
   stop(chatId: string): Promise<void>;
   subscribe(listener: (chatId: string, event: DockEvent) => void): () => void;
+  /**
+   * Send a report about a reply (Store policy 11.16). A product that shows
+   * generated text must provide it; without it the Report action is hidden
+   * rather than shown and broken.
+   */
+  report?(input: DockReport): Promise<void>;
 }
 
 /**
@@ -65,6 +81,7 @@ export function ChatDock({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [reporting, setReporting] = useState<DockMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const pending = useRef("");
@@ -266,13 +283,40 @@ export function ChatDock({
           </div>
         </div>
       ) : (
-        <Thread className="dock-thread" messages={rendered} />
+        <Thread
+          className="dock-thread"
+          messages={rendered}
+          onReport={
+            transport.report
+              ? (message) => {
+                  if (activeRef.current) setReporting(message);
+                }
+              : undefined
+          }
+        />
       )}
 
       {error && (
         <div className="dock-error" role="alert">
           {error}
         </div>
+      )}
+
+      {reporting && transport.report && activeRef.current && (
+        <ReportDialog
+          messages={messages}
+          onClose={() => setReporting(null)}
+          submit={(input) =>
+            transport.report!({
+              chatId: activeRef.current!,
+              messageId: reporting.id,
+              reason: input.reason,
+              note: input.note,
+              content: reporting.content,
+              transcript: input.transcript,
+            })
+          }
+        />
       )}
 
       <div className="dock-composer">

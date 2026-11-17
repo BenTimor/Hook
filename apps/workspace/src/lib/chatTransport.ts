@@ -1,7 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@hook/ui";
-import type { ChatTransport, DockChat, DockEvent, DockMessage } from "@hook/chat";
+import type {
+  ChatTransport,
+  DockChat,
+  DockEvent,
+  DockMessage,
+  DockReport,
+} from "@hook/chat";
 
 interface ChatMeta {
   id: string;
@@ -46,6 +52,24 @@ export const chatTransport: ChatTransport = {
   async stop(chatId: string): Promise<void> {
     if (!isTauri()) return;
     await invoke("stop_stream", { chatId });
+  },
+
+  async report(input: DockReport): Promise<void> {
+    if (!isTauri()) {
+      // Nothing to review in a browser preview, but the flow must be clickable.
+      console.info("[preview] report", input.messageId, input.reason);
+      return;
+    }
+    await invoke("report_message", {
+      payload: {
+        chatId: input.chatId,
+        messageId: input.messageId,
+        reason: input.reason,
+        note: input.note,
+        content: input.content,
+        transcript: input.transcript,
+      },
+    });
   },
 
   subscribe(listener: (chatId: string, event: DockEvent) => void): () => void {
