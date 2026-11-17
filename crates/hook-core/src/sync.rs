@@ -570,14 +570,36 @@ impl SyncEngine {
         let root = self.settings.projects_dir();
         let projects = self.projects.list(&root)?;
         let mut sends: Vec<(String, String)> = Vec::new();
+        let mut unsyncable: Vec<(String, String)> = Vec::new();
         {
             let state = lock(&self.state);
             for project in &projects {
                 let fingerprint = format!("{}|{}", project.name, project.description);
-                if state.project_versions.get(&project.id) != Some(&fingerprint) {
-                    sends.push((project.id.clone(), fingerprint));
+                if state.project_versions.get(&project.id) == Some(&fingerprint) {
+                    continue;
                 }
+                // The account refuses a name it cannot take, and a 400 for the
+                // whole batch would take every other project down with it. A
+                // folder name longer than 64 characters (one was renamed into
+                // existence by the old collision bug) stays local.
+                if let Err(reason) = crate::projects::validate_name(&project.name) {
+                    eprintln!(
+                        "hook: project {} stays on this machine: {reason}",
+                        project.id
+                    );
+                    unsyncable.push((project.id.clone(), fingerprint));
+                    continue;
+                }
+                sends.push((project.id.clone(), fingerprint));
             }
+        }
+        if !unsyncable.is_empty() {
+            let mut state = lock(&self.state);
+            for (id, fingerprint) in unsyncable {
+                state.project_versions.insert(id, fingerprint);
+            }
+            drop(state);
+            self.save_state()?;
         }
         if sends.is_empty() {
             return Ok(());
@@ -609,10 +631,23 @@ impl SyncEngine {
                                 continue;
                             };
                             if result["ok"].as_bool() == Some(false) {
-                                eprintln!(
-                                    "hook: project {id} was not accepted: {}",
-                                    result["error"].as_str().unwrap_or("unknown")
-                                );
+                                let error = result["error"].as_str().unwrap_or("unknown");
+                                let conflict = result["conflictId"].as_str().unwrap_or_default();
+                                // The account already has this name, so this
+                                // folder is that project seen with another id
+                                // (two installs of the same machine, usually).
+                                // Adopt the account's id instead of keeping a
+                                // copy that can never sync.
+                                if error == "duplicate_name"
+                                    && !conflict.is_empty()
+                                    && self.projects.adopt_id(id, conflict).unwrap_or(false)
+                                {
+                                    eprintln!(
+                                        "hook: project {id} is the account's {conflict}; using that id"
+                                    );
+                                    continue;
+                                }
+                                eprintln!("hook: project {id} was not accepted: {error}");
                             }
                             // Either way, stop retrying the same fingerprint every cycle.
                             if let Some((_, fingerprint)) =
@@ -1219,5 +1254,143 @@ mod tests {
         );
         fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }
-}
 
+    #[tokio::test]
+    async fn a_duplicate_name_adopts_the_accounts_project_id() {
+        // The account already has "banana-store" under another id (the other
+        // product, or another install, pushed it first). The local copy must
+        // adopt that id rather than keep failing as a duplicate forever.
+        let (url, seen) = mock_server(|method, path, body| {
+            match (method, path.split('?').next()) {
+                ("POST", Some("/api/sync/projects")) => {
+                    let projects = body["projects"].as_array().cloned().unwrap_or_default();
+                    let results: Vec<serde_json::Value> = projects
+                        .iter()
+                        .map(|project| {
+                            if project["id"] == "pj_local_copy" {
+                                serde_json::json!({
+                                    "id": "pj_local_copy",
+                                    "ok": false,
+                                    "error": "duplicate_name",
+                                    "conflictId": "pj_account_copy"
+                                })
+                            } else {
+                                serde_json::json!({ "id": project["id"].clone(), "ok": true })
+                            }
+                        })
+                        .collect();
+                    serde_json::json!({ "results": results })
+                }
+                ("POST", Some("/api/sync/chats")) => {
+                    serde_json::json!({ "results": [], "cursor": 0 })
+                }
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        let root = fixture.settings.projects_dir();
+        fs::create_dir_all(root.join("banana-store")).unwrap();
+        let note = fixture.base.join("projects.json");
+        fs::write(
+            &note,
+            serde_json::json!({
+                "projects": [{
+                    "id": "pj_local_copy",
+                    "name": "banana-store",
+                    "path": root.join("banana-store").to_string_lossy(),
+                    "description": "",
+                    "createdAt": 1,
+                    "updatedAt": 1
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let engine = SyncEngine::new(
+            Arc::new(|_, _| {}),
+            &fixture.base,
+            fixture.auth.clone(),
+            fixture.store.clone(),
+            Arc::new(ProjectsStore::new(&fixture.base)),
+            fixture.settings.clone(),
+            None,
+        );
+        engine.cycle().await.expect("one cycle");
+        engine.cycle().await.expect("a second cycle");
+
+        let posts: Vec<Value> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "POST" && path == "/api/sync/projects")
+            .map(|(_, _, body)| body.clone())
+            .collect();
+        let ids: Vec<String> = posts
+            .iter()
+            .flat_map(|post| post["projects"].as_array().cloned().unwrap_or_default())
+            .filter_map(|project| project["id"].as_str().map(str::to_string))
+            .collect();
+        assert_eq!(ids.first().map(String::as_str), Some("pj_local_copy"));
+        assert!(
+            ids.iter().any(|id| id == "pj_account_copy"),
+            "the second cycle must push the account's id: {ids:?}"
+        );
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn a_project_the_account_cannot_take_does_not_block_the_others() {
+        let (url, seen) = mock_server(|method, path, body| {
+            match (method, path.split('?').next()) {
+                ("POST", Some("/api/sync/projects")) => {
+                    let projects = body["projects"].as_array().cloned().unwrap_or_default();
+                    serde_json::json!({
+                        "results": projects
+                            .iter()
+                            .map(|project| serde_json::json!({
+                                "id": project["id"].clone(),
+                                "ok": true
+                            }))
+                            .collect::<Vec<_>>()
+                    })
+                }
+                ("POST", Some("/api/sync/chats")) => serde_json::json!({ "results": [], "cursor": 0 }),
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        let root = fixture.settings.projects_dir();
+        fixture.projects.create(&root, "good-one", "").unwrap();
+        // The kind of name the old rename bug produced. Its folder is on disk
+        // and listed, but the account would reject it.
+        let monster = "b".repeat(70);
+        fs::create_dir_all(root.join(&monster)).unwrap();
+        fs::write(root.join(&monster).join("notes.txt"), "x").unwrap();
+
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.cycle().await.expect("one cycle");
+
+        let names: Vec<String> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "POST" && path == "/api/sync/projects")
+            .flat_map(|(_, _, body)| body["projects"].as_array().cloned().unwrap_or_default())
+            .filter_map(|project| project["name"].as_str().map(str::to_string))
+            .collect();
+        assert!(names.iter().any(|name| name == "good-one"), "{names:?}");
+        assert!(!names.iter().any(|name| name.len() > 64), "{names:?}");
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+}

@@ -145,6 +145,14 @@ Changing one side of a boundary is the most common way to break this repo.
   `generate_handler!` → `bridge.ts` / `types.ts` → `mock.ts` → `ImportSection.tsx`.
   Ids must stay derived from the source's own ids, or a re-import duplicates
   every conversation instead of updating it.
+- **Sync identity rules:** project ids live in each product's `projects.json`,
+  while both products open the same projects folder. Before changing
+  `ProjectsStore::bind` or `push_projects`, know that a folder is the same
+  project even when two windows call it by different ids: `bind` adopts the
+  account's id for a folder it already owns, and a push that comes back
+  `duplicate_name` adopts `conflictId` instead of retrying forever. One project
+  the account refuses (a >64-character or reserved name) is skipped locally and
+  logged — never allowed to 400 the batch.
 - **Git/sync behavior:** `server/sync.mjs` + `server/git.mjs` (limits, merge
   rules, endpoints) → `crates/hook-core/src/{sync,git}.rs` → `agent.rs` (env,
   managed config) → `hook-guard.mjs` (`sync_pull`/`sync_push`) → `turn.rs`

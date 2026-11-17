@@ -98,6 +98,20 @@ pub fn validate_name(raw: &str) -> Result<String, String> {
 }
 
 /// A server-provided name still has to be a legal folder name on this machine.
+/// `base (n)`, kept inside the 64-character name the account accepts. Without
+/// the clamp a collision that repeats grows "name (2) (2) (2)…" until the
+/// project can never sync again.
+fn numbered_folder(base: &str, suffix: u32) -> String {
+    const LIMIT: usize = 64;
+    let tail = format!(" ({suffix})");
+    let mut head: String = base.chars().take(LIMIT - tail.chars().count()).collect();
+    head = head.trim_end().to_string();
+    if head.is_empty() {
+        return format!("project{tail}");
+    }
+    format!("{head}{tail}")
+}
+
 fn folder_name(raw: &str, fallback: &str) -> String {
     validate_name(raw).unwrap_or_else(|_| {
         let cleaned: String = raw
@@ -367,6 +381,25 @@ impl ProjectsStore {
         Ok(project)
     }
 
+    /// Point a local project at the id the account already uses for it. The
+    /// folder does not move: only the note's identity changes.
+    pub fn adopt_id(&self, from: &str, to: &str) -> Result<bool, String> {
+        if from.is_empty() || to.is_empty() || from == to {
+            return Ok(false);
+        }
+        let mut notes = lock(&self.notes);
+        if notes.iter().any(|note| note.id == to) {
+            return Ok(false);
+        }
+        let Some(note) = notes.iter_mut().find(|note| note.id == from) else {
+            return Ok(false);
+        };
+        note.id = to.to_string();
+        note.updated_at = now_ms();
+        self.save_locked(&notes)?;
+        Ok(true)
+    }
+
     pub fn id_for_path(&self, path: &Path) -> Option<String> {
         let key = key_of(&canonical(path));
         lock(&self.notes)
@@ -402,6 +435,39 @@ impl ProjectsStore {
         let wanted = folder_name(name, id);
         let mut notes = lock(&self.notes);
 
+        // The same folder seen with a different id: the other Hook product on
+        // this machine, or a reinstall. The account's id wins and the folder
+        // stays where it is. Adding a "(2)" here is what turned one collision
+        // into ten renamed copies of the same project.
+        let root_key = key_of(root);
+        let same_folder = notes.iter().position(|n| {
+            n.id != id
+                && !n.path.is_empty()
+                && Path::new(&n.path)
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().eq_ignore_ascii_case(&root_key))
+                    .unwrap_or(false)
+                && Path::new(&n.path)
+                    .file_name()
+                    .map(|folder| folder.to_string_lossy().eq_ignore_ascii_case(&wanted))
+                    .unwrap_or(false)
+        });
+        if let Some(index) = same_folder {
+            let note = &mut notes[index];
+            note.id = id.to_string();
+            note.name = wanted.clone();
+            note.description = description.to_string();
+            note.created_at = if created_at > 0 { created_at } else { note.created_at };
+            note.updated_at = updated_at.max(note.updated_at);
+            if !Path::new(&note.path).is_dir() {
+                fs::create_dir_all(&note.path)
+                    .map_err(|e| format!("Could not create the project folder: {e}"))?;
+            }
+            let project = Self::project_from(note);
+            self.save_locked(&notes)?;
+            return Ok(project);
+        }
+
         if let Some(index) = notes.iter().position(|n| n.id == id) {
             notes[index].name = wanted.clone();
             notes[index].description = description.to_string();
@@ -429,7 +495,12 @@ impl ProjectsStore {
             if !taken && (!candidate.exists() || is_reusable(&candidate)) {
                 break;
             }
-            folder = format!("{wanted} ({suffix})");
+            if suffix > 50 {
+                return Err(format!(
+                    "There are too many folders named \"{wanted}\"; rename one of them."
+                ));
+            }
+            folder = numbered_folder(&wanted, suffix);
             suffix += 1;
         }
         let created = root.join(&folder);
@@ -637,13 +708,60 @@ mod tests {
     }
 
     #[test]
-    fn a_name_collision_uses_a_suffixed_folder() {
+    fn two_products_over_one_folder_share_the_projects_id() {
+        // Hook and Hook Workspace have separate data directories but the same
+        // projects folder. Binding the account's copy must adopt the folder,
+        // not create "shared (2)" — the bug that renamed a project ten times.
+        let (base, root, first) = temp_store();
+        let project = first.create(&root, "shared", "ours").unwrap();
+        assert!(project.path.ends_with("shared"));
+
+        let other = base.join("other-product");
+        fs::create_dir_all(&other).unwrap();
+        let second = ProjectsStore::new(&other);
+        let bound = second.bind(&root, "pj_from_account", "shared", "theirs", 1, 2).unwrap();
+        assert_eq!(bound.path, project.path);
+        assert_eq!(bound.description, "theirs");
+        assert!(!root.join("shared (2)").exists());
+        assert_eq!(
+            second.id_for_path(&root.join("shared")).as_deref(),
+            Some("pj_from_account")
+        );
+    }
+
+    #[test]
+    fn a_name_collision_stays_inside_the_accounts_limit() {
+        let long = "a".repeat(60);
+        let numbered = numbered_folder(&long, 2);
+        assert_eq!(numbered.chars().count(), 64);
+        assert!(numbered.ends_with(" (2)"));
+
+        // The same folder, created twice: the second gets a suffix that still
+        // fits, so it can be pushed instead of being rejected as too long.
         let (_base, root, store) = temp_store();
-        store.create(&root, "same-name", "local one").unwrap();
+        fs::create_dir_all(root.join(&long)).unwrap();
+        fs::write(root.join(&long).join("notes.txt"), "mine").unwrap();
+        let bound = store.bind(&root, "pj_long", &long, "", 1, 1).unwrap();
+        let folder = Path::new(&bound.path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(folder.chars().count() <= 64, "{folder}");
+        assert!(folder.ends_with(" (2)"), "{folder}");
+    }
+
+    #[test]
+    fn a_name_collision_uses_a_suffixed_folder() {
+        // A folder the user filled by hand is not the account's project with
+        // the same name, so the incoming copy gets its own folder.
+        let (_base, root, store) = temp_store();
+        fs::create_dir_all(root.join("same-name")).unwrap();
+        fs::write(root.join("same-name").join("notes.txt"), "mine").unwrap();
         let bound = store
             .bind(&root, "pj_remote2", "same-name", "remote one", 10, 20)
             .unwrap();
-        assert!(bound.path.ends_with("same-name (2)"));
+        assert!(bound.path.ends_with("same-name (2)"), "{}", bound.path);
         assert_eq!(bound.name, "same-name");
         // Both resolve through their own name; the local one stays first.
         assert!(store.resolve(&root, "same-name").is_ok());

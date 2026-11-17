@@ -220,6 +220,11 @@ relays the SSE stream byte-for-byte. `/api/v1/models` describes the single
 `HOOK_MODEL_ID` model (with the configured model's context, output and image
 capabilities) so the app's capability probe works.
 
+A reply that never starts, or starts and then goes quiet, is an error rather
+than an endless spinner: the request gives up after two minutes without an
+answer, and the stream fails after two minutes without a chunk, so a dead
+connection says "The model stopped sending data" and can be retried.
+
 Every request is tagged with headers from the client:
 
 | Header | Meaning |
@@ -898,6 +903,16 @@ independent mechanisms are at work:
   the next one. The account stores one bare repository per project; a pre-receive
   hook rejects pushes that would take a project over 200 MB or an account over
   1 GB.
+
+Project identities belong to the account, not to an installation. Because both
+Hook and Hook Workspace open the same projects folder on a machine, two windows
+can see the same folder under two different local ids; the account's id wins. A
+folder bound to an account project keeps its id and its place, and a duplicate
+name coming back from the server makes the local copy adopt the account's id
+rather than create a second folder. A folder the account cannot accept — a name
+over 64 characters, or one Windows reserves — stays on that machine and is
+skipped by itself, so one impossible name cannot stop the rest of the account
+from syncing.
 
 Quotas: 250 MB of conversation JSON, 250 MB of chat pictures, 5,000 chats and
 200 projects per account. Limits are server constants in `server/sync.mjs` and
