@@ -891,8 +891,11 @@ independent mechanisms are at work:
   the only merger, so every machine converges on the same answer: messages are
   unioned by id (a finished copy beats a stale in-flight one), titles and pins
   follow the newer chat, a deletion is a tombstone, and an explicit restore
-  revives it. A chat that is streaming is never uploaded or overwritten until its
-  turn ends. Pictures travel by SHA-256 through `/api/sync/media`, so the same
+  revives it. A chat that is streaming is never uploaded, and never overwritten:
+  the check is on the copy **on this machine**, because the incoming copy cannot
+  show a turn that has not been uploaded yet. Before that fix, the account's
+  older copy could land on top of a reply mid-stream, the reply would be lost,
+  and the window waited forever for a message that no longer existed. Pictures travel by SHA-256 through `/api/sync/media`, so the same
   screenshot is stored once. The desktop polls every 15 seconds and immediately
   after sign-in, window focus, a finished turn or a coding-agent note; there is
   no sync button, though Settings has a small status line and a manual nudge for

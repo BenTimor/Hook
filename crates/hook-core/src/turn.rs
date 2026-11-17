@@ -122,6 +122,14 @@ pub struct ChatEvent {
     pub event: StreamEvent,
 }
 
+/// Opt-in tracing for "the window is thinking but nothing is happening":
+/// `HOOK_DEBUG_TURN=1` turns each step of a turn into a stderr line.
+pub fn trace(step: &str) {
+    if std::env::var_os("HOOK_DEBUG_TURN").is_some() {
+        eprintln!("hook: turn {step}");
+    }
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -220,6 +228,7 @@ fn fail_turn(state: &AppState, chat_id: &str, message: &str) {
 }
 
 pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
+    trace(&format!("{chat_id} start"));
     if !state.turns.begin(&chat_id) {
         state.turns.queue(&chat_id);
         return;
@@ -227,6 +236,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
 
     let cancel = CancelToken::new();
     lock(&state.streams).insert(chat_id.clone(), cancel.clone());
+    trace("stream token registered");
 
     let cfg = match config::get() {
         Ok(cfg) => cfg.clone(),
@@ -244,6 +254,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         }
     };
 
+    trace("config loaded");
     let toolset = if cfg.provider.tools {
         let mut set = tools::definitions();
         // Search goes through Hook's account service, which a standalone or
@@ -306,13 +317,16 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         .map(|chat| user_is_waiting(&chat))
         .unwrap_or(false);
 
+    trace("tools prepared");
     let mut rounds = 0usize;
 
     loop {
         rounds += 1;
         let Ok(mut chat) = state.store.load(&chat_id) else {
+            trace("chat could not be loaded; giving up");
             break;
         };
+        trace("chat loaded");
 
         let assistant = Message::new("assistant", "", "streaming");
         let assistant_id = assistant.id.clone();
@@ -321,6 +335,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         if let Err(error) = state.store.save(&mut chat) {
             eprintln!("hook: could not save the chat before the reply: {error}");
         }
+        trace("assistant placeholder saved");
         emit(
             &state,
             &chat_id,
@@ -417,6 +432,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         };
         let context = provider::RequestContext::chat(chat_id.clone());
 
+        trace("calling the model");
         let outcome = provider::stream_chat(
             &cfg,
             &token,
@@ -436,11 +452,27 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             },
         )
         .await;
+        trace("the model returned");
 
         let Ok(mut chat) = state.store.load(&chat_id) else {
+            trace("chat could not be reloaded; giving up");
             break;
         };
         let Some(index) = chat.messages.iter().position(|m| m.id == assistant_id) else {
+            // Something replaced the chat while the reply was arriving (an old
+            // sync race did exactly this). Say so instead of leaving the window
+            // thinking forever.
+            trace("the assistant message vanished; giving up");
+            emit(
+                &state,
+                &chat_id,
+                StreamEvent::Error {
+                    message: "This reply was replaced while it was arriving. Try again."
+                        .to_string(),
+                    messages: chat.messages.clone(),
+                    meta: chat.meta.clone(),
+                },
+            );
             break;
         };
 
@@ -631,6 +663,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
 }
 
 fn finish(state: &Arc<AppState>, chat_id: &str) {
+    trace(&format!("{chat_id} finish"));
     lock(&state.streams).remove(chat_id);
     // Every exit goes through here, including the silent ones (a chat file that
     // could not be read, a panic). A message left "streaming" would keep the

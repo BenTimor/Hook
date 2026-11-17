@@ -153,6 +153,11 @@ Changing one side of a boundary is the most common way to break this repo.
   `duplicate_name` adopts `conflictId` instead of retrying forever. One project
   the account refuses (a >64-character or reserved name) is skipped locally and
   logged — never allowed to 400 the batch.
+- **A turn that seems to never answer:** run the app with `HOOK_DEBUG_TURN=1`
+  and watch stderr — every step (placeholder saved, calling the model, model
+  returned) is logged. `%APPDATA%pp.hook.chat\panic.log` catches panics.
+  `finish()` converts any message still marked `streaming` into an error, so a
+  dead turn can no longer leave the window spinning.
 - **Git/sync behavior:** `server/sync.mjs` + `server/git.mjs` (limits, merge
   rules, endpoints) → `crates/hook-core/src/{sync,git}.rs` → `agent.rs` (env,
   managed config) → `hook-guard.mjs` (`sync_pull`/`sync_push`) → `turn.rs`

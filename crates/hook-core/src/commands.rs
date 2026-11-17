@@ -453,9 +453,12 @@ pub fn send_message(
     }
     chat.messages.push(message);
     state.store.save(&mut chat)?;
+    crate::turn::trace("send_message saved");
     state.sync.wake();
+    crate::turn::trace("sync woken");
 
     turn::kick(state.inner().clone(), chat.meta.id.clone());
+    crate::turn::trace("turn kicked");
     Ok(chat.meta.id)
 }
 

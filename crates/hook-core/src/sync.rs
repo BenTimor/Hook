@@ -457,6 +457,10 @@ impl SyncEngine {
                     };
                     if result["deleted"].as_bool() == Some(true) {
                         self.store.remove_synced(id);
+                    } else if self.locally_streaming(id) {
+                        // The reply started while this request was in flight.
+                        // Keep it; the next cycle merges again.
+                        continue;
                     } else if let Some(chat_value) = result.get("chat") {
                         match serde_json::from_value::<Chat>(chat_value.clone()) {
                             Ok(mut chat) => {
@@ -493,6 +497,21 @@ impl SyncEngine {
         pending.dedup();
         lock(&self.state).pending_chats = pending;
         self.save_state()
+    }
+
+    /// True when the copy on this machine belongs to a turn that has not
+    /// finished. The incoming copy never says so (a streaming chat is never
+    /// uploaded), which is exactly why the check has to be local: without it,
+    /// the account's older copy lands on top of the reply being written.
+    fn locally_streaming(&self, id: &str) -> bool {
+        self.store
+            .load(id)
+            .map(|chat| {
+                chat.messages
+                    .iter()
+                    .any(|message| message.status == "streaming")
+            })
+            .unwrap_or(false)
     }
 
     /// Upload every picture on this chat once. A failed picture never blocks
@@ -712,10 +731,13 @@ impl SyncEngine {
                             };
                             // Never replace a conversation that is being
                             // written right now; retry once that turn ends.
-                            if chat
-                                .messages
-                                .iter()
-                                .any(|message| message.status == "streaming")
+                            // The incoming copy cannot show it — the streaming
+                            // chat is not uploaded — so ask this machine.
+                            if self.locally_streaming(&id)
+                                || chat
+                                    .messages
+                                    .iter()
+                                    .any(|message| message.status == "streaming")
                             {
                                 deferred = true;
                                 break;
@@ -1391,6 +1413,57 @@ mod tests {
             .collect();
         assert!(names.iter().any(|name| name == "good-one"), "{names:?}");
         assert!(!names.iter().any(|name| name.len() > 64), "{names:?}");
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn a_merged_chat_does_not_land_on_top_of_a_reply_being_written() {
+        // The race that made a chat spin forever: the push reads the chat, the
+        // turn saves its streaming placeholder, the merged copy comes back
+        // without it and used to replace the file mid-turn.
+        let store_cell: Arc<Mutex<Option<Arc<Store>>>> = Arc::new(Mutex::new(None));
+        let cell = store_cell.clone();
+        let (url, _seen) = mock_server(move |method, path, body| {
+            match (method, path.split('?').next()) {
+                ("POST", Some("/api/sync/chats")) => {
+                    let chat = body["chats"][0].clone();
+                    // The turn starts while the request is in flight.
+                    if let Some(store) = cell.lock().unwrap().clone() {
+                        let id = chat["meta"]["id"].as_str().unwrap();
+                        let mut local = store.load(id).unwrap();
+                        local.messages.push(Message::new("assistant", "", "streaming"));
+                        store.save(&mut local).unwrap();
+                    }
+                    // The account's answer predates the placeholder.
+                    serde_json::json!({
+                        "results": [{ "id": chat["meta"]["id"].clone(), "chat": chat }],
+                        "cursor": 5
+                    })
+                }
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 5, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        *store_cell.lock().unwrap() = Some(fixture.store.clone());
+        let mut chat = Chat::new();
+        chat.messages.push(Message::new("user", "start here", "complete"));
+        fixture.store.save(&mut chat).unwrap();
+        let id = chat.meta.id.clone();
+
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.cycle().await.expect("one cycle");
+
+        let local = fixture.store.load(&id).unwrap();
+        assert_eq!(
+            local.messages.last().map(|message| message.status.as_str()),
+            Some("streaming"),
+            "the reply being written must survive a sync cycle"
+        );
         fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }
 }
