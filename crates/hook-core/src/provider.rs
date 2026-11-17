@@ -130,6 +130,9 @@ impl ToolCallAccumulator {
     }
 }
 
+/// One request, one stream. There is deliberately no overall or idle deadline:
+/// a model that reasons for minutes before its first token, or an agent that
+/// works through a long job, must not be cut off. Stop is the way out.
 pub async fn stream_chat<F>(
     cfg: &HarnessConfig,
     token: &str,
@@ -137,41 +140,7 @@ pub async fn stream_chat<F>(
     messages: &[serde_json::Value],
     tools: Option<&serde_json::Value>,
     cancel: CancelToken,
-    on_chunk: F,
-) -> Result<Outcome, String>
-where
-    F: FnMut(Chunk) + Send,
-{
-    stream_chat_with(
-        cfg,
-        token,
-        context,
-        messages,
-        tools,
-        cancel,
-        on_chunk,
-        RESPONSE_TIMEOUT,
-        IDLE_TIMEOUT,
-    )
-    .await
-}
-
-/// A reply that never starts, or starts and then goes silent, must not leave the
-/// window thinking forever: both are turned into an error the user can retry.
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
-
-#[allow(clippy::too_many_arguments)]
-async fn stream_chat_with<F>(
-    cfg: &HarnessConfig,
-    token: &str,
-    context: &RequestContext,
-    messages: &[serde_json::Value],
-    tools: Option<&serde_json::Value>,
-    cancel: CancelToken,
     mut on_chunk: F,
-    response_timeout: Duration,
-    idle_timeout: Duration,
 ) -> Result<Outcome, String>
 where
     F: FnMut(Chunk) + Send,
@@ -203,12 +172,7 @@ where
         request = request.header(name, value);
     }
 
-    let response = tokio::time::timeout(response_timeout, request.send())
-        .await
-        .map_err(|_| {
-            "The model did not answer in time. Check your connection and try again.".to_string()
-        })?
-        .map_err(|e| {
+    let response = request.send().await.map_err(|e| {
         if e.is_connect() {
             format!("Could not connect to {}. Check the endpoint in the build config.", cfg.provider.host())
         } else if e.is_timeout() {
@@ -309,11 +273,6 @@ where
         let next = tokio::select! {
             _ = cancel.wait() => return Ok(Outcome::Cancelled),
             next = stream.next() => next,
-            // The timer restarts after every chunk, so this only fires when the
-            // server has gone quiet — not when a reply is simply long.
-            _ = tokio::time::sleep(idle_timeout) => {
-                return Err("The model stopped sending data. Try again.".to_string())
-            }
         };
 
         let Some(chunk) = next else { break };
@@ -802,44 +761,5 @@ mod tests {
         .await
         .expect("stream failed");
         assert!(matches!(outcome, Outcome::Cancelled));
-    }
-
-    /// The other half of the same report: the reply starts and then stalls. A
-    /// long reply must keep streaming, a dead one must fail.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_stream_that_goes_silent_errors_out() {
-        use std::io::{Read, Write};
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            if let Ok((mut socket, _)) = listener.accept() {
-                // Read the request head before answering, like a real server.
-                let mut request = [0u8; 4096];
-                let _ = socket.read(&mut request);
-                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n";
-                let _ = socket.write_all(head.as_bytes());
-                let _ = socket.flush();
-                std::thread::sleep(Duration::from_secs(5));
-            }
-        });
-
-        let mut cfg = mock_config();
-        cfg.provider.base_url = format!("http://{address}/v1");
-        let error = stream_chat_with(
-            &cfg,
-            "test-token",
-            &RequestContext::chat("chat_test"),
-            &messages(),
-            None,
-            CancelToken::new(),
-            |_| {},
-            Duration::from_millis(300),
-            Duration::from_millis(300),
-        )
-        .await
-        .err()
-        .expect("a stalled stream is an error");
-        assert!(error.contains("stopped sending"), "{error}");
     }
 }

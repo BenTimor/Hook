@@ -87,10 +87,6 @@ const STATUS_CONSUMED: &str = "consumed";
 /// Upper bound on pictures carried by one progress batch.
 const MAX_BATCH_IMAGES: usize = 4;
 
-/// One assistant reply may need a few tool round-trips. Beyond this the turn is
-/// stopped with an honest error instead of looping forever.
-const MAX_ROUNDS: usize = 6;
-
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum StreamEvent {
@@ -517,31 +513,6 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 }
 
                 if !calls.is_empty() {
-                    if rounds >= MAX_ROUNDS {
-                        let message = format!(
-                            "Stopped after {MAX_ROUNDS} tool rounds without a final answer. Send another message to continue."
-                        );
-                        let entry = &mut chat.messages[index];
-                        entry.content = content;
-                        entry.reasoning = non_empty(reasoning);
-                        entry.reasoning_field = reasoning_field.clone();
-                        entry.status = "error".into();
-                        entry.error = Some(message.clone());
-                        entry.tool_calls = Some(calls);
-                        chat.meta.updated_at = now_ms();
-                        let _ = state.store.save(&mut chat);
-                        emit(
-                            &state,
-                            &chat_id,
-                            StreamEvent::Error {
-                                message,
-                                messages: chat.messages.clone(),
-                                meta: chat.meta.clone(),
-                            },
-                        );
-                        break;
-                    }
-
                     let entry = &mut chat.messages[index];
                     entry.content = content;
                     entry.reasoning = non_empty(reasoning);
@@ -624,7 +595,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     view.message = Some(err.clone());
                     let _ = state.app.emit("hook://auth", view);
                 }
-                if vision && rounds <= MAX_ROUNDS && rejects_images(&err) {
+                if vision && rejects_images(&err) {
                     // The model card promised vision and the endpoint
                     // disagrees. Drop the images, remember it, and try again.
                     eprintln!("hook: endpoint rejected image input, retrying without images — {err}");

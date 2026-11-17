@@ -220,10 +220,12 @@ relays the SSE stream byte-for-byte. `/api/v1/models` describes the single
 `HOOK_MODEL_ID` model (with the configured model's context, output and image
 capabilities) so the app's capability probe works.
 
-A reply that never starts, or starts and then goes quiet, is an error rather
-than an endless spinner: the request gives up after two minutes without an
-answer, and the stream fails after two minutes without a chunk, so a dead
-connection says "The model stopped sending data" and can be retried.
+A reply is not cut short by a clock. There is no overall or idle deadline on a
+turn and no limit on how many tool round-trips it may take: a model that thinks
+for minutes before its first token, or an agent working through a long job, runs
+until it answers or you press Stop. The window still cannot be left waiting by a
+turn that died — `finish()` turns a reply that never completed into a visible
+error — but the decision to stop is yours, not a timeout's.
 
 Every request is tagged with headers from the client:
 
