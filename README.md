@@ -1,7 +1,9 @@
 # Hook
 
-A local AI chat app with an approved account gate. Tauri 2 (Rust) + React 19
-+ TypeScript.
+A family of local-first desktop products around one account. The first is
+**Hook**, an AI chat app with coding agents; **Hook Workspace** — projects,
+boards, tasks and documents — is the second. Tauri 2 (Rust) + React 19 +
+TypeScript, one pnpm + Cargo workspace.
 
 One model, one thinking level — baked in at build time. Sign in with the Google
 account that was approved on the waiting list, and the same session unlocks the
@@ -201,7 +203,10 @@ server and needs no custom URL scheme or local callback listener:
 4. the app polls `POST /api/auth/device/poll` and receives an opaque `hk_…` token
    once. Only its SHA-256 hash is stored in SQLite.
 
-The token lives in `%APPDATA%\app.hook.chat\auth.json`. The chat agent sends it
+The token lives in `%APPDATA%\app.hook\account.json`, which every Hook product on
+the machine shares: signing in to one signs in all of them, and signing out of
+one signs out all of them. Each product keeps its own `auth.json` mirror so a
+downgrade still starts signed in. The chat agent sends the token
 as a bearer token; the bundled pi runtime receives it through `HOOK_API_TOKEN`
 and references it from its `models.json`. Signing out revokes the token on the
 server and closes live coding agents.
@@ -419,18 +424,27 @@ Restore the production config afterwards (`cp harness.config.ci.toml harness.con
 ## Build
 
 ```bash
-pnpm engine        # fetch the coding engine into src-tauri/resources/pi-runtime
+pnpm engine        # fetch the coding engine into apps/chat/src-tauri/resources/pi-runtime
 pnpm git           # fetch the bundled git for coding agents
-pnpm app:build     # NSIS installer (runs `pnpm engine` and `pnpm git` first)
-pnpm app:portable  # portable folder, zipped (runs `pnpm engine` and `pnpm git` first)
+pnpm app:build     # the chat app's NSIS installer (runs `pnpm engine` and `pnpm git` first)
+pnpm app:portable  # portable folder for the chat app, zipped
+
+pnpm workspace:app         # Hook Workspace dev window
+pnpm workspace:app:build   # Hook Workspace NSIS installer
 ```
 
-Outputs:
+Both apps share one Cargo workspace, so `cargo build` output lands in `target/`
+at the repo root; the Tauri CLI still runs per app (`apps/chat`, `apps/workspace`).
 
-- `src-tauri/target/release/bundle/nsis/Hook_<version>_x64-setup.exe` — installer,
+Outputs for the chat app:
+
+- `target/release/bundle/nsis/Hook_<version>_x64-setup.exe` — installer,
   ~54 MB (the release workflow copies it to `release/Hook-<version>-setup.exe`)
 - `release/Hook-<version>-portable.zip` — `Hook.exe` + `resources\pi-runtime` +
   `resources\git`, no install
+
+The same commands with `workspace:` in front produce Hook Workspace's installer
+and `release/Hook-Workspace-<version>-portable.zip`.
 
 The engine (Node + pi) is ~104 MB of binaries and is not in git; `pnpm engine`
 copies it from the pinned `@earendil-works/pi-coding-agent` dev dependency.
@@ -438,9 +452,9 @@ copies it from the pinned `@earendil-works/pi-coding-agent` dev dependency.
 coding agents' project sync. `scripts/fetch-pi-runtime.mjs` also proves the copy
 can load Hook's guard before anything gets packaged.
 
-`pnpm version:bump patch|minor|major` is the only way to change the version (see
-[Updates](#updates)); hand-editing one of the four files makes the app and the
-installer disagree.
+`pnpm version:bump patch|minor|major` is the only way to change a version (see
+[Updates](#updates)); add `--product workspace` for the second product.
+Hand-editing one of the three files makes the app and the installer disagree.
 
 `harness.config.toml` is gitignored so a local developer can keep a custom
 provider. The Windows release workflow copies the committed
@@ -726,17 +740,46 @@ tools, cross-device sync, project sync. ("ChatGPT import" is tempting but it is
 someone else's trademark in a keyword field — leave it out unless you want to
 argue about it.)
 
+## One account, several products
+
+Hook is a family of desktop products, and the account is the family's centre of
+gravity:
+
+- **One sign-in.** `%APPDATA%\app.hook\account.json` holds the session and this
+  installation's device id. Any product reads it at launch, so installing the
+  second one does not ask again. Signing out writes an empty session back, which
+  signs out every product — it is an account decision, not a product one.
+- **One device id per machine.** The server rotates a git token per
+  `(account, device)` pair, so two products sharing an id look like one computer
+  rather than two. Only the chat app mints git tokens; Workspace never does, so
+  they cannot revoke each other.
+- **Capabilities, not forks.** The backend is a single crate (`hook-core`). A
+  product passes `Product` and `Capabilities` to `hook_core::builder`; the chat
+  agent's prompt and toolset are trimmed to what that product can honour. Hook
+  Workspace, for example, has no preview panel, so its agent is never told
+  about one.
+- **Capability behind the API first.** Anything a product can do is an endpoint
+  before it is a button, which is what makes a second product usable through
+  the chat agent alone — even when it is not installed.
+
+Products share `packages/ui` (tokens, chrome, primitives) and `packages/chat`
+(the chat surface), so "the same family" is enforced by the build.
+
 ## Where the data lives
 
 ```
-%APPDATA%\app.hook.chat\
+%APPDATA%\app.hook\
+  account.json             the signed-in account, shared by every Hook product
+                           on this machine (signing in to one signs in all)
+
+%APPDATA%\app.hook.chat\      Hook's own data
   chats\<id>.json          one readable JSON file per conversation
   trash\                   undoable deletions
   images\<chat id>\        pictures attached to messages (bytes on disk)
   settings.json            projects folder
   projects.json            the notes the chat agent keeps about projects
   agents.json              coding-agent runs and their states
-  auth.json                the opaque API token from the approved Google account
+  auth.json                a mirror of the shared account, so a downgrade works
   device.json              this installation's id (git tokens rotate per device)
   sync.json                the sync cursor, pending uploads and account owner
   accounts\<id>\           conversations moved aside when a different account
@@ -750,6 +793,11 @@ argue about it.)
                            the agents wrote, collected each second
   hook-guard.mjs           the guard loaded into every coding agent
 ```
+
+Hook Workspace writes to `%APPDATA%\app.hook.workspace\` and reads the same
+`%APPDATA%\app.hook\account.json`, so the two products never ask for a sign-in
+twice; its cached data and the service it talks to are documented in
+**Hook Workspace**.
 
 The Microsoft Store (MSIX) build writes to the same `%APPDATA%\app.hook.chat`
 folder: its manifest opts out of AppData virtualization so Store and direct
@@ -1013,7 +1061,7 @@ stay compiled into the build.
 ## How it is put together
 
 ```
-src-tauri/src/
+crates/hook-core/src/          the backend every product links
   config.rs     include_str! the TOML, expose typed config
   provider.rs   OpenAI-compatible SSE client + streamed tool_calls
   store.rs      atomic JSON persistence, pin/delete/restore/search
@@ -1028,16 +1076,20 @@ src-tauri/src/
   projects.rs   folder scanning, stable account ids, descriptions, containment
   git.rs        bundled git, managed config, repository preparation
   sync.rs       background chat/picture/project sync, server-side merge cursor
+  auth.rs       device flow and the account file shared by every product
   commands.rs   the IPC surface
-src/
-  lib/bridge.ts  typed invoke wrappers + app-wide event bus
-  store/         zustand: chats, per-chat streams, agents, settings
-  components/    Sidebar, Thread, Composer, AgentBoard, SettingsSheet,
-                 AgentPill…
-  styles/        design tokens, glass surfaces, prose styles
+  lib.rs        Product + Capabilities, the app builder both products call
+apps/chat/                     the chat product
+  src/lib/bridge.ts  typed invoke wrappers + app-wide event bus
+  src/store/         zustand: chats, per-chat streams, agents, settings
+  src/components/    Sidebar, Thread, Composer, AgentBoard, SettingsSheet…
+  src/styles/        this product's layout (the foundation lives in packages/ui)
+apps/workspace/                Hook Workspace
+packages/ui/                   tokens.css, window chrome, primitives, the mark
 ```
 
-The account service holds two more modules that the desktop talks to:
+The account service holds two more modules that every desktop product talks
+to:
 `server/git.mjs` (smart HTTP over `git http-backend`, one bare repo per project,
 the `git-policy.mjs` size hook) and `server/sync.mjs` (cursor, chat merge,
 project metadata, content-addressed media). Both are mounted under `/api`; git

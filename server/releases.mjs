@@ -18,6 +18,21 @@ import { basename, join, resolve } from "node:path";
 export const RELEASE_FILE = "Hook-setup.exe";
 export const RELEASE_MANIFEST = "latest.json";
 export const RELEASE_INDEX = "releases.json";
+
+/**
+ * Each product publishes its own immutable index next to the chat app's.
+ * The chat app keeps the historical file name because installed clients build
+ * the URL themselves; a new product must never need a client update to find
+ * its own slot.
+ */
+export const PRODUCT_INDEX = {
+  chat: RELEASE_INDEX,
+  workspace: "releases.workspace.json",
+};
+
+export function productIndexName(product = "chat") {
+  return PRODUCT_INDEX[product] ?? null;
+}
 export const RELEASE_CONFIG = "release.config.json";
 
 export function releaseDir(env) {
@@ -165,10 +180,14 @@ function readStore(config) {
  * oldest version allowed to keep working, and comes from the committed
  * `release.config.json` so it can be raised without rebuilding the app.
  */
-export function releaseIndex(env) {
+export function releaseIndex(env, product = "chat") {
   const dir = releaseDir(env);
-  const config = readConfig(env);
-  const index = readJson(join(dir, RELEASE_INDEX));
+  const allConfig = readConfig(env);
+  const config =
+    product === "chat"
+      ? allConfig
+      : (allConfig.products?.[product] ?? {});
+  const index = readJson(join(dir, productIndexName(product) ?? RELEASE_INDEX));
 
   let releases = [];
   if (index && index.releases && typeof index.releases === "object") {
@@ -177,7 +196,7 @@ export function releaseIndex(env) {
       .filter(Boolean)
       .sort((a, b) => compareVersions(b.version, a.version));
   }
-  if (releases.length === 0) {
+  if (releases.length === 0 && product === "chat") {
     const legacy = legacyRelease(env);
     if (legacy) releases = [legacy];
   }

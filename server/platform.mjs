@@ -36,6 +36,16 @@ export function createPlatform(env) {
     res.json(publicReleaseInfo(env));
   });
 
+  // One index per product: a product with no published build answers 404, which
+  // the release gate reads as "release everything".
+  router.get("/releases/:product", (req, res) => {
+    const info = publicReleaseInfo(env, req.params.product);
+    if (!info) {
+      return res.status(404).json({ error: "unknown_product" });
+    }
+    res.json(info);
+  });
+
   if (!waitlist.db) {
     // Local development without Google credentials keeps the landing page
     // browsable; the model/login surface is simply unavailable.

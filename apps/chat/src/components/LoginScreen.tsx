@@ -3,7 +3,7 @@ import { ArrowRight, ExternalLink, LogIn, ShieldCheck } from "lucide-react";
 import { openExternal } from "../lib/bridge";
 import { useChatStore } from "../store/useChatStore";
 import { HookMark } from "@hook/ui";
-import { WindowControls } from "./WindowControls";
+import { WindowControls } from "@hook/ui";
 
 /**
  * The window before there is an account. Hook is invite-only: the download and

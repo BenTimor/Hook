@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
+import "./styles/tailwind.css";
+import "@hook/ui/tokens.css";
 import "./styles/index.css";
 
 import App from "./App";

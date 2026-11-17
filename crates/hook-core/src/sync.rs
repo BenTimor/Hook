@@ -980,7 +980,10 @@ mod tests {
     }
 
     fn fixture(base_url: &str) -> Fixture {
-        let base = std::env::temp_dir().join(format!("hook-sync-{}", uuid::Uuid::new_v4()));
+        // One product's data directory, one level below the family root: the
+        // shared account file lives next to it, so each test gets its own.
+        let root = std::env::temp_dir().join(format!("hook-sync-{}", uuid::Uuid::new_v4()));
+        let base = root.join("app.hook.chat");
         fs::create_dir_all(&base).unwrap();
         let auth = Arc::new(AuthStore::new(&base, base_url, true, ""));
         auth.save_session(&StoredSession {
@@ -1076,7 +1079,7 @@ mod tests {
                 .any(|(method, path, _)| method == "POST" && path == "/api/sync/chats"),
             "the local chat must reach the account"
         );
-        fs::remove_dir_all(&fixture.base).ok();
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }
 
     #[tokio::test]
@@ -1155,7 +1158,7 @@ mod tests {
             .count();
         assert_eq!(again, 0, "an unchanged workspace must not re-send projects");
 
-        fs::remove_dir_all(&fixture.base).ok();
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }
 
     #[tokio::test]
@@ -1214,7 +1217,7 @@ mod tests {
             ["hook://sync"],
             "the window must be told to refresh"
         );
-        fs::remove_dir_all(&fixture.base).ok();
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }
 }
 

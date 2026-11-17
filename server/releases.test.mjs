@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { publicReleaseInfo } from "./download.mjs";
 import {
   compareVersions,
   parseVersion,
@@ -198,4 +199,30 @@ test("an index cannot point outside the download directory", (t) => {
 
   assert.equal(releaseIndex(f.env).releases.length, 0);
   assert.equal(releaseFile(f.env, "0.1.0"), null);
+});
+
+test("each product publishes its own index, and an unpublished one is absent", (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.directory, { recursive: true, force: true }));
+
+  // Nothing has shipped for the second product yet.
+  assert.equal(publicReleaseInfo(f.env, "workspace"), null);
+  assert.equal(publicReleaseInfo(f.env, "nonsense"), null);
+
+  writeFileSync(
+    join(f.releases, "releases.workspace.json"),
+    JSON.stringify({
+      latest: "0.1.0",
+      minimum: "0.1.0",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      releases: { "0.1.0": { file: "Hook-Workspace-0.1.0-setup.exe" } },
+    }),
+  );
+  f.writeInstaller("Hook-Workspace-0.1.0-setup.exe");
+
+  const workspace = publicReleaseInfo(f.env, "workspace");
+  assert.equal(workspace.latest, "0.1.0");
+  assert.equal(workspace.releases[0].version, "0.1.0");
+  // The chat app's index is untouched by the second product.
+  assert.equal(releaseIndex(f.env).latest, null);
 });

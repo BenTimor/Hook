@@ -1,0 +1,330 @@
+/* Hook Workspace's own layout. Everything that makes it look like the same
+   family — tokens, window chrome, buttons, inputs, prose — comes from
+   @hook/ui/tokens.css; only this product's arrangement lives here. */
+
+.shell {
+  display: flex;
+}
+
+/* The shell's hairline sits above the content; the rail and dock are siblings
+   of the pane, so the pane's own border is the only divider. */
+
+.ws-rail {
+  display: flex;
+  flex-direction: column;
+  width: 232px;
+  flex: 0 0 232px;
+  padding: 10px 8px 8px;
+  gap: 4px;
+  background: var(--panel);
+  backdrop-filter: blur(30px) saturate(150%);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  border-right: 1px solid var(--line);
+  -webkit-app-region: drag;
+}
+
+.ws-wordmark {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 8px 10px;
+  font-size: 13.5px;
+  font-weight: 570;
+  letter-spacing: -0.014em;
+  color: var(--ink);
+}
+
+.ws-wordmark svg {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+
+.ws-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ws-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 480;
+  color: var(--ink-3);
+  text-align: left;
+  -webkit-app-region: no-drag;
+  transition: background 120ms, color 120ms;
+}
+
+.ws-nav-row svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.ws-nav-row:hover {
+  background: rgba(var(--ink-rgb), 0.05);
+  color: var(--ink-2);
+}
+
+.ws-nav-row[data-active="true"] {
+  background: rgba(var(--ink-rgb), 0.075);
+  color: var(--ink);
+}
+
+.ws-rail-foot {
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.ws-account {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+
+.ws-pane {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  position: relative;
+}
+
+.ws-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 0 8px 0 16px;
+  -webkit-app-region: drag;
+}
+
+.ws-head-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.ws-crumb {
+  font-size: 12.5px;
+  font-weight: 540;
+  letter-spacing: -0.008em;
+  color: var(--ink-2);
+}
+
+.ws-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.ws-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: auto;
+  padding: 32px;
+  max-width: 420px;
+  text-align: center;
+}
+
+.ws-empty h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 580;
+  letter-spacing: -0.018em;
+  color: var(--ink);
+}
+
+.ws-empty p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+.ws-empty .btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* The chat dock: collapsed by default, opened from the pane head. */
+.ws-dock {
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  flex: 0 0 400px;
+  border-left: 1px solid var(--line);
+  background: var(--panel-strong);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  animation: dock-in 220ms var(--ease) both;
+}
+
+@keyframes dock-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+
+.ws-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 0 8px 0 14px;
+  -webkit-app-region: drag;
+}
+
+.ws-dock-head svg {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+}
+
+.ws-dock-head span {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 540;
+  color: var(--ink-2);
+}
+
+.ws-dock-head .icon-btn {
+  -webkit-app-region: no-drag;
+}
+
+.ws-dock-body {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+}
+
+.ws-dock-note {
+  margin: 0;
+  font-size: 12.8px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+/* Sign-in */
+.ws-drag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  flex: 0 0 44px;
+  padding-left: 16px;
+  -webkit-app-region: drag;
+}
+
+.ws-drag-title {
+  font-size: 12px;
+  font-weight: 540;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+}
+
+.ws-signin {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.ws-signin-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 380px;
+  padding: 32px 28px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--ivory);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+}
+
+.ws-signin-mark {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+}
+
+.ws-signin-card h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.ws-signin-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+.ws-code {
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 19px;
+  letter-spacing: 0.16em;
+}
+
+.ws-hint {
+  font-size: 12px !important;
+  color: var(--ink-4) !important;
+}
+
+.ws-signin-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* A narrow window cannot hold a rail, a board and the dock at once. */
+@media (max-width: 1080px) {
+  .ws-dock {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+@media (max-width: 860px) {
+  .ws-rail {
+    width: 64px;
+    flex-basis: 64px;
+  }
+
+  .ws-wordmark span,
+  .ws-nav-row span,
+  .ws-nav-row {
+    font-size: 0;
+  }
+}

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Toaster } from "sonner";
+import { useWindowState } from "@hook/ui";
 
-import { isTauri, win } from "./lib/bridge";
+import { isTauri } from "./lib/bridge";
 import { useChatStore } from "./store/useChatStore";
 import { UPDATE_CHECK_INTERVAL, useUpdateStore } from "./store/useUpdateStore";
 import { AgentBoard } from "./components/AgentBoard";
@@ -27,7 +28,7 @@ export default function App() {
     s.activeId ? Boolean(s.streams[s.activeId]) : false,
   );
 
-  const [maximized, setMaximized] = useState(false);
+  const maximized = useWindowState();
   const signedIn = Boolean(auth?.signedIn);
   const checkUpdate = useUpdateStore((s) => s.check);
 
@@ -45,20 +46,6 @@ export default function App() {
     );
     return () => window.clearInterval(timer);
   }, [checkUpdate]);
-
-  useEffect(() => {
-    let alive = true;
-    const sync = async () => {
-      const value = await win.isMaximized();
-      if (alive) setMaximized(value);
-    };
-    void sync();
-    const off = win.onResized(() => void sync());
-    return () => {
-      alive = false;
-      off();
-    };
-  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

@@ -1,0 +1,34 @@
+{
+  "name": "@hook/workspace-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Hook Workspace — projects, boards, tasks and documents, with Hook's chat beside them",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "app": "node ../../scripts/tauri.mjs dev",
+    "app:build": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build",
+    "app:portable": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/make-portable.mjs --product workspace",
+    "app:msix": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/build-msix.mjs --product workspace"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "catalog:",
+    "@fontsource-variable/jetbrains-mono": "catalog:",
+    "@hook/ui": "workspace:*",
+    "@tauri-apps/api": "catalog:",
+    "lucide-react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

@@ -8,8 +8,10 @@
 //!   3. the signed-in, approved user approves that code;
 //!   4. `POST /api/auth/device/poll` returns the opaque API token once.
 //!
-//! The token is kept in `auth.json` under the app data directory and is what
-//! both the chat agent and the bundled pi runtime present to the proxy.
+//! The token is kept in a *shared* account file, `%APPDATA%\app.hook\account.json`,
+//! so signing in to one Hook product signs in all of them on this machine. Each
+//! product still mirrors the old per-app `auth.json` so a downgrade keeps working.
+//! The token is what the chat agent, the proxy and the bundled pi runtime present.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,6 +35,13 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn is_valid_device_id(id: &str) -> bool {
+    (8..=64).contains(&id.len())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 /// One stable id per installation, kept across sign-ins. It lets this computer
 /// rotate its own git token without touching the account's other devices.
 fn load_or_create_device(data_dir: &Path) -> String {
@@ -40,11 +49,7 @@ fn load_or_create_device(data_dir: &Path) -> String {
     if let Ok(raw) = fs::read_to_string(&path) {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
             if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
-                let valid = (8..=64).contains(&id.len())
-                    && id
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-                if valid {
+                if is_valid_device_id(id) {
                     return id.to_string();
                 }
             }
@@ -57,6 +62,59 @@ fn load_or_create_device(data_dir: &Path) -> String {
         serde_json::json!({ "id": id }).to_string(),
     );
     id
+}
+
+/// The one account file the whole Hook family on this machine shares.
+///
+/// A product's own data directory is `%APPDATA%\app.hook.<product>`; the account
+/// lives one level up, next to all of them, so installing a second product finds
+/// the first one's sign-in instead of asking again.
+fn shared_account_path(data_dir: &Path) -> Option<PathBuf> {
+    let parent = data_dir.parent()?;
+    Some(parent.join("app.hook").join("account.json"))
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedAccount {
+    /// Bumped when the shape changes; unknown versions are read leniently.
+    #[serde(default)]
+    version: u32,
+    /// One id per machine. The server rotates a git token per device, so both
+    /// products must look like the same installation rather than two computers.
+    #[serde(default)]
+    device_id: String,
+    /// The signed-in account, if any. `None` after signing out.
+    #[serde(default)]
+    session: Option<StoredSession>,
+}
+
+fn read_shared(path: &Path) -> Option<SharedAccount> {
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<SharedAccount>(&raw).ok()
+}
+
+fn write_shared(path: &Path, value: &SharedAccount) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("Could not save sign-in: {e}"))?;
+    }
+    let raw = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    // A unique temp name: two products signing in at the same moment must not
+    // rename each other's half-written file.
+    let unique = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = path.with_extension(format!("json.tmp-{}-{unique}", std::process::id()));
+    fs::write(&tmp, raw).map_err(|e| format!("Could not save sign-in: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+    }
+    // Atomic: a reader (the other Hook product) sees the old file or the new
+    // one, never half a token.
+    fs::rename(&tmp, path).map_err(|e| format!("Could not save sign-in: {e}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +190,8 @@ pub enum RefreshOutcome {
 
 pub struct AuthStore {
     path: PathBuf,
+    /// The account file shared by every Hook product on this machine.
+    account: Option<PathBuf>,
     base_url: String,
     /// Stable identifier for this installation. Not a secret.
     device: String,
@@ -203,10 +263,32 @@ impl AuthStore {
         fallback_token: &str,
     ) -> Self {
         let path = data_dir.join("auth.json");
-        let session = if required {
+        let account = shared_account_path(data_dir);
+        let legacy_session = || {
             fs::read_to_string(&path)
                 .ok()
                 .and_then(|raw| serde_json::from_str::<StoredSession>(&raw).ok())
+        };
+
+        // Read the shared file first; fall back to this product's old file and
+        // adopt it, so the first launch after an update keeps the sign-in. Once
+        // the shared file exists it is authoritative — otherwise a sign-out in
+        // one product would be undone by another product's old mirror.
+        let account_present = account.as_deref().map(|p| p.exists()).unwrap_or(false);
+        let mut shared = account.as_deref().and_then(read_shared).unwrap_or_default();
+        if shared.version == 0 {
+            shared.version = 1;
+        }
+        let session = if required {
+            let adopted = if shared.session.is_some() || account_present {
+                shared.session.clone()
+            } else {
+                legacy_session()
+            };
+            if shared.session.is_none() {
+                shared.session = adopted.clone();
+            }
+            adopted
         } else {
             // A standalone/direct-provider build keeps its old api_key flow by
             // treating the configured key as the session token.
@@ -223,9 +305,24 @@ impl AuthStore {
                 git_token: None,
             })
         };
+        let device = if is_valid_device_id(&shared.device_id) {
+            shared.device_id.clone()
+        } else {
+            load_or_create_device(data_dir)
+        };
+        if shared.device_id != device {
+            shared.device_id = device.clone();
+        }
+        if required {
+            if let Some(account_path) = &account {
+                let _ = write_shared(account_path, &shared);
+            }
+        }
+
         Self {
             path,
-            device: load_or_create_device(data_dir),
+            account,
+            device,
             base_url: base_url.trim_end_matches('/').to_string(),
             required,
             session: Mutex::new(session),
@@ -516,6 +613,19 @@ impl AuthStore {
             *lock(&self.session) = Some(session.clone());
             return Ok(());
         }
+        // The shared file is the one that matters: it is what the other
+        // products on this machine read.
+        if let Some(account) = &self.account {
+            write_shared(
+                account,
+                &SharedAccount {
+                    version: 1,
+                    device_id: self.device.clone(),
+                    session: Some(session.clone()),
+                },
+            )?;
+        }
+        // Mirror the old per-app file so a downgraded build still starts signed in.
         fs::create_dir_all(self.path.parent().unwrap_or(Path::new(".")))
             .map_err(|e| format!("Could not save sign-in: {e}"))?;
         let raw = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
@@ -537,6 +647,18 @@ impl AuthStore {
         }
         *lock(&self.session) = None;
         let _ = fs::remove_file(&self.path);
+        // Signing out is an account decision, not a product decision: drop the
+        // session from the shared file so every Hook product asks again.
+        if let Some(account) = &self.account {
+            let _ = write_shared(
+                account,
+                &SharedAccount {
+                    version: 1,
+                    device_id: self.device.clone(),
+                    session: None,
+                },
+            );
+        }
     }
 
     /// Confirm the cached token is still valid and still approved. Called on
@@ -625,9 +747,12 @@ mod tests {
     use super::*;
 
     fn store() -> (AuthStore, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("hook-auth-{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir().join(format!("hook-auth-{}", uuid::Uuid::new_v4()));
+        // A product's data directory is one level below the family root, which
+        // is where the shared account file lives.
+        let dir = base.join("app.hook.chat");
         fs::create_dir_all(&dir).unwrap();
-        (AuthStore::new(&dir, "https://hookcode.io/", true, ""), dir)
+        (AuthStore::new(&dir, "https://hookcode.io/", true, ""), base)
     }
 
     #[test]
@@ -652,7 +777,7 @@ mod tests {
             git_token: None,
         };
         auth.save_session(&session).unwrap();
-        let reopened = AuthStore::new(&dir, "https://hookcode.io", true, "");
+        let reopened = AuthStore::new(&dir.join("app.hook.chat"), "https://hookcode.io", true, "");
         let view = reopened.view();
         assert!(view.signed_in);
         assert_eq!(view.state, "signed_in");
@@ -661,7 +786,7 @@ mod tests {
 
         reopened.clear_session();
         assert!(reopened.token().is_none());
-        assert!(!dir.join("auth.json").exists());
+        assert!(!dir.join("app.hook.chat").join("auth.json").exists());
         fs::remove_dir_all(dir).ok();
     }
 
@@ -674,17 +799,72 @@ mod tests {
 
     #[test]
     fn local_preview_is_signed_in_without_a_file() {
-        let dir = std::env::temp_dir().join(format!("hook-auth-{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir().join(format!("hook-auth-{}", uuid::Uuid::new_v4()));
+        let dir = base.join("app.hook.chat");
         fs::create_dir_all(&dir).unwrap();
         let auth = AuthStore::new(&dir, "http://127.0.0.1:8787", false, "");
         let view = auth.view();
         assert!(view.signed_in);
         assert_eq!(view.state, "signed_in");
         assert_eq!(auth.token().as_deref(), Some("mock-local"));
-        assert!(!dir.join("auth.json").exists());
+        assert!(!dir.join("app.hook.chat").join("auth.json").exists());
 
         let direct = AuthStore::new(&dir, "https://api.example.test", false, "sk-direct");
         assert_eq!(direct.token().as_deref(), Some("sk-direct"));
-        fs::remove_dir_all(dir).ok();
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn one_sign_in_serves_every_product_on_the_machine() {
+        let base = std::env::temp_dir().join(format!("hook-auth-{}", uuid::Uuid::new_v4()));
+        let chat_dir = base.join("app.hook.chat");
+        let workspace_dir = base.join("app.hook.workspace");
+        fs::create_dir_all(&chat_dir).unwrap();
+
+        let chat = AuthStore::new(&chat_dir, "https://hookcode.io", true, "");
+        chat.save_session(&StoredSession {
+            token: "hk_shared".into(),
+            email: "member@example.test".into(),
+            name: Some("Member".into()),
+            subject: "subject-1".into(),
+            signed_in_at: 7,
+            git_token: None,
+        })
+        .unwrap();
+
+        // The second product starts from the same account without signing in.
+        let workspace = AuthStore::new(&workspace_dir, "https://hookcode.io", true, "");
+        assert_eq!(workspace.token().as_deref(), Some("hk_shared"));
+        assert_eq!(workspace.subject().as_deref(), Some("subject-1"));
+        // ...and the server sees one installation, not two computers.
+        assert_eq!(workspace.device_id(), chat.device_id());
+
+        // Signing out of either one signs both out.
+        workspace.clear_session();
+        let reopened = AuthStore::new(&chat_dir, "https://hookcode.io", true, "");
+        assert!(reopened.token().is_none());
+        fs::remove_dir_all(base).ok();
+    }
+
+    #[test]
+    fn adopts_the_old_per_app_session_once() {
+        let base = std::env::temp_dir().join(format!("hook-auth-{}", uuid::Uuid::new_v4()));
+        let dir = base.join("app.hook.chat");
+        fs::create_dir_all(&dir).unwrap();
+        let legacy = StoredSession {
+            token: "hk_legacy".into(),
+            email: "old@example.test".into(),
+            name: None,
+            subject: "subject-old".into(),
+            signed_in_at: 1,
+            git_token: None,
+        };
+        fs::write(dir.join("auth.json"), serde_json::to_string(&legacy).unwrap()).unwrap();
+
+        let auth = AuthStore::new(&dir, "https://hookcode.io", true, "");
+        assert_eq!(auth.token().as_deref(), Some("hk_legacy"));
+        // The shared file was written, so the next product finds it too.
+        assert!(base.join("app.hook").join("account.json").exists());
+        fs::remove_dir_all(base).ok();
     }
 }

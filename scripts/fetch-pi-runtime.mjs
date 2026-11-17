@@ -30,7 +30,7 @@ const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The app directory to populate: `node scripts/fetch-pi-runtime.mjs apps/chat`.
 const app = resolve(process.cwd(), process.argv[2] ?? "apps/chat");
-const out = join(app, "resources", "pi-runtime");
+const out = join(app, "src-tauri", "resources", "pi-runtime");
 
 const PACKAGE = "@earendil-works/pi-coding-agent";
 

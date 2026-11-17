@@ -1,0 +1,3 @@
+/* Tailwind is the app's CSS engine and reset. It must load before the design tokens so the
+   tokens' base rules (body, buttons, inputs) win over the preflight reset. */
+@import "tailwindcss";

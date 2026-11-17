@@ -1,5 +1,14 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import { Router } from "express";
-import { releaseFile, releaseIndex, releaseInfo } from "./releases.mjs";
+import {
+  productIndexName,
+  releaseDir,
+  releaseFile,
+  releaseIndex,
+  releaseInfo,
+} from "./releases.mjs";
 import { approvedRequest } from "./tokens.mjs";
 
 function refuse(res, account) {
@@ -58,8 +67,13 @@ export function createDownloadRouter({ env, db, auth }) {
 }
 
 /** Public JSON: version history plus the oldest version still supported. */
-export function publicReleaseInfo(env) {
-  const index = releaseIndex(env);
+export function publicReleaseInfo(env, product = "chat") {
+  const name = productIndexName(product);
+  if (!name) return null;
+  // A product that has never shipped has no index: answer 404 rather than an
+  // empty release list that would look like "no update available".
+  if (!existsSync(join(releaseDir(env), name))) return null;
+  const index = releaseIndex(env, product);
   return {
     latest: index.latest,
     minimum: index.minimum,

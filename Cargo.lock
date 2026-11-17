@@ -1521,6 +1521,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hook-workspace"
+version = "0.1.0"
+dependencies = [
+ "hook-core",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

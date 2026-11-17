@@ -1,7 +1,14 @@
 import { Minus, Square, X } from "lucide-react";
 
-import { win } from "../lib/bridge";
+import { win } from "./window";
 
+/**
+ * The three window buttons, at the size and weight the whole family uses.
+ *
+ * Rendered inside a 44px drag strip, next to the pane's own controls. The
+ * handlers go through the shared `win` adapter, so a browser build renders them
+ * inert instead of crashing.
+ */
 export function WindowControls() {
   return (
     <div className="window-controls" data-tauri-drag-region={false}>

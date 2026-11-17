@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/hook-core", "apps/chat/src-tauri"]
+members = ["crates/hook-core", "apps/chat/src-tauri", "apps/workspace/src-tauri"]
 
 # Every product is a release build; keep the installer small and reproducible.
 [profile.release]

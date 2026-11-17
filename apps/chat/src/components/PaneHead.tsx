@@ -5,7 +5,7 @@ import { win } from "../lib/bridge";
 import { modKey } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 import { AgentPill } from "./AgentPill";
-import { WindowControls } from "./WindowControls";
+import { WindowControls } from "@hook/ui";
 
 export function PaneHead() {
   const activeId = useChatStore((s) => s.activeId);

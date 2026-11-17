@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { mock } from "./mock";
 import type {
@@ -25,8 +24,9 @@ import type {
   UpdateInfo,
 } from "./types";
 
-export const isTauri = (): boolean =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+import { isTauri } from "@hook/ui";
+
+export { isTauri, win } from "@hook/ui";
 
 type ChatListener = (chatId: string, event: StreamEvent) => void;
 type AgentsListener = (overview: AgentsOverview) => void;
@@ -387,20 +387,6 @@ export const api = {
   },
 };
 
-export const win = {
-  minimize: () => isTauri() && getCurrentWindow().minimize(),
-  toggleMaximize: () => isTauri() && getCurrentWindow().toggleMaximize(),
-  close: () => isTauri() && getCurrentWindow().close(),
-  isMaximized: async (): Promise<boolean> =>
-    isTauri() ? getCurrentWindow().isMaximized() : false,
-  onResized: (callback: () => void) => {
-    if (!isTauri()) return () => {};
-    const pending = getCurrentWindow().onResized(callback);
-    return () => {
-      pending.then((off) => off()).catch(() => {});
-    };
-  },
-};
 
 export async function openExternal(url: string): Promise<void> {
   if (!isTauri()) {

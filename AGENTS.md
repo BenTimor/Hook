@@ -5,44 +5,57 @@ wrong, fix it in the same commit.
 
 ## What this is
 
-A local AI chat desktop app — Tauri 2 (Rust) + React 19 + TypeScript — with
-coding agents that run as bundled `pi` subprocesses. The repo holds **two
-separate products** that only share tooling:
+Hook is an ecosystem of local-first desktop products that share one account, one
+design system and one backend. Tauri 2 (Rust) + React 19 + TypeScript, in a
+single pnpm + Cargo workspace.
 
-|                | Desktop app                      | Landing page                        |
-| -------------- | -------------------------------- | ----------------------------------- |
-| Code           | `src/` (React), `src-tauri/` (Rust) | `waitlist/` (React), `server/` (Express) |
-| Dev            | `pnpm dev` or `pnpm app`         | `pnpm waitlist:dev` → :5173         |
-| Build          | `pnpm app:build` / `pnpm app:portable` | `pnpm waitlist:build` → `dist-waitlist/` |
-| Deploy         | `.github/workflows/release-app.yml` | `.github/workflows/deploy-waitlist.yml` |
+| Product | Code | Dev | Build | Deploy |
+| --- | --- | --- | --- | --- |
+| **Hook** (AI chat + coding agents) | `apps/chat/` | `pnpm app` | `pnpm app:build` / `pnpm app:portable` | `.github/workflows/release-app.yml` |
+| **Hook Workspace** (projects, boards, tasks, docs) | `apps/workspace/` | `pnpm workspace:app` | `pnpm workspace:app:build` | same workflow, `--product workspace` |
+| Landing page | `waitlist/` | `pnpm waitlist:dev` → :5173 | `pnpm waitlist:build` → `dist-waitlist/` | `.github/workflows/deploy-waitlist.yml` |
+| Account service | `server/` | `pnpm waitlist:start` | Docker image | `scripts/deploy-waitlist.sh` |
 
-The only real coupling: `waitlist/` imports `src/components/HookMark`. Otherwise
-changes do not cross over.
+Shared, and the reason the products look and behave alike:
+
+```
+crates/hook-core/    the backend every product links: account, chats + sync,
+                     coding agents, preview, the assistant turn, the IPC surface
+packages/ui/         tokens.css, window chrome, buttons/inputs, the mark
+packages/chat/       the chat surface (Thread, MessageItem, Markdown, Composer, dock)
+```
+
+`server/` and `waitlist/` deliberately stay at the repo root: they are one deploy
+unit (one container, one `/data` volume) that every product talks to, not an app
+you build alongside the others.
 
 ## Commands
 
 ```bash
-# Desktop app
+# Desktop apps
 cp harness.config.ci.toml harness.config.toml  # required before any cargo build
-pnpm dev           # UI in a plain browser, in-memory mock backend — fastest UI loop
-pnpm app           # real Tauri window with hot reload
-pnpm typecheck     # tsc --noEmit across src/ + waitlist/ (the only static gate)
-pnpm app:build     # NSIS installer (fetches the pi runtime and git first)
-pnpm app:msix      # unsigned Microsoft Store MSIX (same exe, package identity)
-pnpm version:bump patch   # patch|minor|major — never edit a version by hand
-cd src-tauri && cargo test                       # no engine or network needed
-cd src-tauri && cargo test --lib -- --ignored    # live tests; run `pnpm mock` first
+pnpm dev                          # chat UI in a plain browser (mock backend)
+pnpm app                          # chat product: real Tauri window, hot reload
+pnpm workspace:dev                # Workspace UI in a plain browser
+pnpm workspace:app                # Workspace: real Tauri window
+pnpm typecheck                    # every package + the landing page (the only static gate)
+pnpm app:build                    # chat NSIS installer (fetches engine + git first)
+pnpm workspace:app:build          # Workspace NSIS installer
+pnpm version:bump patch           # patch|minor|major, add --product workspace
+cargo test                        # whole workspace, at the repo root; no engine or network
+cargo test -p hook-core -- --ignored   # live tests; run `pnpm mock` first
 
-# Landing page
+# Landing page + account service
 pnpm waitlist:dev
-pnpm waitlist:test  # API, device login, proxy, download, release index
+pnpm waitlist:test                # API, device login, proxy, download, sync, git
 pnpm waitlist:build
 
-# Release pipeline (Node only, no install needed)
-pnpm test:release   # the "needs a Windows build?" gate + index merge
+# Release pipeline (Node only)
+pnpm test:release
 
-# Bundled git for coding agents (pinned MinGit, ~93 MB extracted)
+# Bundled git and coding engine (pinned; ~93 MB and ~104 MB per app)
 pnpm git
+pnpm engine
 
 # Offline chat against a fake OpenAI-compatible endpoint on :8787
 pnpm mock
@@ -52,65 +65,66 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 
 ## Where things live
 
-- `src-tauri/src/turn.rs` — the assistant turn (model → tools → answer), the
-  system prompt, streaming and cancellation. Largest, most delicate file.
-- `src-tauri/src/tools.rs` — chat-agent tool schemas and implementations.
-- `src-tauri/src/agent.rs` — supervisor for `pi` subprocesses over RPC: spawn,
-  states, plans, progress batching, wakes, stop. It also points agents at the
-  bundled git and the managed `agent-home/gitconfig`.
-- `src-tauri/src/git.rs` — locate bundled MinGit, write the scoped git config,
-  prepare a project repository/remote, take the first snapshot, push/pull.
-- `src-tauri/src/sync.rs` — background conversation, picture and project-metadata
-  sync: cursor, pending queue, account quarantine, `hook://sync` events.
-- `server/git.mjs` — `/api/git/<project id>.git` smart HTTP via `git http-backend`;
-  one bare repo per project under `/data/git`. `server/git-policy.mjs` is the
-  pre-receive size hook installed into every repo.
-- `server/sync.mjs` — `/api/sync/*`: monotonic cursor, server-side chat merge,
-  project identity, content-addressed media, quotas and account deletion.
-- `src-tauri/resources/hook-guard.mjs` — the guard extension injected into
-  every coding agent (bash timeouts, `update_plan`, `show_preview`,
-  `web_search`). `guard.rs` embeds it via `include_str!`; edit the `.mjs`.
-- `src-tauri/src/update.rs` — public release index, the required/optional
-  decision, checksum-checked download, NSIS hand-off.
-- `src-tauri/src/import.rs` — the ChatGPT and Claude export readers: branch
-  flattening, derived ids and the re-import rules. `ImportSection.tsx` is the
-  Settings card that drives it.
-- `src-tauri/src/reports.rs` — in-app reports of inappropriate AI output;
-  `server/reports.mjs` stores them and `scripts/ai-reports.sh` reviews them.
-- `src-tauri/src/{provider,store,config,runtime,preview,projects,settings,auth}.rs`
-  — SSE client, atomic JSON persistence, compiled TOML, engine lookup, loopback
-  preview server, projects store, projects-folder setting, device login.
-- `src-tauri/src/commands.rs` — the whole IPC surface.
-- `src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
+- `crates/hook-core/src/turn.rs` — the assistant turn (model → tools → answer),
+  the system prompt, streaming and cancellation. Largest, most delicate file.
+- `crates/hook-core/src/tools.rs` — chat-agent tool schemas and implementations.
+- `crates/hook-core/src/agent.rs` — supervisor for `pi` subprocesses over RPC:
+  spawn, states, plans, progress batching, wakes, stop. It also points agents at
+  the bundled git and the managed `agent-home/gitconfig`.
+- `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
+  builder both apps call. A capability trims the prompt and the toolset; it must
+  never change the data model.
+- `crates/hook-core/src/auth.rs` — device flow, the shared
+  `%APPDATA%\app.hook\account.json`, per-product mirrors, git-token rotation.
+- `crates/hook-core/src/{store,sync}.rs` — chats on disk and the background
+  sync engine (cursor, pending queue, account quarantine, media).
+- `crates/hook-core/src/{git,projects}.rs` — bundled MinGit, scoped git config,
+  project folders and their account ids. "Project" here means a **code project**,
+  a folder on disk; Workspace projects are a different thing (`ws_` ids).
+- `crates/hook-core/src/{preview,runtime,guard}.rs` — loopback preview server,
+  engine lookup, and the guard extension (`resources/hook-guard.mjs`, embedded
+  with `include_str!`; edit the `.mjs`).
+- `crates/hook-core/src/{provider,import,update,reports}.rs` — SSE client, the
+  ChatGPT/Claude export readers, the release index and update policy, AI reports.
+- `crates/hook-core/src/commands.rs` — the whole IPC surface.
+- `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
-  `hook://update`).
-- `src/lib/types.ts` — the types on both sides of that bridge.
-- `src/store/useChatStore.ts` — all zustand state; coalesces stream deltas.
-- `src/components/` — UI. `src/styles/index.css` — tokens, glass, prose.
+  `hook://sync`, `hook://import`, `hook://update`).
+- `apps/chat/src/store/useChatStore.ts` — all chat state; coalesces stream deltas.
+- `packages/ui/src/tokens.css` — the design foundation (tokens, base elements,
+  window chrome, prose, buttons/inputs). Both products import it first.
 - `waitlist/content.json` — all landing-page copy and interest definitions.
-- `server/platform.mjs` — mounts waitlist, device login, download and model
-  proxy under `/api`.
+- `server/platform.mjs` — mounts waitlist, device login, download, sync, git and
+  the model proxy under `/api`.
+- `server/workspace.mjs` — Workspace projects/boards/tasks/documents/members.
 - `infra/` — reference server config, uploaded by `scripts/deploy-waitlist.sh`.
-- `release.config.json` — the direct and Store floors, and the Store's latest.
-- `msix/identity.json` — Partner Center identity + the MSIX manifest template.
-- `scripts/build-msix.mjs` — packages Hook.exe + the engine as an unsigned MSIX.
-- `scripts/fetch-git.mjs` — pinned MinGit into `src-tauri/resources/git/`.
-- `scripts/app-source-hash.mjs` — what counts as a change to the desktop app.
-- `scripts/release-gate.mjs` — decides whether a push needs a Windows build.
+- `release.config.json` — per-product minimum versions and the Store channel.
+- `msix/<product>/` — Partner Center identity + manifest template per product.
+- `scripts/products.mjs` — what a product is and what its source hash covers.
+- `scripts/build-msix.mjs`, `scripts/make-portable.mjs` — take `--product <id>`.
+- `scripts/fetch-git.mjs`, `scripts/fetch-pi-runtime.mjs` — take an app dir.
+- `scripts/app-source-hash.mjs` — a product's installer inputs (shared packages
+  included, so a change in `packages/*` invalidates every product).
+- `scripts/release-gate.mjs` — decides whether a push needs that product's build.
 - `scripts/merge-release-index.mjs` — folds a build into `releases.json`.
 
 ## Touch every layer
 
 Changing one side of a boundary is the most common way to break this repo.
 
-- **New IPC command:** `commands.rs` → `generate_handler!` in `lib.rs` →
-  `bridge.ts` wrapper → `types.ts` → the `mock.ts` fallback → store/component.
-  Both `isTauri()` branches must work.
+- **New IPC command:** `crates/hook-core/src/commands.rs` → `generate_handler!` in
+  `crates/hook-core/src/lib.rs` → the product's `bridge.ts` wrapper → `types.ts`
+  → the `mock.ts` fallback → store/component. Both `isTauri()` branches must work.
 - **New chat-agent tool:** schema + impl in `tools.rs`, dispatch in `turn.rs`,
   and the prompt in `turn.rs` (`system_prompt`) if the agent must know about it.
-- **New guard behavior:** `src-tauri/resources/hook-guard.mjs`, plus `tools.rs`
-  if it calls back into Rust; then `src-tauri/tests/guard_policy.rs` +
-  `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`
+  Gate it on `Capabilities` when only some products have it.
+- **New product:** `apps/<id>/` (package.json, index.html, vite.config.ts,
+  `src-tauri/` with its own identifier) → `Product` + `Capabilities` in
+  `crates/hook-core/src/lib.rs` → an entry in `scripts/products.mjs` → root
+  scripts → its own `msix/<id>/` when it reaches the Store.
+- **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
+  `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`
+  + `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`
   built-ins — it is copied into the user's data folder where nothing resolves.
 - **New import format:** a reader in `import.rs` returning `Parsed` (plus a unit
   test in that file) → `commands.rs` (`import_scan` / `import_apply`) →
@@ -118,68 +132,84 @@ Changing one side of a boundary is the most common way to break this repo.
   Ids must stay derived from the source's own ids, or a re-import duplicates
   every conversation instead of updating it.
 - **Git/sync behavior:** `server/sync.mjs` + `server/git.mjs` (limits, merge
-  rules, endpoints) → `src-tauri/src/sync.rs` / `git.rs` → `agent.rs` (env,
+  rules, endpoints) → `crates/hook-core/src/{sync,git}.rs` → `agent.rs` (env,
   managed config) → `hook-guard.mjs` (`sync_pull`/`sync_push`) → `turn.rs`
   (what the chat agent tells the coding agent) → Settings status → README
   **Sync between computers** and `infra/README.md`. Add to `server/sync.test.mjs`
   / `server/git.test.mjs` and the sync unit tests in `sync.rs`.
+- **Workspace entity or permission change:** `server/workspace.mjs` +
+  `server/workspace.test.mjs` → the shared client in `crates/hook-core` →
+  the `workspace_*` tools in `tools.rs` → `apps/workspace/src` → README
+  **Hook Workspace**.
 - **New landing-page route or field:** `server/*.mjs` router → `waitlist/` UI →
   `server/*.test.mjs`. Keep old rows readable — tests deliberately seed an
   older schema.
-- **New visual token:** `src/styles/index.css`. The window is frameless and the
-  glass is pure CSS, not an OS backdrop material.
+- **New visual token or primitive:** `packages/ui/src/tokens.css`. The window is
+  frameless and the glass is pure CSS, not an OS backdrop material. Plain CSS,
+  no Tailwind utilities: the products keep hand-authored class names.
 - **AI reporting / Store policy 11.16:** `ReportDialog.tsx` + `MessageItem.tsx`
   → `bridge.ts`/`types.ts` → `commands::report_message` → `reports.rs` →
   `server/reports.mjs` → the `ai_reports` table → `scripts/ai-reports.sh`.
-  Keep the “include the whole conversation” toggle opt-in.
-- **New release/update behavior:** `server/releases.mjs` → `server/download.mjs`
-  → `src-tauri/src/update.rs` → `src/lib/types.ts` → `bridge.ts` → the update
-  store/component → `server/releases.test.mjs` and the `update.rs` tests. The
-  release pipeline lives in `.github/workflows/release-app.yml` plus
-  `scripts/release-gate.mjs` and `scripts/merge-release-index.mjs`.
-- **Store/update channel changes:** `msix/AppxManifest.xml` +
-  `msix/identity.json` → `scripts/build-msix.mjs` → `update.rs` channel
-  detection/`store_url` → the Store branches in `UpdatePrompt` and the update
-  store → `release.config.json` `store` fields → README **Microsoft Store**.
+  Keep the "include the whole conversation" toggle opt-in.
+- **New release/update behavior:** `scripts/products.mjs` →
+  `server/releases.mjs` → `server/download.mjs` → `update.rs` →
+  `src/lib/types.ts` → `bridge.ts` → the update store/component →
+  `server/releases.test.mjs` and the `update.rs` tests. The release pipeline
+  lives in `.github/workflows/release-app.yml` plus `scripts/release-gate.mjs`
+  and `scripts/merge-release-index.mjs`. One index per product:
+  `/api/releases` (chat, historical) and `/api/releases/<product>`.
+- **Store/update channel changes:** `msix/<product>/AppxManifest.xml` +
+  `msix/<product>/identity.json` → `scripts/build-msix.mjs` → `update.rs`
+  channel detection/`store_url` → the Store branches in `UpdatePrompt` and the
+  update store → `release.config.json` `store` fields → README **Microsoft
+  Store**.
 
 ## Hard constraints
 
-- `harness.config.toml` is gitignored and `include_str!`d into the binary — a
+- `harness.config.toml` is gitignored and `include_str!`d into `hook-core` — a
   missing file is a compile error. Never commit it or a real provider key. The
   key lives server-side; the renderer must never see a secret.
 - **Git credentials are scoped.** The desktop mints `scope='git'` tokens; the app
   token (`scope='app'`) is what reads chats and spends model credits. Never put
   the app token in a project, URL or agent environment. The git token lives in
-  `agent-home/gitconfig` and is rotated per `device.json` id.
+  `agent-home/gitconfig` and is rotated per device.
+- **The account file is shared.** `%APPDATA%\app.hook\account.json` is read by
+  every product; writes go through `auth.rs` (atomic, unique temp name) and a
+  sign-out must clear the session for all of them. Never write a product-specific
+  token there.
 - **Sync is account-scoped and automatic.** Chats/pictures/projects push and pull
   in the background while signed in; the server merges, never the client. A chat
   that is streaming is never uploaded or overwritten. A different account on the
   same machine quarantines the previous chats under `accounts/<id>/`; never
   upload one account's history to another.
+- **Workspace permissions are server-side.** Viewer/editor/manager/owner is
+  checked on every request; the UI's gating is cosmetic. The chat agent acts as
+  the signed-in user and gets the same checks.
 - **Git quotas are server-side.** 200 MB per project, 1 GB per account, 50 MB per
   push (`server/git.mjs` + `server/git-policy.mjs`). Do not remove the pre-receive
   hook; a push must be rejected before anything is written.
-- Never edit generated or bundled trees: `src-tauri/target/`, `src-tauri/gen/`,
-  `src-tauri/resources/pi-runtime/` (restored by `pnpm engine`),
-  `src-tauri/resources/git/` (restored by `pnpm git`), `dist/`, `dist-waitlist/`,
-  `release/`.
+- Never edit generated or bundled trees: `target/`, `apps/*/src-tauri/gen/`,
+  `apps/*/src-tauri/resources/pi-runtime/` (restored by `pnpm engine`),
+  `apps/*/src-tauri/resources/git/` (restored by `pnpm git`), `dist/`,
+  `dist-waitlist/`, `release/`.
 - **A push to `main` deploys production.** `deploy-waitlist.yml` ships
-  hookcode.io on every push; `release-app.yml` publishes a Windows build when the
-  application source changed. Do not push unless the user asked.
-- **Never edit a version by hand.** Run `pnpm version:bump patch|minor|major`;
-  it updates `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json`
-  together. The release gate fails if they disagree, and refuses to republish an
-  existing version with different source.
+  hookcode.io on every push; `release-app.yml` publishes a Windows build when a
+  product's source changed. Do not push unless the user asked.
+- **Never edit a version by hand.** Run `pnpm version:bump patch|minor|major`
+  (add `--product workspace` for the second product); it updates that product's
+  `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` together. The
+  release gate fails if they disagree, and refuses to republish an existing
+  version with different source.
 - **Publishing must stay non-breaking.** Installers are immutable and versioned;
-  `releases.json` is swapped last. Never delete or overwrite the installer the
-  current index points at.
+  a product's index is swapped last. Never delete or overwrite the installer the
+  current index points at. The chat app's index keeps its historical URL.
 - **The Store channel is separate.** A packaged (MSIX) build must never run the
   direct installer: it updates through the Store. `store.latest` is set only
   after Microsoft certifies that version. Store submissions are uploaded
   unsigned (`makeappx` without a cert). The MSIX manifest opts out of AppData
-  virtualization for `%APPDATA%\app.hook.chat`; keep that so the two channels
-  share data instead of forking it. The Store product name is **HookCode** (the
-  manifest display name); the app UI stays Hook.
+  virtualization for its own `%APPDATA%\app.hook.<product>`; keep that so the two
+  channels share data instead of forking it. The Store product name for the chat
+  app is **HookCode** (the manifest display name); the app UI stays Hook.
 - **Store policy 11.16 is mandatory.** Live generative AI needs: the Report
   action on assistant replies, the AI disclosure in the listing, the Partner
   Center declaration, and a way to review reports (`scripts/ai-reports.sh`).
@@ -197,6 +227,7 @@ Changing one side of a boundary is the most common way to break this repo.
 `README.md` is the deep reference. Read the section instead of guessing:
 
 - Invariants and architecture → **How it is put together**
+- One account and several products → **One account, several products**
 - Coding-agent runtime, RPC args, guard policy, preview → **Coding agents**
 - Config keys and what is compiled in → **Configure**
 - Version bumping, release gate, in-app updates → **Updates** and
@@ -204,7 +235,7 @@ Changing one side of a boundary is the most common way to break this repo.
 - AI reporting for users and reviewers → **Reporting AI output**
 - Microsoft Store setup/submission, MSIX, Store update cadence →
   **Microsoft Store (MSIX)**
-- Local data layout (`%APPDATA%\app.hook.chat`) → **Where the data lives**
+- Local data layout (`%APPDATA%\app.hook*`) → **Where the data lives**
 - Landing page, OAuth, model proxy → **Web waitlist** + `infra/README.md`
 - Coverage → **Tests**
 

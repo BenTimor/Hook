@@ -39,7 +39,7 @@ const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The app directory to populate: `node scripts/fetch-git.mjs apps/chat`.
 const app = resolve(process.cwd(), process.argv[2] ?? "apps/chat");
-const out = join(app, "resources", "git");
+const out = join(app, "src-tauri", "resources", "git");
 const cache = join(root, ".git-runtime-cache");
 
 const VERSION = "2.56.1";
