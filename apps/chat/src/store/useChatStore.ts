@@ -294,7 +294,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
               .getChat(activeId)
               .then((chat) => {
                 if (get().activeId === activeId && !get().streams[activeId])
-                  set({ messages: chat.messages });
+                  set({ messages: settle(chat.messages, false) });
               })
               .catch(() => {
                 // It was deleted on another computer.

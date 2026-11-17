@@ -33,14 +33,26 @@ export function Thread<M extends ChatMessage>({
   const ref = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  const prevCount = useRef(messages.length);
+  const prevCount = useRef(0);
+
+  // Tool traffic is history, not conversation. The store already drops it, but
+  // this is the one place every product renders through, so the guarantee
+  // belongs here too: no caller can put a tool result on screen by accident.
+  const shown = useMemo(
+    () =>
+      messages.filter(
+        (message) =>
+          !message.hidden && message.role !== "tool" && message.role !== "system",
+      ),
+    [messages],
+  );
 
   const lastAssistantId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (messages[i].role === "assistant") return messages[i].id;
+    for (let i = shown.length - 1; i >= 0; i -= 1) {
+      if (shown[i].role === "assistant") return shown[i].id;
     }
     return null;
-  }, [messages]);
+  }, [shown]);
 
   useEffect(() => {
     const inner = innerRef.current;
@@ -56,14 +68,14 @@ export function Thread<M extends ChatMessage>({
   }, []);
 
   useEffect(() => {
-    if (messages.length > prevCount.current) {
-      const last = messages[messages.length - 1];
+    if (shown.length > prevCount.current) {
+      const last = shown[shown.length - 1];
       if (last?.role === "user") stick.current = true;
     }
-    prevCount.current = messages.length;
+    prevCount.current = shown.length;
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [messages, streamText]);
+  }, [shown, streamText]);
 
   return (
     <div
@@ -75,7 +87,7 @@ export function Thread<M extends ChatMessage>({
       }}
     >
       <div className="thread-inner" ref={innerRef}>
-        {messages.map((message) => (
+        {shown.map((message) => (
           <MessageItem
             key={message.id}
             message={message}
