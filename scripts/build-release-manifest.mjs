@@ -3,7 +3,7 @@
  * Build the manifest the download endpoints and the updater read next to an
  * installer.
  *
- *   node scripts/build-release-manifest.mjs <installer> <manifest> [version]
+ *   node scripts/build-release-manifest.mjs <installer> <manifest> [version] [--product <id>]
  *
  * The release workflow runs this on Windows after `tauri build`, uploads the
  * installer under its versioned name, and merges this manifest into the public
@@ -18,11 +18,17 @@ import { appSourceHash } from "./app-source-hash.mjs";
 import { productFromArgs } from "./products.mjs";
 import { readRepoVersion } from "./release-gate.mjs";
 
-const [, , installerArg, manifestArg, versionArg] = process.argv;
+// `--product <id>` is a flag, not a third positional: strip it (and its value)
+// before reading the positional arguments, or it is mistaken for the version.
+const argv = process.argv.slice(2);
+const positionals = argv.filter(
+  (arg, index) => arg !== "--product" && argv[index - 1] !== "--product",
+);
+const [installerArg, manifestArg, versionArg] = positionals;
 const product = productFromArgs();
 if (!installerArg || !manifestArg) {
   console.error(
-    "usage: node scripts/build-release-manifest.mjs <installer> <manifest> [version]",
+    "usage: node scripts/build-release-manifest.mjs <installer> <manifest> [version] [--product <id>]",
   );
   process.exit(1);
 }
