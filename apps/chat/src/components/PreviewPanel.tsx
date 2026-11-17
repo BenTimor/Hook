@@ -8,8 +8,14 @@ import {
 } from "lucide-react";
 
 import { openExternal } from "../lib/bridge";
-import type { PreviewView } from "../lib/types";
+import type {
+  PreviewView,
+  WorkspaceBoard,
+  WorkspaceComment,
+  WorkspaceTask,
+} from "../lib/types";
 import { useChatStore } from "../store/useChatStore";
+import { Markdown } from "./Markdown";
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 720;
@@ -61,6 +67,7 @@ export function PreviewPanel() {
   const shown = preview ?? lastPreview.current;
   const wantsOpen = Boolean(preview && open);
   const live = Boolean(shown?.live);
+  const kind = shown?.kind ?? "page";
 
   useEffect(() => {
     if (wantsOpen) {
@@ -176,8 +183,15 @@ export function PreviewPanel() {
           <div className="preview-title" title={shown.title}>
             {shown.title ?? "Preview"}
           </div>
-          <div className="preview-path" title={`${shown.project} / ${shown.file}`}>
-            {shown.project} / {shown.file}
+          <div
+            className="preview-path"
+            title={
+              kind === "page"
+                ? `${shown.project} / ${shown.file}`
+                : "Hook Workspace"
+            }
+          >
+            {kind === "page" ? `${shown.project} / ${shown.file}` : "Hook Workspace"}
           </div>
         </div>
         {live && (
@@ -197,14 +211,16 @@ export function PreviewPanel() {
           </div>
         )}
         <div className="preview-actions">
-          <button
-            className="icon-btn"
-            title="Reload the page"
-            onClick={() => setReloads((value) => value + 1)}
-          >
-            <RefreshCw strokeWidth={1.8} />
-          </button>
-          {shown.url && (
+          {kind === "page" && (
+            <button
+              className="icon-btn"
+              title="Reload the page"
+              onClick={() => setReloads((value) => value + 1)}
+            >
+              <RefreshCw strokeWidth={1.8} />
+            </button>
+          )}
+          {kind === "page" && shown.url && (
             <button
               className="icon-btn"
               title="Open in your browser"
@@ -245,8 +261,16 @@ export function PreviewPanel() {
         </div>
       )}
 
-      <div className="preview-body">
-        {waiting ? (
+      <div className="preview-body" data-kind={kind}>
+        {kind === "document" && shown.document ? (
+          <div className="preview-doc">
+            <Markdown content={shown.document.markdown} />
+          </div>
+        ) : kind === "task" && shown.task ? (
+          <TaskCard task={shown.task} comments={shown.comments ?? []} />
+        ) : kind === "board" && shown.board ? (
+          <BoardCard board={shown.board} tasks={shown.tasks ?? []} />
+        ) : waiting ? (
           <div className="preview-waiting">
             {live && <span className="preview-waiting-dot" aria-hidden="true" />}
             <div className="preview-waiting-title">
@@ -271,5 +295,76 @@ export function PreviewPanel() {
         )}
       </div>
     </aside>
+  );
+}
+
+function TaskCard({
+  task,
+  comments,
+}: {
+  task: WorkspaceTask;
+  comments: WorkspaceComment[];
+}) {
+  return (
+    <div className="preview-entity">
+      <h2 className="preview-entity-title">{task.title}</h2>
+      {task.description ? <Markdown content={task.description} /> : null}
+      {comments.length > 0 && (
+        <div className="preview-comments">
+          <div className="preview-comments-title">Comments</div>
+          {comments.map((comment) => (
+            <div className="preview-comment" key={comment.id}>
+              <div className="preview-comment-meta">
+                <span>{comment.author}</span>
+                {comment.authorKind === "agent" && (
+                  <span className="preview-agent-tag">via Hook agent</span>
+                )}
+              </div>
+              <Markdown content={comment.body} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BoardCard({
+  board,
+  tasks,
+}: {
+  board: WorkspaceBoard;
+  tasks: WorkspaceTask[];
+}) {
+  const status = board.columns.find((column) => column.type === "status");
+  const columns = status?.options ?? [];
+  return (
+    <div className="preview-entity">
+      <h2 className="preview-entity-title">{board.name}</h2>
+      {board.description ? (
+        <p className="preview-entity-note">{board.description}</p>
+      ) : null}
+      <div className="preview-board">
+        {columns.map((column) => {
+          const items = tasks.filter((task) => task.status === column.id);
+          return (
+            <div className="preview-board-column" key={column.id}>
+              <div className="preview-board-head">
+                {column.label}
+                <span>{items.length}</span>
+              </div>
+              {items.map((task) => (
+                <div className="preview-board-card" key={task.id}>
+                  {task.title}
+                </div>
+              ))}
+              {items.length === 0 && (
+                <div className="preview-board-empty">Nothing here</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

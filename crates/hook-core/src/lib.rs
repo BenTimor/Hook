@@ -28,6 +28,7 @@ mod sync;
 mod tools;
 mod turn;
 mod update;
+mod workspace;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -220,6 +221,8 @@ fn setup(
         git_runtime,
     ));
 
+    let workspace = Arc::new(workspace::WorkspaceClient::new(&cfg, auth.clone()));
+
     let state = Arc::new(AppState {
         app: app.handle().clone(),
         store,
@@ -235,6 +238,7 @@ fn setup(
         vision: vision.clone(),
         vision_off: Arc::new(Default::default()),
         imports: Arc::new(import::Importer::new()),
+        workspace,
         product,
         capabilities,
     });

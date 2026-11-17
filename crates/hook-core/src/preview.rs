@@ -47,6 +47,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct PreviewView {
     pub active: bool,
     pub chat_id: String,
+    /// "page" (an HTML file served from a project) or one of the workspace
+    /// kinds: "document", "task", "board".
+    pub kind: String,
     pub project: String,
     /// Project-relative path, always with forward slashes.
     pub file: String,
@@ -56,6 +59,19 @@ pub struct PreviewView {
     /// True the first time this run showed a preview: open the panel. Later
     /// updates leave the user's collapsed/expanded choice alone.
     pub open: bool,
+    /// A Markdown document shown from Hook Workspace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<serde_json::Value>,
+    /// A task with its comments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comments: Option<serde_json::Value>,
+    /// The board and its tasks, for the board view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<serde_json::Value>,
     /// The page file does not exist yet. The watcher loads it when it appears.
     pub waiting: bool,
     /// The run is still working and the page refreshes itself as files change.
@@ -94,6 +110,15 @@ pub struct PreviewManager {
 
 struct Active {
     chat_id: String,
+    /// "page" or a workspace kind. Workspace previews have no watcher, no
+    /// server and no run behind them: they are a document the chat agent put
+    /// in front of the user.
+    kind: String,
+    document: Option<serde_json::Value>,
+    task: Option<serde_json::Value>,
+    comments: Option<serde_json::Value>,
+    board: Option<serde_json::Value>,
+    tasks: Option<serde_json::Value>,
     /// The coding agent that pointed the panel at this page. The preview stops
     /// refreshing when that run settles, but stays open.
     agent_id: String,
@@ -117,13 +142,19 @@ impl Active {
         PreviewView {
             active: true,
             chat_id: self.chat_id.clone(),
+            kind: self.kind.clone(),
+            document: self.document.clone(),
+            task: self.task.clone(),
+            comments: self.comments.clone(),
+            board: self.board.clone(),
+            tasks: self.tasks.clone(),
             project: self.project.clone(),
             file: self.file.clone(),
             title: self.title.clone(),
             url: self.url.clone(),
             version: self.version.load(Ordering::SeqCst),
             open,
-            waiting: !self.path.is_file(),
+            waiting: self.kind == "page" && !self.path.is_file(),
             live: !self.settled.load(Ordering::SeqCst),
         }
     }
@@ -216,6 +247,12 @@ impl PreviewManager {
 
         let active = Active {
             chat_id: chat_id.to_string(),
+            kind: "page".to_string(),
+            document: None,
+            task: None,
+            comments: None,
+            board: None,
+            tasks: None,
             agent_id: agent_id.to_string(),
             project: project.to_string(),
             file,
@@ -235,6 +272,48 @@ impl PreviewManager {
         *lock(&self.active) = Some(active);
         (self.emit)(PreviewEvent::Open(view.clone()));
         Ok(view)
+    }
+
+    /// Show a Hook Workspace entity in the panel. There is no run and no
+    /// watcher behind it: the chat agent asked, and the panel displays it until
+    /// something else replaces it.
+    pub fn show_workspace(
+        &self,
+        chat_id: &str,
+        kind: &str,
+        title: &str,
+        document: Option<serde_json::Value>,
+        task: Option<serde_json::Value>,
+        comments: Option<serde_json::Value>,
+        board: Option<serde_json::Value>,
+        tasks: Option<serde_json::Value>,
+    ) -> PreviewView {
+        self.clear(false);
+        let active = Active {
+            chat_id: chat_id.to_string(),
+            kind: kind.to_string(),
+            document,
+            task,
+            comments,
+            board,
+            tasks,
+            // No coding-agent run owns this preview, so it never settles.
+            agent_id: String::new(),
+            project: "Workspace".to_string(),
+            file: String::new(),
+            title: title.to_string(),
+            url: String::new(),
+            path: PathBuf::new(),
+            version: Arc::new(AtomicU64::new(0)),
+            stop: Arc::new(AtomicBool::new(false)),
+            settled: Arc::new(AtomicBool::new(true)),
+            server: None,
+            thread: None,
+        };
+        let view = active.view(true);
+        *lock(&self.active) = Some(active);
+        (self.emit)(PreviewEvent::Open(view.clone()));
+        view
     }
 
     /// The panel as it stands now, or `None` when nothing is open. Restored by
@@ -270,7 +349,10 @@ impl PreviewManager {
 
     /// The coding agent whose run owns the panel, if one is open.
     pub fn agent_id(&self) -> Option<String> {
-        lock(&self.active).as_ref().map(|active| active.agent_id.clone())
+        lock(&self.active)
+            .as_ref()
+            .map(|active| active.agent_id.clone())
+            .filter(|id| !id.is_empty())
     }
 
     /// End the preview only when it belongs to this chat. Used when a chat is
@@ -724,6 +806,12 @@ fn start_watch(
                 emit(PreviewEvent::Open(PreviewView {
                     active: true,
                     chat_id: chat_id.clone(),
+                    kind: "page".to_string(),
+                    document: None,
+                    task: None,
+                    comments: None,
+                    board: None,
+                    tasks: None,
                     project: project.clone(),
                     file: file.clone(),
                     title: title.clone(),
@@ -807,6 +895,12 @@ mod tests {
         let open = PreviewEvent::Open(PreviewView {
             active: true,
             chat_id: "chat-1".into(),
+            kind: "page".into(),
+            document: None,
+            task: None,
+            comments: None,
+            board: None,
+            tasks: None,
             project: "demo".into(),
             file: "dist/index.html".into(),
             title: "Demo".into(),

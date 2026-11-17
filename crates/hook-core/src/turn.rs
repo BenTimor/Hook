@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::agent::AgentInfo;
@@ -44,6 +44,16 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - Frontend work: tell the coding agent to point show_preview at the page the user should see, usually index.html or the project preview entry - never a source file such as App.tsx - and to keep that page working and current, with relative paths, so what the user sees is the real thing.
 - Other work worth seeing: tell it to create a standalone, self-contained HTML page (for example preview.html) with the real numbers and charts, and to call show_preview for it. It should keep the page updated as findings change.
 - The panel opens itself the first time in a coding session. When that run finishes it stays open and simply stops refreshing on its own; the user can collapse it or reload it by hand. Never ask permission and never explain the mechanics. A few plain words when it matters is enough ('the pricing page is in the preview').
+
+## Hook Workspace
+- Hook Workspace holds the user's projects: boards of tasks, and Markdown documents, shared with people. You can do everything a person can do there, except transfer ownership.
+- Find things by id: workspace_projects (list) → workspace_boards (list, project) → workspace_tasks (list, board). Never invent an id; list first when the request names something you have not seen.
+- A task has a title, a Markdown description, one status from the board's status column, an optional assignee and values for the board's other columns. Read the board before creating tasks so the ids are real.
+- Comments you write are in the user's name, marked as written by their Hook agent. Write the comment itself, as it should read to the team; do not narrate that you wrote it.
+- A document *is* its Markdown. To change one, read it, then send the revision you read (baseRev) with the new Markdown. If the write comes back refused, the document changed while you were working: read it again.
+- You may invite people as viewer or editor, change roles, remove people, and accept an invitation the user asked you to accept. Never transfer ownership — tell the user to do that in Workspace.
+- Deleting a project, board or document is permanent for everyone in it. Say what will disappear and ask first unless the user was unambiguous.
+- workspace_preview puts a task, board or document beside the chat. Use it after changing something worth looking at.
 
 ## Steering a running agent
 - While a coding agent is working, a message from the user is guidance for that agent, not a request for you to do work. Call list_agents or agent_status, find the live agent in this chat, and pass the instruction on with steer_agent. Then reply with one short line saying what you told it to change.
@@ -208,6 +218,13 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         if !has_notes {
             if let Some(list) = set.as_array_mut() {
                 list.retain(|tool| tool["function"]["name"] != "no_update");
+            }
+        }
+        // Workspace tools: the same data the Workspace app shows, reachable
+        // from the chat whether or not that product is installed.
+        if state.capabilities.workspace_tools {
+            if let Some(list) = set.as_array_mut() {
+                list.extend(crate::workspace::definitions());
             }
         }
         // Only advertise tools this product can actually honour.
@@ -698,6 +715,51 @@ fn non_empty(value: String) -> Option<String> {
     }
 }
 
+/// Run a `workspace_*` call and put anything it asks to preview in the panel.
+async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &Value) -> String {
+    let raw = crate::workspace::execute(&state.workspace, chat_id, name, args).await;
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return raw;
+    };
+    let Some(preview) = value.get("preview") else {
+        return raw;
+    };
+    let kind = preview.get("kind").and_then(Value::as_str).unwrap_or("");
+    let document = preview.get("document").cloned();
+    let task = preview.get("task").cloned();
+    let comments = preview.get("comments").cloned();
+    let board = preview.get("board").cloned();
+    let tasks = preview.get("tasks").cloned();
+    let title = document
+        .as_ref()
+        .and_then(|value| value.get("title"))
+        .or_else(|| task.as_ref().and_then(|value| value.get("title")))
+        .or_else(|| board.as_ref().and_then(|value| value.get("name")))
+        .and_then(Value::as_str)
+        .unwrap_or("Preview")
+        .to_string();
+
+    if !state.capabilities.preview {
+        return json!({
+            "shown": false,
+            "reason": "This window has no preview panel.",
+            "hint": "Answer with a short summary instead.",
+        })
+        .to_string();
+    }
+    state.preview.show_workspace(
+        chat_id,
+        kind,
+        &title,
+        document,
+        task,
+        comments,
+        board,
+        tasks,
+    );
+    json!({ "shown": true, "kind": kind, "title": title }).to_string()
+}
+
 async fn run_tool(
     state: &AppState,
     chat_id: &str,
@@ -708,6 +770,9 @@ async fn run_tool(
         .unwrap_or_else(|_| json!({}));
     if call.name == "web_search" {
         return web_search(state, &args).await;
+    }
+    if call.name.starts_with("workspace_") {
+        return run_workspace_tool(state, chat_id, &call.name, &args).await;
     }
     tools::execute(
         &ToolEnv {
@@ -1475,5 +1540,45 @@ mod tests {
         turns.queue("c1");
         assert!(turns.release("c1"));
         assert!(turns.begin("c1"));
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    fn config() -> config::HarnessConfig {
+        config::get().expect("harness.config.toml").clone()
+    }
+
+    #[test]
+    fn a_product_without_a_preview_panel_is_not_told_about_one() {
+        let cfg = config();
+        let chat = system_prompt(&cfg, crate::Capabilities::chat());
+        let workspace = system_prompt(&cfg, crate::Capabilities::workspace());
+        assert!(chat.contains("## Preview panel"));
+        assert!(!workspace.contains("## Preview panel"));
+        // Both products share the workspace tools.
+        assert!(workspace.contains("## Hook Workspace"));
+        assert!(chat.contains("## Hook Workspace"));
+    }
+
+    #[test]
+    fn capabilities_remove_sections_whole() {
+        let cfg = config();
+        let bare = system_prompt(
+            &cfg,
+            crate::Capabilities {
+                preview: false,
+                coding_agents: false,
+                workspace_tools: false,
+            },
+        );
+        for heading in ["## Coding agents", "## Steering a running agent", "## Progress"] {
+            assert!(!bare.contains(heading), "{heading} should be gone");
+        }
+        // The style rules at the end must survive: dropping a section must not
+        // swallow its neighbours.
+        assert!(bare.contains("## Style"));
     }
 }

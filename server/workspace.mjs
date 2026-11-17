@@ -748,6 +748,14 @@ export function createWorkspaceRouter({ db, env = {} }) {
     res.json({ boards: list(db, "boards", id).map(shapeBoard) });
   });
 
+  router.get("/boards/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_boards", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "read")) return;
+    const row = db.prepare("SELECT * FROM ws_boards WHERE id = ?").get(req.params.id);
+    res.json({ board: shapeBoard(row) });
+  });
+
   router.post("/projects/:id/boards", (req, res) => {
     const id = req.params.id;
     if (!actor(req, res, id, "write")) return;

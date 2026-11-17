@@ -37,6 +37,9 @@ pub struct AppState {
     /// Scanned ChatGPT / Claude exports, kept between the preview and the
     /// confirmation so a large archive is parsed once.
     pub imports: Arc<crate::import::Importer>,
+    /// Hook Workspace's data, reached over the account API. Shared with the
+    /// chat agent's tools, which work without Workspace installed.
+    pub workspace: Arc<crate::workspace::WorkspaceClient>,
     /// Which desktop product this backend is serving.
     pub product: crate::Product,
     /// What this product's chat agent may do (see `Capabilities`).

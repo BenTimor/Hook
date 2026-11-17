@@ -740,6 +740,46 @@ tools, cross-device sync, project sync. ("ChatGPT import" is tempting but it is
 someone else's trademark in a keyword field — leave it out unless you want to
 argue about it.)
 
+## Hook Workspace
+
+The second product. A project holds boards of tasks, Markdown documents and the
+people they are shared with; folders only organize them. It is its own installer
+(`apps/workspace`, identifier `app.hook.workspace`) with the same window chrome,
+the same account and the same chat beside it.
+
+The important structural decision: **the workspace service is the product; the
+window is a client.** `server/workspace.mjs` owns projects, memberships,
+invitations, folders, boards, tasks, comments and documents, and enforces roles
+on every request. That is what lets Hook's chat agent do the same work on a
+machine where Workspace is not installed, and it is why there is no local merge
+to write: a device applies `/api/ws/changes` and converges.
+
+Roles: `viewer` reads, `editor` creates and edits, `manager` also invites
+viewers and editors, `owner` deletes the project and transfers ownership. A
+manager cannot mint another manager, and ownership only moves to someone who
+accepted the invitation and is already a manager — the Workspace dialog says
+that it is permanent and cannot be undone.
+
+- **One cursor.** Every workspace row carries `seq` from one global counter;
+  `GET /api/ws/changes?since=N` returns rows in projects the caller belongs to,
+  tombstones included, bounded by rows and bytes. Clients keep the last `seq`.
+- **Documents are Markdown.** The buffer is the document, so there is no
+  round-trip to lose formatting. A write carries the revision it was based on;
+  a stale one is refused with the current copy rather than silently overwriting
+  someone else's paragraph.
+- **Comments know how they were written.** `author_kind` is `user` or `agent`,
+  and an agent comment carries the conversation it came from, so a teammate sees
+  "via Hook agent" instead of mistaking it for something the user typed.
+- **The chat agent can do everything a person can, except transfer ownership.**
+  `workspace_projects`, `workspace_folders`, `workspace_boards`,
+  `workspace_tasks`, `workspace_comments`, `workspace_documents`,
+  `workspace_members`, `workspace_invites` and `workspace_preview` are ordinary
+  chat tools (`crates/hook-core/src/workspace.rs`) that call the account API with
+  the user's token, so the server checks the user's real role.
+- **Previews.** `workspace_preview` puts a task, board or document in the preview
+  panel. It is a second kind of preview next to the HTML page a coding agent can
+  show, and the panel renders it directly instead of in an iframe.
+
 ## One account, several products
 
 Hook is a family of desktop products, and the account is the family's centre of

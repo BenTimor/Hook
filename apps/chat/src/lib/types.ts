@@ -207,9 +207,64 @@ export interface AgentsOverview {
 }
 
 /** One HTML page shown in the right-side preview panel. */
+export interface WorkspaceTask {
+  id: string;
+  projectId: string;
+  boardId: string;
+  title: string;
+  description: string;
+  status: string;
+  assignee?: string | null;
+  fields?: Record<string, unknown>;
+  updatedAt: number;
+}
+
+export interface WorkspaceDocument {
+  id: string;
+  projectId: string;
+  title: string;
+  markdown: string;
+  rev: number;
+  updatedAt: number;
+}
+
+export interface WorkspaceColumn {
+  id: string;
+  name: string;
+  type: string;
+  options?: Array<{ id: string; label: string }>;
+}
+
+export interface WorkspaceBoard {
+  id: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  columns: WorkspaceColumn[];
+}
+
+export interface WorkspaceComment {
+  id: string;
+  author: string;
+  authorKind: "user" | "agent";
+  viaChatId?: string | null;
+  body: string;
+  createdAt: number;
+}
+
+/** What the preview panel is showing: a project page, or a Workspace entity. */
+export type PreviewKind = "page" | "document" | "task" | "board";
+
 export interface PreviewView {
   active: true;
   chatId: string;
+  kind?: PreviewKind;
+  /** A Markdown document from Hook Workspace. */
+  document?: WorkspaceDocument;
+  task?: WorkspaceTask;
+  comments?: WorkspaceComment[];
+  board?: WorkspaceBoard;
+  tasks?: WorkspaceTask[];
   project?: string;
   file?: string;
   title?: string;
