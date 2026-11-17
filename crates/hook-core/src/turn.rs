@@ -164,9 +164,59 @@ impl TurnState {
 
 /// Starts a turn if the chat is free, otherwise remembers to run one later.
 pub fn kick(state: Arc<AppState>, chat_id: String) {
+    spawn_turn(state, chat_id);
+}
+
+/// A turn that panics would otherwise leave the chat marked as busy forever and
+/// the window waiting for an event that never comes. Catch it, say so, release.
+fn spawn_turn(state: Arc<AppState>, chat_id: String) {
+    use futures_util::FutureExt;
+
     tauri::async_runtime::spawn(async move {
-        run_turn(state, chat_id).await;
+        let outcome =
+            std::panic::AssertUnwindSafe(run_turn(state.clone(), chat_id.clone()))
+                .catch_unwind()
+                .await;
+        if outcome.is_err() {
+            fail_turn(
+                &state,
+                &chat_id,
+                "Something went wrong while composing this reply. Try again.",
+            );
+            finish(&state, &chat_id);
+        }
     });
+}
+
+/// Turn any assistant message still marked as streaming into a visible error.
+fn fail_turn(state: &AppState, chat_id: &str, message: &str) {
+    let Ok(mut chat) = state.store.load(chat_id) else {
+        return;
+    };
+    let Some(entry) = chat
+        .messages
+        .iter_mut()
+        .rev()
+        .find(|entry| entry.role == "assistant" && entry.status == "streaming")
+    else {
+        return;
+    };
+    entry.status = "error".into();
+    entry.error = Some(message.to_string());
+    chat.meta.updated_at = now_ms();
+    if let Err(error) = state.store.save(&mut chat) {
+        eprintln!("hook: could not record the failed turn: {error}");
+        return;
+    }
+    emit(
+        state,
+        chat_id,
+        StreamEvent::Error {
+            message: message.to_string(),
+            messages: chat.messages.clone(),
+            meta: chat.meta.clone(),
+        },
+    );
 }
 
 pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
@@ -268,7 +318,9 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         let assistant_id = assistant.id.clone();
         chat.messages.push(assistant);
         chat.meta.updated_at = now_ms();
-        let _ = state.store.save(&mut chat);
+        if let Err(error) = state.store.save(&mut chat) {
+            eprintln!("hook: could not save the chat before the reply: {error}");
+        }
         emit(
             &state,
             &chat_id,
@@ -580,16 +632,20 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
 
 fn finish(state: &Arc<AppState>, chat_id: &str) {
     lock(&state.streams).remove(chat_id);
+    // Every exit goes through here, including the silent ones (a chat file that
+    // could not be read, a panic). A message left "streaming" would keep the
+    // window thinking until the app restarts, so it becomes an error now.
+    fail_turn(
+        state,
+        chat_id,
+        "This reply did not finish. Try again.",
+    );
     // Make the finished turn visible on the other computers without waiting
     // for the next poll.
     state.sync.wake();
     if state.turns.release(chat_id) {
         // Something arrived while this turn was running.
-        let state = state.clone();
-        let chat_id = chat_id.to_string();
-        tauri::async_runtime::spawn(async move {
-            run_turn(state, chat_id).await;
-        });
+        spawn_turn(state.clone(), chat_id.to_string());
     }
 }
 

@@ -146,6 +146,33 @@ pub fn builder(product: Product, capabilities: Capabilities) -> tauri::Builder<t
         ])
 }
 
+/// A panic inside a spawned task is otherwise invisible: the window keeps
+/// waiting for an event that will never arrive, and the only trace is a line in
+/// a terminal someone has to be watching. Keep the last ones on disk.
+fn install_panic_log(data_dir: &std::path::Path) {
+    use std::io::Write;
+
+    let path = data_dir.join("panic.log");
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("unnamed");
+        let location = info
+            .location()
+            .map(|at| format!("{}:{}", at.file(), at.line()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let text = format!("{stamp} [{name}] {location}: {info}
+");
+        eprintln!("hook: panic {text}");
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = file.write_all(text.as_bytes());
+        }
+    }));
+}
+
 fn setup(
     app: &mut tauri::App,
     product: Product,
@@ -153,6 +180,7 @@ fn setup(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
+    install_panic_log(&data_dir);
 
     let store = Arc::new(store::Store::new(data_dir.clone()).map_err(std::io::Error::other)?);
     let settings = Arc::new(settings::SettingsStore::new(&data_dir));
