@@ -2273,8 +2273,10 @@ node \"%~dp0fake-pi.mjs\" %*
 
         // Wait for the settle signal, then check the recorded state. In the
         // app a 1 s ticker does the harvesting; here the test plays that role.
+        // The deadline is generous because this spawns cmd.exe + node, which on a
+        // loaded CI runner can take seconds to get going (10 s was flaky).
         let mut woke = false;
-        let deadline = tokio::time::Instant::now() + StdDuration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + StdDuration::from_secs(45);
         while tokio::time::Instant::now() < deadline {
             mgr.harvest();
             mgr.flush_due(StdDuration::ZERO);

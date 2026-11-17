@@ -297,6 +297,7 @@ impl ProjectsStore {
     }
 
     pub fn create(&self, root: &Path, raw_name: &str, description: &str) -> Result<Project, String> {
+        let root = &canonical(root);
         let name = validate_name(raw_name)?;
         let path = root.join(&name);
         if path.exists() {
@@ -395,6 +396,9 @@ impl ProjectsStore {
         created_at: i64,
         updated_at: i64,
     ) -> Result<Project, String> {
+        // A short (8.3) root such as C:/Users/RUNNER~1 would otherwise be
+        // stored as the folder's path while resolve() returns the long form.
+        let root = &canonical(root);
         let wanted = folder_name(name, id);
         let mut notes = lock(&self.notes);
 
@@ -428,8 +432,11 @@ impl ProjectsStore {
             folder = format!("{wanted} ({suffix})");
             suffix += 1;
         }
-        let path = canonical(&root.join(&folder));
-        fs::create_dir_all(&path).map_err(|e| format!("Could not create {folder}: {e}"))?;
+        let created = root.join(&folder);
+        fs::create_dir_all(&created).map_err(|e| format!("Could not create {folder}: {e}"))?;
+        // Canonicalize after creating it: before that, canonicalize() falls back
+        // to whatever form the root was given in.
+        let path = canonical(&created);
         let now = now_ms();
         let note = ProjectNote {
             id: id.to_string(),
@@ -622,6 +629,9 @@ mod tests {
             .bind(&root, "pj_remote1", "from-other-machine", "new notes", 10, 30)
             .unwrap();
         assert_eq!(first.path, again.path);
+        // Stored in the long form even when the root was given as a short
+        // (8.3) name: resolve() canonicalizes, so the two must agree.
+        assert_eq!(canonical(Path::new(&first.path)), Path::new(&first.path));
         assert_eq!(again.description, "new notes");
         assert_eq!(store.resolve(&root, "from-other-machine").unwrap(), Path::new(&first.path));
     }
