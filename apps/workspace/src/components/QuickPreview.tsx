@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { FileText, KanbanSquare } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 
 import { api } from "../lib/bridge";
 import type { Task } from "../lib/types";
@@ -92,6 +94,7 @@ export function QuickPreview({
           {content.text?.trim() ? (
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw, [rehypeSanitize, { ...defaultSchema, tagNames: [...(defaultSchema.tagNames ?? []), "u"] }]]}
               components={{
                 a: ({ children }) => <span className="ws-preview-link">{children}</span>,
                 img: ({ alt }) => <span>{alt || "Image"}</span>,

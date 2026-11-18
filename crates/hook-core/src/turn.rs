@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::agent::AgentInfo;
+use crate::auth::RefreshOutcome;
 use crate::commands::AppState;
 use crate::config::{self, ReasoningEcho};
 use crate::provider::{self, CancelToken, Chunk, Outcome};
@@ -592,15 +593,17 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 break;
             }
             Err(err) => {
-                // 401/403 from the Hook proxy means the account was signed out
-                // or unapproved while this window was open. Drop the token and
-                // show the login screen; the chat keeps the failed message.
-                if err.starts_with("401") || err.starts_with("403") {
-                    state.auth.clear_session();
-                    crate::commands::revoke_local(&state);
-                    let mut view = state.auth.view();
-                    view.message = Some(err.clone());
-                    let _ = state.app.emit("hook://auth", view);
+                // The model endpoint can reject a request even when the Hook
+                // account is valid. Only the account service can confirm revocation.
+                if (err.starts_with("401 · ") || err.starts_with("403 · "))
+                    && state.auth.token().as_deref() == Some(token.as_str())
+                {
+                    if let RefreshOutcome::Revoked(message) = state.auth.refresh().await {
+                        crate::commands::revoke_local(&state);
+                        let mut view = state.auth.view();
+                        view.message = Some(message);
+                        let _ = state.app.emit("hook://auth", view);
+                    }
                 }
                 if vision && rejects_images(&err) {
                     // The model card promised vision and the endpoint

@@ -848,6 +848,7 @@ that it is permanent and cannot be undone.
   round-trip to lose formatting. A formatting toolbar adds headings, lists,
   checklists, links, inline styles, code blocks, dividers and Markdown tables.
   The formatted editor is the default and lets people edit table cells directly.
+  Hover over a web link for its address and open action, or Ctrl-click it to open.
   Document options also offers Markdown source editing and deletion. A write carries the revision it was based
   on; a stale one is refused with the current copy rather than silently overwriting
   someone else's paragraph.

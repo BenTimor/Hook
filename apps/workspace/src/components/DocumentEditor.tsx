@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { TextFieldDialog } from "@hook/ui";
 import {
   Annotation,
   Compartment,
@@ -11,6 +12,7 @@ import {
   EditorView,
   ViewPlugin,
   WidgetType,
+  hoverTooltip,
   keymap,
   placeholder,
   type DecorationSet,
@@ -19,9 +21,10 @@ import {
 import { history, historyKeymap, indentWithTab, defaultKeymap, undo, redo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
-import { Bold, Italic, Heading1, Heading2, Heading3, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2 } from "lucide-react";
+import { Bold, Italic, Underline, Heading1, Heading2, Heading3, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2 } from "lucide-react";
 
 import type { DocumentMeta } from "../lib/types";
+import { openExternal } from "../lib/bridge";
 
 /**
  * The document editor.
@@ -54,6 +57,9 @@ export function DocumentEditor({
   onSave: (markdown: string) => Promise<boolean>;
 }) {
   const host = useRef<HTMLDivElement>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const linkSelection = useRef<{ from: number; to: number; label?: string } | null>(null);
   const view = useRef<EditorView | null>(null);
   const rawCompartment = useRef(new Compartment());
   const saveRef = useRef(onSave);
@@ -96,7 +102,8 @@ export function DocumentEditor({
         keymap.of([
           { key: "Mod-b", run: (target) => toggleWrap(target, "**") },
           { key: "Mod-i", run: (target) => toggleWrap(target, "*") },
-          { key: "Mod-k", run: (target) => insertLink(target) },
+          { key: "Mod-k", run: (target) => { openLink(target); return true; } },
+          { key: "Mod-u", run: (target) => toggleWrap(target, "<u>", "</u>") },
           ...defaultKeymap,
           ...historyKeymap,
           indentWithTab,
@@ -106,7 +113,7 @@ export function DocumentEditor({
         EditorState.readOnly.of(readOnly),
         placeholder(readOnly ? "This document is empty." : "Start writing your document…"),
         markdown({ base: markdownLanguage, addKeymap: false }),
-        rawCompartment.current.of(raw ? [] : [livePreview, tablePreview]),
+        rawCompartment.current.of(raw ? [] : [livePreview, tablePreview, linkHover]),
         EditorView.domEventHandlers({
           mousedown(event, editor) {
             if (event.button !== 0 || editor.state.readOnly ||
@@ -180,9 +187,30 @@ export function DocumentEditor({
     const instance = view.current;
     if (!instance) return;
     instance.dispatch({
-      effects: rawCompartment.current.reconfigure(raw ? [] : [livePreview, tablePreview]),
+      effects: rawCompartment.current.reconfigure(raw ? [] : [livePreview, tablePreview, linkHover]),
     });
   }, [raw]);
+
+  const openLink = (editor: EditorView) => {
+    if (editor.state.readOnly) return;
+    const { from, to } = editor.state.selection.main;
+    const line = editor.state.doc.lineAt(from);
+    const nested = /\[\[([^\]]+)\]\(([^)]*)\)\]\(([^)]*)\)/g;
+    const links = /\[([^\[\]]+)\]\(([^)]*)\)/g;
+    const match = [...line.text.matchAll(nested), ...line.text.matchAll(links)].find((item) => {
+      const start = line.from + item.index!;
+      return from >= start && to <= start + item[0].length;
+    });
+    if (match) {
+      const start = line.from + match.index!;
+      linkSelection.current = { from: start, to: start + match[0].length, label: match[1] };
+      setLinkUrl(match[2] === "url" ? "" : match[2]);
+    } else {
+      linkSelection.current = { from, to };
+      setLinkUrl("");
+    }
+    setLinkOpen(true);
+  };
 
   const tools = [
     { label: "Undo", Icon: Undo2, run: undo },
@@ -192,8 +220,9 @@ export function DocumentEditor({
     { label: "Heading 3", Icon: Heading3, run: (editor: EditorView) => toggleLinePrefix(editor, "heading3") },
     { label: "Bold", Icon: Bold, run: (editor: EditorView) => toggleWrap(editor, "**") },
     { label: "Italic", Icon: Italic, run: (editor: EditorView) => toggleWrap(editor, "*") },
+    { label: "Underline", Icon: Underline, run: (editor: EditorView) => toggleWrap(editor, "<u>", "</u>") },
     { label: "Strikethrough", Icon: Strikethrough, run: (editor: EditorView) => toggleWrap(editor, "~~") },
-    { label: "Link", Icon: Link, run: insertLink },
+    { label: "Link", Icon: Link, run: (editor: EditorView) => { openLink(editor); return true; } },
     { label: "Bulleted list", Icon: List, run: (editor: EditorView) => toggleLinePrefix(editor, "bullet") },
     { label: "Numbered list", Icon: ListOrdered, run: (editor: EditorView) => toggleLinePrefix(editor, "number") },
     { label: "Checklist", Icon: ListTodo, run: (editor: EditorView) => toggleLinePrefix(editor, "check") },
@@ -209,13 +238,56 @@ export function DocumentEditor({
         {tools.map(({ label, Icon, run }) => (
           <button key={label} className="ws-editor-tool" type="button" title={label} aria-label={label} disabled={readOnly}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => { if (view.current) { run(view.current); view.current.focus(); } }}>
+            onClick={() => { if (view.current) { run(view.current); if (label !== "Link") view.current.focus(); } }}>
             <Icon aria-hidden="true" />
           </button>
         ))}
         {readOnly && <span className="ws-editor-readonly">View only</span>}
       </div>
-      <div className="ws-editor" data-source={raw} ref={host} />
+      <div
+        className="ws-editor"
+        data-source={raw}
+        ref={host}
+        onKeyDownCapture={(event) => {
+          const editor = view.current;
+          if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey ||
+              event.altKey || event.nativeEvent.isComposing || !editor ||
+              event.target !== editor.contentDOM) return;
+          if (continueList(editor)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }}
+        onPointerDownCapture={(event) => {
+          // Read Ctrl as the button goes down, before CodeMirror handles selection.
+          if (event.button !== 0 || !(event.ctrlKey || event.metaKey)) return;
+          const target = event.target instanceof Element
+            ? event.target.closest(".cm-link[data-link-url]")
+            : null;
+          if (!target || !view.current?.contentDOM.contains(target)) return;
+          const url = webLinkUrl(target.getAttribute("data-link-url") ?? "");
+          if (!url) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void openExternal(url.href).catch((error) => {
+            console.error("Could not open link", error);
+            window.alert("Could not open this link. Please check your browser settings and try again.");
+          });
+        }}
+      />
+      <TextFieldDialog open={linkOpen} title="Add a link" label="Web address" placeholder="https://example.com" value={linkUrl} onChange={setLinkUrl} confirm="Add link" onClose={() => setLinkOpen(false)} onConfirm={() => {
+        const editor = view.current;
+        const selection = linkSelection.current;
+        const input = linkUrl.trim();
+        if (!editor || !selection || !input) return;
+        const url = /^(?:https?:|mailto:)/i.test(input) ? input : `https://${input}`;
+        const label = selection.label ?? (editor.state.sliceDoc(selection.from, selection.to) || input);
+        const safeUrl = url.replace(/\s/g, "%20").replace(/\(/g, "%28").replace(/\)/g, "%29");
+        const insert = `[${label.replace(/\]/g, "\\]")}](${safeUrl})`;
+        editor.dispatch({ changes: { ...selection, insert }, selection: { anchor: selection.from + insert.length } });
+        setLinkOpen(false);
+        editor.focus();
+      }} />
     </div>
   );
 }
@@ -295,19 +367,20 @@ const INLINE = [
   { pattern: /(?<!_)_([^_]+)_(?!_)/g, klass: "cm-em", delimiters: 1 },
   { pattern: /`([^`]+)`/g, klass: "cm-code", delimiters: 1 },
   { pattern: /~~([^~]+)~~/g, klass: "cm-strike", delimiters: 2 },
+  { pattern: /<u>([^\n]+?)<\/u>/g, klass: "cm-underline", delimiters: 3, endDelimiters: 4 },
 ];
 
 function addInline(builder: RangeSetBuilder<Decoration>, offset: number, text: string) {
   type Range = { from: number; to: number; decoration: Decoration };
   const ranges: Range[] = [];
 
-  for (const { pattern, klass, delimiters } of INLINE) {
+  for (const { pattern, klass, delimiters, endDelimiters = delimiters } of INLINE) {
     pattern.lastIndex = 0;
     let match = pattern.exec(text);
     while (match) {
       const start = offset + match.index;
       const innerStart = start + delimiters;
-      const innerEnd = start + match[0].length - delimiters;
+      const innerEnd = start + match[0].length - endDelimiters;
       ranges.push({ from: start, to: innerStart, decoration: hide });
       ranges.push({ from: innerEnd, to: start + match[0].length, decoration: hide });
       ranges.push({ from: innerStart, to: innerEnd, decoration: mark(klass) });
@@ -316,7 +389,14 @@ function addInline(builder: RangeSetBuilder<Decoration>, offset: number, text: s
   }
 
   // Links: keep the label, hide the brackets and the target.
-  const link = /\[([^\]]+)\]\(([^)]+)\)/g;
+  const nestedLink = /\[\[([^\]]+)\]\(([^)]*)\)\]\(([^)]*)\)/g;
+  for (const nested of text.matchAll(nestedLink)) {
+    const start = offset + nested.index!;
+    const innerEnd = start + 2 + nested[1].length + 2 + nested[2].length + 1;
+    ranges.push({ from: start, to: start + 1, decoration: hide });
+    ranges.push({ from: innerEnd, to: start + nested[0].length, decoration: hide });
+  }
+  const link = /\[([^\[\]]+)\]\(([^)]+)\)/g;
   let match = link.exec(text);
   while (match) {
     const start = offset + match.index;
@@ -328,7 +408,15 @@ function addInline(builder: RangeSetBuilder<Decoration>, offset: number, text: s
       to: start + match[0].length,
       decoration: hide,
     });
-    ranges.push({ from: labelStart, to: labelEnd, decoration: mark("cm-link") });
+    const url = webLinkUrl(match[2]);
+    ranges.push({
+      from: labelStart,
+      to: labelEnd,
+      decoration: Decoration.mark({
+        class: "cm-link",
+        attributes: url ? { "data-link-url": url.href } : undefined,
+      }),
+    });
     match = link.exec(text);
   }
 
@@ -356,6 +444,59 @@ const livePreview = ViewPlugin.fromClass(
   },
   { decorations: (value) => value.decorations },
 );
+
+function webLinkUrl(destination: string): URL | null {
+  try {
+    const url = new URL(destination);
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function linkAt(view: EditorView, position: number) {
+  const line = view.state.doc.lineAt(position);
+  const links = /\[([^\[\]]+)\]\(([^)]+)\)/g;
+  for (const match of line.text.matchAll(links)) {
+    const from = line.from + match.index! + 1;
+    const to = from + match[1].length;
+    if (position < from || position > to) continue;
+    const url = webLinkUrl(match[2]);
+    return url ? { from, to, url: url.href, hostname: url.hostname } : null;
+  }
+  return null;
+}
+
+const linkHover = hoverTooltip((editor, position) => {
+  const link = linkAt(editor, position);
+  if (!link) return null;
+  return {
+    pos: link.from,
+    end: link.to,
+    above: false,
+    create() {
+      const card = document.createElement("div");
+      card.className = "ws-link-preview";
+      const details = document.createElement("div");
+      details.className = "ws-link-preview-details";
+      const site = document.createElement("strong");
+      site.textContent = link.hostname;
+      const address = document.createElement("span");
+      address.className = "ws-link-preview-address";
+      address.textContent = link.url;
+      details.append(site, address);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ws-link-preview-open";
+      button.textContent = "Open link ↗";
+      button.addEventListener("click", () => {
+        void openExternal(link.url).catch(() => { address.textContent = "Could not open this link"; });
+      });
+      card.append(details, button);
+      return { dom: card };
+    },
+  };
+}, { hoverTime: 350, hideOnChange: true });
 
 // Table cells edit the Markdown buffer directly while keeping the table visible.
 
@@ -491,46 +632,34 @@ function buildTables(state: EditorState): DecorationSet {
 
 // ── Shortcuts ────────────────────────────────────────────────────────────────
 
-function toggleWrap(view: EditorView, marker: string): boolean {
+function toggleWrap(view: EditorView, marker: string, endMarker = marker): boolean {
   if (view.state.readOnly) return false;
   const { from, to } = view.state.selection.main;
   const text = view.state.sliceDoc(from, to);
   const before = view.state.sliceDoc(Math.max(0, from - marker.length), from);
-  const after = view.state.sliceDoc(to, to + marker.length);
-  if (before === marker && after === marker) {
+  const after = view.state.sliceDoc(to, to + endMarker.length);
+  if (before === marker && after === endMarker) {
     view.dispatch({
       changes: [
         { from: from - marker.length, to: from },
-        { from: to, to: to + marker.length },
+        { from: to, to: to + endMarker.length },
       ],
       selection: { anchor: from - marker.length, head: to - marker.length },
     });
     return true;
   }
-  if (text.startsWith(marker) && text.endsWith(marker) && text.length > marker.length * 2) {
+  if (text.startsWith(marker) && text.endsWith(endMarker) && text.length > marker.length + endMarker.length) {
     view.dispatch({
-      changes: { from, to, insert: text.slice(marker.length, -marker.length) },
+      changes: { from, to, insert: text.slice(marker.length, -endMarker.length) },
     });
     return true;
   }
   view.dispatch({
     changes: [
       { from, insert: marker },
-      { from: to, insert: marker },
+      { from: to, insert: endMarker },
     ],
     selection: { anchor: from + marker.length, head: to + marker.length },
-  });
-  return true;
-}
-
-function insertLink(view: EditorView): boolean {
-  if (view.state.readOnly) return false;
-  const { from, to } = view.state.selection.main;
-  const label = view.state.sliceDoc(from, to) || "link text";
-  const insert = `[${label}](url)`;
-  view.dispatch({
-    changes: { from, to, insert },
-    selection: { anchor: from + label.length + 3, head: from + label.length + 6 },
   });
   return true;
 }
@@ -549,10 +678,38 @@ function toggleLinePrefix(view: EditorView, kind: "heading1" | "heading2" | "hea
     const match = patterns[kind].exec(line.text);
     const insert = kind === "number" ? `${index + 1}. ` : prefix[kind];
     if (remove) return { from: line.from, to: line.from + match![0].length, insert: "" };
+    if (kind === "bullet" || kind === "number" || kind === "check") {
+      const existing = /^\s*(?:[-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+[.)]\s+)/.exec(line.text);
+      return { from: line.from, to: line.from + (existing?.[0].length ?? 0), insert };
+    }
     if (match && !heading) return { from: line.from, to: line.from, insert: "" };
     return { from: line.from, to: line.from + (heading && match ? match[0].length : 0), insert };
   });
-  view.dispatch({ changes });
+  const changeSet = view.state.changes(changes);
+  view.dispatch({
+    changes: changeSet,
+    selection: from === to ? { anchor: changeSet.mapPos(from, 1) } : undefined,
+  });
+  return true;
+}
+
+function continueList(view: EditorView): boolean {
+  if (view.state.readOnly || view.state.selection.ranges.length !== 1) return false;
+  const { from, to } = view.state.selection.main;
+  const line = view.state.doc.lineAt(from);
+  if (view.state.doc.lineAt(to).number !== line.number) return false;
+  let node = syntaxTree(view.state).resolveInner(line.from, 1);
+  while (node.parent && node.name !== "FencedCode" && node.name !== "CodeBlock") node = node.parent;
+  if (node.name === "FencedCode" || node.name === "CodeBlock") return false;
+  const match = /^(\s*)(?:(\d+)([.)])\s+|([-*+])\s+)(\[[ xX]\]\s+)?/.exec(line.text);
+  if (!match || from < line.from + match[0].length) return false;
+  if (!line.text.slice(match[0].length).trim() && from === to) {
+    view.dispatch({ changes: { from: line.from, to: line.to, insert: match[1] }, selection: { anchor: line.from + match[1].length }, scrollIntoView: true });
+    return true;
+  }
+  const marker = match[2] ? `${Number(match[2]) + 1}${match[3]}` : match[4];
+  const insert = `\n${match[1]}${marker} ${match[5] ? "[ ] " : ""}`;
+  view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, scrollIntoView: true });
   return true;
 }
 
