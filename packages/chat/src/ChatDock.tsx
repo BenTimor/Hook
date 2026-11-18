@@ -289,26 +289,24 @@ export function ChatDock({
   const listed = hits ?? chats;
 
   return (
-    <aside className="dock" aria-label="Hook chat">
+    <aside className="dock" aria-label={`${title} chat`}>
       <header className="dock-head" data-tauri-drag-region>
-        <span className="dock-title">{activeChat?.title || title}</span>
+        <button
+          className="dock-heading"
+          title="Conversations"
+          aria-label="Conversations"
+          aria-expanded={historyOpen}
+          data-active={historyOpen}
+          onClick={() => {
+            setHistoryOpen((value) => !value);
+            setQuery("");
+            void refreshChats();
+          }}
+        >
+          <List strokeWidth={1.9} />
+          {activeChat ? <span className="dock-title">{activeChat.title}</span> : null}
+        </button>
         <div className="dock-actions">
-          <button
-            className="icon-btn"
-            title="Conversations"
-            aria-label="Conversations"
-            data-active={historyOpen}
-            onClick={() => {
-              setHistoryOpen((value) => !value);
-              setQuery("");
-              void refreshChats();
-            }}
-          >
-            <List strokeWidth={1.9} />
-          </button>
-          <button className="icon-btn" title="New chat" aria-label="New chat" onClick={startNew}>
-            <SquarePen strokeWidth={1.8} />
-          </button>
           <button
             className="icon-btn"
             title="Hide Hook"
