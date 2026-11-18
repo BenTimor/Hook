@@ -5,6 +5,7 @@ import {
   FileText,
   Folder as FolderIcon,
   FolderPlus,
+  House,
   KanbanSquare,
   Mail,
   MoreHorizontal,
@@ -53,19 +54,24 @@ function readExpanded(): Record<string, boolean> {
  */
 export function Sidebar({
   email,
+  homeActive,
   invitesActive,
+  onHome,
   onNewProject,
   onOpenInvites,
   onLogout,
 }: {
   email: string | null;
+  homeActive: boolean;
   invitesActive: boolean;
+  onHome: () => void;
   onNewProject: () => void;
   onOpenInvites: () => void;
   onLogout: () => void;
 }) {
   const projects = useWorkspaceStore((state) => state.projects);
   const invites = useWorkspaceStore((state) => state.invites);
+  const pendingInviteCount = invites.filter((invite) => invite.status === "pending").length;
   const boards = useWorkspaceStore((state) => state.boards);
   const documents = useWorkspaceStore((state) => state.documents);
   const folders = useWorkspaceStore((state) => state.folders);
@@ -647,14 +653,40 @@ export function Sidebar({
   return (
     <>
       <aside className="ws-rail" data-tauri-drag-region>
-        <div className="ws-wordmark">
+        <button className="ws-wordmark" onClick={onHome} aria-label="Workspace home">
           <HookMark />
           <span>Workspace</span>
-        </div>
+        </button>
 
-        <button className="ws-new" onClick={onNewProject}>
+        <nav className="ws-main-nav" aria-label="Workspace navigation">
+          <button
+            className="ws-nav-row"
+            data-active={homeActive}
+            aria-current={homeActive ? "page" : undefined}
+            onClick={onHome}
+            title="Home"
+          >
+            <House />
+            <span className="ws-nav-label">Home</span>
+          </button>
+          <button
+            className="ws-nav-row ws-nav-invites"
+            data-active={invitesActive}
+            data-pending={pendingInviteCount > 0}
+            aria-current={invitesActive ? "page" : undefined}
+            aria-label={`Invites${pendingInviteCount ? `, ${pendingInviteCount} pending` : ""}`}
+            onClick={onOpenInvites}
+            title="Invites"
+          >
+            <Mail />
+            <span className="ws-nav-label">Invites</span>
+            {pendingInviteCount > 0 && <span className="ws-badge">{pendingInviteCount}</span>}
+          </button>
+        </nav>
+
+        <button className="ws-new" onClick={onNewProject} title="New project" aria-label="New project">
           <Plus strokeWidth={1.9} />
-          New project
+          <span>New project</span>
         </button>
 
         <div className="ws-tree" role="tree" aria-label="Projects">
@@ -666,15 +698,6 @@ export function Sidebar({
         </div>
 
         <div className="ws-rail-foot">
-          <button
-            className="ws-nav-row"
-            data-active={invitesActive}
-            onClick={onOpenInvites}
-          >
-            <Mail />
-            <span className="ws-nav-label">Invites</span>
-            {invites.length > 0 && <span className="ws-badge">{invites.length}</span>}
-          </button>
           <button className="ws-nav-row" onClick={onLogout}>
             <Settings />
             <span className="ws-account" title={email ?? undefined}>

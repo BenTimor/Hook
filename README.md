@@ -807,6 +807,12 @@ people they are shared with; folders organize them, and can nest. It is its own 
 (`apps/workspace`, identifier `app.hook.workspace`) with the same window chrome,
 the same account and the same chat beside it.
 
+Home surfaces pending invitations before the getting-started actions, with the
+project name, inviter profile when available, and Accept/Decline buttons. Accept
+opens the joined project. Home also lists existing projects and offers Create a
+project and Plan with Hook. Home and Invites sit near the top of the rail;
+the invite count stays visible while working inside a project.
+
 One rail, one tree: projects read as special folders (they are the unit of
 sharing), and everything inside one — nested folders, boards, documents — is a
 row under it. Nothing lives in a second column. Right-click anything in the

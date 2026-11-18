@@ -6,6 +6,7 @@ import { Dialog } from "@hook/ui";
 import type { Project, Role } from "../lib/types";
 import { personLabel } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { InvitationCard } from "./InvitationCard";
 
 const EMPTY: never[] = [];
 
@@ -254,12 +255,11 @@ function capitalize(value: string): string {
 }
 
 /** The inbox: invitations addressed to this account. */
-export function InvitesPanel() {
+export function InvitesPanel({ onOpenProject }: { onOpenProject: (id: string) => void }) {
   const invites = useWorkspaceStore((state) => state.invites);
-  const accept = useWorkspaceStore((state) => state.acceptInvite);
-  const decline = useWorkspaceStore((state) => state.declineInvite);
+  const pending = invites.filter((invite) => invite.status === "pending");
 
-  if (invites.length === 0) {
+  if (pending.length === 0) {
     return (
       <section className="ws-empty">
         <Mail className="ws-empty-icon" />
@@ -270,27 +270,14 @@ export function InvitesPanel() {
   }
 
   return (
-    <div className="ws-people">
-      <ul className="ws-people-list">
-        {invites.map((invite) => (
-          <li className="ws-person" key={invite.id}>
-            <div>
-              <div className="ws-person-name">{invite.projectName ?? "A project"}</div>
-              <div className="ws-person-email">
-                {invite.email} · {capitalize(invite.role)}
-              </div>
-            </div>
-            <div className="ws-person-actions">
-              <button className="btn btn-ghost" onClick={() => void decline(invite.id)}>
-                Decline
-              </button>
-              <button className="btn btn-primary" onClick={() => void accept(invite.id)}>
-                Accept
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+    <div className="ws-home ws-inbox">
+      <header className="ws-home-heading">
+        <h1>Your invitations</h1>
+        <p>Join a project and make something happen together.</p>
+      </header>
+      <div className="ws-invitation-list">
+        {pending.map((invite) => <InvitationCard key={invite.id} invite={invite} onOpenProject={onOpenProject} />)}
+      </div>
     </div>
   );
 }

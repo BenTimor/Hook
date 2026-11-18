@@ -697,7 +697,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       await api.acceptInvite(id);
       const projects = await api.projects();
-      set({ projects: projects.projects, invites: (await api.invites()).invites });
+      set({ projects: projects.projects, invites: (await api.invites()).invites, error: null });
     } catch (error) {
       set({ error: message(error) });
     }
@@ -706,7 +706,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async declineInvite(id) {
     try {
       await api.declineInvite(id);
-      set((state) => ({ invites: state.invites.filter((invite) => invite.id !== id) }));
+      set((state) => ({ invites: state.invites.filter((invite) => invite.id !== id), error: null }));
     } catch (error) {
       set({ error: message(error) });
     }

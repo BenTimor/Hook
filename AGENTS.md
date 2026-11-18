@@ -119,6 +119,9 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
   `hook://sync`, `hook://import`, `hook://update`).
 - `apps/chat/src/store/useChatStore.ts` — all chat state; coalesces stream deltas.
+- `apps/workspace/src/components/WorkspaceHome.tsx` — invitations, projects and
+  getting-started actions. `InvitationCard.tsx` shares response states with the
+  Invites inbox; sender profiles are optional fields from `GET /api/ws/invites`.
 - `packages/ui/src/tokens.css` — the design foundation (tokens, base elements,
   window chrome, prose, buttons/inputs). Both products import it first.
 - `waitlist/content.json` — all landing-page copy and interest definitions.

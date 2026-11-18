@@ -12,6 +12,7 @@ import { DocumentEditor } from "./components/DocumentEditor";
 import { InvitesPanel } from "./components/MembersPanel";
 import { ProjectHome } from "./components/ProjectHome";
 import { Sidebar } from "./components/Sidebar";
+import { WorkspaceHome } from "./components/WorkspaceHome";
 
 export default function App() {
   const maximized = useWindowState();
@@ -130,10 +131,14 @@ function Workspace({
           "Tighten this document's opening",
           "Turn this into a task list",
         ]
-      : [
+      : project ? [
           "Create a board for this project",
           "What should we work on next?",
           "Invite someone to this project",
+        ] : [
+          "Help me plan a new project",
+          "Turn my idea into a task list",
+          "What can I do in Workspace?",
         ];
 
   const crumbs: Array<{ label: string; onClick?: () => void }> = invitesOpen
@@ -147,20 +152,33 @@ function Workspace({
               ? [{ label: documentMeta.title || "Untitled" }]
               : []),
         ]
-      : [{ label: "Projects" }];
+      : [{ label: "Home" }];
 
   const back = Boolean(board || activeDocumentId);
+  const showProject = (id: string) => {
+    setInvitesOpen(false);
+    void openProject(id);
+  };
+  const showInvites = () => {
+    void openProject(null);
+    setInvitesOpen(true);
+  };
 
   return (
     <div className="shell" data-maximized={maximized}>
       <Sidebar
         email={auth.email ?? null}
+        homeActive={!project && !invitesOpen}
         invitesActive={invitesOpen}
+        onHome={() => {
+          setInvitesOpen(false);
+          void openProject(null);
+        }}
         onNewProject={() => {
           setInvitesOpen(false);
           setNewProject(true);
         }}
-        onOpenInvites={() => setInvitesOpen(true)}
+        onOpenInvites={showInvites}
         onLogout={() => void api.authLogout().then(setAuth)}
       />
 
@@ -218,18 +236,14 @@ function Workspace({
 
         <div className="ws-body">
           {invitesOpen ? (
-            <InvitesPanel />
+            <InvitesPanel onOpenProject={showProject} />
           ) : !project ? (
-            <section className="ws-empty">
-              <h2>No project open</h2>
-              <p>
-                Pick a project on the left, or create one. Every project has its
-                own boards, documents and people.
-              </p>
-              <button className="btn btn-primary" onClick={() => setNewProject(true)}>
-                New project
-              </button>
-            </section>
+            <WorkspaceHome
+              onNewProject={() => setNewProject(true)}
+              onAskHook={() => setDockOpen(true)}
+              onOpenProject={showProject}
+              onOpenInvites={showInvites}
+            />
           ) : activeDocumentId ? (
             <DocumentPage
               id={activeDocumentId}
@@ -450,7 +464,7 @@ function SignIn({
   maximized: boolean;
 }) {
   return (
-    <div className="shell" data-maximized={maximized}>
+    <div className="shell ws-signin-shell" data-maximized={maximized}>
       <header className="ws-drag" data-tauri-drag-region>
         <span className="ws-drag-title">Hook Workspace</span>
         <WindowControls />

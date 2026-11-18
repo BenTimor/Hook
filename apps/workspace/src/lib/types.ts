@@ -115,6 +115,8 @@ export interface Invite {
   respondedAt: number | null;
   seq: number;
   projectName?: string;
+  inviterName?: string | null;
+  inviterEmail?: string | null;
 }
 
 export type ChangeKind =

@@ -640,14 +640,19 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const invites = email
       ? db
           .prepare(
-            `SELECT i.*, p.name AS project_name, p.owner_subject
+            `SELECT i.*, p.name AS project_name, p.owner_subject,
+                    sender.name AS inviter_name, sender.email AS inviter_email
              FROM ws_invites i
              JOIN ws_projects p ON p.id = i.project_id AND p.deleted_at IS NULL
+             LEFT JOIN waitlist_signups sender ON sender.google_subject = i.invited_by
              WHERE i.email = ? AND i.status = 'pending'
              ORDER BY i.created_at DESC`,
           )
           .all(email)
-          .map((row) => ({ ...shapeInvite(row), projectName: row.project_name }))
+          .map((row) => ({
+            ...shapeInvite(row), projectName: row.project_name,
+            inviterName: row.inviter_name ?? null, inviterEmail: row.inviter_email ?? null,
+          }))
       : [];
     res.json({ invites });
   });

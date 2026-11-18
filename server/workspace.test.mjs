@@ -99,6 +99,8 @@ async function sharedProject(request) {
   assert.equal(inbox.status, 200);
   assert.equal(inbox.body.invites.length, 1);
   assert.equal(inbox.body.invites[0].projectName, "Website redesign");
+  assert.equal(inbox.body.invites[0].inviterEmail, "owner@example.test");
+  assert.equal(inbox.body.invites[0].inviterName, null);
 
   const accepted = await request(`/invites/${inbox.body.invites[0].id}/accept`, {
     method: "POST",
@@ -107,6 +109,22 @@ async function sharedProject(request) {
   assert.equal(accepted.status, 200);
   return project;
 }
+
+test("an inbox invitation includes the inviter's readable profile", async (t) => {
+  const { request, directory } = await setup(t);
+  const db = new DatabaseSync(join(directory, "signups.sqlite"));
+  db.prepare("UPDATE waitlist_signups SET name = ? WHERE google_subject = ?").run("Alex Morgan", "ws-owner");
+  db.close();
+  const created = await request("/projects", { method: "POST", body: { name: "Launch planning" } });
+  await request(`/projects/${created.body.project.id}/invites`, {
+    method: "POST", body: { email: "editor@example.test", role: "editor" },
+  });
+  const inbox = await request("/invites", { token: EDITOR });
+  assert.equal(inbox.status, 200);
+  assert.equal(inbox.body.invites[0].inviterName, "Alex Morgan");
+  assert.equal(inbox.body.invites[0].inviterEmail, "owner@example.test");
+  assert.equal(inbox.body.invites[0].projectName, "Launch planning");
+});
 
 test("the role table is the one the routes use", () => {
   assert.equal(can("viewer", "read"), true);
