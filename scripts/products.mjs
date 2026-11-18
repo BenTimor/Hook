@@ -89,6 +89,15 @@ export function appInputs(product) {
   ];
 }
 
+/**
+ * Paths inside `appInputs` that are not part of the shipped bytes. Tests run in
+ * CI but never enter an executable or an installer, so editing one must not
+ * demand a version bump and a rebuild of every product that links the crate.
+ */
+export function appExcludes() {
+  return ["crates/hook-core/tests"];
+}
+
 /** Absolute path inside a product directory. */
 export function productPath(product, ...parts) {
   return resolve(root, product.dir, ...parts);

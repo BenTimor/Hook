@@ -84,17 +84,25 @@ The page is live at **[hookcode.io](https://hookcode.io)** on the MoonRock VPS
 ```
 
 ```bash
-./scripts/deploy-waitlist.sh     # build → upload site + source → rebuild container → probe
+./scripts/deploy-waitlist.sh     # build → upload site (and source, if the image changed) → probe
 ```
 
 #### Automatic deploys (GitHub Actions)
 
-Pushes to `main` deploy automatically. `.github/workflows/deploy-waitlist.yml` runs
-`pnpm waitlist:test` + `pnpm waitlist:build` on a clean runner, then calls the same
+Pushes to `main` that can change the site or the server deploy automatically.
+`.github/workflows/deploy-waitlist.yml` runs `pnpm waitlist:test` +
+`pnpm waitlist:build` on a clean runner, then calls the same
 `scripts/deploy-waitlist.sh` over SSH with `SKIP_BUILD=1` (it reuses the artifact the
 verify job built). Pull requests run the checks without deploying
 (`.github/workflows/ci.yml`). Deploys are serialized; a running deploy is never
 cancelled by the next push.
+
+The script fingerprints what the container runs (`scripts/site-source-hash.mjs`:
+the server, `waitlist/content.json`, `release.config.json`, the manifests and
+`Dockerfile`) and compares it with `/opt/hook-web/.image-hash` from the last
+rebuild. A copy, layout or stylesheet change therefore ships the static build
+alone and leaves the API container running; only a server, content or dependency
+change pays for `docker compose build`. `REBUILD_IMAGE=1` forces it locally.
 
 Two repository secrets are required:
 
@@ -272,24 +280,38 @@ per-account search limit is 4 in flight and 60 per minute.
 
 ### Automatic Windows builds
 
-`.github/workflows/release-app.yml` runs on every push to `main` that can change
-the desktop app. A cheap first job fingerprints the application source
-(`scripts/app-source-hash.mjs`) and compares it with the published release, so a
-twenty-minute Windows build only happens when there is something new to ship:
+`.github/workflows/release.yml` ships both desktop products on every push to
+`main` that can change one of them. A cheap first job fingerprints each product's
+source (`scripts/app-source-hash.mjs`) and compares it with the published release,
+so the Windows build only happens when there is something new to ship — and only
+for the product that changed:
 
 | Repo state | What happens |
 |---|---|
-| Same application source as the published build | the build is skipped |
+| Same application source as the published build | that product's build is skipped |
 | Source changed, version bumped | builds and publishes |
 | Source changed, same version | fails and asks for `pnpm version:bump` |
 | Source changed, lower version | fails (no downgrades) |
 
-The build runs on `windows-latest` (roughly 15 minutes), writes
+The checks run beside the build, not before it: `verify` (typecheck, both
+frontends, the server suite) and `rust-test` (`cargo test -p hook-core`) run in
+parallel with the Windows build, and the publish job needs all three. A red test
+still cannot ship, and the push does not wait for it twice. When both products
+change they are built in one job, so the second one reuses every compiled
+dependency.
+
+The workflow is cancelled when a newer push arrives: a superseded build publishes
+nothing (the index is swapped at the very end), so a fix does not queue behind
+twenty minutes of wasted compilation.
+
+A build runs on `windows-latest` in roughly eight minutes. It writes
 `release/latest.json` (version, commit, builtAt, size, SHA-256, source hash,
 release notes), merges it into `release/releases.json`, and uploads the installer
 (under `Hook-<version>-setup.exe`) and the index to `/opt/hook-web/data/releases`
 over the same SSH deploy key as the website. Builds also appear as workflow
-artifacts for 14 days.
+artifacts for 14 days. The release profile is tuned for build time — thin LTO and
+parallel codegen units — because an installer is dominated by the ~200 MB of
+MinGit, Node and pi it ships, not by the executable in it.
 
 Publishing never takes downloads down. The new installer is uploaded under its
 versioned name first; the old `releases.json` keeps serving the previous version
@@ -447,9 +469,17 @@ at the repo root; the Tauri CLI still runs per app (`apps/chat`, `apps/workspace
 Outputs for the chat app:
 
 - `target/release/bundle/nsis/Hook_<version>_x64-setup.exe` — installer,
-  ~54 MB (the release workflow copies it to `release/Hook-<version>-setup.exe`)
+  ~78 MB (the release workflow copies it to `release/Hook-<version>-setup.exe`)
 - `release/Hook-<version>-portable.zip` — `Hook.exe` + `resources\pi-runtime` +
   `resources\git`, no install
+
+`compression: "bzip2"` is a deliberate trade. Measured on this payload (195 MB of
+MinGit + Node + pi): LZMA produced 46.6 MB in 92 s, bzip2 69.9 MB in 17 s. The
+installer is therefore ~24 MB larger and every build is ~75 s shorter; building
+is the scarcer resource. Switch that one line back to `"lzma"` if download size
+ever matters more. `bundle.useLocalToolsDir` keeps the NSIS tools in
+`target/.tauri`, so they are cached with the build directory instead of
+downloaded on every runner.
 
 The same commands with `workspace:` in front produce Hook Workspace's installer
 (`target/release/bundle/nsis/Hook Workspace_<version>_x64-setup.exe`, published as
@@ -1222,11 +1252,14 @@ pnpm waitlist:test                              # API, auth, proxy, download, sy
 pnpm test:release                               # "does this push need a Windows build?"
 ```
 
-GitHub Actions runs on every pull request **and every push to `main`**: the
-landing-page tests and build, then `pnpm typecheck`, both window builds and
-`cargo test -p hook-core` on Windows (`ci.yml`). The release workflows run the
-typecheck and the Rust tests again before they build an installer, so a failing
-test cannot ship. `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
+GitHub Actions runs on every push to `main` and, without a build, on every pull
+request (`ci.yml`). A push runs the checks once, next to the build they gate:
+`release.yml` has a `verify` job (landing-page tests and build, the release-gate
+tests, `pnpm typecheck`, both window builds) and a `rust-test` job, both in
+parallel with the Windows installer build, while `deploy-waitlist.yml` does the
+same for the site. The release profile is `lto = "thin"` with parallel codegen
+units, and a product ships one `rlib` plus its binary — not the mobile
+`staticlib`/`cdylib` as well. `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
 shapes thinking-mode APIs reject), image parts and the base64/header helpers,
 path containment, the project and agent stores, progress batching, the chat-agent
 tool loop, the guard policy (a Node harness feeds it bad `bash` calls, force-push

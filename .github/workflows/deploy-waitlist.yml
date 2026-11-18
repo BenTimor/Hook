@@ -1,8 +1,13 @@
 name: Deploy waitlist
 
-# Every push to main deploys https://hookcode.io. Reuses scripts/deploy-waitlist.sh
-# so CI and a local deploy stay identical; the only difference is that the built
-# site is passed from the verify job instead of being rebuilt (SKIP_BUILD=1).
+# Pushes to main that can change https://hookcode.io deploy it. Reuses
+# scripts/deploy-waitlist.sh so CI and a local deploy stay identical; the only
+# difference is that the built site is passed from the verify job instead of
+# being rebuilt (SKIP_BUILD=1).
+#
+# The script fingerprints what the server container runs and rebuilds the image
+# only when that changed, so copy, layout and stylesheet changes ship a tarball
+# and leave the API container alone.
 #
 # Required repository secrets:
 #   DEPLOY_SSH_KEY      private key whose public half is in
@@ -15,12 +20,32 @@ name: Deploy waitlist
 on:
   push:
     branches: [main]
+    paths:
+      - "waitlist/**"
+      - "public/**"
+      - "packages/ui/**"
+      - "server/**"
+      - "infra/**"
+      - "release.config.json"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - "tsconfig.waitlist.json"
+      - "waitlist.vite.config.mjs"
+      - "scripts/deploy-waitlist.sh"
+      - "scripts/site-source-hash.mjs"
+      - ".github/workflows/deploy-waitlist.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Serialize deploys; never cancel one halfway through.
+# Serialize deploys; never cancel one halfway through. The site is streamed
+# into the live directory, so a cancelled run could leave it half-unpacked —
+# unlike a superseded installer build, which publishes nothing until the end.
 concurrency:
   group: deploy-waitlist
   cancel-in-progress: false

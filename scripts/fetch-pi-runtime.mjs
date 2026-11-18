@@ -20,6 +20,7 @@
  * `pnpm app:build` runs this automatically.
  */
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,31 @@ const app = resolve(process.cwd(), process.argv[2] ?? "apps/chat");
 const out = join(app, "src-tauri", "resources", "pi-runtime");
 
 const PACKAGE = "@earendil-works/pi-coding-agent";
+
+const nodeExe = join(out, process.platform === "win32" ? "node.exe" : "node");
+
+/**
+ * The VERSION file records the pi package and the Node build. When both match
+ * what is on disk, the 130 MB copy is skipped: `pnpm app:build` runs this on
+ * every build, and the shipped runtime only changes after a bump.
+ */
+function installed(version) {
+  let recorded;
+  try {
+    recorded = readFileSync(join(out, "VERSION"), "utf8")
+      .split("\n")
+      .slice(0, 2)
+      .join("\n");
+  } catch {
+    return false;
+  }
+  if (recorded !== `${PACKAGE} ${version}\nnode ${process.version}`) return false;
+  return (
+    existsSync(nodeExe) &&
+    existsSync(join(out, "pi", "dist", "bundle", "cli.js")) &&
+    existsSync(join(out, "pi", "node_modules", "jiti", "package.json"))
+  );
+}
 
 /** Find the installed pi package: CLI flag, local resolution, then global npm. */
 async function locatePi(flag) {
@@ -67,6 +93,12 @@ async function main() {
   const bundle = join(piDir, "dist", "bundle", "cli.js");
   await stat(bundle);
 
+  if (installed(version)) {
+    console.log(`pi-runtime already at pi ${version} on node ${process.version}`);
+    console.log(`  ${out}`);
+    return;
+  }
+
   const nodeSrc = process.execPath;
   const nodeStat = await stat(nodeSrc);
   if (nodeStat.size < 1_000_000) {
@@ -76,7 +108,6 @@ async function main() {
   await rm(out, { recursive: true, force: true });
   await mkdir(join(out, "pi"), { recursive: true });
 
-  const nodeExe = join(out, process.platform === "win32" ? "node.exe" : "node");
   await cp(nodeSrc, nodeExe);
   // `dist` is the whole self-contained bundle (21 MB). Almost nothing from
   // node_modules is needed — except the loader used to read extensions, which

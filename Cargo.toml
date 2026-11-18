@@ -2,9 +2,15 @@
 resolver = "2"
 members = ["crates/hook-core", "apps/chat/src-tauri", "apps/workspace/src-tauri"]
 
-# Every product is a release build; keep the installer small and reproducible.
+# Every product is a release build. The binary stays small, but the profile is
+# tuned for build time: an installer is dominated by the ~200 MB of MinGit, Node
+# and pi it ships, so a smaller executable buys nothing, while fat LTO on a
+# single codegen unit costs most of the twenty-minute Windows build.
+# Thin LTO keeps the cross-crate inlining that matters and parallelises the
+# rest; drop back to `lto = true` + `codegen-units = 1` only if a profile of a
+# real slowdown says so.
 [profile.release]
-codegen-units = 1
-lto = true
+codegen-units = 16
+lto = "thin"
 opt-level = "s"
 strip = true

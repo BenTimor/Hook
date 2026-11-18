@@ -1,14 +1,17 @@
 [package]
 name = "hook-workspace"
-version = "0.1.7"
+version = "0.1.8"
 description = "Hook Workspace — projects, boards, tasks and documents"
 authors = ["you"]
 edition = "2021"
 rust-version = "1.77"
 
+# Desktop only: `staticlib` and `cdylib` exist for Android and iOS and cost an
+# extra optimised codegen and LTO pass each. Add them back when this product
+# targets mobile — see apps/chat/src-tauri/Cargo.toml.
 [lib]
 name = "hook_workspace_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

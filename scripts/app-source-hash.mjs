@@ -20,9 +20,9 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { appInputs, productFromArgs, root } from "./products.mjs";
+import { appExcludes, appInputs, productFromArgs, root } from "./products.mjs";
 
-function walk(target, out) {
+function walk(target, out, excludes) {
   let stat;
   try {
     stat = statSync(target);
@@ -36,17 +36,21 @@ function walk(target, out) {
   for (const entry of readdirSync(target, { withFileTypes: true }).sort((a, b) =>
     a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
   )) {
-    walk(join(target, entry.name), out);
+    const child = join(target, entry.name);
+    // `sep` keeps `.../tests` from also excluding a hypothetical `tests2`.
+    if (excludes.some((excluded) => child.startsWith(excluded))) continue;
+    walk(child, out, excludes);
   }
 }
 
 /**
  * @param {{product?: object, root?: string}} [options]
- * @returns {string} `v3:<sha256>` over every included path and its bytes.
+ * @returns {string} `v4:<sha256>` over every included path and its bytes.
  */
 export function appSourceHash({ product = productFromArgs([]), root: dir = root } = {}) {
   const files = [];
-  for (const input of appInputs(product)) walk(join(dir, input), files);
+  const excludes = appExcludes().map((path) => join(dir, path) + sep);
+  for (const input of appInputs(product)) walk(join(dir, input), files, excludes);
   const digest = createHash("sha256");
   for (const file of files.sort()) {
     const name = relative(dir, file).split(sep).join("/");
@@ -60,7 +64,7 @@ export function appSourceHash({ product = productFromArgs([]), root: dir = root 
     );
     digest.update("\0");
   }
-  return `v3:${digest.digest("hex")}`;
+  return `v4:${digest.digest("hex")}`;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

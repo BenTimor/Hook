@@ -7,11 +7,15 @@
 # What it does:
 #   1. builds the site locally (tsc + vite → dist-waitlist/), unless SKIP_BUILD=1
 #      (GitHub Actions builds once in the verify job and passes the artifact on)
-#   2. streams the source into /opt/hook-web/app (Docker build context)
+#   2. fingerprints what the server container runs (scripts/site-source-hash.mjs)
+#      and streams the source into /opt/hook-web/app only when that changed
 #   3. streams dist-waitlist/ into /opt/hook-web/site (served by Caddy)
 #   4. syncs docker-compose.yml + hookcode.caddy, reloads Caddy only if changed
-#   5. rebuilds and restarts the hook-waitlist container
+#   5. rebuilds and restarts the hook-waitlist container only when the image
+#      changed; a site-only deploy leaves the API running untouched
 #   6. probes the live routes
+#
+# REBUILD_IMAGE=1 forces step 5 and records the new fingerprint afterwards.
 #
 # Secrets never leave the server: /opt/hook-web/.env is created once with a
 # generated session secret and left alone on later deploys. Add your Google
@@ -59,21 +63,33 @@ else
   pnpm waitlist:build
 fi
 
-step "Uploading source → $HOST:$DIR/app"
-# Only tracked / gitignore-visible files: src-tauri is 11 GB locally and none
-# of it is needed for the waitlist image.
-FILES="$(mktemp)"
-trap 'rm -f "$FILES"' EXIT
-git ls-files --cached --others --exclude-standard \
-  | grep -v -e '^src-tauri/' -e '^harness\.config' > "$FILES"
-tar --owner=0 --group=0 --numeric-owner -czf - -T "$FILES" |
-  ssh_do "rm -rf '$DIR/app' && mkdir -p '$DIR/app' && tar -xzf - -C '$DIR/app'"
-echo "  $(wc -l < "$FILES") files"
-
+# The container only has to be rebuilt when something it runs changed. The
+# fingerprint is recorded on the server by the last rebuild, so a copy, layout
+# or stylesheet change ships the static build alone: twenty seconds instead of
+# a cold `pnpm install` on the box.
+IMAGE_HASH="$(node scripts/site-source-hash.mjs)"
+REMOTE_HASH="$(ssh_do "cat '$DIR/.image-hash' 2>/dev/null || true" | tr -d '\r\n')"
+if [ "${REBUILD_IMAGE:-0}" = 1 ] || [ "$IMAGE_HASH" != "$REMOTE_HASH" ]; then
+  IMAGE_CHANGED=1
+  step "Uploading source → $HOST:$DIR/app (image ${IMAGE_HASH:0:11})"
+  # Only tracked / gitignore-visible files: src-tauri is 11 GB locally and none
+  # of it is needed for the waitlist image.
+  FILES="$(mktemp)"
+  trap 'rm -f "$FILES"' EXIT
+  git ls-files --cached --others --exclude-standard \
+    | grep -v -e '^src-tauri/' -e '^harness\.config' > "$FILES"
+  tar --owner=0 --group=0 --numeric-owner -czf - -T "$FILES" |
+    ssh_do "rm -rf '$DIR/app' && mkdir -p '$DIR/app' && tar -xzf - -C '$DIR/app'"
+  echo "  $(wc -l < "$FILES") files"
+else
+  IMAGE_CHANGED=0
+  step "Server image unchanged (${IMAGE_HASH:0:11})"
+fi
 step "Uploading dist-waitlist/ → $HOST:$DIR/site"
 tar --owner=0 --group=0 --numeric-owner -czf - -C dist-waitlist . |
   ssh_do "rm -rf '$DIR/site' && mkdir -p '$DIR/site' && tar -xzf - -C '$DIR/site'"
 
+COMPOSE_CHANGED=0
 step "Syncing $DIR/docker-compose.yml"
 ssh_do "cat > '$DIR/docker-compose.yml.new'" < infra/docker-compose.yml
 if ssh_do "cmp -s '$DIR/docker-compose.yml' '$DIR/docker-compose.yml.new'"; then
@@ -82,6 +98,7 @@ if ssh_do "cmp -s '$DIR/docker-compose.yml' '$DIR/docker-compose.yml.new'"; then
 else
   ssh_do "mv '$DIR/docker-compose.yml.new' '$DIR/docker-compose.yml'"
   echo "  updated"
+  COMPOSE_CHANGED=1
 fi
 
 CADDY_CHANGED=0
@@ -141,18 +158,35 @@ if ! grep -q 'import /srv/hook-web' /opt/scout/Caddyfile 2>/dev/null; then
 fi
 REMOTE
 
-step "Rebuilding hook-waitlist"
-ssh_do "cd '$DIR' && docker compose build waitlist" 2>&1 | tail -6
-if ssh_do "grep -q '^GOOGLE_CLIENT_ID=.' '$DIR/.env'"; then
-  ssh_do "cd '$DIR' && docker compose up -d --no-deps waitlist" 2>&1 | tail -4
+if [ "$IMAGE_CHANGED" = 1 ]; then
+  step "Rebuilding hook-waitlist"
+  ssh_do "cd '$DIR' && docker compose build waitlist" 2>&1 | tail -6
+elif [ "$COMPOSE_CHANGED" = 1 ]; then
+  step "Recreating hook-waitlist (docker-compose.yml changed)"
 else
-  # Without OAuth credentials the API deliberately refuses to boot (that is what
-  # stops a half-configured production deploy from going live). Create/replace the
-  # container but leave it stopped instead of letting it crash-loop.
-  ssh_do "cd '$DIR' && docker compose up -d --no-deps --no-start waitlist >/dev/null 2>&1 || true
-          cd '$DIR' && docker compose stop waitlist >/dev/null 2>&1 || true"
-  echo "  API left stopped: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are empty in $DIR/.env"
-  echo "  Landing page serves fine; the signup button reports sign-in unavailable."
+  step "Container left alone"
+fi
+
+if [ "$IMAGE_CHANGED" = 1 ] || [ "$COMPOSE_CHANGED" = 1 ]; then
+  if ssh_do "grep -q '^GOOGLE_CLIENT_ID=.' '$DIR/.env'"; then
+    ssh_do "cd '$DIR' && docker compose up -d --no-deps waitlist" 2>&1 | tail -4
+  else
+    # Without OAuth credentials the API deliberately refuses to boot (that is what
+    # stops a half-configured production deploy from going live). Create/replace the
+    # container but leave it stopped instead of letting it crash-loop.
+    ssh_do "cd '$DIR' && docker compose up -d --no-deps --no-start waitlist >/dev/null 2>&1 || true
+            cd '$DIR' && docker compose stop waitlist >/dev/null 2>&1 || true"
+    echo "  API left stopped: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are empty in $DIR/.env"
+    echo "  Landing page serves fine; the signup button reports sign-in unavailable."
+  fi
+else
+  echo "  site updated, API untouched (nothing it runs changed)"
+fi
+
+# Only a rebuild that actually happened may claim the fingerprint; a failed
+# deploy retries the rebuild on the next run instead of shipping a stale image.
+if [ "$IMAGE_CHANGED" = 1 ]; then
+  ssh_do "printf '%s\n' '$IMAGE_HASH' > '$DIR/.image-hash' && chmod 644 '$DIR/.image-hash'"
 fi
 
 if [ "$CADDY_CHANGED" = 1 ]; then

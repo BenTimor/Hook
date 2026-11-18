@@ -1,11 +1,11 @@
 name: CI
 
-# Pull requests get everything; main gets the same checks on every push, next to
-# the deploy and release workflows. Nothing here touches the server.
+# Pull requests get everything; a push to `main` is covered by release.yml and
+# deploy-waitlist.yml, which run the same checks once, next to the build they
+# gate. Keeping this workflow off `main` is what stops four Windows runners from
+# compiling the same crates in parallel.
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

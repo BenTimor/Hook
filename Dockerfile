@@ -10,10 +10,17 @@
 FROM node:24-slim AS build
 WORKDIR /app
 RUN npm install -g pnpm@10
-# The repo is a pnpm workspace (apps/* + packages/*), so the member manifests
-# have to be present before install resolves the root lockfile.
+# Manifests first, source after: the install layer is then only invalidated by a
+# dependency change instead of by every edit. The lockfile resolves against the
+# workspace members, so their package.json files are needed here too.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/chat/package.json apps/chat/package.json
+COPY apps/workspace/package.json apps/workspace/package.json
+COPY packages/ui/package.json packages/ui/package.json
+COPY packages/chat/package.json packages/chat/package.json
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile
 COPY . .
-RUN pnpm install --frozen-lockfile
 RUN pnpm waitlist:build
 
 FROM node:24-slim AS runtime
@@ -25,10 +32,16 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 RUN npm install -g pnpm@10
+# Only the manifests: the workspace members are needed to resolve the lockfile,
+# not to run the server, and shipping their source would rebuild this layer on
+# every UI change.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps ./apps
-COPY packages ./packages
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts
+COPY apps/chat/package.json apps/chat/package.json
+COPY apps/workspace/package.json apps/workspace/package.json
+COPY packages/ui/package.json packages/ui/package.json
+COPY packages/chat/package.json packages/chat/package.json
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --prod --frozen-lockfile --ignore-scripts
 COPY server ./server
 COPY waitlist/content.json ./waitlist/content.json
 COPY release.config.json ./release.config.json

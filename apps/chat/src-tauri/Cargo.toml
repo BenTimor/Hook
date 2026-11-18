@@ -1,14 +1,18 @@
 [package]
 name = "hook"
-version = "0.3.7"
+version = "0.3.8"
 description = "Hook — a local, single-provider AI chat harness"
 authors = ["you"]
 edition = "2021"
 rust-version = "1.77"
 
+# `staticlib` and `cdylib` are the mobile targets: every crate type gets its
+# own optimised codegen and its own LTO pass, so listing them here triples the
+# release build. Hook ships NSIS and MSIX, which link the `rlib` only — add
+# them back, and only then, when this product targets Android or iOS.
 [lib]
 name = "hook_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

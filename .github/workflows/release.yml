@@ -1,0 +1,488 @@
+name: Release desktop products
+
+# Every desktop product ships from this one workflow.
+#
+# A push that can change a product runs the checks once and builds only the
+# products whose application source actually changed:
+#
+#   gate (ubuntu, seconds)   fingerprints each product, compares it with the
+#                            published release, demands a version bump
+#     ├─ verify    (ubuntu)   typecheck, both frontends, the server suite
+#     ├─ rust-test (windows)  cargo test -p hook-core
+#     └─ build     (windows)  the installers, both products in one job so the
+#                             second one reuses every compiled dependency
+#          └─ publish (ubuntu) one job per product; needs every job above
+#
+# `build` runs beside `verify` and `rust-test` rather than after them, so the
+# checks cost no wall clock but still gate production: publish is the only job
+# that writes to the server, and a failed test or build skips it.
+#
+# A superseded run is cancelled. Nothing is published before `publish`, and the
+# upload writes `.new` files and swaps the index last, so a cancelled run can
+# only leave unused `.new` files behind while the previous version keeps being
+# served.
+#
+# Required repository secrets (same ones the website deploy uses):
+#   DEPLOY_SSH_KEY      private key for root@167.233.58.139
+#   DEPLOY_KNOWN_HOSTS  pinned ssh-keyscan output for that host
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/chat/**"
+      - "apps/workspace/**"
+      - "packages/**"
+      - "crates/hook-core/**"
+      - "harness.config.ci.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - "release.config.json"
+      - "msix/**"
+      - "scripts/app-source-hash.mjs"
+      - "scripts/products.mjs"
+      - "scripts/release-gate.mjs"
+      - "scripts/build-msix.mjs"
+      - "scripts/build-release-manifest.mjs"
+      - "scripts/merge-release-index.mjs"
+      - "scripts/fetch-pi-runtime.mjs"
+      - "scripts/fetch-git.mjs"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if the application source is unchanged"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-desktop
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Decide what to build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      chat: ${{ steps.chat.outputs.publish }}
+      chat_version: ${{ steps.chat.outputs.version }}
+      chat_source_hash: ${{ steps.chat.outputs.source_hash }}
+      workspace: ${{ steps.workspace.outputs.publish }}
+      workspace_version: ${{ steps.workspace.outputs.version }}
+      workspace_source_hash: ${{ steps.workspace.outputs.source_hash }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # Fails on a source change without a version bump; skips identical source.
+      # Each product is checked separately and a failure is collected instead of
+      # aborting, so one push reports every bump it needs: a change in
+      # `packages/**` moves both products, not just the one checked first.
+      - name: Hook
+        id: chat
+        continue-on-error: true
+        env:
+          HOOK_RELEASES_URL: https://hookcode.io
+        run: node scripts/release-gate.mjs --product chat ${{ inputs.force && '--force' || '' }}
+
+      - name: Hook Workspace
+        id: workspace
+        continue-on-error: true
+        env:
+          HOOK_RELEASES_URL: https://hookcode.io
+        run: node scripts/release-gate.mjs --product workspace ${{ inputs.force && '--force' || '' }}
+
+      - name: Report a missing version bump
+        if: steps.chat.outcome == 'failure' || steps.workspace.outcome == 'failure'
+        run: exit 1
+
+  verify:
+    name: Typecheck, frontends and server tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # The pnpm version comes from package.json's `packageManager`; passing it
+      # here too makes the action fail with "multiple versions specified".
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run API regression tests
+        run: pnpm waitlist:test
+
+      - name: Test the release gate
+        run: pnpm test:release
+
+      # The only static gate: every workspace package plus the site.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # tsc per app is not enough: these catch a bad import that only shows up
+      # when Vite resolves the graph (a shared package not declared, for one).
+      - name: Build the chat window
+        run: pnpm build
+
+      - name: Build the Workspace window
+        run: pnpm workspace:build
+
+  rust-test:
+    name: Rust tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      # config.rs include_str!s this file, so every cargo command needs it.
+      - name: Use CI harness config
+        shell: pwsh
+        run: Copy-Item harness.config.ci.toml harness.config.toml -Force
+
+      # hook-core holds every test that matters (SSE framing, the tool loop, the
+      # guard policy, sync, the update policy). It needs no node_modules: the
+      # engine tests skip themselves when the bundled runtime is not there yet,
+      # and the guard test only needs `node`.
+      - name: Rust tests
+        run: cargo test -p hook-core
+
+  build:
+    name: Build installers
+    needs: gate
+    if: needs.gate.outputs.chat == 'true' || needs.gate.outputs.workspace == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # The pnpm version comes from package.json's `packageManager`; passing it
+      # here too makes the action fail with "multiple versions specified".
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # harness.config.toml is gitignored locally; the committed CI copy has
+      # the hookcode.io proxy settings and no secrets.
+      - name: Use CI harness config
+        shell: pwsh
+        run: Copy-Item harness.config.ci.toml harness.config.toml -Force
+
+      # MinGit is ~50 MB and is checked by SHA-256 before it is unpacked. The cache
+      # key follows the pin in the script, so a bump restores nothing and the
+      # download happens once instead of on every build.
+      - name: Read the pinned MinGit version
+        id: mingit
+        shell: bash
+        run: |
+          # `tr` keeps a CRLF checkout from poisoning the key.
+          version=$(sed -n 's/^const VERSION = "\([^"]*\)".*/\1/p' scripts/fetch-git.mjs | tr -d '\r')
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v5
+        with:
+          path: .git-runtime-cache
+          key: mingit-${{ steps.mingit.outputs.version }}
+
+      # Each step is timed in the Actions UI, which is the only place the split
+      # between "unpack 130 MB of runtime" and "compile for ten minutes" is
+      # visible. `pnpm app:build` runs exactly these two.
+      - name: Hook — install the runtime
+        if: needs.gate.outputs.chat == 'true'
+        working-directory: apps/chat
+        run: pnpm run app:runtime
+
+      - name: Hook — compile and bundle
+        if: needs.gate.outputs.chat == 'true'
+        working-directory: apps/chat
+        run: pnpm run app:bundle
+
+      - name: Collect the Hook installer
+        if: needs.gate.outputs.chat == 'true'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { throw "Tauri did not produce an NSIS installer." }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item $exe.FullName "release/Hook-${{ needs.gate.outputs.chat_version }}-setup.exe" -Force
+          Write-Host "installer: $($exe.Name) ($([math]::Round($exe.Length / 1MB, 1)) MB)"
+
+      # Packages the same Hook.exe as an unsigned MSIX for Microsoft Store
+      # submission. Exits cleanly while msix/chat/identity.json is unconfigured.
+      - name: Package the Hook Store MSIX
+        if: needs.gate.outputs.chat == 'true'
+        run: node scripts/build-msix.mjs --product chat
+
+      - name: Write the Hook version manifest
+        if: needs.gate.outputs.chat == 'true'
+        env:
+          HOOK_RELEASE_NOTES: ${{ github.event.head_commit.message }}
+          HOOK_SOURCE_HASH: ${{ needs.gate.outputs.chat_source_hash }}
+        run: >
+          node scripts/build-release-manifest.mjs
+          "release/Hook-${{ needs.gate.outputs.chat_version }}-setup.exe"
+          release/latest.json
+
+      - name: Hook Workspace — install the runtime
+        if: needs.gate.outputs.workspace == 'true'
+        working-directory: apps/workspace
+        run: pnpm run app:runtime
+
+      - name: Hook Workspace — compile and bundle
+        if: needs.gate.outputs.workspace == 'true'
+        working-directory: apps/workspace
+        run: pnpm run app:bundle
+
+      - name: Collect the Hook Workspace installer
+        if: needs.gate.outputs.workspace == 'true'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { throw "Tauri did not produce an NSIS installer." }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item $exe.FullName "release/Hook-Workspace-${{ needs.gate.outputs.workspace_version }}-setup.exe" -Force
+          Write-Host "installer: $($exe.Name) ($([math]::Round($exe.Length / 1MB, 1)) MB)"
+
+      - name: Package the Hook Workspace Store MSIX
+        if: needs.gate.outputs.workspace == 'true'
+        run: node scripts/build-msix.mjs --product workspace
+
+      - name: Write the Hook Workspace version manifest
+        if: needs.gate.outputs.workspace == 'true'
+        env:
+          HOOK_RELEASE_NOTES: ${{ github.event.head_commit.message }}
+          HOOK_SOURCE_HASH: ${{ needs.gate.outputs.workspace_source_hash }}
+        run: >
+          node scripts/build-release-manifest.mjs
+          "release/Hook-Workspace-${{ needs.gate.outputs.workspace_version }}-setup.exe"
+          release/latest-workspace.json
+          --product workspace
+
+      # The installer and the MSIX are already compressed: deflating them again
+      # costs a minute of runner time and saves nothing. Exact file names keep
+      # one product's artifact from picking up the other's installer.
+      - uses: actions/upload-artifact@v7
+        if: needs.gate.outputs.chat == 'true'
+        with:
+          name: hook-windows-release
+          path: |
+            release/Hook-${{ needs.gate.outputs.chat_version }}-setup.exe
+            release/Hook-${{ needs.gate.outputs.chat_version }}-x64.msix
+            release/latest.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        if: needs.gate.outputs.workspace == 'true'
+        with:
+          name: hook-workspace-release
+          path: |
+            release/Hook-Workspace-${{ needs.gate.outputs.workspace_version }}-setup.exe
+            release/Hook-Workspace-${{ needs.gate.outputs.workspace_version }}-x64.msix
+            release/latest-workspace.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-chat:
+    name: Publish Hook
+    needs: [gate, verify, rust-test, build]
+    if: needs.gate.outputs.chat == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: hook-windows-release
+          path: release
+
+      # Merge the new build into the public version history. Fails rather than
+      # replacing history if hookcode.io cannot be read.
+      - name: Merge release index
+        env:
+          HOOK_SERVER: https://hookcode.io
+        run: >
+          node scripts/merge-release-index.mjs
+          --manifest release/latest.json
+          --out release/releases.json
+          --server "$HOOK_SERVER"
+          --keep 5
+
+      - name: Install SSH credentials
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::Missing DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS repository secrets."
+            exit 1
+          fi
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      # New files are uploaded under their final (versioned) names first. The
+      # index that points at them is swapped last, so downloads keep working
+      # against the previous version for the whole upload.
+      - name: Upload installer and release index
+        env:
+          DEPLOY_HOST: root@167.233.58.139
+          VERSION: ${{ needs.gate.outputs.chat_version }}
+        run: |
+          set -euo pipefail
+          SSH=(-i "$HOME/.ssh/deploy_key" -o BatchMode=yes -o ConnectTimeout=10)
+          DIR=/opt/hook-web/data/releases
+          KEEP=$(node -e "const i=require('./release/releases.json'); process.stdout.write(Object.values(i.releases).map(r=>r.file).join(' '))")
+          ssh "${SSH[@]}" "$DEPLOY_HOST" "mkdir -p '$DIR' && chmod 755 '$DIR'"
+          scp "${SSH[@]}" "release/Hook-$VERSION-setup.exe" "$DEPLOY_HOST:$DIR/Hook-$VERSION-setup.exe.new"
+          scp "${SSH[@]}" release/latest.json "$DEPLOY_HOST:$DIR/latest.json.new"
+          scp "${SSH[@]}" release/releases.json "$DEPLOY_HOST:$DIR/releases.json.new"
+          ssh "${SSH[@]}" "$DEPLOY_HOST" "DIR='$DIR' KEEP='$KEEP' VERSION='$VERSION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DIR"
+          chmod 644 "Hook-$VERSION-setup.exe.new" latest.json.new releases.json.new
+          mv "Hook-$VERSION-setup.exe.new" "Hook-$VERSION-setup.exe"
+          mv latest.json.new latest.json
+          # The atomic switch: from here on the new version is what /api/releases
+          # reports and what new downloads receive.
+          mv releases.json.new releases.json
+          # Keep exactly the installers the published index references.
+          # Only the chat app's installers: Hook Workspace shares this folder.
+          for file in Hook-[0-9]*.exe; do
+            [ -e "$file" ] || continue
+            case " $KEEP " in
+              *" $file "*) ;;
+              *) rm -f "$file" ;;
+            esac
+          done
+          # Keep a legacy single-slot installer only while the index mentions it.
+          ls -lh releases.json latest.json *.exe
+          REMOTE
+          node -p "'published Hook ' + require('./release/latest.json').version"
+
+  publish-workspace:
+    name: Publish Hook Workspace
+    needs: [gate, verify, rust-test, build]
+    if: needs.gate.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: hook-workspace-release
+          path: release
+
+      - name: Merge release index
+        env:
+          HOOK_SERVER: https://hookcode.io
+        run: >
+          node scripts/merge-release-index.mjs
+          --manifest release/latest-workspace.json
+          --out release/releases.workspace.json
+          --server "$HOOK_SERVER"
+          --keep 5
+          --product workspace
+
+      - name: Install SSH credentials
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::Missing DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS repository secrets."
+            exit 1
+          fi
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+      # New files first, the index last. This product's index is its own file,
+      # so publishing Workspace cannot move the chat app's downloads.
+      - name: Upload installer and release index
+        env:
+          DEPLOY_HOST: root@167.233.58.139
+          VERSION: ${{ needs.gate.outputs.workspace_version }}
+        run: |
+          set -euo pipefail
+          SSH=(-i "$HOME/.ssh/deploy_key" -o BatchMode=yes -o ConnectTimeout=10)
+          DIR=/opt/hook-web/data/releases
+          KEEP=$(node -e "const i=require('./release/releases.workspace.json'); process.stdout.write(Object.values(i.releases).map(r=>r.file).join(' '))")
+          ssh "${SSH[@]}" "$DEPLOY_HOST" "mkdir -p '$DIR' && chmod 755 '$DIR'"
+          scp "${SSH[@]}" "release/Hook-Workspace-$VERSION-setup.exe" "$DEPLOY_HOST:$DIR/Hook-Workspace-$VERSION-setup.exe.new"
+          scp "${SSH[@]}" release/releases.workspace.json "$DEPLOY_HOST:$DIR/releases.workspace.json.new"
+          ssh "${SSH[@]}" "$DEPLOY_HOST" "DIR='$DIR' KEEP='$KEEP' VERSION='$VERSION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DIR"
+          chmod 644 "Hook-Workspace-$VERSION-setup.exe.new" releases.workspace.json.new
+          mv "Hook-Workspace-$VERSION-setup.exe.new" "Hook-Workspace-$VERSION-setup.exe"
+          mv releases.workspace.json.new releases.workspace.json
+          # Only this product's installers: the chat app's files share the folder.
+          for file in Hook-Workspace-*.exe; do
+            [ -e "$file" ] || continue
+            case " $KEEP " in
+              *" $file "*) ;;
+              *) rm -f "$file" ;;
+            esac
+          done
+          ls -lh releases.workspace.json *.exe
+          REMOTE
+          node -p "'published Hook Workspace ' + require('./release/latest-workspace.json').version"

@@ -1,7 +1,7 @@
 {
   "name": "@hook/chat-app",
   "private": true,
-  "version": "0.3.7",
+  "version": "0.3.8",
   "type": "module",
   "description": "Hook — a local AI chat harness",
   "scripts": {
@@ -9,9 +9,11 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "app": "node ../../scripts/tauri.mjs dev",
-    "app:build": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build",
-    "app:portable": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/make-portable.mjs --product chat",
-    "app:msix": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs . && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/build-msix.mjs --product chat"
+    "app:runtime": "node ../../scripts/fetch-git.mjs . && node ../../scripts/fetch-pi-runtime.mjs .",
+    "app:bundle": "node ../../scripts/tauri.mjs build",
+    "app:build": "pnpm run app:runtime && pnpm run app:bundle",
+    "app:portable": "pnpm run app:runtime && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/make-portable.mjs --product chat",
+    "app:msix": "pnpm run app:runtime && node ../../scripts/tauri.mjs build --no-bundle && node ../../scripts/build-msix.mjs --product chat"
   },
   "dependencies": {
     "@fontsource-variable/inter": "catalog:",

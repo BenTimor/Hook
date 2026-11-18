@@ -50,6 +50,23 @@ const URL =
 const SHA256 =
   "4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfefdafd";
 
+/**
+ * The VERSION file is the marker for "already unpacked": a build that runs
+ * this script twice (both products, or a rebuild of the same app) must not pay
+ * for the download and the ~2 000-file extraction again.
+ */
+function installed() {
+  try {
+    if (readFileSync(join(out, "VERSION"), "utf8").trim() !== VERSION) return false;
+  } catch {
+    return false;
+  }
+  return (
+    existsSync(join(out, "cmd", "git.exe")) &&
+    existsSync(join(out, "ucrt64", "bin", "git.exe"))
+  );
+}
+
 function digest(path) {
   const hash = createHash("sha256");
   const bytes = readFileSync(path);
@@ -99,6 +116,16 @@ async function extract(archive, destination) {
   rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });
   if (process.platform === "win32") {
+    // bsdtar ships with Windows 10 1803+ and reads zip. PowerShell's
+    // Expand-Archive takes tens of seconds on MinGit's ~2 000 files, which a
+    // build that cannot reuse `.git-runtime-cache/` pays every time.
+    try {
+      await run("tar.exe", ["-xf", archive, "-C", destination]);
+      return;
+    } catch {
+      rmSync(destination, { recursive: true, force: true });
+      mkdirSync(destination, { recursive: true });
+    }
     await run("powershell.exe", [
       "-NoProfile",
       "-NonInteractive",
@@ -111,6 +138,11 @@ async function extract(archive, destination) {
 }
 
 async function main() {
+  if (installed()) {
+    console.log(`hook: git ${VERSION} already in ${out}`);
+    return;
+  }
+
   const archive = join(cache, ARCHIVE);
   await download(archive);
 

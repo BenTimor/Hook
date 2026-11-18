@@ -24,7 +24,7 @@
     "waitlist:dev": "vite --config waitlist.vite.config.mjs",
     "waitlist:build": "pnpm run typecheck:waitlist && vite build --config waitlist.vite.config.mjs",
     "waitlist:test": "node --test server/api.test.mjs server/platform.test.mjs server/releases.test.mjs server/git.test.mjs server/sync.test.mjs server/workspace.test.mjs",
-    "test:release": "node --test scripts/release-gate.test.mjs scripts/merge-release-index.test.mjs",
+    "test:release": "node --test scripts/release-gate.test.mjs scripts/merge-release-index.test.mjs scripts/site-source-hash.test.mjs",
     "waitlist:start": "node --env-file-if-exists=.env.waitlist.local server/waitlist.mjs",
     "mock": "node dev/mock-provider.mjs"
   },
