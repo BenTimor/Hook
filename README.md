@@ -530,7 +530,7 @@ A packaged Microsoft Store build uses its own pair (`store.latest` /
 ```json
 {
   "minimumVersion": "0.1.0",
-  "store": { "latest": "0.2.0", "minimumVersion": "0.1.0" }
+  "store": { "latest": "0.3.8", "minimumVersion": "0.1.0" }
 }
 ```
 
