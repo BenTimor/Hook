@@ -820,6 +820,13 @@ tree to rename, delete, create inside it, or move it to another folder; the
 same menu opens from the plus on a project or folder. A board opens as a table
 with one task per row, the board's own columns across, and a grip to reorder
 the rows (the kanban is the second tab, not the only view).
+The project overview highlights boards and documents, with a plus beside each
+heading for editors and managers. The People button opens members and invitations.
+Below Boards and Documents, Quick access shows favorites first, then recently
+opened and edited work without duplicates. Favorites and recently opened items
+are saved on this device for the signed-in email and project; recently edited
+uses the items' server-provided edit times. Quick access tiles load board tasks
+or formatted document content for a preview when the tile comes into view.
 
 The important structural decision: **the workspace service is the product; the
 window is a client.** `server/workspace.mjs` owns projects, memberships,
@@ -838,8 +845,11 @@ that it is permanent and cannot be undone.
   `GET /api/ws/changes?since=N` returns rows in projects the caller belongs to,
   tombstones included, bounded by rows and bytes. Clients keep the last `seq`.
 - **Documents are Markdown.** The buffer is the document, so there is no
-  round-trip to lose formatting. A write carries the revision it was based on;
-  a stale one is refused with the current copy rather than silently overwriting
+  round-trip to lose formatting. A formatting toolbar adds headings, lists,
+  checklists, links, inline styles, code blocks, dividers and Markdown tables.
+  The formatted editor is the default and lets people edit table cells directly.
+  Document options also offers Markdown source editing and deletion. A write carries the revision it was based
+  on; a stale one is refused with the current copy rather than silently overwriting
   someone else's paragraph.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,
   and an agent comment carries the conversation it came from, so a teammate sees

@@ -10,12 +10,16 @@ import {
   Decoration,
   EditorView,
   ViewPlugin,
+  WidgetType,
   keymap,
+  placeholder,
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
-import { history, historyKeymap, indentWithTab, defaultKeymap } from "@codemirror/commands";
+import { history, historyKeymap, indentWithTab, defaultKeymap, undo, redo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
+import { Bold, Italic, Heading1, Heading2, Heading3, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2 } from "lucide-react";
 
 import type { DocumentMeta } from "../lib/types";
 
@@ -25,8 +29,8 @@ import type { DocumentMeta } from "../lib/types";
  * The Markdown buffer is the document — there is no rich-text representation to
  * convert to and from, so what an agent writes is exactly what a person sees.
  * "Live preview" is a layer of decorations over that buffer: headings, bold,
- * inline code and links are styled, and their markup is hidden until the cursor
- * is on the line. The Raw toggle removes the layer; the text is untouched.
+ * inline code and links are styled, with their markup hidden in the formatted
+ * editor. Source mode removes the layer; the text is untouched.
  */
 
 export interface DocumentEditorHandle {
@@ -99,8 +103,28 @@ export function DocumentEditor({
         ]),
         EditorView.lineWrapping,
         EditorView.editable.of(!readOnly),
+        EditorState.readOnly.of(readOnly),
+        placeholder(readOnly ? "This document is empty." : "Start writing your document…"),
         markdown({ base: markdownLanguage, addKeymap: false }),
-        rawCompartment.current.of(raw ? [] : livePreview),
+        rawCompartment.current.of(raw ? [] : [livePreview, tablePreview]),
+        EditorView.domEventHandlers({
+          mousedown(event, editor) {
+            if (event.button !== 0 || editor.state.readOnly ||
+                (event.target !== editor.contentDOM && event.target !== editor.scrollDOM)) return false;
+            const end = editor.state.doc.length;
+            let endsWithTable = false;
+            editor.state.field(tablePreview, false)?.between(end, end, (_from, to) => {
+              if (to === end) endsWithTable = true;
+            });
+            const tables = editor.contentDOM.querySelectorAll(".cm-table-preview");
+            const lastTable = tables.item(tables.length - 1);
+            if (!endsWithTable || !lastTable || event.clientY <= lastTable.getBoundingClientRect().bottom) return false;
+            event.preventDefault();
+            editor.dispatch({ changes: { from: end, insert: "\n" }, selection: { anchor: end + 1 } });
+            editor.focus();
+            return true;
+          },
+        }),
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged) changeRef.current(true);
           if (update.docChanged) schedule(update.state.doc.toString());
@@ -110,14 +134,14 @@ export function DocumentEditor({
           ".cm-scroller": {
             fontFamily: "var(--font-sans)",
             lineHeight: "1.7",
-            padding: "8px 0 40px",
+            padding: "48px 0 56px",
           },
-          ".cm-content": { padding: "0 24px", maxWidth: "760px", margin: "0 auto" },
+          ".cm-content": { padding: "0 24px", maxWidth: "760px", margin: "0 auto", userSelect: "text" },
           ".cm-line": { padding: "0 4px" },
           "&.cm-focused": { outline: "none" },
           ".cm-cursor": { borderLeftColor: "var(--accent)" },
           "&.cm-focused .cm-selectionBackground, ::selection": {
-            background: "rgba(var(--accent-rgb), 0.14)",
+            background: "rgba(var(--accent-rgb), 0.28)",
           },
         }),
       ],
@@ -131,6 +155,16 @@ export function DocumentEditor({
     // A new document must start from a fresh state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, readOnly]);
+
+  // A development hot update can replace the host while preserving the editor.
+  // Move the existing view into the current host so its unsaved buffer survives.
+  useEffect(() => {
+    const instance = view.current;
+    if (instance && host.current && instance.dom.parentElement !== host.current) {
+      host.current.appendChild(instance.dom);
+      instance.requestMeasure();
+    }
+  });
 
   // "Keep mine" after a conflict: save the buffer again against the revision
   // the server just handed back.
@@ -146,11 +180,44 @@ export function DocumentEditor({
     const instance = view.current;
     if (!instance) return;
     instance.dispatch({
-      effects: rawCompartment.current.reconfigure(raw ? [] : livePreview),
+      effects: rawCompartment.current.reconfigure(raw ? [] : [livePreview, tablePreview]),
     });
   }, [raw]);
 
-  return <div className="ws-editor" ref={host} />;
+  const tools = [
+    { label: "Undo", Icon: Undo2, run: undo },
+    { label: "Redo", Icon: Redo2, run: redo },
+    { label: "Heading 1", Icon: Heading1, run: (editor: EditorView) => toggleLinePrefix(editor, "heading1") },
+    { label: "Heading 2", Icon: Heading2, run: (editor: EditorView) => toggleLinePrefix(editor, "heading2") },
+    { label: "Heading 3", Icon: Heading3, run: (editor: EditorView) => toggleLinePrefix(editor, "heading3") },
+    { label: "Bold", Icon: Bold, run: (editor: EditorView) => toggleWrap(editor, "**") },
+    { label: "Italic", Icon: Italic, run: (editor: EditorView) => toggleWrap(editor, "*") },
+    { label: "Strikethrough", Icon: Strikethrough, run: (editor: EditorView) => toggleWrap(editor, "~~") },
+    { label: "Link", Icon: Link, run: insertLink },
+    { label: "Bulleted list", Icon: List, run: (editor: EditorView) => toggleLinePrefix(editor, "bullet") },
+    { label: "Numbered list", Icon: ListOrdered, run: (editor: EditorView) => toggleLinePrefix(editor, "number") },
+    { label: "Checklist", Icon: ListTodo, run: (editor: EditorView) => toggleLinePrefix(editor, "check") },
+    { label: "Quote", Icon: Quote, run: (editor: EditorView) => toggleLinePrefix(editor, "quote") },
+    { label: "Inline code", Icon: Code, run: (editor: EditorView) => toggleWrap(editor, "`") },
+    { label: "Code block", Icon: CodeXml, run: insertCodeBlock },
+    { label: "Divider", Icon: Minus, run: (editor: EditorView) => insertBlock(editor, "---") },
+    { label: "Table", Icon: Table2, run: (editor: EditorView) => insertBlock(editor, "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |") },
+  ];
+  return (
+    <div className="ws-editor-shell">
+      <div className="ws-editor-toolbar" role="toolbar" aria-label="Document formatting">
+        {tools.map(({ label, Icon, run }) => (
+          <button key={label} className="ws-editor-tool" type="button" title={label} aria-label={label} disabled={readOnly}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => { if (view.current) { run(view.current); view.current.focus(); } }}>
+            <Icon aria-hidden="true" />
+          </button>
+        ))}
+        {readOnly && <span className="ws-editor-readonly">View only</span>}
+      </div>
+      <div className="ws-editor" data-source={raw} ref={host} />
+    </div>
+  );
 }
 
 
@@ -158,6 +225,8 @@ export function DocumentEditor({
 
 const mark = (className: string) => Decoration.mark({ class: className });
 const hide = Decoration.replace({});
+const codeLine = Decoration.line({ class: "cm-code-block-line" });
+const ruleLine = Decoration.line({ class: "cm-rule" });
 
 const HEADINGS = [
   /* level 1 */ Decoration.line({ class: "cm-h1" }),
@@ -172,18 +241,16 @@ const HEADINGS = [
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = view.state.doc;
-  const head = view.state.selection.main.head;
-  const cursorLine = doc.lineAt(head).number;
 
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
     while (pos <= to) {
       const line = doc.lineAt(pos);
-      // The line being edited shows its markup, like every other Markdown
-      // editor worth using: you can always see and fix the syntax.
-      if (line.number !== cursorLine) {
-        decorateLine(builder, line.from, line.text);
-      }
+      let node = syntaxTree(view.state).resolveInner(line.from, 1);
+      while (node.parent && node.name !== "FencedCode" && node.name !== "CodeBlock") node = node.parent;
+      const codeBlock = node.name === "FencedCode" || node.name === "CodeBlock";
+      if (codeBlock) builder.add(line.from, line.from, codeLine);
+      else decorateLine(builder, line.from, line.text);
       pos = line.to + 1;
     }
   }
@@ -195,6 +262,11 @@ function decorateLine(
   offset: number,
   text: string,
 ) {
+  if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(text)) {
+    builder.add(offset, offset, ruleLine);
+    builder.add(offset, offset + text.length, hide);
+    return;
+  }
   const heading = /^(#{1,6})\s+/.exec(text);
   if (heading) {
     builder.add(offset, offset, HEADINGS[heading[1].length - 1]);
@@ -203,13 +275,13 @@ function decorateLine(
     return;
   }
   if (/^>\s+/.test(text)) {
+    builder.add(offset, offset, Decoration.line({ class: "cm-quote" }));
     builder.add(offset, offset + 2, hide);
     addInline(builder, offset + 2, text.slice(2));
     return;
   }
   if (/^[-*+]\s+/.test(text) || /^\d+\.\s+/.test(text)) {
     const match = /^([-*+]\s+|\d+\.\s+)/.exec(text)!;
-    builder.add(offset, offset + match[0].length, Decoration.replace({}));
     addInline(builder, offset + match[0].length, text.slice(match[0].length));
     return;
   }
@@ -277,7 +349,7 @@ const livePreview = ViewPlugin.fromClass(
       this.decorations = buildDecorations(view);
     }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged || update.selectionSet) {
+      if (update.docChanged || update.viewportChanged) {
         this.decorations = buildDecorations(update.view);
       }
     }
@@ -285,9 +357,142 @@ const livePreview = ViewPlugin.fromClass(
   { decorations: (value) => value.decorations },
 );
 
+// Table cells edit the Markdown buffer directly while keeping the table visible.
+
+function tableCells(text: string): string[] {
+  const cells: string[] = [];
+  let cell = "", ticks = 0;
+  const line = text.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "");
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "\\" && i + 1 < line.length) {
+      cell += line[i] + line[++i];
+    } else if (line[i] === "`") {
+      let end = i;
+      while (line[end] === "`") end++;
+      const count = end - i;
+      ticks = ticks === count ? 0 : ticks || count;
+      cell += line.slice(i, end);
+      i = end - 1;
+    } else if (line[i] === "|" && !ticks) {
+      cells.push(cell.trim());
+      cell = "";
+    } else cell += line[i];
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+class TableWidget extends WidgetType {
+  constructor(readonly rows: string[][], readonly align: string[], readonly from: number, readonly readOnly: boolean) { super(); }
+  eq(other: TableWidget) { return this.from === other.from && this.readOnly === other.readOnly && JSON.stringify(this.rows) === JSON.stringify(other.rows) && JSON.stringify(this.align) === JSON.stringify(other.align); }
+  toDOM(view: EditorView) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "cm-table-preview";
+    wrapper.dataset.from = String(this.from);
+    const table = document.createElement("table");
+    table.setAttribute("aria-label", "Markdown table");
+    const head = document.createElement("thead");
+    const body = document.createElement("tbody");
+    this.rows.forEach((row, rowIndex) => {
+      const tr = document.createElement("tr");
+      for (let i = 0; i < this.align.length; i++) {
+        const cell = document.createElement(rowIndex === 0 ? "th" : "td");
+        cell.textContent = (row[i] ?? "").replace(/\\\|/g, "|");
+        cell.style.textAlign = this.align[i];
+        if (!this.readOnly) {
+          cell.contentEditable = "true";
+          cell.setAttribute("role", "textbox");
+          cell.setAttribute("aria-label", `${rowIndex === 0 ? "Column heading" : `Row ${rowIndex}, column`} ${i + 1}`);
+          cell.addEventListener("input", (event) => {
+            event.stopPropagation();
+            const start = Number(wrapper.dataset.from);
+            const header = view.state.doc.lineAt(start);
+            const lineNumber = header.number + (rowIndex === 0 ? 0 : rowIndex + 1);
+            if (lineNumber > view.state.doc.lines) return;
+            const line = view.state.doc.line(lineNumber);
+            const cells = tableCells(line.text);
+            while (cells.length < this.align.length) cells.push("");
+            cells[i] = (cell.textContent ?? "").replace(/\r?\n/g, " ").replace(/(?<!\\)\|/g, "\\|");
+            view.dispatch({ changes: { from: line.from, to: line.to, insert: `| ${cells.join(" | ")} |` } });
+          });
+          cell.addEventListener("keydown", (event) => {
+            event.stopPropagation();
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+              event.preventDefault();
+              const range = document.createRange();
+              range.selectNodeContents(cell);
+              const selection = window.getSelection();
+              selection?.removeAllRanges();
+              selection?.addRange(range);
+            }
+            if (event.key === "Enter") event.preventDefault();
+          });
+          cell.addEventListener("beforeinput", (event) => event.stopPropagation());
+          cell.addEventListener("paste", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const text = event.clipboardData?.getData("text/plain").replace(/\r?\n/g, " ") ?? "";
+            document.execCommand("insertText", false, text);
+          });
+        }
+        tr.appendChild(cell);
+      }
+      (rowIndex === 0 ? head : body).appendChild(tr);
+    });
+    table.append(head, body);
+    wrapper.appendChild(table);
+    return wrapper;
+  }
+  updateDOM(dom: HTMLElement) {
+    if ((dom.querySelectorAll("tr").length !== this.rows.length) ||
+      dom.querySelector("tr")?.children.length !== this.align.length) return false;
+    dom.dataset.from = String(this.from);
+    dom.querySelectorAll("tr").forEach((tr, rowIndex) => {
+      tr.querySelectorAll<HTMLElement>("th, td").forEach((cell, index) => {
+        const text = (this.rows[rowIndex][index] ?? "").replace(/\\\|/g, "|");
+        if (cell !== document.activeElement && cell.textContent !== text) cell.textContent = text;
+        cell.style.textAlign = this.align[index];
+      });
+    });
+    return true;
+  }
+}
+
+const tablePreview = StateField.define<DecorationSet>({
+  create(state) { return buildTables(state); },
+  update(value, transaction) { return transaction.docChanged ? buildTables(transaction.state) : value; },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+function buildTables(state: EditorState): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const doc = state.doc;
+  const tree = ensureSyntaxTree(state, doc.length, 100) ?? syntaxTree(state);
+  for (let number = 1; number < doc.lines; number++) {
+    const header = doc.line(number), divider = doc.line(number + 1);
+    if (!header.text.includes("|") || !divider.text.includes("|")) continue;
+    let node = tree.resolveInner(header.from, 1);
+    while (node.parent && node.name !== "FencedCode" && node.name !== "CodeBlock") node = node.parent;
+    if (node.name === "FencedCode" || node.name === "CodeBlock") continue;
+    const columns = tableCells(header.text), rules = tableCells(divider.text);
+    if (columns.length !== rules.length || !rules.every((rule) => /^:?-{3,}:?$/.test(rule))) continue;
+    const rows = [columns];
+    let last = number + 1;
+    while (last < doc.lines && doc.line(last + 1).text.trim() && doc.line(last + 1).text.includes("|")) {
+      rows.push(tableCells(doc.line(++last).text));
+    }
+    const end = doc.line(last).to;
+    const align = rules.map((rule) => rule.startsWith(":") && rule.endsWith(":") ? "center" : rule.endsWith(":") ? "right" : "left");
+    builder.add(header.from, end, Decoration.replace({ block: true, widget: new TableWidget(rows, align, header.from, state.readOnly) }));
+    number = last;
+  }
+  return builder.finish();
+}
+
 // ── Shortcuts ────────────────────────────────────────────────────────────────
 
 function toggleWrap(view: EditorView, marker: string): boolean {
+  if (view.state.readOnly) return false;
   const { from, to } = view.state.selection.main;
   const text = view.state.sliceDoc(from, to);
   const before = view.state.sliceDoc(Math.max(0, from - marker.length), from);
@@ -319,6 +524,7 @@ function toggleWrap(view: EditorView, marker: string): boolean {
 }
 
 function insertLink(view: EditorView): boolean {
+  if (view.state.readOnly) return false;
   const { from, to } = view.state.selection.main;
   const label = view.state.sliceDoc(from, to) || "link text";
   const insert = `[${label}](url)`;
@@ -326,6 +532,49 @@ function insertLink(view: EditorView): boolean {
     changes: { from, to, insert },
     selection: { anchor: from + label.length + 3, head: from + label.length + 6 },
   });
+  return true;
+}
+
+function toggleLinePrefix(view: EditorView, kind: "heading1" | "heading2" | "heading3" | "bullet" | "number" | "check" | "quote"): boolean {
+  if (view.state.readOnly) return false;
+  const { from, to } = view.state.selection.main;
+  const first = view.state.doc.lineAt(from);
+  const last = view.state.doc.lineAt(to > from ? to - 1 : to);
+  const patterns = { heading1: /^#{1,6}\s+/, heading2: /^#{1,6}\s+/, heading3: /^#{1,6}\s+/, bullet: /^[-*+]\s+(?!\[[ xX]\]\s)/, number: /^\d+\.\s+/, check: /^[-*+]\s+\[[ xX]\]\s+/, quote: /^>\s+/ };
+  const prefix = { heading1: "# ", heading2: "## ", heading3: "### ", bullet: "- ", number: "1. ", check: "- [ ] ", quote: "> " };
+  const lines = Array.from({ length: last.number - first.number + 1 }, (_, index) => view.state.doc.line(first.number + index));
+  const heading = kind.startsWith("heading");
+  const remove = lines.every((line) => heading ? line.text.startsWith(prefix[kind]) : patterns[kind].test(line.text));
+  const changes = lines.map((line, index) => {
+    const match = patterns[kind].exec(line.text);
+    const insert = kind === "number" ? `${index + 1}. ` : prefix[kind];
+    if (remove) return { from: line.from, to: line.from + match![0].length, insert: "" };
+    if (match && !heading) return { from: line.from, to: line.from, insert: "" };
+    return { from: line.from, to: line.from + (heading && match ? match[0].length : 0), insert };
+  });
+  view.dispatch({ changes });
+  return true;
+}
+
+function insertBlock(view: EditorView, block: string): boolean {
+  if (view.state.readOnly) return false;
+  const pos = view.state.doc.lineAt(view.state.selection.main.to).to;
+  const before = pos ? "\n\n" : "";
+  const insert = `${before}${block}\n`;
+  view.dispatch({ changes: { from: pos, insert }, selection: { anchor: pos + insert.length } });
+  return true;
+}
+
+function insertCodeBlock(view: EditorView): boolean {
+  if (view.state.readOnly) return false;
+  const { from, to } = view.state.selection.main;
+  const selected = view.state.sliceDoc(from, to);
+  const longest = Math.max(2, ...(selected.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const before = from && view.state.sliceDoc(from - 1, from) !== "\n" ? "\n\n" : "";
+  const after = to < view.state.doc.length && view.state.sliceDoc(to, to + 1) !== "\n" ? "\n\n" : "\n";
+  const prefix = `${before}${fence}\n`;
+  view.dispatch({ changes: { from, to, insert: `${prefix}${selected}\n${fence}${after}` }, selection: { anchor: from + prefix.length, head: from + prefix.length + selected.length } });
   return true;
 }
 

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, PanelRight, X } from "lucide-react";
+import { ArrowLeft, Check, Code2, MoreHorizontal, PanelRight, Trash2, X } from "lucide-react";
 import { HookMark, TextFieldDialog, WindowControls, useWindowState } from "@hook/ui";
 import { ChatDock } from "@hook/chat";
 
 import { api, onAuthEvent, openExternal, type AuthView } from "./lib/bridge";
 import { chatTransport, setChatContext } from "./lib/chatTransport";
+import { rememberOpened } from "./lib/projectShortcuts";
 import type { DocumentMeta } from "./lib/types";
 import { useWorkspaceStore } from "./store/useWorkspaceStore";
 import { BoardPage, TaskPanel } from "./components/BoardView";
@@ -90,6 +91,12 @@ function Workspace({
     () => tasks.find((candidate) => candidate.id === activeTaskId) ?? null,
     [tasks, activeTaskId],
   );
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    if (board && board.id === activeBoardId) rememberOpened(auth.email ?? null, activeProjectId, { kind: "board", id: board.id });
+    else if (documentMeta && documentMeta.id === activeDocumentId) rememberOpened(auth.email ?? null, activeProjectId, { kind: "document", id: documentMeta.id });
+  }, [auth.email, activeProjectId, activeBoardId, activeDocumentId, board, documentMeta]);
 
   // Picking something in the tree leaves the invites list behind.
   useEffect(() => {
@@ -254,7 +261,9 @@ function Workspace({
             <BoardPage board={board} tasks={tasks} />
           ) : (
             <ProjectHome
+              key={`${auth.email ?? ""}:${project.id}`}
               project={project}
+              accountEmail={auth.email ?? null}
               onOpenBoard={(id) => void openBoard(id, project.id)}
               onOpenDocument={(id) => void openDocument(id, project.id)}
             />
@@ -318,6 +327,9 @@ function DocumentPage({
   const [title, setTitle] = useState("");
   const [epoch, setEpoch] = useState(0);
   const [forceSave, setForceSave] = useState(0);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const optionsRef = useRef<HTMLDivElement>(null);
+  const optionsButton = useRef<HTMLButtonElement>(null);
   // A rename from the tree is a save like any other; follow it here too, unless
   // the title field is the thing being typed in.
   const meta = useWorkspaceStore((state) =>
@@ -328,6 +340,27 @@ function DocumentPage({
   // save, and jumps when the user chooses to keep their text over someone
   // else's version.
   const baseRev = useRef(0);
+
+  useEffect(() => { setRaw(false); }, [id]);
+
+  useEffect(() => {
+    if (!optionsOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!optionsRef.current?.contains(event.target as Node)) setOptionsOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOptionsOpen(false);
+        optionsButton.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [optionsOpen]);
 
   useEffect(() => {
     let alive = true;
@@ -368,32 +401,40 @@ function DocumentPage({
             }
           }}
         />
-        <span className="ws-document-state" data-dirty={dirty}>
-          {dirty ? "Saving…" : `Saved · revision ${baseRev.current}`}
+        <span className="ws-document-state" data-dirty={dirty} title={dirty ? "Saving changes" : `Saved · revision ${baseRev.current}`} aria-live="polite">
+          {!dirty && <Check aria-hidden="true" />}
+          {dirty ? "Saving…" : "Saved"}
         </span>
-        <button
-          className="btn btn-ghost"
-          data-active={raw}
-          onClick={() => setRaw((value) => !value)}
-          title="Show the Markdown as it is stored"
-        >
-          {raw ? "Preview" : "Raw"}
-        </button>
-        <button className="btn btn-ghost" onClick={onBack}>
-          Close
-        </button>
-        {project.role !== "viewer" && (
-          <button
-            className="btn btn-ghost"
-            onClick={() => {
-              if (confirm("Delete this document for everyone?")) {
-                void deleteDocument(id).then(onBack);
-              }
-            }}
-          >
-            Delete
+        {raw && (
+          <button type="button" className="ws-source-indicator" onClick={() => setRaw(false)} title="Return to the formatted document">
+            <Code2 aria-hidden="true" /> <span>Markdown</span><span className="ws-source-return">Back to document</span>
           </button>
         )}
+        <div className="ws-document-options" ref={optionsRef}>
+          <button type="button" ref={optionsButton} className="ws-document-options-trigger" aria-label="Document options" aria-expanded={optionsOpen} aria-controls="document-options" onClick={() => setOptionsOpen((open) => !open)}>
+            <MoreHorizontal aria-hidden="true" />
+          </button>
+          {optionsOpen && (
+            <div className="ws-document-options-menu" id="document-options" aria-label="Document options">
+              <div className="ws-document-options-heading">Document options</div>
+              <button type="button" className="ws-document-option" onClick={() => { setRaw(!raw); setOptionsOpen(false); }}>
+                <Code2 aria-hidden="true" />
+                <span><strong>{raw ? "Back to document" : readOnly ? "View Markdown" : "Edit Markdown"}</strong><small>{raw ? "Return to the formatted document" : readOnly ? "View the source" : "View and edit the source"}</small></span>
+              </button>
+              {!readOnly && (
+                <>
+                  <div className="ws-document-options-divider" />
+                  <button type="button" className="ws-document-option ws-document-option-danger" onClick={() => {
+                    setOptionsOpen(false);
+                    if (confirm("Delete this document for everyone?")) void deleteDocument(id).then(onBack);
+                  }}>
+                    <Trash2 aria-hidden="true" /><span><strong>Delete document</strong><small>Remove for everyone</small></span>
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {conflict ? (
