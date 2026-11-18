@@ -188,7 +188,7 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Re
         headers.insert("X-Hook-Surface".into(), "coding".into());
         headers.insert("X-Hook-Chat-Id".into(), "$HOOK_CHAT_ID".into());
         headers.insert("X-Hook-Agent-Id".into(), "$HOOK_AGENT_ID".into());
-        headers.insert("X-Hook-App-Version".into(), env!("CARGO_PKG_VERSION").into());
+        headers.insert("X-Hook-App-Version".into(), crate::version::current());
         obj.insert(
             "headers".into(),
             serde_json::to_value(headers).unwrap_or_default(),

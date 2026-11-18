@@ -28,6 +28,7 @@ mod sync;
 mod tools;
 mod turn;
 mod update;
+mod version;
 mod workspace;
 
 use std::collections::HashMap;
@@ -97,13 +98,21 @@ fn emit_agents(state: &AppState) {
 
 /// Build the Tauri app: plugins, state, background loops and the IPC surface.
 ///
-/// The caller supplies `generate_context!()` and the window configuration,
-/// because those belong to the product's own `tauri.conf.json`.
-pub fn builder(product: Product, capabilities: Capabilities) -> tauri::Builder<tauri::Wry> {
+/// The caller supplies `generate_context!()`, the window configuration and its
+/// own version, because all three belong to the product: `generate_context!()`
+/// and the window come from its `tauri.conf.json`, and `version` — normally
+/// `env!("CARGO_PKG_VERSION")` in the product crate — is what this build reports
+/// as itself. It is a required argument so no product can silently fall back to
+/// hook-core's version, which is not a release number (see `version.rs`).
+pub fn builder(
+    product: Product,
+    capabilities: Capabilities,
+    version: &'static str,
+) -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .setup(move |app| setup(app, product, capabilities))
+        .setup(move |app| setup(app, product, capabilities, version))
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::list_chats,
@@ -177,7 +186,11 @@ fn setup(
     app: &mut tauri::App,
     product: Product,
     capabilities: Capabilities,
+    version: &'static str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // First, so anything that logs or reports "this build" during startup
+    // names the product's version rather than hook-core's.
+    version::set(version);
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     install_panic_log(&data_dir);

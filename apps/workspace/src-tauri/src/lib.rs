@@ -11,6 +11,7 @@ pub fn run() {
     hook_core::builder(
         hook_core::Product::Workspace,
         hook_core::Capabilities::workspace(),
+        env!("CARGO_PKG_VERSION"),
     )
     .build(tauri::generate_context!())
     .expect("error while building Hook Workspace")

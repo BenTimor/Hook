@@ -7,7 +7,11 @@
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    hook_core::builder(hook_core::Product::Chat, hook_core::Capabilities::chat())
+    hook_core::builder(
+        hook_core::Product::Chat,
+        hook_core::Capabilities::chat(),
+        env!("CARGO_PKG_VERSION"),
+    )
         .build(tauri::generate_context!())
         .expect("error while building Hook")
         .run(|app, event| {

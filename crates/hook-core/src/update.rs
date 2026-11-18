@@ -106,7 +106,9 @@ pub struct UpdateEvent {
 }
 
 pub fn current_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+    // The product's number, injected by `builder`; hook-core's own Cargo version
+    // is not a release and must never reach the index comparison.
+    crate::version::current()
 }
 
 fn parse_version(value: &str) -> Option<(u64, u64, u64, Option<&str>)> {
@@ -341,7 +343,17 @@ pub async fn check(cfg: &HarnessConfig, product: crate::Product) -> Result<Updat
         return Ok(idle(&current, channel));
     }
     let index = fetch_index(cfg, product).await?;
-    Ok(build_info(&index, &current, channel).unwrap_or_else(|| idle(&current, channel)))
+    let info = build_info(&index, &current, channel).unwrap_or_else(|| idle(&current, channel));
+    // The version this build reports and the version it compares against are the
+    // only way to tell "the index is behind" from "the build believes it is
+    // older than it is". One line here makes that difference visible in stderr.
+    if info.available {
+        eprintln!(
+            "hook: update available: {} -> {} ({:?} channel)",
+            info.current, info.latest, info.channel
+        );
+    }
+    Ok(info)
 }
 
 fn safe_version(value: &str) -> bool {

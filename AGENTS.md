@@ -160,8 +160,10 @@ Changing one side of a boundary is the most common way to break this repo.
   none. Gate it on `Capabilities` when only some products have it.
 - **New product:** `apps/<id>/` (package.json, index.html, vite.config.ts,
   `src-tauri/` with its own identifier) → `Product` + `Capabilities` in
-  `crates/hook-core/src/lib.rs` → an entry in `scripts/products.mjs` → root
-  scripts → its own `msix/<id>/`. Every product is built and published by
+  `crates/hook-core/src/lib.rs`, plus its own version passed to
+  `hook_core::builder(product, capabilities, env!("CARGO_PKG_VERSION"))` → an
+  entry in `scripts/products.mjs` → root scripts → its own `msix/<id>/`. Every
+  product is built and published by
   `pnpm release` (`scripts/release.sh`); add its `package.json` to the manifest
   copies in `Dockerfile` so a workspace install still resolves.
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
@@ -259,7 +261,12 @@ Changing one side of a boundary is the most common way to break this repo.
   (add `--product workspace` for the second product); it updates that product's
   `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` together. The
   release gate fails if they disagree, and refuses to republish an existing
-  version with different source.
+  version with different source. `crates/hook-core/Cargo.toml` is not one of
+  those files: its version is not a release number and is never bumped. A build
+  reports whatever its product passes to `hook_core::builder`, so never read the
+  version from `env!("CARGO_PKG_VERSION")` inside that crate — that is 0.2.1 in
+  every release, which made Store builds show the wrong version and offer an
+  update the Store had already installed.
 - **Publishing must stay non-breaking.** Installers are immutable and versioned;
   a product's index is swapped last. Never delete or overwrite the installer the
   current index points at. The chat app's index keeps its historical URL.

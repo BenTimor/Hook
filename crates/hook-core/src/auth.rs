@@ -448,7 +448,7 @@ impl AuthStore {
             .post(format!("{}/api/auth/device/start", self.base_url))
             .json(&serde_json::json!({
                 "client": "hook-desktop",
-                "version": env!("CARGO_PKG_VERSION"),
+                "version": crate::version::current(),
             }))
             .send()
             .await

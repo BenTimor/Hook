@@ -162,7 +162,7 @@ where
         .header("X-Hook-Client", "hook-desktop")
         .header("X-Hook-Surface", context.surface)
         .header("X-Hook-Chat-Id", &context.chat_id)
-        .header("X-Hook-App-Version", env!("CARGO_PKG_VERSION"))
+        .header("X-Hook-App-Version", crate::version::current())
         .json(&build_body(cfg, messages, tools));
     if let Some(agent_id) = &context.agent_id {
         request = request.header("X-Hook-Agent-Id", agent_id);

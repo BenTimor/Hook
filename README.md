@@ -332,6 +332,15 @@ explicit version, add `--product workspace`). It updates that product's
 Cargo's version, the installer is named after Tauri's, and the release manifest
 refuses to publish if they disagree.
 
+`crates/hook-core` is the one crate with no release version: it is shared by both
+products, so a number of its own would be wrong for at least one of them. Each
+app passes `env!("CARGO_PKG_VERSION")` to `hook_core::builder`, which records it
+in `crates/hook-core/src/version.rs`; the window's version label, the update
+check, the sign-in payload, the AI report and the `X-Hook-App-Version` header all
+read it from there. Never call `env!("CARGO_PKG_VERSION")` inside `hook-core`
+for anything user-facing — that answers with the crate's own number, and a build
+that believes it is an old version offers an update forever.
+
 
 ### Google Cloud
 

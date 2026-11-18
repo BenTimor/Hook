@@ -172,7 +172,7 @@ pub fn app_info(state: State<'_, Arc<AppState>>) -> Result<AppInfo, String> {
     // instead of on the first message.
     config::get()?;
     Ok(AppInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::version::current(),
         product: match state.product {
             crate::Product::Chat => "chat",
             crate::Product::Workspace => "workspace",
