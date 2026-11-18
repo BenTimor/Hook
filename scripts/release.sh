@@ -109,8 +109,14 @@ fi
 
 upload_release() {
   local exe="$1" manifest_file="$2" index_file="$3" glob="$4" with_latest="$5"
+  # `index_file` is the name the server stores; the copy to read is local, under
+  # `release/`. Requiring it by its bare name resolved against the repo root and
+  # failed before anything was uploaded.
+  local index_path="release/$index_file"
+  [ -f "$index_path" ] || fail "no release index at $index_path"
   local keep
-  keep=$(node -e "const i=require('./${index_file}'); process.stdout.write(Object.values(i.releases).map((r) => r.file).join(' '))")
+  keep=$(node -e "const i=require('./${index_path}'); process.stdout.write(Object.values(i.releases).map((r) => r.file).join(' '))")
+  [ -n "$keep" ] || fail "$index_path names no installers to keep"
   ssh "${SSH_OPTS[@]}" "$HOST" "mkdir -p '$RELEASES_DIR' && chmod 755 '$RELEASES_DIR'"
   scp "${SSH_OPTS[@]}" "release/$exe" "$HOST:$RELEASES_DIR/$exe.new"
   if [ "$with_latest" = 1 ]; then
