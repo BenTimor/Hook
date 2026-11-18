@@ -9,7 +9,8 @@
  * Include: application source, the shared packages and shared crate it links,
  * its compiled config, dependencies, installer inputs.
  * Exclude: tests, the landing page, the server, docs, build scripts that only
- * describe an artifact instead of changing it.
+ * describe an artifact instead of changing it — including `msix/` and
+ * `build-msix.mjs`, which package the exe for the Store without touching it.
  *
  *   node scripts/app-source-hash.mjs                  # chat app
  *   node scripts/app-source-hash.mjs --product workspace

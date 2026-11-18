@@ -1,0 +1,115 @@
+name: Checks
+
+# The static gate and the Rust tests, for every push to `main` that can change a
+# desktop product and for every pull request.
+#
+# This workflow does not build an installer. Installers are built, published and
+# handed to the Microsoft Store from the machine that makes the release
+# (`pnpm release`, see README **Releasing**): the download channel and the Store
+# channel are one deliberate action by a person who already has the toolchain
+# and the MSIX identity, instead of a twenty-minute Windows build per push.
+#
+# What still has to be true before a push is good: the typecheck, both window
+# builds, the server suite and `cargo test -p hook-core`. That is what this file
+# runs.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/chat/**"
+      - "apps/workspace/**"
+      - "packages/**"
+      - "crates/hook-core/**"
+      - "harness.config.ci.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - "scripts/app-source-hash.mjs"
+      - "scripts/products.mjs"
+      - "scripts/release-gate.mjs"
+      - "scripts/release.sh"
+      - "scripts/merge-release-index.mjs"
+      - "scripts/fetch-pi-runtime.mjs"
+      - "scripts/fetch-git.mjs"
+      - ".github/workflows/checks.yml"
+  # A pull request gets the same checks whatever it touches: the path filter
+  # above exists to keep main quiet, not to hide a broken import in review.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push supersedes a running check; nothing here publishes anything.
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, frontends and server tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # The pnpm version comes from package.json's `packageManager`; passing it
+      # here too makes the action fail with "multiple versions specified".
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run API regression tests
+        run: pnpm waitlist:test
+
+      - name: Test the release gate
+        run: pnpm test:release
+
+      # The only static gate: every workspace package plus the site.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # tsc per app is not enough: these catch a bad import that only shows up
+      # when Vite resolves the graph (a shared package not declared, for one).
+      - name: Build the chat window
+        run: pnpm build
+
+      - name: Build the Workspace window
+        run: pnpm workspace:build
+
+  rust-test:
+    name: Rust tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      # config.rs include_str!s this file, so every cargo command needs it.
+      - name: Use CI harness config
+        shell: pwsh
+        run: Copy-Item harness.config.ci.toml harness.config.toml -Force
+
+      # hook-core holds every test that matters (SSE framing, the tool loop, the
+      # guard policy, sync, the update policy). It needs no node_modules: the
+      # engine tests skip themselves when the bundled runtime is not there yet,
+      # and the guard test only needs `node`.
+      - name: Rust tests
+        run: cargo test -p hook-core

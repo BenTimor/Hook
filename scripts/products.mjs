@@ -80,11 +80,9 @@ export function appInputs(product) {
     `${product.dir}/src-tauri/capabilities`,
     `${product.dir}/src-tauri/icons`,
     `${product.dir}/src-tauri/src`,
-    product.msix,
     "scripts/app-source-hash.mjs",
     "scripts/fetch-git.mjs",
     "scripts/fetch-pi-runtime.mjs",
-    "scripts/build-msix.mjs",
     "scripts/products.mjs",
   ];
 }

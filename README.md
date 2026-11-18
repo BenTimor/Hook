@@ -94,7 +94,7 @@ Pushes to `main` that can change the site or the server deploy automatically.
 `pnpm waitlist:build` on a clean runner, then calls the same
 `scripts/deploy-waitlist.sh` over SSH with `SKIP_BUILD=1` (it reuses the artifact the
 verify job built). Pull requests run the checks without deploying
-(`.github/workflows/ci.yml`). Deploys are serialized; a running deploy is never
+(`.github/workflows/checks.yml`). Deploys are serialized; a running deploy is never
 cancelled by the next push.
 
 The script fingerprints what the container runs (`scripts/site-source-hash.mjs`:
@@ -195,7 +195,7 @@ failing silently.
 An approved account sees a **Download Hook** button instead of the waiting-list
 flow. The button points at `/api/download/windows`, which re-checks the session
 and streams `DOWNLOAD_DIR/Hook-setup.exe`. The file and `latest.json` are written
-by the release workflow described below. Nothing is served from GitHub, so a
+by `pnpm release` (see **Releasing**). Nothing is served from GitHub, so a
 shared link cannot bypass the approval check.
 
 ### Desktop sign-in
@@ -278,45 +278,52 @@ usage. It is not included in the token/cache totals; the proxy logs only that a
 search happened and how many results came back, not the query text. The
 per-account search limit is 4 in flight and 60 per minute.
 
-### Automatic Windows builds
+### Releasing
 
-`.github/workflows/release.yml` ships both desktop products on every push to
-`main` that can change one of them. A cheap first job fingerprints each product's
-source (`scripts/app-source-hash.mjs`) and compares it with the published release,
-so the Windows build only happens when there is something new to ship — and only
-for the product that changed:
+Installers are built and published from the machine that makes the release, not
+from CI:
+
+```bash
+pnpm version:bump patch                 # patch|minor|major, add --product workspace
+pnpm release                            # every product whose source changed
+pnpm release -- --dry-run               # build and merge the index, upload nothing
+pnpm release -- --store                 # also package the MSIX and print the submit
+```
+
+`scripts/release.sh` refuses to run from anything but a clean, already-pushed
+`main`, runs the checks (`pnpm typecheck`, `pnpm test:release`,
+`cargo test -p hook-core`), and then, per product, builds the installer, writes
+`release/latest.json` (version, commit, builtAt, size, SHA-256, source hash,
+release notes), merges it into `release/releases.json`, and uploads both to
+`/opt/hook-web/data/releases` over the same SSH deploy key as the website. It
+prints what it is skipping: a product whose source is identical to the published
+build is left alone.
+
+The release gate (`scripts/release-gate.mjs`) is what decides that, and it still
+refuses the two cases that used to fail the workflow:
 
 | Repo state | What happens |
 |---|---|
-| Same application source as the published build | that product's build is skipped |
+| Same application source as the published build | that product is skipped |
 | Source changed, version bumped | builds and publishes |
-| Source changed, same version | fails and asks for `pnpm version:bump` |
-| Source changed, lower version | fails (no downgrades) |
+| Source changed, same version | refuses, asks for `pnpm version:bump` |
+| Source changed, lower version | refuses (no downgrades) |
 
-The checks run beside the build, not before it: `verify` (typecheck, both
-frontends, the server suite) and `rust-test` (`cargo test -p hook-core`) run in
-parallel with the Windows build, and the publish job needs all three. A red test
-still cannot ship, and the push does not wait for it twice. When both products
-change they are built in one job, so the second one reuses every compiled
-dependency.
+Publishing never takes downloads down. The new installer goes up under its
+versioned name first; the old index keeps serving the previous version until the
+new one is complete, and the swap is a single `mv`. The last five versions stay
+downloadable.
 
-The workflow is cancelled when a newer push arrives: a superseded build publishes
-nothing (the index is swapped at the very end), so a fix does not queue behind
-twenty minutes of wasted compilation.
+`.github/workflows/checks.yml` still runs the typecheck, both window builds, the
+server suite and `cargo test -p hook-core` on every push that can change a
+product — it is the "is main good" light, not a publisher. Nothing in CI has to
+pass for a release to go out, which is why `pnpm release` runs those checks
+itself before it uploads anything.
 
-A build runs on `windows-latest` in roughly eight minutes. It writes
-`release/latest.json` (version, commit, builtAt, size, SHA-256, source hash,
-release notes), merges it into `release/releases.json`, and uploads the installer
-(under `Hook-<version>-setup.exe`) and the index to `/opt/hook-web/data/releases`
-over the same SSH deploy key as the website. Builds also appear as workflow
-artifacts for 14 days. The release profile is tuned for build time — thin LTO and
-parallel codegen units — because an installer is dominated by the ~200 MB of
-MinGit, Node and pi it ships, not by the executable in it.
-
-Publishing never takes downloads down. The new installer is uploaded under its
-versioned name first; the old `releases.json` keeps serving the previous version
-until the new one is complete, and the index swap is a single `mv`. The last five
-versions stay downloadable.
+The release profile is tuned for build time — thin LTO, parallel codegen units,
+and one `rlib` per product instead of the mobile `staticlib`/`cdylib` too —
+because an installer is dominated by the ~200 MB of MinGit, Node and pi it ships,
+not by the executable in it.
 
 Bump the version with `pnpm version:bump patch` (or `minor`, `major`, or an
 explicit version, add `--product workspace`). It updates that product's
@@ -435,7 +442,7 @@ pnpm app          # dev window with hot reload
 ```
 
 `harness.config.toml` is gitignored so you can keep a local provider. On a fresh
-clone, copy `harness.config.ci.toml` (the build the release workflow ships) or
+clone, copy `harness.config.ci.toml` (the config a release is built with) or
 `harness.config.example.toml`. The production config requires a signed-in
 approved account. For UI work without the service, use the mock provider below.
 The config file must exist before building — it is compiled into the binary, so a
@@ -469,7 +476,7 @@ at the repo root; the Tauri CLI still runs per app (`apps/chat`, `apps/workspace
 Outputs for the chat app:
 
 - `target/release/bundle/nsis/Hook_<version>_x64-setup.exe` — installer,
-  ~78 MB (the release workflow copies it to `release/Hook-<version>-setup.exe`)
+  ~78 MB (`pnpm release` copies it to `release/Hook-<version>-setup.exe`)
 - `release/Hook-<version>-portable.zip` — `Hook.exe` + `resources\pi-runtime` +
   `resources\git`, no install
 
@@ -498,9 +505,8 @@ can load Hook's guard before anything gets packaged.
 Hand-editing one of the three files makes the app and the installer disagree.
 
 `harness.config.toml` is gitignored so a local developer can keep a custom
-provider. The Windows release workflow copies the committed
-`harness.config.ci.toml` (hookcode.io proxy, no secrets) into that slot before
-building.
+provider. `pnpm release` swaps in the committed `harness.config.ci.toml`
+(hookcode.io proxy, no secrets) for the build and restores yours afterwards.
 
 ## Updates
 
@@ -617,13 +623,13 @@ pnpm app:msix      # fetch the engine, build Hook.exe, package the MSIX
 ```
 
 The result is `release/Hook-<version>-x64.msix` (about 84 MB with the bundled
-engine and git). The release
-workflow runs the same packaging step after the NSIS build and keeps the `.msix`
-in the `hook-windows-release` artifact for 14 days. The package is deliberately
-unsigned: Partner Center re-signs Store submissions, and signing it yourself
-with a self-signed certificate only breaks the upload. For local sideload
-testing, pass `--sign dev.pfx --password …` to sign with a development
-certificate.
+engine and git). CI does not package the Store build: it is made here, on
+demand, from the commit that was published, and submitted when you decide to
+(`pnpm release -- --store` packages it and prints the submit command). The
+package is deliberately unsigned: Partner Center re-signs Store submissions, and
+signing it yourself with a self-signed certificate only breaks the upload. For
+local sideload testing, pass `--sign dev.pfx --password …` to sign with a
+development certificate.
 
 A package version has four numeric parts, so the script writes `<semver>.0`
 (0.2.1 → `0.2.1.0`) and the manifest is not edited by hand. Every Store
@@ -1249,17 +1255,18 @@ cargo test                                      # the whole workspace: no engine
 cargo test -p hook-core -- --ignored             # live tests against `pnpm mock`
 pnpm typecheck                                  # the only static gate: every package + the site
 pnpm waitlist:test                              # API, auth, proxy, download, sync, git, workspace
-pnpm test:release                               # "does this push need a Windows build?"
+pnpm test:release                               # "is this tree already published?"
+pnpm release                                    # build + publish the installers
 ```
 
-GitHub Actions runs on every push to `main` and, without a build, on every pull
-request (`ci.yml`). A push runs the checks once, next to the build they gate:
-`release.yml` has a `verify` job (landing-page tests and build, the release-gate
-tests, `pnpm typecheck`, both window builds) and a `rust-test` job, both in
-parallel with the Windows installer build, while `deploy-waitlist.yml` does the
-same for the site. The release profile is `lto = "thin"` with parallel codegen
-units, and a product ships one `rlib` plus its binary — not the mobile
-`staticlib`/`cdylib` as well. `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
+GitHub Actions runs the checks on every push to `main` that can change a desktop
+product, and on every pull request (`.github/workflows/checks.yml`): a `verify`
+job (landing-page tests and build, the release-gate tests, `pnpm typecheck`, both
+window builds) and a `rust-test` job (`cargo test -p hook-core`), in parallel.
+Nothing there builds an installer — `pnpm release` does that, locally, when you
+decide to ship (see **Releasing**). The release profile is `lto = "thin"` with
+parallel codegen units, and a product ships one `rlib` plus its binary — not the
+mobile `staticlib`/`cdylib` as well. `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
 shapes thinking-mode APIs reject), image parts and the base64/header helpers,
 path containment, the project and agent stores, progress batching, the chat-agent
 tool loop, the guard policy (a Node harness feeds it bad `bash` calls, force-push

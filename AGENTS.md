@@ -25,8 +25,8 @@ single pnpm + Cargo workspace.
 
 | Product | Code | Dev | Build | Deploy |
 | --- | --- | --- | --- | --- |
-| **Hook** (AI chat + coding agents) | `apps/chat/` | `pnpm app` | `pnpm app:build` / `pnpm app:portable` | `.github/workflows/release.yml` |
-| **Hook Workspace** (projects, boards, tasks, docs) | `apps/workspace/` | `pnpm workspace:app` | `pnpm workspace:app:build` | `.github/workflows/release.yml` |
+| **Hook** (AI chat + coding agents) | `apps/chat/` | `pnpm app` | `pnpm app:build` / `pnpm app:portable` | `pnpm release` |
+| **Hook Workspace** (projects, boards, tasks, docs) | `apps/workspace/` | `pnpm workspace:app` | `pnpm workspace:app:build` | `pnpm release` |
 | Landing page | `waitlist/` | `pnpm waitlist:dev` → :5173 | `pnpm waitlist:build` → `dist-waitlist/` | `.github/workflows/deploy-waitlist.yml` |
 | Account service | `server/` | `pnpm waitlist:start` | Docker image | `scripts/deploy-waitlist.sh` |
 
@@ -57,6 +57,7 @@ pnpm typecheck                    # every package + the landing page (the only s
 pnpm app:build                    # chat NSIS installer (fetches engine + git first)
 pnpm workspace:app:build          # Workspace NSIS installer
 pnpm version:bump patch           # patch|minor|major, add --product workspace
+pnpm release                      # build + publish installers (-- --dry-run, -- --store)
 cargo test                        # whole workspace, at the repo root; no engine or network
 cargo test -p hook-core -- --ignored   # live tests; run `pnpm mock` first
 
@@ -132,7 +133,10 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
   excluded: they run in CI but never enter an executable.
 - `scripts/site-source-hash.mjs` — what the server container runs, so a deploy
   that only changes the site skips the Docker rebuild.
-- `scripts/release-gate.mjs` — decides whether a push needs that product's build.
+- `scripts/release.sh` — `pnpm release`: refuses a dirty or unpushed tree, runs
+  the checks, builds each changed product, publishes the installer and the index.
+- `scripts/release-gate.mjs` — decides whether a product's source is already
+  published (and refuses a missing version bump).
 - `scripts/merge-release-index.mjs` — folds a build into `releases.json`.
 
 ## Touch every layer
@@ -152,9 +156,9 @@ Changing one side of a boundary is the most common way to break this repo.
 - **New product:** `apps/<id>/` (package.json, index.html, vite.config.ts,
   `src-tauri/` with its own identifier) → `Product` + `Capabilities` in
   `crates/hook-core/src/lib.rs` → an entry in `scripts/products.mjs` → root
-  scripts → its own `msix/<id>/`. Every product ships from
-  `.github/workflows/release.yml`; add its `package.json` to the manifest copies
-  in `Dockerfile` so a workspace install still resolves.
+  scripts → its own `msix/<id>/`. Every product is built and published by
+  `pnpm release` (`scripts/release.sh`); add its `package.json` to the manifest
+  copies in `Dockerfile` so a workspace install still resolves.
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
   `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`
   + `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`
@@ -202,9 +206,10 @@ Changing one side of a boundary is the most common way to break this repo.
 - **New release/update behavior:** `scripts/products.mjs` →
   `server/releases.mjs` → `server/download.mjs` → `update.rs` →
   `src/lib/types.ts` → `bridge.ts` → the update store/component →
-  `server/releases.test.mjs` and the `update.rs` tests. The release pipeline
-  lives in `.github/workflows/release.yml` plus `scripts/release-gate.mjs`
-  and `scripts/merge-release-index.mjs`. One index per product:
+  `server/releases.test.mjs` and the `update.rs` tests. The release path is
+  `scripts/release.sh` plus `scripts/release-gate.mjs` and
+  `scripts/merge-release-index.mjs`; the checks that run on every push live in
+  `.github/workflows/checks.yml`. One index per product:
   `/api/releases` (chat, historical) and `/api/releases/<product>`.
 - **Store/update channel changes:** `msix/<product>/AppxManifest.xml` +
   `msix/<product>/identity.json` → `scripts/build-msix.mjs` → `update.rs`
@@ -241,9 +246,10 @@ Changing one side of a boundary is the most common way to break this repo.
   `apps/*/src-tauri/resources/git/` (restored by `pnpm git`), `dist/`,
   `dist-waitlist/`, `release/`.
 - **A push to `main` deploys production.** `deploy-waitlist.yml` ships
-  hookcode.io when the site or the server changed; `release.yml` publishes a
-  Windows build for the products whose source changed. Do not push unless the
-  user asked.
+  hookcode.io when the site or the server changed; an installer is published by
+  `pnpm release`, which uploads the versioned file and swaps the index last. Do
+  not push unless the user asked, and never run `pnpm release` without being
+  asked for that release.
 - **Never edit a version by hand.** Run `pnpm version:bump patch|minor|major`
   (add `--product workspace` for the second product); it updates that product's
   `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` together. The
@@ -255,7 +261,9 @@ Changing one side of a boundary is the most common way to break this repo.
 - **The Store channel is separate.** A packaged (MSIX) build must never run the
   direct installer: it updates through the Store. `store.latest` is set only
   after Microsoft certifies that version. Store submissions are uploaded
-  unsigned (`makeappx` without a cert). The MSIX manifest opts out of AppData
+  unsigned (`makeappx` without a cert), and the package is built locally
+  (`pnpm app:msix`, or `pnpm release -- --store`) from the commit that was
+  published — CI does not package it. The MSIX manifest opts out of AppData
   virtualization for its own `%APPDATA%\app.hook.<product>`; keep that so the two
   channels share data instead of forking it. The Store product name for the chat
   app is **HookCode** (the manifest display name); the app UI stays Hook.
@@ -279,8 +287,8 @@ Changing one side of a boundary is the most common way to break this repo.
 - One account and several products → **One account, several products**
 - Coding-agent runtime, RPC args, guard policy, preview → **Coding agents**
 - Config keys and what is compiled in → **Configure**
-- Version bumping, release gate, in-app updates → **Updates** and
-  **Automatic Windows builds**
+- Version bumping, releasing an installer, updates → **Updates** and
+  **Releasing**
 - AI reporting for users and reviewers → **Reporting AI output**
 - Microsoft Store setup/submission, MSIX, Store update cadence →
   **Microsoft Store (MSIX)**

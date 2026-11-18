@@ -21,6 +21,7 @@
     "engine": "node scripts/fetch-pi-runtime.mjs apps/chat",
     "git": "node scripts/fetch-git.mjs apps/chat",
     "version:bump": "node scripts/bump-version.mjs",
+    "release": "bash scripts/release.sh",
     "waitlist:dev": "vite --config waitlist.vite.config.mjs",
     "waitlist:build": "pnpm run typecheck:waitlist && vite build --config waitlist.vite.config.mjs",
     "waitlist:test": "node --test server/api.test.mjs server/platform.test.mjs server/releases.test.mjs server/git.test.mjs server/sync.test.mjs server/workspace.test.mjs",
