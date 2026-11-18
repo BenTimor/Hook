@@ -68,6 +68,59 @@ pub fn new_id() -> String {
     format!("pj_{}", uuid::Uuid::new_v4().simple())
 }
 
+/// The block Hook maintains in a project's `AGENTS.md`. Everything outside it
+/// belongs to the user, and everything inside it is regenerated on every write.
+const NOTES_START: &str = "<!-- hook:memory";
+const NOTES_END: &str = "<!-- /hook:memory -->";
+/// How many notes one project keeps. A long list stops being read.
+const MAX_AGENT_NOTES: usize = 40;
+
+fn has_agent_block(text: &str) -> bool {
+    text.contains(NOTES_START) && text.contains(NOTES_END)
+}
+
+/// Split `AGENTS.md` into what comes before the block, the bullets in it, and
+/// what comes after. Without a block the whole file is "before".
+fn split_agent_block(text: &str) -> (String, Vec<String>, String) {
+    if !has_agent_block(text) {
+        return (text.to_string(), Vec::new(), String::new());
+    }
+    let start = text.find(NOTES_START).unwrap_or(0);
+    let line_start = text[..start].rfind('\n').map(|at| at + 1).unwrap_or(0);
+    let end_at = text[start..]
+        .find(NOTES_END)
+        .map(|at| start + at)
+        .unwrap_or(text.len());
+    let end = end_at + NOTES_END.len();
+    let bullets = text[start..end_at]
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("- "))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    (
+        text[..line_start].to_string(),
+        bullets,
+        text[end..].trim_start_matches('\n').to_string(),
+    )
+}
+
+fn render_agent_block(bullets: &[String]) -> String {
+    let mut out = String::from(NOTES_START);
+    out.push_str(" Hook keeps these for coding agents; edits inside these markers are overwritten -->\n");
+    for bullet in bullets {
+        out.push_str("- ");
+        out.push_str(bullet);
+        out.push('\n');
+    }
+    out.push_str(NOTES_END);
+    out.push('\n');
+    out
+}
+
 pub fn validate_name(raw: &str) -> Result<String, String> {
     let name = raw.trim();
     if name.is_empty() {
@@ -523,6 +576,55 @@ impl ProjectsStore {
         Ok(project)
     }
 
+    /// Add one line to the notes Hook keeps for coding agents in this project.
+    ///
+    /// The notes live in the repository itself, in a marked block inside
+    /// `AGENTS.md`, because that is the file the coding agent already reads: the
+    /// note travels with the code to every computer and reaches `pi` without
+    /// anything extra. Only the block is ours — the rest of the file is the
+    /// user's and is left alone.
+    pub fn append_agent_note(path: &Path, note: &str) -> Result<PathBuf, String> {
+        let note = note.split_whitespace().collect::<Vec<_>>().join(" ");
+        let note = note.trim_start_matches("- ").to_string();
+        if note.chars().count() < 3 {
+            return Err("A note needs a few words.".into());
+        }
+        let file = path.join("AGENTS.md");
+        let existing = fs::read_to_string(&file).unwrap_or_default();
+        let (before, mut bullets, after) = split_agent_block(&existing);
+        // The same rule twice is one rule. Compared case-insensitively because
+        // the agent rewrites these in slightly different words.
+        if !bullets.iter().any(|bullet| bullet.eq_ignore_ascii_case(&note)) {
+            bullets.push(note);
+        }
+        if bullets.len() > MAX_AGENT_NOTES {
+            let drop = bullets.len() - MAX_AGENT_NOTES;
+            bullets.drain(..drop);
+        }
+        let block = render_agent_block(&bullets);
+        let text = if has_agent_block(&existing) {
+            format!("{before}{block}{after}")
+        } else {
+            let head = existing.trim_end();
+            if head.is_empty() {
+                block
+            } else {
+                format!("{head}
+
+{block}")
+            }
+        };
+        crate::store::write_atomic(&file, text.as_bytes())?;
+        Ok(file)
+    }
+
+    /// What the block currently says, for the tool result and the UI.
+    pub fn agent_notes(path: &Path) -> Vec<String> {
+        fs::read_to_string(path.join("AGENTS.md"))
+            .map(|text| split_agent_block(&text).1)
+            .unwrap_or_default()
+    }
+
     /// Resolve a project by folder name (case-insensitive), account id or
     /// absolute path. The result is always a direct child of `root`.
     pub fn resolve(&self, root: &Path, reference: &str) -> Result<PathBuf, String> {
@@ -619,6 +721,72 @@ mod tests {
         assert!(validate_name("con").is_err());
         assert!(validate_name(" leading").is_ok());
         assert!(validate_name("fine-name_1").is_ok());
+    }
+
+    #[test]
+    fn agent_notes_land_in_a_marked_block() {
+        let (_base, root, store) = temp_store();
+        let project = store.create(&root, "alpha", "a demo project").unwrap();
+        let path = PathBuf::from(&project.path);
+
+        let file = ProjectsStore::append_agent_note(&path, "Uses pnpm, not npm.").unwrap();
+        assert_eq!(file.file_name().unwrap(), "AGENTS.md");
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(text.contains(NOTES_START), "{text}");
+        assert!(text.contains(NOTES_END), "{text}");
+        assert!(text.contains("- Uses pnpm, not npm."), "{text}");
+
+        // The same rule said twice is one rule, in any case.
+        ProjectsStore::append_agent_note(&path, "uses pnpm, not npm.").unwrap();
+        let text = fs::read_to_string(&file).unwrap();
+        assert_eq!(text.matches("pnpm").count(), 1, "{text}");
+        assert_eq!(ProjectsStore::agent_notes(&path).len(), 1);
+    }
+
+    #[test]
+    fn agent_notes_leave_the_users_file_alone() {
+        let (_base, root, _store) = temp_store();
+        let dir = root.join("site");
+        fs::create_dir_all(&dir).unwrap();
+        let original = "# Site\n\nAlways run the tests with `npm test`.\n";
+        fs::write(dir.join("AGENTS.md"), original).unwrap();
+
+        ProjectsStore::append_agent_note(&dir, "The build needs Node 22.").unwrap();
+        let text = fs::read_to_string(dir.join("AGENTS.md")).unwrap();
+        assert!(text.starts_with(original.trim_end()), "{text}");
+        assert_eq!(text.matches("npm test").count(), 1);
+        assert!(text.contains("- The build needs Node 22."));
+
+        // A second note replaces the block, not the file.
+        ProjectsStore::append_agent_note(&dir, "Deploys from main.").unwrap();
+        let text = fs::read_to_string(dir.join("AGENTS.md")).unwrap();
+        assert_eq!(text.matches(NOTES_START).count(), 1, "{text}");
+        assert_eq!(text.matches("npm test").count(), 1);
+        assert!(text.contains("- The build needs Node 22."));
+        assert!(text.contains("- Deploys from main."));
+    }
+
+    #[test]
+    fn agent_notes_stop_at_the_cap() {
+        let (_base, root, _store) = temp_store();
+        let dir = root.join("big");
+        fs::create_dir_all(&dir).unwrap();
+        for i in 0..(MAX_AGENT_NOTES + 5) {
+            ProjectsStore::append_agent_note(&dir, &format!("Rule number {i}.")).unwrap();
+        }
+        let notes = ProjectsStore::agent_notes(&dir);
+        assert_eq!(notes.len(), MAX_AGENT_NOTES);
+        assert_eq!(notes.last().unwrap(), "Rule number 44.");
+        assert!(!notes.iter().any(|note| note == "Rule number 0."));
+    }
+
+    #[test]
+    fn a_note_that_says_nothing_is_refused() {
+        let (_base, root, _store) = temp_store();
+        let dir = root.join("empty");
+        fs::create_dir_all(&dir).unwrap();
+        assert!(ProjectsStore::append_agent_note(&dir, "   ").is_err());
+        assert!(!dir.join("AGENTS.md").exists());
     }
 
     #[test]

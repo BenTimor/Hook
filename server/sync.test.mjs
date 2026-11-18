@@ -330,9 +330,94 @@ test("quota rejections roll the whole batch back", async (t) => {
   assert.equal(changes.body.changes.length, 0);
 });
 
-test("deleting the account clears chats, projects and media", async (t) => {
+function memory(id, { text = "Prefers pnpm.", pinned = true, updatedAt = 1000, deleted = false } = {}) {
+  return {
+    id,
+    text,
+    kind: "user",
+    pinned,
+    chatId: null,
+    createdAt: 1000,
+    updatedAt,
+    deleted,
+  };
+}
+
+test("memory entries sync to the other device and keep the newest version", async (t) => {
+  const { request } = await setup(t);
+  const pushed = await request("/sync/memory", {
+    method: "POST",
+    body: { entries: [memory("mem-1", { text: "Prefers pnpm.", updatedAt: 2000 })] },
+  });
+  assert.equal(pushed.status, 200);
+  assert.equal(pushed.body.entries[0].ok, true);
+
+  const pulled = await request("/sync/changes?since=0");
+  const change = pulled.body.changes.find((entry) => entry.id === "mem-1");
+  assert.equal(change.kind, "memory");
+  assert.equal(change.entry.text, "Prefers pnpm.");
+  assert.equal(change.entry.pinned, true);
+  assert.equal(change.entry.kind, "user");
+
+  // The same fact again is a no-op, not a new revision.
+  const again = await request("/sync/memory", {
+    method: "POST",
+    body: { entries: [memory("mem-1", { text: "Prefers pnpm.", updatedAt: 2000 })] },
+  });
+  assert.equal(again.body.entries[0].unchanged, true);
+  assert.equal(again.body.cursor, pushed.body.cursor);
+
+  // A stale push from the other device never wins.
+  const stale = await request("/sync/memory", {
+    method: "POST",
+    body: { entries: [memory("mem-1", { text: "Prefers yarn.", updatedAt: 1000 })] },
+  });
+  assert.equal(stale.body.entries[0].unchanged, true);
+  const latest = await request("/sync/changes?since=0");
+  const entries = latest.body.changes.filter((entry) => entry.id === "mem-1");
+  assert.equal(entries[entries.length - 1].entry.text, "Prefers pnpm.");
+});
+
+test("a forgotten memory arrives as a tombstone", async (t) => {
+  const { request } = await setup(t);
+  await request("/sync/memory", {
+    method: "POST",
+    body: { entries: [memory("mem-2", { updatedAt: 1000 })] },
+  });
+  const removed = await request("/sync/memory", {
+    method: "POST",
+    body: { entries: [memory("mem-2", { text: "", updatedAt: 2000, deleted: true })] },
+  });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.entries[0].deleted, true);
+
+  const pulled = await request("/sync/changes?since=0");
+  const change = pulled.body.changes.find((entry) => entry.id === "mem-2");
+  assert.equal(change.deleted, true);
+  assert.equal(change.entry.deleted, true);
+
+  const status = await request("/sync/status");
+  assert.equal(status.body.memory, 0, "a tombstone is not a live memory");
+});
+
+test("memory rejects an entry that is not shaped like one", async (t) => {
+  const { request } = await setup(t);
+  const response = await request("/sync/memory", {
+    method: "POST",
+    body: { entries: [{ id: "has spaces", text: "nope" }] },
+  });
+  assert.equal(response.status, 400);
+  const pulled = await request("/sync/changes?since=0");
+  assert.equal(pulled.body.changes.length, 0);
+});
+
+test("deleting the account clears chats, projects, memory and media", async (t) => {
   const { request } = await setup(t);
   await request("/sync/chats", { method: "POST", body: { chats: [chat("chat-gone")] } });
+  await request("/sync/memory", {
+    method: "POST",
+    body: { entries: [memory("mem-gone", { text: "Prefers pnpm." })] },
+  });
   const removed = await request("/sync/account", { method: "DELETE" });
   assert.equal(removed.status, 200);
   const changes = await request("/sync/changes?since=0");
@@ -340,4 +425,5 @@ test("deleting the account clears chats, projects and media", async (t) => {
   const status = await request("/sync/status");
   assert.equal(status.body.chats, 0);
   assert.equal(status.body.projects, 0);
+  assert.equal(status.body.memory, 0);
 });

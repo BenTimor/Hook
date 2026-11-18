@@ -15,6 +15,7 @@ import type { SyncView } from "../lib/types";
 import { useChatStore } from "../store/useChatStore";
 import { useUpdateStore } from "../store/useUpdateStore";
 import { ImportSection } from "./ImportSection";
+import { MemorySection } from "./MemorySection";
 
 /**
  * One quiet line about where the work lives. Syncing itself is automatic; this
@@ -159,6 +160,8 @@ export function SettingsSheet() {
           </section>
 
           <ImportSection />
+
+          <MemorySection />
 
           <SyncRow />
 

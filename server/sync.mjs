@@ -51,11 +51,15 @@ function limits(env = {}) {
     mediaQuota: Number(env.SYNC_MEDIA_QUOTA_BYTES) || 250 * 1024 * 1024,
     chats: Number(env.SYNC_MAX_CHATS) || 5000,
     projects: Number(env.SYNC_MAX_PROJECTS) || 200,
+    // Generous against the desktop's own ceiling (400): the server should not be
+    // the thing that surprises a user who has been saving preferences for a year.
+    memory: Number(env.SYNC_MAX_MEMORY) || 1000,
   };
 }
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const PROJECT_ID = /^[A-Za-z0-9_-]{4,64}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
+const MEMORY_KINDS = new Set(["user", "feedback", "project", "reference"]);
 
 const RESERVED = new Set([
   "con", "prn", "aux", "nul",
@@ -360,6 +364,53 @@ function reply(res, payload) {
   res.json(payload);
 }
 
+/** One memory entry, or null when the row is shaped in a way this build cannot
+ * trust. The body travels inline: entries are a sentence, not a conversation. */
+function normalizeEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (typeof raw.id !== "string" || !SAFE_ID.test(raw.id)) return null;
+  const text = typeof raw.text === "string" ? raw.text.trim().slice(0, 2000) : "";
+  // A tombstone carries no text; everything else has to say something.
+  if (!text && raw.deleted !== true) return null;
+  return {
+    id: raw.id,
+    text,
+    kind: MEMORY_KINDS.has(raw.kind) ? raw.kind : "user",
+    pinned: raw.pinned === true,
+    chatId: typeof raw.chatId === "string" && SAFE_ID.test(raw.chatId) ? raw.chatId : null,
+    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : nowMs(),
+    updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : nowMs(),
+    deleted: raw.deleted === true,
+  };
+}
+
+function writeMemory(db, subject, entry) {
+  const seq = bumpSeq(db, subject);
+  db.prepare(
+    `INSERT INTO sync_memory
+       (google_subject, entry_id, seq, updated_at, deleted, text, kind,
+        pinned, chat_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(google_subject, entry_id) DO UPDATE SET
+       seq = excluded.seq, updated_at = excluded.updated_at,
+       deleted = excluded.deleted, text = excluded.text, kind = excluded.kind,
+       pinned = excluded.pinned, chat_id = excluded.chat_id,
+       created_at = excluded.created_at`,
+  ).run(
+    subject,
+    entry.id,
+    seq,
+    entry.updatedAt,
+    entry.deleted ? 1 : 0,
+    entry.text,
+    entry.kind,
+    entry.pinned ? 1 : 0,
+    entry.chatId,
+    entry.createdAt,
+  );
+  return seq;
+}
+
 export function createSyncRouter({ env, db }) {
   const router = Router();
   const root = syncRoot(env);
@@ -375,6 +426,11 @@ export function createSyncRouter({ env, db }) {
       projects: db
         .prepare(
           "SELECT COUNT(*) AS total FROM sync_projects WHERE google_subject = ? AND deleted = 0",
+        )
+        .get(subject).total,
+      memory: db
+        .prepare(
+          "SELECT COUNT(*) AS total FROM sync_memory WHERE google_subject = ? AND deleted = 0",
         )
         .get(subject).total,
       chatBytes: chatStorageBytes(db, subject),
@@ -402,21 +458,37 @@ export function createSyncRouter({ env, db }) {
     const rows = db
       .prepare(
         `SELECT kind, id, seq, updated_at, deleted, hash, body,
-                name, description, created_at
+                name, description, created_at, payload
          FROM (
            SELECT 'chat' AS kind, chat_id AS id, seq, updated_at, deleted,
                   hash, body, NULL AS name, NULL AS description,
-                  NULL AS created_at
+                  NULL AS created_at, NULL AS payload
            FROM sync_chats WHERE google_subject = ? AND seq > ?
            UNION ALL
            SELECT 'project' AS kind, project_id AS id, seq, updated_at, deleted,
-                  NULL AS hash, NULL AS body, name, description, created_at
+                  NULL AS hash, NULL AS body, name, description, created_at,
+                  NULL AS payload
            FROM sync_projects WHERE google_subject = ? AND seq > ?
+           UNION ALL
+           SELECT 'memory' AS kind, entry_id AS id, seq, updated_at, deleted,
+                  NULL AS hash, NULL AS body, NULL AS name,
+                  NULL AS description, created_at,
+                  json_object(
+                    'id', entry_id,
+                    'text', text,
+                    'kind', kind,
+                    'pinned', json(CASE WHEN pinned = 1 THEN 'true' ELSE 'false' END),
+                    'chatId', chat_id,
+                    'createdAt', created_at,
+                    'updatedAt', updated_at,
+                    'deleted', json(CASE WHEN deleted = 1 THEN 'true' ELSE 'false' END)
+                  ) AS payload
+           FROM sync_memory WHERE google_subject = ? AND seq > ?
          )
          ORDER BY seq ASC
          LIMIT ?`,
       )
-      .all(subject, since, subject, since, limit + 1);
+      .all(subject, since, subject, since, subject, since, limit + 1);
 
     const hasMoreRows = rows.length > limit;
     const page = hasMoreRows ? rows.slice(0, limit) : rows;
@@ -435,8 +507,17 @@ export function createSyncRouter({ env, db }) {
               ? {}
               : { chat: JSON.parse(gunzipSync(row.body).toString("utf8")) }),
           }
-        : {
-            kind: "project",
+        : row.kind === "memory"
+          ? {
+              kind: "memory",
+              id: row.id,
+              seq: row.seq,
+              deleted: row.deleted === 1,
+              updatedAt: row.updated_at,
+              entry: JSON.parse(row.payload),
+            }
+          : {
+              kind: "project",
             id: row.id,
             seq: row.seq,
             deleted: row.deleted === 1,
@@ -688,6 +769,87 @@ export function createSyncRouter({ env, db }) {
     reply(res, { cursor: currentSeq(db, subject), results: out });
   });
 
+  /**
+   * Memory entries, one row each. Last write wins on the device's clock, and a
+   * tombstone is just an entry with nothing left in it, so the merge rule is
+   * the same one chats use.
+   */
+  router.post("/memory", json({ limit: "256kb" }), (req, res) => {
+    const result = apiUser(db, req);
+    if (!result.row) return authError(res, result);
+    const subject = result.row.google_subject;
+    const incoming = req.body?.entries;
+    if (!Array.isArray(incoming) || incoming.length < 1 || incoming.length > MAX_BATCH)
+      return badRequest(res, `Send between 1 and ${MAX_BATCH} memories.`);
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const out = [];
+      for (const raw of incoming) {
+        const entry = normalizeEntry(raw);
+        if (!entry) {
+          db.exec("ROLLBACK");
+          return badRequest(res, "A memory is not shaped like a Hook memory.");
+        }
+        const stored = db
+          .prepare(
+            "SELECT * FROM sync_memory WHERE google_subject = ? AND entry_id = ?",
+          )
+          .get(subject, entry.id);
+        const same =
+          stored &&
+          stored.updated_at === entry.updatedAt &&
+          stored.deleted === (entry.deleted ? 1 : 0) &&
+          stored.text === entry.text &&
+          stored.pinned === (entry.pinned ? 1 : 0);
+        // An older stamp never wins; an identical one is the same fact, so it is
+        // accepted without a new revision and the devices stop echoing.
+        if (stored && (stored.updated_at > entry.updatedAt || same)) {
+          out.push({
+            id: entry.id,
+            ok: true,
+            unchanged: true,
+            updatedAt: stored.updated_at,
+          });
+          continue;
+        }
+        if (!stored) {
+          const total = db
+            .prepare(
+              "SELECT COUNT(*) AS total FROM sync_memory WHERE google_subject = ? AND deleted = 0",
+            )
+            .get(subject).total;
+          if (total >= caps.memory) {
+            db.exec("ROLLBACK");
+            return res.status(413).json({
+              error: {
+                message: "This account has reached its memory limit.",
+                type: "invalid_request_error",
+                code: "memory_quota",
+              },
+            });
+          }
+        }
+        writeMemory(db, subject, entry);
+        out.push({
+          id: entry.id,
+          ok: true,
+          deleted: entry.deleted,
+          updatedAt: entry.updatedAt,
+        });
+      }
+      db.exec("COMMIT");
+      reply(res, { cursor: currentSeq(db, subject), entries: out });
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        /* already rolled back */
+      }
+      throw error;
+    }
+  });
+
   router.put(
     "/media/:sha256",
     raw({ type: "*/*", limit: `${Math.ceil(caps.mediaBytes / (1024 * 1024)) + 1}mb` }),
@@ -778,6 +940,7 @@ export function createSyncRouter({ env, db }) {
     try {
       db.prepare("DELETE FROM sync_chats WHERE google_subject = ?").run(subject);
       db.prepare("DELETE FROM sync_projects WHERE google_subject = ?").run(subject);
+      db.prepare("DELETE FROM sync_memory WHERE google_subject = ?").run(subject);
       db.prepare("DELETE FROM sync_media WHERE google_subject = ?").run(subject);
       db.prepare("UPDATE sync_state SET next_seq = 0 WHERE google_subject = ?").run(subject);
       // Hook Workspace belongs to the same account. The projects this account

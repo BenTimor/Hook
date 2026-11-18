@@ -19,6 +19,9 @@ pub struct AppState {
     pub store: Arc<Store>,
     pub settings: Arc<SettingsStore>,
     pub projects: Arc<ProjectsStore>,
+    /// What the chat agent remembers between conversations. Shared by both
+    /// products: it lives beside the account file, not beside the chats.
+    pub memory: Arc<crate::memory::MemoryStore>,
     pub agents: Arc<AgentManager>,
     pub preview: Arc<PreviewManager>,
     pub streams: Arc<Mutex<HashMap<String, CancelToken>>>,
@@ -34,6 +37,10 @@ pub struct AppState {
     /// Set when the endpoint rejects image parts anyway, so later turns stop
     /// trying. A card can promise more than the endpoint delivers.
     pub vision_off: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when the endpoint refused a context frame sent as a trailing
+    /// `system` message, so later turns send it as `user` instead. A card can
+    /// promise more than the endpoint delivers; so can a config.
+    pub context_role_off: Arc<std::sync::atomic::AtomicBool>,
     /// Scanned ChatGPT / Claude exports, kept between the preview and the
     /// confirmation so a large archive is parsed once.
     pub imports: Arc<crate::import::Importer>,
@@ -117,6 +124,79 @@ impl AppState {
 #[tauri::command]
 pub fn sync_status(state: State<'_, Arc<AppState>>) -> crate::sync::SyncView {
     state.sync.status()
+}
+
+// ── memory ──────────────────────────────────────────────────────────
+
+/// Everything the Settings window shows, plus the live switches. `enabled` is
+/// the build flag and the user's own toggle together, because the UI only cares
+/// whether memory is working.
+fn memory_view(state: &AppState) -> serde_json::Value {
+    let mut view = state.memory.view();
+    view["enabled"] = serde_json::json!(state.cfg.memory.enabled && state.settings.memory_enabled());
+    view["available"] = serde_json::json!(state.cfg.memory.enabled);
+    view
+}
+
+#[tauri::command]
+pub fn memory_list(state: State<'_, Arc<AppState>>) -> serde_json::Value {
+    memory_view(&state)
+}
+
+/// A memory the user typed themselves. The agent's own writes go through the
+/// turn's `remember` tool; this is the Settings window doing the same thing.
+#[tauri::command]
+pub fn memory_save(
+    state: State<'_, Arc<AppState>>,
+    text: String,
+    kind: Option<String>,
+    pinned: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    state
+        .memory
+        .add(&text, kind.as_deref(), pinned, None)?;
+    state.sync.wake();
+    Ok(memory_view(&state))
+}
+
+#[tauri::command]
+pub fn memory_update(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    text: Option<String>,
+    pinned: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    state.memory.update(&id, text.as_deref(), pinned)?;
+    state.sync.wake();
+    Ok(memory_view(&state))
+}
+
+#[tauri::command]
+pub fn memory_delete(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    state.memory.delete(&id)?;
+    state.sync.wake();
+    Ok(memory_view(&state))
+}
+
+#[tauri::command]
+pub fn memory_clear(state: State<'_, Arc<AppState>>) -> Result<serde_json::Value, String> {
+    state.memory.clear()?;
+    state.sync.wake();
+    Ok(memory_view(&state))
+}
+
+/// The user's switch. It is stored here, not in the compiled-in config: turning
+/// memory off must not need a rebuild.
+#[tauri::command]
+pub fn memory_set_enabled(
+    state: State<'_, Arc<AppState>>,
+    enabled: bool,
+) -> Result<serde_json::Value, String> {
+    state.settings.set_memory_enabled(enabled)?;
+    Ok(memory_view(&state))
 }
 
 /// Run a sync cycle now instead of waiting for the next tick.

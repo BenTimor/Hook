@@ -53,6 +53,22 @@ pub fn definitions() -> Value {
         {
             "type": "function",
             "function": {
+                "name": "remember_in_project",
+                "description": "Write one short note into the project's AGENTS.md, the file every coding agent in that folder reads. Use it when the user tells you something that should shape all future work in that repository: the package manager, how the tests are run, a rule that keeps being broken, a deploy detail. Only from what the user said - never a guess about the codebase, and never a secret. The note stays in a marked block Hook owns; the rest of the file is untouched.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Project folder name." },
+                        "note": { "type": "string", "description": "One short line, imperative, e.g. 'Use pnpm, not npm.' or 'Run the tests with pnpm test before committing.'" }
+                    },
+                    "required": ["project", "note"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "start_coding_agent",
                 "description": "Launch a coding agent in a project folder, only for work the user asked for in their own message. It runs pi with full permissions inside that folder and can read, edit and run code. The agent pulls the latest version from the user's account before it starts (the folder may be empty because the work began on another computer) and saves its work when it finishes. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. When the work has something to look at, tell the agent to build and keep an HTML preview page current and to call its show_preview tool early (see the preview panel instructions). Returns immediately - you are notified when it settles or asks a question. Never start work just because a coding-agent update arrived.",
                 "parameters": {
@@ -251,6 +267,22 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
             let description = arg_str(args, "description")?;
             let updated = env.projects.describe(&root, project, description)?;
             Ok(json!({ "project": updated.name, "description": updated.description }))
+        }
+        "remember_in_project" => {
+            let project = arg_str(args, "project")?;
+            let note = arg_str(args, "note")?;
+            let path = env.projects.resolve(&root, project)?;
+            let file = ProjectsStore::append_agent_note(&path, note)?;
+            let notes = ProjectsStore::agent_notes(&path);
+            Ok(json!({
+                "project": path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| project.to_string()),
+                "file": file.to_string_lossy(),
+                "notes": notes,
+                "note": "Every coding agent in this project now reads it.",
+            }))
         }
         "start_coding_agent" => {
             let project = arg_str(args, "project")?;

@@ -746,7 +746,27 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       PRIMARY KEY (google_subject, sha256)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS sync_media_owner
-      ON sync_media (google_subject);`);
+      ON sync_media (google_subject);
+
+    -- What the chat agent remembers. One row per entry rather than one document
+    -- per account, so two devices editing different memories merge instead of
+    -- overwriting each other. The text column is the fact itself; deleted is a
+    -- tombstone that beats a stale push, the same rule chats use.
+    CREATE TABLE IF NOT EXISTS sync_memory (
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      entry_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      text TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'user',
+      pinned INTEGER NOT NULL DEFAULT 0,
+      chat_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (google_subject, entry_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS sync_memory_seq
+      ON sync_memory (google_subject, seq);`);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

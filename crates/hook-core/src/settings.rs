@@ -4,8 +4,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
-/// Runtime preferences that are *not* part of the compiled-in harness config.
-/// Only one remains: where the user's projects live.
+/// Runtime preferences that are *not* part of the compiled-in harness config:
+/// where the user's projects live, and whether the chat may use memory.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -13,6 +13,10 @@ pub struct Settings {
     /// `pi_command` in an existing settings.json is ignored on load.
     #[serde(default)]
     pub projects_dir: Option<String>,
+    /// The user's own switch. `None` means "on", which is the default and also
+    /// what every settings.json written before memory existed says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<bool>,
 }
 
 pub struct SettingsStore {
@@ -87,6 +91,18 @@ impl SettingsStore {
         Ok(canonical)
     }
 
+    /// Whether the chat agent may use long-term memory. On unless the user
+    /// turned it off; a settings.json written before memory existed has no key
+    /// and must not read as "off".
+    pub fn memory_enabled(&self) -> bool {
+        lock(&self.data).memory.unwrap_or(true)
+    }
+
+    pub fn set_memory_enabled(&self, enabled: bool) -> Result<(), String> {
+        let mut data = lock(&self.data);
+        data.memory = Some(enabled);
+        self.save_locked(&data)
+    }
 }
 
 fn resolve_dir(path: &Path) -> Option<PathBuf> {
@@ -99,6 +115,18 @@ fn resolve_dir(path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_is_on_until_it_is_turned_off() {
+        let tmp = std::env::temp_dir().join(format!("hook-settings-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let store = SettingsStore::new(&tmp);
+        assert!(store.memory_enabled(), "a fresh install remembers things");
+        store.set_memory_enabled(false).unwrap();
+        assert!(!store.memory_enabled());
+        let reopened = SettingsStore::new(&tmp);
+        assert!(!reopened.memory_enabled());
+    }
 
     #[test]
     fn default_dir_is_under_documents() {

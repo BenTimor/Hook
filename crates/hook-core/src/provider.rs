@@ -598,6 +598,7 @@ mod tests {
             auth: Default::default(),
             coding: Default::default(),
             agent: Default::default(),
+            memory: Default::default(),
             update: Default::default(),
         }
     }

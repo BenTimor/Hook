@@ -1825,6 +1825,160 @@ body[data-preview-dragging="true"] iframe {
   height: 10px;
 }
 
+/* Memory: the list of what the chat keeps, and the pin that decides whether it
+   rides on every request or only comes up when it is looked for. */
+.memory-compose {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.memory-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 253, 249, 0.75);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.memory-input:focus {
+  outline: none;
+  border-color: rgba(var(--ink-rgb), 0.28);
+  background: #fffdfa;
+}
+
+.memory-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+  user-select: none;
+}
+
+.memory-note input {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--ink);
+}
+
+.memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.memory-list li:hover {
+  background: rgba(255, 253, 249, 0.6);
+  border-color: var(--line-soft);
+}
+
+.memory-list li.is-pinned {
+  background: rgba(255, 253, 249, 0.6);
+  border-color: var(--line-soft);
+}
+
+.memory-pin,
+.memory-forget {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.memory-pin svg,
+.memory-forget svg {
+  width: 13px;
+  height: 13px;
+}
+
+.memory-pin {
+  opacity: 0.35;
+}
+
+.memory-pin.on {
+  opacity: 1;
+  color: var(--ink);
+}
+
+.memory-pin:hover,
+.memory-forget:hover {
+  background: rgba(var(--ink-rgb), 0.06);
+  color: var(--ink);
+}
+
+.memory-pin:disabled,
+.memory-forget:disabled {
+  cursor: default;
+}
+
+.memory-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.45;
+  cursor: text;
+}
+
+.memory-meta {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.memory-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.memory-foot .memory-note {
+  margin-top: 0;
+}
+
+.sheet-help.bad {
+  color: var(--danger);
+}
+
 .sheet-foot {
   margin: 0;
   padding-top: 16px;

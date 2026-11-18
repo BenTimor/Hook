@@ -11,6 +11,8 @@ import type {
   ChatMeta,
   ImportPreview,
   ImportSummary,
+  MemoryEntry,
+  MemoryView,
   Message,
   PlanStep,
   PreviewView,
@@ -261,6 +263,59 @@ const mockAuth: AuthView = {
 
 const demoLogin = () =>
   new URLSearchParams(window.location.search).get("login") === "1";
+
+/**
+ * Browser preview only. The desktop keeps memories in the shared account folder
+ * and syncs them; this list never leaves the tab, but it lets the Settings
+ * screen be designed and clicked without the desktop shell.
+ */
+let MOCK_MEMORY_ENABLED = true;
+
+const MOCK_MEMORY: MemoryEntry[] = [
+  {
+    id: "mem-pnpm",
+    text: "Prefers pnpm over npm, and hates unnecessary dependencies.",
+    kind: "feedback",
+    pinned: true,
+    chatId: null,
+    createdAt: Date.now() - 40 * DAY,
+    updatedAt: Date.now() - 40 * DAY,
+    age: "1 months ago",
+  },
+  {
+    id: "mem-style",
+    text: "Likes short answers without preamble, and British spelling.",
+    kind: "user",
+    pinned: true,
+    chatId: null,
+    createdAt: Date.now() - 12 * DAY,
+    updatedAt: Date.now() - 12 * DAY,
+    age: "1 weeks ago",
+  },
+  {
+    id: "mem-stack",
+    text: "Works in TypeScript and Rust; the invoice parser is Python.",
+    kind: "project",
+    pinned: false,
+    chatId: null,
+    createdAt: Date.now() - 3 * DAY,
+    updatedAt: Date.now() - 3 * DAY,
+    age: "3 days ago",
+  },
+];
+
+function memoryView(): MemoryView {
+  return {
+    enabled: MOCK_MEMORY_ENABLED,
+    available: true,
+    entries: [...MOCK_MEMORY].sort(
+      (a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt,
+    ),
+    pinned: MOCK_MEMORY.filter((entry) => entry.pinned).length,
+    maxPinned: 40,
+    maxEntries: 400,
+  };
+}
 
 export const mock = {
   async appInfo() {
@@ -637,6 +692,56 @@ export const mock = {
 
   async stopChatAgents(): Promise<AgentsOverview> {
     return { working: 0, live: 0, agents: [] };
+  },
+
+  async memoryList(): Promise<MemoryView> {
+    return memoryView();
+  },
+
+  async memorySave(text: string, pinned: boolean): Promise<MemoryView> {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error("Write what to remember first.");
+    MOCK_MEMORY.unshift({
+      id: `mem-${Math.random().toString(36).slice(2, 10)}`,
+      text: trimmed,
+      kind: "user",
+      pinned,
+      chatId: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      age: "just now",
+    });
+    return memoryView();
+  },
+
+  async memoryUpdate(
+    id: string,
+    text: string | null,
+    pinned: boolean | null,
+  ): Promise<MemoryView> {
+    const entry = MOCK_MEMORY.find((item) => item.id === id);
+    if (!entry) throw new Error("That memory no longer exists.");
+    if (text !== null) entry.text = text.trim() || entry.text;
+    if (pinned !== null) entry.pinned = pinned;
+    entry.updatedAt = Date.now();
+    entry.age = "just now";
+    return memoryView();
+  },
+
+  async memoryDelete(id: string): Promise<MemoryView> {
+    const index = MOCK_MEMORY.findIndex((item) => item.id === id);
+    if (index >= 0) MOCK_MEMORY.splice(index, 1);
+    return memoryView();
+  },
+
+  async memoryClear(): Promise<MemoryView> {
+    MOCK_MEMORY.length = 0;
+    return memoryView();
+  },
+
+  async memorySetEnabled(enabled: boolean): Promise<MemoryView> {
+    MOCK_MEMORY_ENABLED = enabled;
+    return memoryView();
   },
 
   async syncStatus(): Promise<SyncView> {

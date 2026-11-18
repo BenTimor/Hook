@@ -48,6 +48,8 @@ you build alongside the others.
 
 ```bash
 # Desktop apps
+pnpm install                     # once: with missing links tsc blames a source
+                                 # file (TS2307) instead of node_modules
 cp harness.config.ci.toml harness.config.toml  # required before any cargo build
 pnpm dev                          # chat UI in a plain browser (mock backend)
 pnpm app                          # chat product: real Tauri window, hot reload
@@ -83,6 +85,15 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 
 - `crates/hook-core/src/turn.rs` — the assistant turn (model → tools → answer),
   the system prompt, streaming and cancellation. Largest, most delicate file.
+  Its request is **append-only**: the leading system message is the instructions
+  and nothing else, and everything volatile (coding-agent notes, memory frames,
+  the live hint, window context) is a message appended after it. See
+  "Never rewrite the request prefix" below before touching `system_message`,
+  `build_history` or `ensure_memory_frames`.
+- `crates/hook-core/src/memory.rs` — what the chat agent remembers between
+  conversations: entries (text, kind, pin, source chat), the pinned block, the
+  frames that carry it into a chat, `memory_search`, and per-account files in
+  the shared `%APPDATA%\app.hook\memory\` folder.
 - `crates/hook-core/src/tools.rs` — chat-agent tool schemas and implementations.
 - `crates/hook-core/src/agent.rs` — supervisor for `pi` subprocesses over RPC:
   spawn, states, plans, progress batching, wakes, stop. It also points agents at
@@ -160,7 +171,22 @@ Changing one side of a boundary is the most common way to break this repo.
   and the prompt in `turn.rs` (`system_prompt`) if the agent must know about it.
   Give it a line in `activity_label` (`turn.rs`): that is what the chat says it
   is doing while the tool runs, and a test fails when an advertised tool has
-  none. Gate it on `Capabilities` when only some products have it.
+  none. Gate it on `Capabilities` when only some products have it. A tool that
+  reaches beyond `tools.rs` follows `workspace_*` (own `definitions()` +
+  `execute`, added to the toolset in `run_turn`) or `memory::*` (the same, plus
+  the Settings toggle).
+- **New kind of memory, or a change to how it reaches a chat:**
+  `memory.rs` (store, caps, frames) → `turn.rs` (`ensure_memory_frames`,
+  `activity_label`, the `## Memory` prompt section) → the tool schemas in
+  `memory.rs` → `commands.rs` + `generate_handler!` → `bridge.ts` → `types.ts` →
+  `mock.ts` → `SettingsSheet.tsx` / `MemorySection.tsx` → `server/sync.mjs`
+  (`/memory`, the `/changes` union) → `server/api.mjs` (`sync_memory`) →
+  `server/sync.test.mjs`. Keep the frames append-only and the caps enforced;
+  `pinned_budget_chars` is what stops memory from eating the prompt.
+- **Project instructions for coding agents:** `projects.rs`
+  (`append_agent_note` / `agent_notes`, the marked block in `AGENTS.md`) → the
+  `remember_in_project` tool in `tools.rs` → the prompt's **Projects** section.
+  Only the marked block is Hook's; never rewrite the rest of the file.
 - **New product:** `apps/<id>/` (package.json, index.html, vite.config.ts,
   `src-tauri/` with its own identifier) → `Product` + `Capabilities` in
   `crates/hook-core/src/lib.rs`, plus its own version passed to
@@ -239,7 +265,19 @@ Changing one side of a boundary is the most common way to break this repo.
 - **The account file is shared.** `%APPDATA%\app.hook\account.json` is read by
   every product; writes go through `auth.rs` (atomic, unique temp name) and a
   sign-out must clear the session for all of them. Never write a product-specific
-  token there.
+  token there. `%APPDATA%\app.hook\memory\` is the same kind of shared,
+  account-scoped data: one file per account, atomic writes with a unique temp
+  name, and never uploaded to a different account (the file name is a hash of
+  the account).
+- **Never rewrite the request prefix.** Providers cache a request by its longest
+  common prefix with an earlier one, so anything that changes the *start* of a
+  turn's message list throws away the whole cached conversation. The leading
+  system message is the instructions only; coding-agent notes and memory frames
+  are hidden `system` messages appended when they happen and replayed in place by
+  `build_history`; the live hint and window context are one trailing frame
+  rebuilt per request. Memory is never re-retrieved per turn for the same reason.
+  `cache_hit_tokens` in `usage_events` (written by `server/deepseek.mjs`) is how
+  to check that a change did not break this.
 - **Sync is account-scoped and automatic.** Chats/pictures/projects push and pull
   in the background while signed in; the server merges, never the client. A chat
   that is streaming is never uploaded or overwritten. A different account on the

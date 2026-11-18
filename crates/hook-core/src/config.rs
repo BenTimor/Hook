@@ -18,6 +18,9 @@ pub struct HarnessConfig {
     /// Chat-agent behaviour. Optional section.
     #[serde(default)]
     pub agent: AgentConfig,
+    /// What the chat agent remembers between conversations. Optional section.
+    #[serde(default)]
+    pub memory: MemoryConfig,
     /// Update channel details. Optional section.
     #[serde(default)]
     pub update: UpdateConfig,
@@ -67,6 +70,73 @@ impl AgentConfig {
             .map(str::trim)
             .filter(|p| !p.is_empty())
     }
+}
+
+/// Long-term memory. The caps are budgets, not preferences: the pinned block is
+/// paid for on every single request, so it has a hard ceiling.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryConfig {
+    /// Offer the memory tools and the prompt section at all.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// How a context frame is sent: as a trailing `system` message (the default)
+    /// or as a `user` message when an endpoint rejects a system message that is
+    /// not the first one.
+    #[serde(default)]
+    pub context_role: Option<String>,
+    /// Ceiling on stored entries (pinned and not), tombstones excluded.
+    #[serde(default = "default_max_entries")]
+    pub max_entries: usize,
+    /// Ceiling on pinned entries. They ride on every request.
+    #[serde(default = "default_max_pinned")]
+    pub max_pinned: usize,
+    /// Ceiling on the characters the pinned block may occupy in the prompt
+    /// (roughly four characters per token).
+    #[serde(default = "default_pinned_budget")]
+    pub pinned_budget_chars: usize,
+    /// Longest single memory. Longer facts are cut rather than rejected.
+    #[serde(default = "default_max_text")]
+    pub max_text_chars: usize,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            context_role: None,
+            max_entries: default_max_entries(),
+            max_pinned: default_max_pinned(),
+            pinned_budget_chars: default_pinned_budget(),
+            max_text_chars: default_max_text(),
+        }
+    }
+}
+
+impl MemoryConfig {
+    /// `"system"` unless the build says otherwise.
+    pub fn context_role(&self) -> &str {
+        match self.context_role.as_deref().map(str::trim) {
+            Some("user") => "user",
+            Some("none") | Some("off") => "",
+            _ => "system",
+        }
+    }
+}
+
+fn default_max_entries() -> usize {
+    400
+}
+
+fn default_max_pinned() -> usize {
+    40
+}
+
+fn default_pinned_budget() -> usize {
+    2400
+}
+
+fn default_max_text() -> usize {
+    400
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -311,4 +381,54 @@ impl ModelConfig {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_is_on_with_budgets_by_default() {
+        let cfg = get().expect("harness.config.toml");
+        assert!(cfg.memory.enabled);
+        assert!(cfg.memory.max_pinned > 0);
+        assert!(cfg.memory.pinned_budget_chars > 0);
+        assert_eq!(cfg.memory.context_role(), "system");
+    }
+
+    #[test]
+    fn the_memory_section_is_optional_and_typed() {
+        let raw = r#"
+[provider]
+base_url = "https://example.test/v1"
+api_key = ""
+[model]
+name = "m"
+[memory]
+enabled = false
+max_pinned = 5
+context_role = "user"
+"#;
+        let cfg: HarnessConfig = toml::from_str(raw).expect("parse");
+        assert!(!cfg.memory.enabled);
+        assert_eq!(cfg.memory.max_pinned, 5);
+        assert_eq!(cfg.memory.context_role(), "user");
+        // Keys the file does not mention keep their built-in default.
+        assert_eq!(cfg.memory.max_entries, 400);
+    }
+
+    #[test]
+    fn an_unknown_context_role_falls_back_to_system() {
+        let raw = r#"
+[provider]
+base_url = "https://example.test/v1"
+api_key = ""
+[model]
+name = "m"
+[memory]
+context_role = "assistant"
+"#;
+        let cfg: HarnessConfig = toml::from_str(raw).expect("parse");
+        assert_eq!(cfg.memory.context_role(), "system");
+    }
 }

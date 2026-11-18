@@ -17,6 +17,7 @@ mod config;
 mod git;
 mod guard;
 mod import;
+mod memory;
 mod projects;
 mod preview;
 mod provider;
@@ -152,6 +153,12 @@ pub fn builder(
             commands::install_update,
             commands::open_store_update,
             commands::report_message,
+            commands::memory_list,
+            commands::memory_save,
+            commands::memory_update,
+            commands::memory_delete,
+            commands::memory_clear,
+            commands::memory_set_enabled,
         ])
 }
 
@@ -199,6 +206,9 @@ fn setup(
     let settings = Arc::new(settings::SettingsStore::new(&data_dir));
     let projects = Arc::new(projects::ProjectsStore::new(&data_dir));
     let cfg = Arc::new(config::get().map_err(std::io::Error::other)?.clone());
+    // Memory lives beside the account file, not beside the chats: both products
+    // read the same store, and a different account reads a different file.
+    let memory = Arc::new(memory::MemoryStore::new(&data_dir, cfg.memory.clone()));
     let auth = Arc::new(auth::AuthStore::new(
         &data_dir,
         &cfg.auth.base_url,
@@ -241,8 +251,7 @@ fn setup(
         .with_git(git_runtime.clone()),
     );
 
-    let preview_emit: preview::Emitter = {
-        let app = app.handle().clone();
+    let preview_emit: preview::Emitter = {        let app = app.handle().clone();
         Arc::new(move |event| {
             let _ = app.emit("hook://preview", event);
         })
@@ -261,16 +270,19 @@ fn setup(
         store.clone(),
         projects.clone(),
         settings.clone(),
+        memory.clone(),
         git_runtime,
     ));
 
     let workspace = Arc::new(workspace::WorkspaceClient::new(&cfg, auth.clone()));
 
+    memory.bind(auth.subject().as_deref());
     let state = Arc::new(AppState {
         app: app.handle().clone(),
         store,
         settings,
         projects,
+        memory,
         agents,
         preview: Arc::new(preview::PreviewManager::new(preview_emit)),
         streams: Arc::new(Mutex::new(HashMap::new())),
@@ -280,6 +292,7 @@ fn setup(
         sync: sync.clone(),
         vision: vision.clone(),
         vision_off: Arc::new(Default::default()),
+        context_role_off: Arc::new(Default::default()),
         imports: Arc::new(import::Importer::new()),
         workspace,
         context: Arc::new(Mutex::new(None)),

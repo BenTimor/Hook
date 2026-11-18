@@ -135,6 +135,8 @@ export interface SyncView {
 export interface SyncEvent {
   chats: boolean;
   projects: boolean;
+  /** Memories arrived from another computer. */
+  memory?: boolean;
   at: number;
 }
 
@@ -170,6 +172,34 @@ export interface Project {
 export interface SettingsView {
   projectsDir: string;
   projects: Project[];
+}
+
+export type MemoryKind = "user" | "feedback" | "project" | "reference";
+
+/** One thing the chat remembers about the user. */
+export interface MemoryEntry {
+  id: string;
+  text: string;
+  kind: MemoryKind;
+  /** In every chat without being asked for. */
+  pinned: boolean;
+  /** The conversation it came from, when it came from one. */
+  chatId: string | null;
+  createdAt: number;
+  updatedAt: number;
+  /** Plain words for the UI: "3 days ago". */
+  age: string;
+}
+
+export interface MemoryView {
+  /** Built into this build and not switched off by the user. */
+  enabled: boolean;
+  /** The build has memory at all; the toggle is hidden when it does not. */
+  available: boolean;
+  entries: MemoryEntry[];
+  pinned: number;
+  maxPinned: number;
+  maxEntries: number;
 }
 
 export type PlanStepStatus = "pending" | "active" | "done";

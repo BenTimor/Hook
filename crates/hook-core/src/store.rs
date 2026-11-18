@@ -62,6 +62,12 @@ pub struct Message {
     /// Internal bookkeeping (agent events, tool traffic) the user never sees.
     #[serde(default, skip_serializing_if = "is_false")]
     pub hidden: bool,
+    /// What a hidden context message is for: `memory` for a memory frame, empty
+    /// for a coding-agent note. Both are replayed in order like any other
+    /// message — that is what keeps the request prefix stable — and the kind is
+    /// how the prompt tells "is a note waiting" from "is this a frame".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     /// Pictures that belong to this message.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
@@ -113,6 +119,7 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             hidden: false,
+            kind: None,
             attachments: Vec::new(),
         }
     }
@@ -121,6 +128,14 @@ impl Message {
     pub fn hidden(role: &str, content: &str) -> Self {
         let mut message = Self::new(role, content, "complete");
         message.hidden = true;
+        message
+    }
+
+    /// A context frame: a hidden message with a kind, so the prompt can tell a
+    /// memory frame from a coding-agent note.
+    pub fn frame(kind: &str, content: &str) -> Self {
+        let mut message = Self::hidden("system", content);
+        message.kind = Some(kind.to_string());
         message
     }
 }
@@ -678,6 +693,7 @@ impl Store {
             let content_match = chat
                 .messages
                 .iter()
+                .filter(|m| !m.hidden)
                 .find(|m| m.content.to_lowercase().contains(&needle));
             if title_match {
                 hits.push(SearchHit {

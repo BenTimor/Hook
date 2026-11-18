@@ -12,6 +12,7 @@ import type {
   ImportPreview,
   ImportProgress,
   ImportSummary,
+  MemoryView,
   PreviewEvent,
   PreviewView,
   ReportRequest,
@@ -338,6 +339,36 @@ export const api = {
     isTauri()
       ? invoke<PreviewView | null>("preview_state")
       : mock.previewState(),
+
+  memoryList: (): Promise<MemoryView> =>
+    isTauri() ? invoke<MemoryView>("memory_list") : mock.memoryList(),
+
+  memorySave: (text: string, pinned: boolean): Promise<MemoryView> =>
+    isTauri()
+      ? invoke<MemoryView>("memory_save", { text, pinned })
+      : mock.memorySave(text, pinned),
+
+  memoryUpdate: (
+    id: string,
+    text: string | null,
+    pinned: boolean | null,
+  ): Promise<MemoryView> =>
+    isTauri()
+      ? invoke<MemoryView>("memory_update", { id, text, pinned })
+      : mock.memoryUpdate(id, text, pinned),
+
+  memoryDelete: (id: string): Promise<MemoryView> =>
+    isTauri()
+      ? invoke<MemoryView>("memory_delete", { id })
+      : mock.memoryDelete(id),
+
+  memoryClear: (): Promise<MemoryView> =>
+    isTauri() ? invoke<MemoryView>("memory_clear") : mock.memoryClear(),
+
+  memorySetEnabled: (enabled: boolean): Promise<MemoryView> =>
+    isTauri()
+      ? invoke<MemoryView>("memory_set_enabled", { enabled })
+      : mock.memorySetEnabled(enabled),
 
   syncStatus: (): Promise<SyncView> =>
     isTauri() ? invoke<SyncView>("sync_status") : mock.syncStatus(),

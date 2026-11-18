@@ -27,6 +27,7 @@ use tokio::sync::Notify;
 
 use crate::auth::AuthStore;
 use crate::git::{self, GitRuntime};
+use crate::memory::{Entry, MemoryStore};
 use crate::projects::ProjectsStore;
 use crate::settings::SettingsStore;
 use crate::store::{now_ms, Chat, Store};
@@ -106,6 +107,7 @@ pub struct SyncEngine {
     store: Arc<Store>,
     projects: Arc<ProjectsStore>,
     settings: Arc<SettingsStore>,
+    memory: Arc<MemoryStore>,
     git: Option<GitRuntime>,
     state: Mutex<SyncState>,
     view: Mutex<SyncView>,
@@ -123,6 +125,7 @@ impl SyncEngine {
         store: Arc<Store>,
         projects: Arc<ProjectsStore>,
         settings: Arc<SettingsStore>,
+        memory: Arc<MemoryStore>,
         git: Option<GitRuntime>,
     ) -> Self {
         let path = data_dir.join("sync.json");
@@ -150,6 +153,7 @@ impl SyncEngine {
             store,
             projects,
             settings,
+            memory,
             git,
             state: Mutex::new(state),
             view: Mutex::new(view),
@@ -249,6 +253,9 @@ impl SyncEngine {
             return Ok(());
         };
         self.ensure_owner(&owner)?;
+        // Memory is account data too, and it is shared by both products: bind
+        // before anything reads or writes it.
+        self.memory.bind(Some(&owner));
         {
             let mut view = lock(&self.view);
             view.state = "syncing".into();
@@ -257,6 +264,7 @@ impl SyncEngine {
         self.configure_git().await;
         self.push_chats(&token).await?;
         self.push_projects(&token).await?;
+        self.push_memory(&token).await?;
         self.pull(&token).await?;
         self.prepare_projects().await;
         Ok(())
@@ -693,11 +701,39 @@ impl SyncEngine {
         }
     }
 
+    /// Entries changed on this machine. One small batch is enough: memory is a
+    /// few hundred short strings, not a conversation.
+    async fn push_memory(&self, token: &str) -> Result<(), String> {
+        let dirty = self.memory.dirty_entries();
+        if dirty.is_empty() {
+            return Ok(());
+        }
+        for batch in dirty.chunks(MAX_BATCH) {
+            let response = self
+                .post(token, "/api/sync/memory", json!({ "entries": batch }))
+                .await?;
+            let mut accepted: Vec<String> = Vec::new();
+            if let Some(entries) = response["entries"].as_array() {
+                for entry in entries {
+                    if let Some(id) = entry["id"].as_str() {
+                        accepted.push(id.to_string());
+                    }
+                }
+            }
+            if accepted.is_empty() {
+                accepted = batch.iter().map(|entry| entry.id.clone()).collect();
+            }
+            self.memory.clear_dirty(&accepted);
+        }
+        Ok(())
+    }
+
     // ── pull ────────────────────────────────────────────────────────────
     async fn pull(&self, token: &str) -> Result<(), String> {
         let mut cursor = lock(&self.state).cursor;
         let mut chats_changed = false;
         let mut projects_changed = false;
+        let mut memory_changed = false;
         let mut pages = 0;
         loop {
             let response = self
@@ -781,6 +817,15 @@ impl SyncEngine {
                             Err(error) => eprintln!("hook: could not bind a synced project: {error}"),
                         }
                     }
+                    "memory" => match serde_json::from_value::<Entry>(change["entry"].clone()) {
+                        Ok(entry) => {
+                            self.memory.apply_remote(vec![entry]);
+                            memory_changed = true;
+                        }
+                        Err(error) => {
+                            eprintln!("hook: skipping an unreadable synced memory: {error}")
+                        }
+                    },
                     _ => {}
                 }
                 last = seq;
@@ -795,12 +840,13 @@ impl SyncEngine {
             }
         }
 
-        if chats_changed || projects_changed {
+        if chats_changed || projects_changed || memory_changed {
             (self.emit)(
                 "hook://sync",
                 json!({
                     "chats": chats_changed,
                     "projects": projects_changed,
+                    "memory": memory_changed,
                     "at": now_ms(),
                 }),
             );
@@ -1075,6 +1121,7 @@ mod tests {
             fixture.store.clone(),
             fixture.projects.clone(),
             fixture.settings.clone(),
+            Arc::new(MemoryStore::new(&fixture.base, Default::default())),
             None,
         )
     }
@@ -1341,6 +1388,7 @@ mod tests {
             fixture.store.clone(),
             Arc::new(ProjectsStore::new(&fixture.base)),
             fixture.settings.clone(),
+            Arc::new(MemoryStore::new(&fixture.base, Default::default())),
             None,
         );
         engine.cycle().await.expect("one cycle");

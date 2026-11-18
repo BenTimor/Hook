@@ -128,3 +128,26 @@ bash_min_timeout = 1
 # Leave empty to use Hook's built-in instructions for the chat agent.
 # Set it to replace them entirely. Sent verbatim as the system prompt.
 system_prompt = ""
+
+[memory]
+# Long-term memory for the chat agent. The pinned block is paid for on every
+# request, so its ceiling is a budget rather than a preference.
+enabled = true
+
+# Ceiling on stored entries, and on the pinned ones that ride on every request.
+max_entries = 400
+max_pinned = 40
+
+# Characters the pinned block may occupy in the prompt (~4 chars per token).
+# When it is full the agent is told to merge or unpin rather than to keep
+# saving; entries beyond it stay findable with memory_search.
+pinned_budget_chars = 2400
+
+# Longest single memory. Longer facts are cut, not rejected.
+max_text_chars = 400
+
+# How a context frame is sent. "system" (default) is a trailing system message,
+# which every OpenAI-compatible endpoint Hook has been pointed at accepts.
+# Use "user" for an endpoint that rejects a system message that is not first;
+# "none" drops the live context entirely.
+context_role = "system"
