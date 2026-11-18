@@ -293,6 +293,7 @@ export type StreamEvent =
   | { kind: "started"; messages: Message[]; meta: ChatMeta }
   | { kind: "delta"; text: string }
   | { kind: "reasoning"; text: string }
+  | { kind: "activity"; label: string | null }
   | { kind: "done"; messages: Message[]; meta: ChatMeta }
   | { kind: "error"; message: string; messages: Message[]; meta: ChatMeta };
 

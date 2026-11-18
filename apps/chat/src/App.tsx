@@ -25,7 +25,7 @@ export default function App() {
   const requestSearch = useChatStore((s) => s.requestSearch);
   const stop = useChatStore((s) => s.stop);
   const streaming = useChatStore((s) =>
-    s.activeId ? Boolean(s.streams[s.activeId]) : false,
+    s.activeId ? Boolean(s.streams[s.activeId] || s.activity[s.activeId]) : false,
   );
 
   const maximized = useWindowState();

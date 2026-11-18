@@ -223,6 +223,88 @@
   }
 }
 
+/* The line that says what a running turn is doing. It sits where the reply
+   will appear, so when text starts the words are replaced without a jump. */
+.activity {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 22px;
+  padding: 2px 0;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.activity-dots {
+  display: flex;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.activity-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  animation: thinkBounce 1.15s var(--ease) infinite;
+}
+
+.activity-dots i:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.activity-dots i:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+.activity-text {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-text > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two labels are on top of each other for one beat: the old one leaving, the
+   new one arriving. Only the words move; the dots never flinch. */
+.activity-leaving {
+  position: absolute;
+  inset: 0;
+  animation: activity-out 160ms var(--ease) forwards;
+}
+
+.activity-arriving {
+  animation: activity-in 170ms var(--ease) both;
+}
+
+@keyframes activity-out {
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes activity-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-leaving {
+    display: none;
+  }
+  .activity-arriving {
+    animation: none;
+  }
+}
+
 .msg-error {
   display: flex;
   align-items: flex-start;

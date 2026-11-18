@@ -10,7 +10,9 @@ export function Composer() {
   const draft = useChatStore((s) => s.draft);
   const setDraft = useChatStore((s) => s.setDraft);
   const activeId = useChatStore((s) => s.activeId);
-  const streaming = useChatStore((s) => (s.activeId ? Boolean(s.streams[s.activeId]) : false));
+  const streaming = useChatStore((s) =>
+    s.activeId ? Boolean(s.streams[s.activeId] || s.activity[s.activeId]) : false,
+  );
   const ready = useChatStore((s) => s.ready);
   const send = useChatStore((s) => s.send);
   const stop = useChatStore((s) => s.stop);

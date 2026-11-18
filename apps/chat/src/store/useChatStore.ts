@@ -35,6 +35,12 @@ interface ChatStore {
   activeId: string | null;
   messages: Message[];
   streams: Record<string, StreamState>;
+  /**
+   * What each running turn is doing, oldest label first. The store only keeps
+   * the record; `TurnActivity` paces it. A chat with an entry is running even
+   * while no text is arriving, which is the whole point: a tool has the floor.
+   */
+  activity: Record<string, string[]>;
   draft: string;
   /** Pictures staged for the next message in the active chat. */
   draftImages: DraftImage[];
@@ -136,6 +142,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       activeId: null,
       messages: [],
       streams: {},
+      activity: {},
       draft: "",
       draftImages: [],
       pendingNewChat: false,
@@ -194,6 +201,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
           const shows = state.activeId === chatId || state.pendingNewChat;
           return {
             chats: upsertMeta(state.chats, event.meta),
+            // A new turn opens the activity line with "Thinking"; the next
+            // model call of the same turn leaves what is already queued.
+            activity: state.activity[chatId]
+              ? state.activity
+              : { ...state.activity, [chatId]: [] },
             streams: streaming
               ? {
                   ...state.streams,
@@ -211,6 +223,19 @@ export const useChatStore = create<ChatStore>((set, get) => {
         });
         break;
       }
+      case "activity": {
+        const label = event.label;
+        set((state) => {
+          const activity = { ...state.activity };
+          if (label === null) {
+            delete activity[chatId];
+          } else {
+            activity[chatId] = [...(activity[chatId] ?? []), label];
+          }
+          return { activity };
+        });
+        break;
+      }
       case "delta": {
         if (!get().streams[chatId]) break;
         deltaQueue[chatId] = (deltaQueue[chatId] ?? "") + event.text;
@@ -221,8 +246,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
         set((state) => {
           const streams = { ...state.streams };
           delete streams[chatId];
+          // A reply that ended in a tool call hands the turn to the next model
+          // call, so the activity line keeps what it has. Anything else is the
+          // end of the turn: drop the line here instead of waiting a frame for
+          // the turn's final event to arrive.
+          const last = [...event.messages]
+            .reverse()
+            .find((message) => message.role === "assistant");
+          const activity = { ...state.activity };
+          if (!last || !last.toolCalls?.length) delete activity[chatId];
           return {
             streams,
+            activity,
             chats: upsertMeta(state.chats, event.meta),
             ...(state.activeId === chatId
               ? { messages: settle(event.messages, false) }
@@ -235,8 +270,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
         set((state) => {
           const streams = { ...state.streams };
           delete streams[chatId];
+          const activity = { ...state.activity };
+          delete activity[chatId];
           return {
             streams,
+            activity,
             chats: upsertMeta(state.chats, event.meta),
             ...(state.activeId === chatId
               ? { messages: settle(event.messages, false) }
@@ -260,6 +298,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     activeId: null,
     messages: [],
     streams: {},
+    activity: {},
     draft: "",
     draftImages: [],
     sidebarOpen: true,
@@ -289,11 +328,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
           .listChats()
           .then((chats) => {
             set({ chats: sortMetas(chats) });
-            if (!activeId || get().streams[activeId]) return;
+            if (
+              !activeId ||
+              get().streams[activeId] ||
+              get().activity[activeId]
+            )
+              return;
             void api
               .getChat(activeId)
               .then((chat) => {
-                if (get().activeId === activeId && !get().streams[activeId])
+                if (
+                  get().activeId === activeId &&
+                  !get().streams[activeId] &&
+                  !get().activity[activeId]
+                )
                   set({ messages: settle(chat.messages, false) });
               })
               .catch(() => {
@@ -422,7 +470,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
         const chat = await api.getChat(id);
         set({
           activeId: id,
-          messages: settle(chat.messages, Boolean(get().streams[id])),
+          messages: settle(
+            chat.messages,
+            Boolean(get().streams[id] || get().activity[id]),
+          ),
         });
       } catch (error) {
         toast.error(textOf(error));
@@ -534,9 +585,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
       set((state) => {
         const streams = { ...state.streams };
         delete streams[id];
+        const activity = { ...state.activity };
+        delete activity[id];
         return {
           chats: state.chats.filter((c) => c.id !== id),
           streams,
+          activity,
           ...(wasActive ? { activeId: null, messages: [] } : {}),
         };
       });

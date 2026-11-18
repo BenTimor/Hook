@@ -166,6 +166,7 @@ function demoReply(chatId: string | null, text: string): string {
     settled[settled.length - 1] = done;
     demoMessages.set(id, settled);
     demoEmit(id, { kind: "done", messages: settled });
+    demoEmit(id, { kind: "activity", label: null });
   }, 160 + words.length * 40);
   return id;
 }

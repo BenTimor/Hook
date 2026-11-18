@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { List, Search, SquarePen, X } from "lucide-react";
 import { HookMark } from "@hook/ui";
 
@@ -17,13 +17,17 @@ export interface DockChat {
 
 export interface DockMessage extends ChatMessage {
   role: "user" | "assistant" | "system" | "tool";
+  /** Present when a reply ended in a tool call: the turn is still going. */
+  toolCalls?: unknown[];
 }
 
 export interface DockEvent {
-  kind: "started" | "delta" | "reasoning" | "done" | "error";
+  kind: "started" | "delta" | "reasoning" | "done" | "error" | "activity";
   text?: string;
   message?: string;
   messages?: DockMessage[];
+  /** `null` ends the turn's status line; a string is the next thing it is doing. */
+  label?: string | null;
 }
 
 /**
@@ -78,6 +82,7 @@ export function ChatDock({
   transport: ChatTransport;
   open: boolean;
   onClose: () => void;
+  /** Said to a screen reader only: the dock never prints the product's name. */
   title?: string;
   /** Three things worth asking here, offered on the empty screen. */
   suggestions?: string[];
@@ -88,7 +93,10 @@ export function ChatDock({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DockMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<string[] | null>(null);
+  // A turn is running while the activity line exists, which outlives each
+  // model call: the line is what keeps the panel honest during tools.
+  const busy = activity !== null;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<DockChat[] | null>(null);
@@ -187,19 +195,35 @@ export function ChatDock({
             setActiveId(chatId);
           }
           setMessages(visible(event.messages ?? []));
-          setBusy(true);
+          setActivity((current) => current ?? []);
           break;
+        case "activity": {
+          const label = event.label ?? null;
+          setActivity((current) => (label ? [...(current ?? []), label] : null));
+          break;
+        }
         case "delta":
           pending.current += event.text ?? "";
           if (frame.current === null) frame.current = requestAnimationFrame(flush);
           break;
         case "reasoning":
           break;
-        case "done":
+        case "done": {
+          if (event.messages) setMessages(visible(event.messages));
+          // A reply that ended in a tool call hands the turn to the next model
+          // call; anything else is the end of it, and the line goes with it
+          // rather than waiting for the turn's final event.
+          const last = [...(event.messages ?? [])]
+            .reverse()
+            .find((message) => message.role === "assistant");
+          if (!last || !last.toolCalls?.length) setActivity(null);
+          void refreshChats();
+          break;
+        }
         case "error":
           if (event.messages) setMessages(visible(event.messages));
-          if (event.kind === "error") setError(event.message ?? "The reply failed.");
-          setBusy(false);
+          setError(event.message ?? "The reply failed.");
+          setActivity(null);
           void refreshChats();
           break;
       }
@@ -230,6 +254,7 @@ export function ChatDock({
     setActiveId(null);
     activeRef.current = null;
     setMessages([]);
+    setActivity(null);
     setError(null);
     setHistoryOpen(false);
     setQuery("");
@@ -241,7 +266,7 @@ export function ChatDock({
     if (!text || busy) return;
     setDraft("");
     setError(null);
-    setBusy(true);
+    setActivity([]);
     // Optimistic echo: the backend's "started" event replaces this list with
     // the authoritative one a moment later.
     setMessages((current) => [
@@ -256,32 +281,10 @@ export function ChatDock({
       }
       void refreshChats();
     } catch (failure) {
-      setBusy(false);
+      setActivity(null);
       setError(String(failure));
     }
   };
-
-  // While the reply is on its way but no text has landed yet, show the same
-  // "Thinking" state the chat window shows: a placeholder reply on the end.
-  const rendered = useMemo(() => {
-    const thinking =
-      busy && messages.length > 0 && messages[messages.length - 1]?.role === "user";
-    return thinking
-      ? [
-          ...messages,
-          {
-            id: "dock-thinking",
-            role: "assistant" as const,
-            content: "",
-            status: "streaming",
-          },
-        ]
-      : messages.map((message) =>
-          busy && message === messages[messages.length - 1]
-            ? { ...message, status: "streaming" }
-            : message,
-        );
-  }, [busy, messages]);
 
   if (!open) return null;
 
@@ -391,7 +394,8 @@ export function ChatDock({
       ) : (
         <Thread
           className="dock-thread"
-          messages={rendered}
+          messages={messages}
+          activity={activity ?? undefined}
           onReport={
             transport.report
               ? (message) => {

@@ -100,6 +100,12 @@ pub enum StreamEvent {
     Reasoning {
         text: String,
     },
+    /// What the turn is doing right now, in the product's words. `None` means
+    /// the turn is over; the line must not outlive it. Sent before each tool
+    /// runs and once from `finish`, never persisted with the chat.
+    Activity {
+        label: Option<String>,
+    },
     Done {
         messages: Vec<Message>,
         meta: ChatMeta,
@@ -531,6 +537,9 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     );
 
                     for call in &calls {
+                        if let Some(label) = activity_label(&call.name, &call.arguments) {
+                            emit(&state, &chat_id, StreamEvent::Activity { label: Some(label) });
+                        }
                         let result =
                             run_tool(&state, &chat_id, call, user_initiated).await;
                         let mut message = Message::new("tool", &result, "complete");
@@ -632,6 +641,10 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
 
 fn finish(state: &Arc<AppState>, chat_id: &str) {
     trace(&format!("{chat_id} finish"));
+    // The turn is over, so whatever the status line said is no longer true.
+    // This is the one event that ends the line: a `Done` only ends one model
+    // call, and a tool round hands straight over to the next one.
+    emit(state, chat_id, StreamEvent::Activity { label: None });
     lock(&state.streams).remove(chat_id);
     // Every exit goes through here, including the silent ones (a chat file that
     // could not be read, a panic). A message left "streaming" would keep the
@@ -826,6 +839,117 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
         tasks,
     );
     json!({ "shown": true, "kind": kind, "title": title }).to_string()
+}
+
+/// What the status line under a turn says while a tool runs.
+///
+/// It is derived from the tool's own name and arguments, so nothing extra is
+/// asked of the model and the line cannot drift from what is actually running.
+/// Arguments that name the object make it specific; `no_update` is silent
+/// because it is a decision not to do anything.
+fn activity_label(name: &str, arguments: &str) -> Option<String> {
+    let args = serde_json::from_str::<serde_json::Value>(arguments).unwrap_or_else(|_| json!({}));
+    let text = |key: &str| -> Option<&str> {
+        args.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let action = text("action").unwrap_or_default();
+    let titled = |verb: &str, key: &str, fallback: &str| -> String {
+        match text(key) {
+            Some(value) => format!("{verb} “{}”…", short(value, 42)),
+            None => fallback.to_string(),
+        }
+    };
+
+    let label: String = match name {
+        "no_update" => return None,
+        "web_search" => match text("query") {
+            Some(query) => format!("Searching the web for “{}”…", short(query, 42)),
+            None => "Searching the web…".into(),
+        },
+        "list_projects" => "Looking at your projects…".into(),
+        "create_project" => titled("Creating", "name", "Creating a project…"),
+        "update_project_description" => "Updating a project…".into(),
+        "start_coding_agent" => "Starting a coding agent…".into(),
+        "list_agents" => "Checking on the agents…".into(),
+        "agent_status" => "Checking on the agent…".into(),
+        "steer_agent" => "Redirecting the agent…".into(),
+        "answer_agent" => "Answering the agent…".into(),
+        "stop_agent" => "Stopping the agent…".into(),
+        "list_coding_sessions" => "Looking up coding sessions…".into(),
+        "workspace_projects" => match action {
+            "create" => titled("Creating", "name", "Creating a project…"),
+            "update" => "Updating a project…".into(),
+            "delete" => "Deleting a project…".into(),
+            "get" => "Opening a project…".into(),
+            _ => "Looking at your projects…".into(),
+        },
+        "workspace_folders" => match action {
+            "create" => titled("Creating", "name", "Creating a folder…"),
+            "update" => "Updating a folder…".into(),
+            "delete" => "Deleting a folder…".into(),
+            _ => "Reading the folders…".into(),
+        },
+        "workspace_boards" => match action {
+            "create" => titled("Creating", "name", "Creating a board…"),
+            "update" => "Updating a board…".into(),
+            "delete" => "Deleting a board…".into(),
+            _ => "Reading the boards…".into(),
+        },
+        "workspace_tasks" => match action {
+            "create" => titled("Adding", "title", "Adding a task…"),
+            "update" => "Updating a task…".into(),
+            "delete" => "Deleting a task…".into(),
+            "get" => "Opening a task…".into(),
+            _ => "Reading the tasks…".into(),
+        },
+        "workspace_comments" => match action {
+            "create" => "Writing a comment…".into(),
+            "delete" => "Deleting a comment…".into(),
+            _ => "Reading the comments…".into(),
+        },
+        "workspace_documents" => match action {
+            "create" => titled("Writing", "title", "Writing a document…"),
+            "update" => "Updating a document…".into(),
+            "delete" => "Deleting a document…".into(),
+            "get" => "Opening a document…".into(),
+            _ => "Reading the documents…".into(),
+        },
+        "workspace_members" => match action {
+            "invite" => titled("Inviting", "email", "Inviting someone…"),
+            "set_role" => "Changing a role…".into(),
+            "remove" => "Removing a member…".into(),
+            _ => "Checking the members…".into(),
+        },
+        "workspace_invites" => match action {
+            "accept" => "Accepting an invitation…".into(),
+            "decline" => "Declining an invitation…".into(),
+            "revoke" => "Revoking an invitation…".into(),
+            _ => "Checking invitations…".into(),
+        },
+        "workspace_preview" => "Showing a preview…".into(),
+        _ => "Working…".into(),
+    };
+    Some(label)
+}
+
+/// A tool argument that has to fit on one line of the status line: whitespace
+/// collapsed, cut back to a word boundary. The line's own ellipsis marks the
+/// cut, so this one does not add another.
+fn short(text: &str, max: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        return flat;
+    }
+    let mut cut: String = flat.chars().take(max).collect();
+    if let Some(space) = cut.rfind(' ') {
+        if cut[..space].chars().count() >= max / 2 {
+            cut.truncate(space);
+        }
+    }
+    cut.trim_end().to_string()
 }
 
 async fn run_tool(
@@ -1648,5 +1772,92 @@ mod capability_tests {
         // The style rules at the end must survive: dropping a section must not
         // swallow its neighbours.
         assert!(bare.contains("## Style"));
+    }
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+
+    #[test]
+    fn the_activity_event_has_the_shape_the_window_expects() {
+        let event = StreamEvent::Activity {
+            label: Some("Thinking…".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            json!({ "kind": "activity", "label": "Thinking…" })
+        );
+        // `None` is how the turn says it has stopped, so it must survive the
+        // trip as a null rather than disappearing from the object.
+        assert_eq!(
+            serde_json::to_value(StreamEvent::Activity { label: None }).unwrap(),
+            json!({ "kind": "activity", "label": null })
+        );
+    }
+
+    #[test]
+    fn every_advertised_tool_says_what_it_is_doing() {
+        let chat = tools::definitions();
+        let workspace = crate::workspace::definitions();
+        let names = chat
+            .as_array()
+            .expect("tools are an array")
+            .iter()
+            .chain(workspace.iter())
+            .filter_map(|tool| tool["function"]["name"].as_str())
+            .filter(|name| *name != "no_update");
+        for name in names {
+            let label = activity_label(name, "{}");
+            assert!(label.is_some(), "{name} has no activity label");
+            assert!(!label.unwrap().is_empty(), "{name} has an empty label");
+        }
+        // A note's answer is silence, not an action.
+        assert_eq!(activity_label("no_update", "{}"), None);
+        // A tool added tomorrow still gets a line rather than a blank one.
+        assert_eq!(activity_label("brand_new_tool", "{}").as_deref(), Some("Working…"));
+    }
+
+    #[test]
+    fn activity_labels_name_what_the_tool_touches() {
+        let label = |name: &str, args: serde_json::Value| {
+            activity_label(name, &args.to_string()).unwrap()
+        };
+        assert_eq!(
+            label("web_search", json!({ "query": "deepseek v4" })),
+            "Searching the web for “deepseek v4”…"
+        );
+        assert_eq!(label("web_search", json!({})), "Searching the web…");
+        assert_eq!(
+            label("workspace_tasks", json!({ "action": "create", "title": "Fix login" })),
+            "Adding “Fix login”…"
+        );
+        assert_eq!(
+            label("workspace_tasks", json!({ "action": "list" })),
+            "Reading the tasks…"
+        );
+        assert_eq!(
+            label("create_project", json!({ "name": "Website" })),
+            "Creating “Website”…"
+        );
+        // No arguments (a model that dropped them) still reads as a sentence.
+        assert_eq!(
+            label("workspace_documents", json!({ "action": "create" })),
+            "Writing a document…"
+        );
+    }
+
+    #[test]
+    fn a_long_argument_becomes_one_short_line() {
+        let label = activity_label(
+            "web_search",
+            &json!({ "query": "how do I make a very long and rambling search query that should be cut down" })
+                .to_string(),
+        )
+        .unwrap();
+        assert!(label.chars().count() < 70, "{label}");
+        assert!(label.ends_with("”…"), "{label}");
+        // Whitespace never reaches the line.
+        assert!(!label.contains('\n'));
     }
 }

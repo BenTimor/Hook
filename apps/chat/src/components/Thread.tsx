@@ -21,6 +21,9 @@ export function Thread() {
   const streamText = useChatStore((s) =>
     s.activeId ? s.streams[s.activeId]?.text : undefined,
   );
+  const activity = useChatStore((s) =>
+    s.activeId ? s.activity[s.activeId] : undefined,
+  );
   const regenerate = useChatStore((s) => s.regenerate);
   const edit = useChatStore((s) => s.edit);
 
@@ -32,6 +35,7 @@ export function Thread() {
       <SharedThread
         messages={messages}
         streamText={streamText}
+        activity={activity}
         onRegenerate={() => void regenerate()}
         onEdit={(id, text) => void edit(id, text)}
         onReport={setReporting}

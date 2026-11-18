@@ -103,11 +103,14 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 - `crates/hook-core/src/{provider,import,update,reports}.rs` — SSE client, the
   ChatGPT/Claude export readers, the release index and update policy, AI reports.
 - `crates/hook-core/src/commands.rs` — the whole IPC surface.
-- `packages/chat/src/{Thread,MessageItem,Composer}.tsx` — the conversation and
-  the input, prop-driven and store-free. `apps/chat/src/components/{Thread,
-  Composer}.tsx` are the thin store adapters; a product supplies the pictures
-  (`renderExtras`) and what Report means (`onReport`). `chat.css` holds their
-  styles and `dock.css` the 380px overrides, so both apps look the same.
+- `packages/chat/src/{Thread,MessageItem,TurnActivity,Composer}.tsx` — the
+  conversation and the input, prop-driven and store-free. `TurnActivity` is the
+  line that says what a running turn is doing ("Thinking…", "Searching the web
+  for …"); the store hands it the labels and it owns the pacing. `apps/chat/src/
+  components/{Thread,Composer}.tsx` are the thin store adapters; a product
+  supplies the pictures (`renderExtras`) and what Report means (`onReport`).
+  `chat.css` holds their styles and `dock.css` the 380px overrides, so both apps
+  look the same.
 - `packages/chat/src/ChatDock.tsx` — the collapsible chat panel every product
   embeds, built from those same pieces. It takes a `ChatTransport`, so it knows
   nothing about which app it is running in;
@@ -152,7 +155,9 @@ Changing one side of a boundary is the most common way to break this repo.
   into one app: the dock and the window are meant to be the same thing.
 - **New chat-agent tool:** schema + impl in `tools.rs`, dispatch in `turn.rs`,
   and the prompt in `turn.rs` (`system_prompt`) if the agent must know about it.
-  Gate it on `Capabilities` when only some products have it.
+  Give it a line in `activity_label` (`turn.rs`): that is what the chat says it
+  is doing while the tool runs, and a test fails when an advertised tool has
+  none. Gate it on `Capabilities` when only some products have it.
 - **New product:** `apps/<id>/` (package.json, index.html, vite.config.ts,
   `src-tauri/` with its own identifier) → `Product` + `Capabilities` in
   `crates/hook-core/src/lib.rs` → an entry in `scripts/products.mjs` → root

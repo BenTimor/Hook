@@ -13,6 +13,7 @@ export function Sidebar() {
   const chats = useChatStore((s) => s.chats);
   const activeId = useChatStore((s) => s.activeId);
   const streams = useChatStore((s) => s.streams);
+  const activity = useChatStore((s) => s.activity);
   const agents = useChatStore((s) => s.agents.agents);
   const select = useChatStore((s) => s.select);
   const newChat = useChatStore((s) => s.newChat);
@@ -161,7 +162,10 @@ export function Sidebar() {
                   key={chat.id}
                   chat={chat}
                   active={chat.id === activeId}
-                  streaming={Boolean(streams[chat.id]) || workingChats.has(chat.id)}
+                  streaming={
+                    Boolean(streams[chat.id] || activity[chat.id]) ||
+                    workingChats.has(chat.id)
+                  }
                 />
               ))}
             </div>
