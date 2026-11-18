@@ -54,7 +54,7 @@ if (!identity.identityName?.trim() || !identity.publisher?.trim()) {
   console.log(`  1. Reserve ${product.name} in Partner Center (MSIX or PWA app).`);
   console.log(`  2. Copy Identity Name and Publisher into ${product.msix}/identity.json.`);
   console.log("  3. Put the Store product id in harness.config.ci.toml [update] store_id.");
-  console.log("  4. Run `pnpm app:msix` again (or use the release workflow artifact).");
+  console.log("  4. Run `pnpm app:msix` again.");
   process.exit(0);
 }
 

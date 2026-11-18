@@ -5,10 +5,10 @@
  *
  *   node scripts/build-release-manifest.mjs <installer> <manifest> [version] [--product <id>]
  *
- * The release workflow runs this on Windows after `tauri build`, uploads the
- * installer under its versioned name, and merges this manifest into the public
- * release index. `sourceHash` is what lets the next push skip a rebuild when
- * nothing that goes into the app changed.
+ * The release script runs this after `tauri build`, uploads the installer under
+ * its versioned name, and merges this manifest into the public release index.
+ * `sourceHash` is what lets the next release skip a rebuild when nothing that
+ * goes into the app changed.
  */
 import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";

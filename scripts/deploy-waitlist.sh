@@ -214,7 +214,7 @@ probe /api/download/info
 probe /api/releases
 probe /api/v1/models
 if [ ! -s "$DIR/data/releases/Hook-setup.exe" ]; then
-  echo "  installer: not uploaded yet (release workflow fills this)"
+  echo "  installer: not uploaded yet (pnpm release fills this)"
 fi
 if [ ! -s "$DIR/data/signups.sqlite" ]; then
   echo "  signups: none yet"

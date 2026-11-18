@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
  * A stable fingerprint of everything that ends up inside a product executable
- * or the installer around it. The release workflow compares it with the
- * version it already published, so a push that changes only docs, the
- * website, another product, or a server route does not trigger a Windows
- * rebuild.
+ * or the installer around it. `pnpm release` compares it with the version the
+ * index already published, so a tree that differs only in docs, the website,
+ * another product or a server route does not get rebuilt and re-shipped.
  *
  * Include: application source, the shared packages and shared crate it links,
  * its compiled config, dependencies, installer inputs.

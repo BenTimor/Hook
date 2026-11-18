@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * Decide whether a push actually needs a new Windows build.
+ * Decide whether a product's source is already published.
  *
- * A rebuild is expensive and every new build asks users to update, so the
- * answer is "only when the application source changed":
+ * `pnpm release` uses it to skip a product nothing changed for, and every
+ * release asks users to update, so the answer is "only when the application
+ * source changed":
  *
  *   - same source as the published latest version  -> skip
  *   - changed source, same version                 -> fail: bump the version
