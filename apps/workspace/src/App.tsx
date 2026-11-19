@@ -261,7 +261,7 @@ function Workspace({
           ) : board ? (
             <>
               <div className="ws-board-container" hidden={Boolean(task)}><BoardPage board={board} tasks={tasks} /></div>
-              {task && <TaskPanel key={task.id} task={task} />}
+              {task && <TaskPanel key={task.id} task={task} accountEmail={auth.email ?? null} />}
             </>
           ) : (
             <ProjectHome

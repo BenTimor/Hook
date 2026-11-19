@@ -1064,6 +1064,21 @@ export function createWorkspaceRouter({ db, env = {} }) {
     res.status(201).json({ comment: shapeComment(row) });
   });
 
+  router.patch("/comments/:id", (req, res) => {
+    const comment = db
+      .prepare("SELECT * FROM ws_comments WHERE id = ? AND deleted_at IS NULL")
+      .get(req.params.id);
+    if (!comment) return notFound(res);
+    const who = actor(req, res, comment.project_id, "write");
+    if (!who) return;
+    if (comment.author !== who.subject && !can(who.role, "manageMembers")) {
+      return forbidden(res, "Only the author, a manager or the owner can edit a comment.");
+    }
+    const body = text(req.body?.body, limit.commentBytes);
+    if (!body) return badRequest(res, "Write something first.");
+    res.json({ comment: shapeComment(update(db, "comments", comment.id, { body })) });
+  });
+
   router.delete("/comments/:id", (req, res) => {
     const comment = db
       .prepare("SELECT * FROM ws_comments WHERE id = ? AND deleted_at IS NULL")

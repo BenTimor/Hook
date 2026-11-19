@@ -193,7 +193,7 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
                       invited={invited}
                       label={column.name}
                       onChange={(next) =>
-                        void updateTask(task.id, { assignees: next, assignee: next[0] ?? null })
+                        updateTask(task.id, { assignees: next, assignee: next[0] ?? null })
                       }
                     />
                   </div>

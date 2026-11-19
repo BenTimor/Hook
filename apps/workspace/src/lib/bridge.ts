@@ -405,6 +405,21 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
     return { task, comments: demo.comments.filter((comment) => comment.taskId === id) };
   }
 
+  if (root === "comments") {
+    if (method === "PATCH") {
+      demo.comments = demo.comments.map((comment) =>
+        comment.id === id
+          ? { ...comment, body: String(payload.body ?? comment.body), updatedAt: demoNow() }
+          : comment,
+      );
+      return { comment: demo.comments.find((comment) => comment.id === id) };
+    }
+    if (method === "DELETE") {
+      demo.comments = demo.comments.filter((comment) => comment.id !== id);
+      return { ok: true };
+    }
+  }
+
   if (root === "documents") {
     if (method === "PATCH") {
       demo.documents = demo.documents.map((document) =>
@@ -525,6 +540,8 @@ export const api = {
     call<{ comments: Comment[] }>("GET", `/tasks/${taskId}/comments`),
   addComment: (taskId: string, body: string) =>
     call<{ comment: Comment }>("POST", `/tasks/${taskId}/comments`, { body }),
+  editComment: (id: string, body: string) =>
+    call<{ comment: Comment }>("PATCH", `/comments/${id}`, { body }),
   deleteComment: (id: string) => call<{ ok: true }>("DELETE", `/comments/${id}`),
 
   documents: (projectId: string) =>

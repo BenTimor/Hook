@@ -75,13 +75,44 @@ export function AssigneesPicker({
   readOnly?: boolean;
   compact?: boolean;
   label?: string;
-  onChange: (next: string[]) => void;
+  onChange: (next: string[]) => void | Promise<unknown>;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const [query, setQuery] = useState("");
+  // Selections are optimistic: a second click must see the first one even
+  // before the server's response reaches the task. Writes are serialized so
+  // two quick choices cannot land out of order and leave one assignee.
+  const [draft, setDraft] = useState(values);
+  const latest = useRef(values);
+  const pending = useRef(0);
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
+
+  useEffect(() => {
+    latest.current = values;
+    if (pending.current === 0) setDraft(values);
+  }, [values]);
+
+  const commit = (next: string[]) => {
+    setDraft(next);
+    pending.current += 1;
+    writes.current = writes.current
+      .catch(() => undefined)
+      .then(() => onChange(next))
+      .catch(() => undefined)
+      .finally(() => {
+        pending.current -= 1;
+        if (pending.current === 0) {
+          // Let React apply the last server row before reconciling a failed
+          // or normalized write back into the optimistic draft.
+          window.setTimeout(() => {
+            if (pending.current === 0) setDraft(latest.current);
+          }, 0);
+        }
+      });
+  };
 
   const options = useMemo<PersonOption[]>(() => {
     const seen = new Set<string>();
@@ -98,12 +129,12 @@ export function AssigneesPicker({
     for (const invite of invited) {
       add({ value: invite.email, label: invite.email, detail: "Invited" });
     }
-    for (const value of values) {
+    for (const value of draft) {
       if (seen.has(value.toLowerCase())) continue;
       add({ value, label: assigneeLabel(members, value) });
     }
     return list;
-  }, [members, invited, values]);
+  }, [members, invited, draft]);
 
   useEffect(() => {
     if (!open) return;
@@ -150,15 +181,16 @@ export function AssigneesPicker({
     setOpen(true);
   };
 
-  const selected = (value: string) => values.some((entry) => sameValue(entry, value));
+  const selected = (value: string) => draft.some((entry) => sameValue(entry, value));
 
   const toggle = (value: string) => {
-    onChange(
+    commit(
       selected(value)
-        ? values.filter((entry) => !sameValue(entry, value))
-        : [...values, value],
+        ? draft.filter((entry) => !sameValue(entry, value))
+        : [...draft, value],
     );
   };
+
 
   const term = query.trim().toLowerCase();
   const filtered = term
@@ -174,18 +206,18 @@ export function AssigneesPicker({
           ref={trigger}
           type="button"
           className="ws-assignee-stack"
-          aria-label={values.length ? `${label}: ${values.map((value) => assigneeLabel(members, value)).join(", ")}` : `Assign ${label}`}
+          aria-label={draft.length ? `${label}: ${draft.map((value) => assigneeLabel(members, value)).join(", ")}` : `Assign ${label}`}
           disabled={readOnly}
           onClick={() => (open ? setOpen(false) : show())}
         >
-          {values.length ? (
-            values.slice(0, 3).map((value) => (
+          {draft.length ? (
+            draft.slice(0, 3).map((value) => (
               <PersonAvatar key={value} small value={value} label={assigneeLabel(members, value)} />
             ))
           ) : (
             <span className="ws-assignee-stack-empty">Unassigned</span>
           )}
-          {values.length > 3 ? <span className="ws-avatar ws-avatar-sm ws-avatar-more">+{values.length - 3}</span> : null}
+          {draft.length > 3 ? <span className="ws-avatar ws-avatar-sm ws-avatar-more">+{draft.length - 3}</span> : null}
         </button>
         {open && position ? menuView() : null}
       </>
@@ -195,7 +227,7 @@ export function AssigneesPicker({
   return (
     <div className="ws-assignees">
       <div className="ws-assignee-chips">
-        {values.map((value) => {
+        {draft.map((value) => {
           const name = assigneeLabel(members, value);
           return (
             <span className="ws-assignee-chip" key={value}>
@@ -206,7 +238,7 @@ export function AssigneesPicker({
                   type="button"
                   className="ws-assignee-remove"
                   aria-label={`Remove ${name}`}
-                  onClick={() => onChange(values.filter((entry) => !sameValue(entry, value)))}
+                  onClick={() => commit(draft.filter((entry) => !sameValue(entry, value)))}
                 >
                   <X aria-hidden="true" />
                 </button>
@@ -217,9 +249,9 @@ export function AssigneesPicker({
         {!readOnly ? (
           <button ref={trigger} type="button" className="ws-assignee-add" onClick={() => (open ? setOpen(false) : show())}>
             <Plus aria-hidden="true" />
-            {values.length ? "Add" : "Assign"}
+            {draft.length ? "Add" : "Assign"}
           </button>
-        ) : values.length === 0 ? (
+        ) : draft.length === 0 ? (
           <span className="ws-property-empty">Unassigned</span>
         ) : null}
       </div>
@@ -270,10 +302,10 @@ export function AssigneesPicker({
             );
           })}
         </div>
-        {values.length > 0 ? (
+        {draft.length > 0 ? (
           <div className="ws-people-menu-foot">
-            <button type="button" onClick={() => onChange([])}>Clear all</button>
-            <span>{values.length} assigned</span>
+            <button type="button" onClick={() => commit([])}>Clear all</button>
+            <span>{draft.length} assigned</span>
           </div>
         ) : null}
       </div>,

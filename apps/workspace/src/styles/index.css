@@ -1793,14 +1793,33 @@
 .ws-task-discussion { min-width: 0; }
 .ws-task-head {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 14px;
   padding: 10px 0 18px;
 }
+.ws-task-head-actions { display: flex; flex: 0 0 auto; align-items: center; min-height: 38px; margin-left: auto; padding-top: 4px; }
+.ws-task-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 550;
+}
+.ws-task-delete:hover { border-color: rgba(164, 66, 58, 0.25); background: rgba(164, 66, 58, 0.08); color: #a4423a; }
+.ws-task-delete svg { width: 14px; height: 14px; }
+.ws-task-delete-confirm { display: flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 11.5px; white-space: nowrap; }
+.ws-task-delete-danger { height: 32px; padding: 0 10px; border-radius: 7px; background: #a4423a; color: #fff; font-size: 11.5px; font-weight: 600; }
+.ws-task-delete-danger:hover { background: #8f372f; }
 
 .ws-task-title {
   flex: 1;
   min-width: 0;
+  max-width: 860px;
   margin-left: -10px;
   padding: 6px 10px;
   border-radius: 8px;
@@ -2037,6 +2056,24 @@
   color: var(--ink-2);
   white-space: pre-wrap;
 }
+.ws-comment-edited { color: var(--ink-4); font-size: 10px; font-weight: 500; }
+.ws-comment-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; opacity: 0; transition: opacity 120ms ease; }
+.ws-comment:hover .ws-comment-actions,
+.ws-comment:focus-within .ws-comment-actions { opacity: 1; }
+.ws-comment-actions > button { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 6px; color: var(--ink-4); }
+.ws-comment-actions > button:hover { background: rgba(var(--ink-rgb), 0.07); color: var(--ink-2); }
+.ws-comment-actions > button:last-child:hover { background: rgba(164, 66, 58, 0.08); color: #a4423a; }
+.ws-comment-actions svg { width: 13px; height: 13px; }
+.ws-comment-confirm { display: flex; align-items: center; gap: 5px; color: var(--ink-3); font-size: 10.5px; white-space: nowrap; }
+.ws-comment-confirm button { padding: 2px 6px; border-radius: 5px; color: var(--ink-3); font-size: 10.5px; }
+.ws-comment-confirm button:first-of-type { color: #a4423a; }
+.ws-comment-confirm button:hover { background: rgba(var(--ink-rgb), 0.06); }
+.ws-comment-editor { display: flex; flex-direction: column; gap: 7px; }
+.ws-comment-editor .ws-comment-input { min-height: 72px; background: var(--ivory); }
+.ws-comment-editor-actions { display: flex; justify-content: flex-end; gap: 6px; }
+@media (hover: none) {
+  .ws-comment-actions { opacity: 1; }
+}
 
 .ws-agent-tag {
   padding: 1px 6px;
@@ -2059,16 +2096,6 @@
   min-height: 64px;
 }
 
-.ws-task-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: auto;
-  padding: 30px 0 0;
-  font-size: 12px;
-  color: var(--ink-3);
-}
-.ws-task-layout > .ws-task-foot { grid-column: 1; flex-wrap: wrap; margin-top: 0; padding: 14px 0 0; border-top: 1px solid var(--line-soft); }
 .ws-task-empty { margin: 0 0 10px; padding: 12px; border-radius: 9px; background: rgba(var(--ink-rgb), 0.03); color: var(--ink-4); font-size: 12px; }
 /* ── People ───────────────────────────────────────────────────────────────── */
 
@@ -2453,8 +2480,9 @@
   .ws-task-side { position: static; order: -1; }
   .ws-task-properties { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
   .ws-task-properties-heading { grid-column: 1 / -1; }
-  .ws-task-layout > .ws-task-foot { grid-column: 1 / -1; }
 }
 @media (max-width: 600px) {
   .ws-task-properties { grid-template-columns: minmax(0, 1fr); }
+  .ws-task-head { flex-wrap: wrap; }
+  .ws-task-head-actions { width: 100%; margin-left: 0; justify-content: flex-end; padding-top: 0; }
 }

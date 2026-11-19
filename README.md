@@ -935,7 +935,9 @@ rows written before this rule are adopted when the service starts.
   someone else's paragraph.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,
   and an agent comment carries the conversation it came from, so a teammate sees
-  "via Hook agent" instead of mistaking it for something the user typed.
+  "via Hook agent" instead of mistaking it for something the user typed. The
+  author can edit or delete their own comment; a manager or owner can edit or
+  delete any comment on the task.
 - **The chat agent can do everything a person can, except transfer ownership.**
   `workspace_projects`, `workspace_folders`, `workspace_boards`,
   `workspace_tasks`, `workspace_comments`, `workspace_documents`,
@@ -1621,8 +1623,9 @@ chat). Tests skip themselves when the engine or `node` is missing.
 The workspace suite (`server/workspace.test.mjs`) drives the real router against a
 temporary SQLite file: the role table, an invitation accepted in the product,
 viewer/editor/manager limits, ownership transfer and its permanence, a removed
-member's tombstone in the changes feed, typed task columns, an agent comment that
-carries the conversation it came from, a stale document write that is refused
+member's tombstone in the changes feed, typed task columns, several assignees on
+one task, comment editing and deletion by author or manager, an agent comment
+that carries the conversation it came from, a stale document write that is refused
 with the current copy, folder nesting and deletion that keeps its contents, and
 account deletion that removes owned projects but not other people's. `server/releases.test.mjs` covers the second product's
 index and its "not published yet" answer.

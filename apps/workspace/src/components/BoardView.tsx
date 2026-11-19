@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, LayoutList, Plus, Rows3 } from "lucide-react";
+import { ArrowLeft, LayoutList, Pencil, Plus, Rows3, Trash2 } from "lucide-react";
 
-import type { Board, Member, Task } from "../lib/types";
+import type { Board, Comment, Member, Task } from "../lib/types";
 import { pendingPeople, personLabel, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { AssigneesPicker, PersonAvatar } from "./AssigneesPicker";
@@ -174,7 +174,7 @@ function firstLine(markdown: string): string {
  * The task view. Description and title are edited in place and saved on blur,
  * so there is no Save button to forget.
  */
-export function TaskPanel({ task }: { task: Task }) {
+export function TaskPanel({ task, accountEmail }: { task: Task; accountEmail?: string | null }) {
   const members = useWorkspaceStore((state) =>
     state.activeProjectId ? (state.members[state.activeProjectId] ?? EMPTY) : EMPTY,
   );
@@ -190,6 +190,8 @@ export function TaskPanel({ task }: { task: Task }) {
   const deleteTask = useWorkspaceStore((state) => state.deleteTask);
   const openTask = useWorkspaceStore((state) => state.openTask);
   const addComment = useWorkspaceStore((state) => state.addComment);
+  const editComment = useWorkspaceStore((state) => state.editComment);
+  const deleteComment = useWorkspaceStore((state) => state.deleteComment);
 
   const [title, setTitle] = useState(task.title);
   const [descriptionDirty, setDescriptionDirty] = useState(false);
@@ -197,8 +199,15 @@ export function TaskPanel({ task }: { task: Task }) {
   const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   const project = useWorkspaceStore((state) => state.projects.find((item) => item.id === state.activeProjectId));
   const readOnly = project?.role === "viewer";
+  const canManage = project?.role === "manager" || project?.role === "owner";
+  const currentSubject = accountEmail
+    ? members.find((member) => member.email?.toLowerCase() === accountEmail.toLowerCase())?.subject
+    : undefined;
   const [draft, setDraft] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editingComment, setEditingComment] = useState<string | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [confirmComment, setConfirmComment] = useState<string | null>(null);
   useEffect(() => {
     setTitle(task.title);
   }, [task.title]);
@@ -213,6 +222,21 @@ export function TaskPanel({ task }: { task: Task }) {
   const assigned = taskAssignees(task);
   const invited = pendingPeople(members, pending);
   const creator = personLabel(members.find((member) => member.subject === task.createdBy));
+  const canChangeComment = (comment: Comment) =>
+    !readOnly && (canManage || comment.author === currentSubject);
+  const beginEditComment = (comment: Comment) => {
+    setEditingComment(comment.id);
+    setCommentDraft(comment.body);
+    setConfirmComment(null);
+  };
+  const saveComment = async (comment: Comment) => {
+    const body = commentDraft.trim();
+    if (!body || body === comment.body) {
+      setEditingComment(null);
+      return;
+    }
+    if (await editComment(task.id, comment.id, body)) setEditingComment(null);
+  };
 
   return (
     <section className="ws-task" aria-label="Task details">
@@ -243,6 +267,36 @@ export function TaskPanel({ task }: { task: Task }) {
               }
             }}
           />
+          {!readOnly ? (
+            <div className="ws-task-head-actions">
+              {confirmDelete ? (
+                <div className="ws-task-delete-confirm">
+                  <span>Delete task?</span>
+                  <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>Keep</button>
+                  <button
+                    className="ws-task-delete-danger"
+                    onClick={() => {
+                      void deleteTask(task.id);
+                      setConfirmDelete(false);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="ws-task-delete"
+                  title="Delete task"
+                  aria-label="Delete task"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  <Trash2 />
+                  Delete
+                </button>
+              )}
+            </div>
+          ) : null}
         </header>
 
         <div className="ws-task-layout">
@@ -287,8 +341,79 @@ export function TaskPanel({ task }: { task: Task }) {
                         {comment.authorKind === "agent" && (
                           <span className="ws-agent-tag">via Hook agent</span>
                         )}
+                        {comment.updatedAt > comment.createdAt ? (
+                          <span className="ws-comment-edited">edited</span>
+                        ) : null}
+                        {canChangeComment(comment) && editingComment !== comment.id ? (
+                          <div className="ws-comment-actions">
+                            {confirmComment === comment.id ? (
+                              <span className="ws-comment-confirm">
+                                Delete comment?
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void deleteComment(task.id, comment.id);
+                                    setConfirmComment(null);
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                                <button type="button" onClick={() => setConfirmComment(null)}>
+                                  Keep
+                                </button>
+                              </span>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  title="Edit comment"
+                                  aria-label="Edit comment"
+                                  onClick={() => beginEditComment(comment)}
+                                >
+                                  <Pencil aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Delete comment"
+                                  aria-label="Delete comment"
+                                  onClick={() => setConfirmComment(comment.id)}
+                                >
+                                  <Trash2 aria-hidden="true" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
-                      <p>{comment.body}</p>
+                      {editingComment === comment.id ? (
+                        <div className="ws-comment-editor">
+                          <textarea
+                            className="ws-comment-input"
+                            value={commentDraft}
+                            autoFocus
+                            aria-label="Edit comment"
+                            onChange={(event) => setCommentDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") setEditingComment(null);
+                              if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && commentDraft.trim()) {
+                                void saveComment(comment);
+                              }
+                            }}
+                          />
+                          <div className="ws-comment-editor-actions">
+                            <button className="btn btn-ghost" onClick={() => setEditingComment(null)}>Cancel</button>
+                            <button
+                              className="btn"
+                              disabled={!commentDraft.trim() || commentDraft.trim() === comment.body}
+                              onClick={() => void saveComment(comment)}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p>{comment.body}</p>
+                      )}
                     </div>
                   );
                 })
@@ -342,7 +467,7 @@ export function TaskPanel({ task }: { task: Task }) {
                   invited={invited}
                   readOnly={readOnly}
                   label={assigneeColumn.name}
-                  onChange={(next) => void updateTask(task.id, { assignees: next, assignee: next[0] ?? null })}
+                  onChange={(next) => updateTask(task.id, { assignees: next, assignee: next[0] ?? null })}
                 />
               </div>
               <div className="ws-property ws-property-row">
@@ -362,33 +487,6 @@ export function TaskPanel({ task }: { task: Task }) {
               </div>
             </div>
           </aside>
-
-          <footer className="ws-task-foot">
-            {confirmDelete ? (
-              <>
-                <span>Delete this task for everyone?</span>
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => setConfirmDelete(false)}
-                >
-                  Keep
-                </button>
-                <button
-                  className="btn"
-                  onClick={() => {
-                    void deleteTask(task.id);
-                    setConfirmDelete(false);
-                  }}
-                >
-                  Delete
-                </button>
-              </>
-            ) : (
-              <button className="btn btn-ghost" onClick={() => setConfirmDelete(true)}>
-                Delete task
-              </button>
-            )}
-          </footer>
         </div>
       </div>
     </section>

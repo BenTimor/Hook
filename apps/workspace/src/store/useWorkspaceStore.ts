@@ -65,6 +65,7 @@ interface WorkspaceState {
   reorderTasks: (boardId: string, orderedIds: string[]) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   addComment: (taskId: string, body: string) => Promise<void>;
+  editComment: (taskId: string, id: string, body: string) => Promise<boolean>;
   deleteComment: (taskId: string, id: string) => Promise<void>;
 
   openDocument: (id: string | null, projectId?: string) => Promise<void>;
@@ -439,6 +440,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }));
     } catch (error) {
       set({ error: message(error) });
+    }
+  },
+
+  async editComment(taskId, id, body) {
+    try {
+      const updated = await api.editComment(id, body);
+      set((state) => ({
+        comments: {
+          ...state.comments,
+          [taskId]: upsert(state.comments[taskId] ?? [], updated.comment),
+        },
+      }));
+      return true;
+    } catch (error) {
+      set({ error: message(error) });
+      return false;
     }
   },
 

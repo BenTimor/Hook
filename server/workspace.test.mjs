@@ -477,6 +477,65 @@ test("tasks keep their board's typed columns, and comments record who really wro
   assert.equal(detail.body.comments.length, 2);
 });
 
+test("comments are edited and deleted by their author or a manager", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Sprint 1" },
+  });
+  const task = await request(`/boards/${board.body.board.id}/tasks`, {
+    method: "POST",
+    body: { title: "Review the brief" },
+  });
+
+  const ownersComment = await request(`/tasks/${task.body.task.id}/comments`, {
+    method: "POST",
+    body: { body: "First draft." },
+  });
+  const commentId = ownersComment.body.comment.id;
+
+  // A different editor cannot rewrite someone else's comment.
+  const refused = await request(`/comments/${commentId}`, {
+    method: "PATCH",
+    token: EDITOR,
+    body: { body: "Hijacked." },
+  });
+  assert.equal(refused.status, 403);
+
+  const edited = await request(`/comments/${commentId}`, {
+    method: "PATCH",
+    body: { body: "Second draft." },
+  });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.body.comment.body, "Second draft.");
+  assert.ok(edited.body.comment.updatedAt >= edited.body.comment.createdAt);
+
+  const editorsComment = await request(`/tasks/${task.body.task.id}/comments`, {
+    method: "POST",
+    token: EDITOR,
+    body: { body: "Looks good to me." },
+  });
+  const ownEdit = await request(`/comments/${editorsComment.body.comment.id}`, {
+    method: "PATCH",
+    token: EDITOR,
+    body: { body: "Looks good to me now." },
+  });
+  assert.equal(ownEdit.status, 200);
+  assert.equal(ownEdit.body.comment.body, "Looks good to me now.");
+
+  // A manager may remove another person's comment; an editor may not.
+  const editorRemoval = await request(`/comments/${commentId}`, {
+    method: "DELETE",
+    token: EDITOR,
+  });
+  assert.equal(editorRemoval.status, 403);
+  const removed = await request(`/comments/${commentId}`, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const remaining = await request(`/tasks/${task.body.task.id}/comments`);
+  assert.deepEqual(remaining.body.comments.map((comment) => comment.id), [editorsComment.body.comment.id]);
+});
+
 test("a task keeps several assignees, de-duplicated, with the first mirrored for older clients", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);
