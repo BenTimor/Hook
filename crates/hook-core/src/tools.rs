@@ -1,9 +1,24 @@
 use serde_json::{json, Value};
 
 use crate::agent::AgentManager;
+use crate::config::HarnessConfig;
 use crate::projects::ProjectsStore;
 use crate::settings::SettingsStore;
 use crate::store::truncate;
+
+/// The tools that only make sense for the chat agent, because they launch and
+/// manage coding agents. A coding agent talking to the user directly has no
+/// subagents, so it must not be offered them either (see
+/// [`direct_bridge_definitions`]).
+pub const AGENT_TOOLS: [&str; 7] = [
+    "start_coding_agent",
+    "list_agents",
+    "agent_status",
+    "steer_agent",
+    "answer_agent",
+    "stop_agent",
+    "list_coding_sessions",
+];
 
 /// Tool surface offered to the chat model. The chat agent never touches files
 /// directly: it organises projects and delegates all code work to a coding
@@ -195,6 +210,46 @@ pub fn definitions() -> Value {
             }
         }
     ])
+}
+
+/// The chat agent's tools, minus the ones that manage coding agents, as a
+/// schema list for a directly-driven coding agent.
+///
+/// The user talks to `pi` in that conversation, so it should be able to do
+/// everything the chat agent can do with Hook's data — projects, memory,
+/// Workspace — on top of its own file and shell tools. Creating another
+/// coding agent from inside one is not one of those things.
+///
+/// `web_search` is left out on purpose: the guard already registers it with
+/// the same account-backed implementation, and two tools of that name would
+/// only shadow each other.
+pub fn direct_bridge_definitions(
+    cfg: &HarnessConfig,
+    caps: crate::Capabilities,
+    memory: bool,
+) -> Vec<Value> {
+    // Without tool calling there is nothing to advertise: pi would offer them
+    // and the provider would refuse the request.
+    if !cfg.provider.tools {
+        return Vec::new();
+    }
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(list) = definitions().as_array() {
+        for tool in list {
+            let name = tool["function"]["name"].as_str().unwrap_or("");
+            if AGENT_TOOLS.contains(&name) || name == "web_search" || name == "no_update" {
+                continue;
+            }
+            out.push(tool.clone());
+        }
+    }
+    if memory {
+        out.extend(crate::memory::definitions());
+    }
+    if caps.workspace_tools {
+        out.extend(crate::workspace::definitions());
+    }
+    out
 }
 
 pub struct ToolEnv<'a> {
@@ -533,6 +588,7 @@ mod tests {
             error: None,
             question: None,
             plan: Vec::new(),
+            direct: false,
         }
     }
 
@@ -615,6 +671,61 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("No file names"));
+    }
+
+    #[test]
+    fn a_direct_agent_gets_the_chat_agents_tools_but_no_subagents() {
+        let cfg = crate::config::get().expect("config");
+        let defs = direct_bridge_definitions(cfg, crate::Capabilities::chat(), true);
+        let names: Vec<&str> = defs
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str())
+            .collect();
+        for expected in [
+            "list_projects",
+            "create_project",
+            "update_project_description",
+            "remember_in_project",
+            "remember",
+            "memory_search",
+            "forget",
+            "workspace_projects",
+        ] {
+            assert!(names.contains(&expected), "{expected} missing");
+        }
+        // No subagents in this direction, and two tools the engine already has
+        // (or has nothing to say to): a duplicate name would shadow it.
+        for refused in [
+            "start_coding_agent",
+            "list_agents",
+            "agent_status",
+            "steer_agent",
+            "answer_agent",
+            "stop_agent",
+            "list_coding_sessions",
+            "web_search",
+            "no_update",
+        ] {
+            assert!(!names.contains(&refused), "{refused} must not be offered");
+        }
+
+        // Without memory or Workspace, only the project tools remain.
+        let bare = direct_bridge_definitions(
+            cfg,
+            crate::Capabilities {
+                preview: false,
+                coding_agents: true,
+                workspace_tools: false,
+            },
+            false,
+        );
+        let bare: Vec<&str> = bare
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str())
+            .collect();
+        assert!(!bare.contains(&"remember"));
+        assert!(!bare.contains(&"workspace_projects"));
+        assert!(bare.contains(&"list_projects"));
     }
 
     #[test]

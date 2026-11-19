@@ -107,6 +107,18 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
   `%APPDATA%\app.hook\account.json`, per-product mirrors, git-token rotation.
 - `crates/hook-core/src/{store,sync}.rs` — chats on disk and the background
   sync engine (cursor, pending queue, account quarantine, media).
+  `ChatMeta.kind = "coding"` marks a chat the user has with a coding agent
+  directly: it carries `projectPath` and `sessionId`, and it is never uploaded.
+- `crates/hook-core/src/coding.rs` — that chat's turn driver: start / steer /
+  answer / stop the engine, and turn its RPC records (`message_start`,
+  `message_update`, `message_end`, `tool_execution_end`, `agent_settled`,
+  `agent_exit`) back into the `Message` list the thread already draws. It owns
+  the assistant message being streamed, so nothing else has to know that a
+  direct conversation is not a model turn.
+- `crates/hook-core/src/bridge.rs` — the loopback endpoint that runs the chat
+  agent's own tools (projects, memory, Workspace) for a directly-driven agent.
+  One token per chat, only the tool names written into that agent's
+  `tools.json`, and the schemas come from `tools::direct_bridge_definitions`.
 - `crates/hook-core/src/{git,projects}.rs` — bundled MinGit, scoped git config,
   project folders and their account ids. "Project" here means a **code project**,
   a folder on disk; Workspace projects are a different thing (`ws_` ids).
@@ -172,7 +184,11 @@ Changing one side of a boundary is the most common way to break this repo.
 - **Chat surface change:** `packages/chat/src` (component + `chat.css`) → check
   it at both sizes (the chat window and the 380px dock) → the adapters in
   `apps/chat/src/components` if the store gains a prop. Never fork a component
-  into one app: the dock and the window are meant to be the same thing.
+  into one app: the dock and the window are meant to be the same thing. The
+  activity line (`TurnActivity.tsx`, drawn by `Thread.tsx`) is the *empty*
+  reply's place: a message that is merely streaming must not hide it, or a
+  thinking model leaves a blank window for half a minute. Only text that is on
+  screen counts as "arriving".
 - **Advanced-mode change (thinking, tool calls, coding-agent inspector):**
   `settings.rs` (`advanced_mode`) → `commands.rs` (`set_advanced_mode`) →
   `bridge.ts` / `types.ts` / `mock.ts` → the settings in the store →
@@ -182,6 +198,26 @@ Changing one side of a boundary is the most common way to break this repo.
   that are otherwise skipped. Hidden messages and tool results must stay in
   history and be filtered only at render time — `visible()` in the store keeps
   them for exactly this reason.
+- **Direct coding-agent chat (a conversation with `pi`, no chat agent):**
+  `store.rs` (`KIND_CODING`, `is_local_only`) → `sync.rs::push_chats` (skip and
+  clear it, so the status line is not stuck) → `agent.rs` (`direct` on
+  `AgentInfo`, `start_direct`, no wakes, `Signal::Record`) → `coding.rs` →
+  `commands.rs` (`create_coding_chat`, `set_coding_chat_folder`,
+  `answer_coding_agent`, and the `coding` branches in `send_message`,
+  `stop_stream`, `stop_chat_agents`) → `bridge.rs` + `tools.json` + the guard's
+  `HOOK_DIRECT` branch → `bridge.ts` / `types.ts` / `mock.ts` →
+  `useChatStore` (`newCodingChat`, `changeCodingFolder`, `answerAgent`) →
+  `Sidebar` (the New chat menu and the advanced filter), `ChatRow`,
+  `PaneHead`, `AgentBoard`, `Composer` (`steer`). Three filters matter: the
+  sidebar hides these chats while Advanced is off, `setAdvancedMode` closes one
+  that is already open (the simple view cannot fold its per-tool turns), and
+  `AgentTree` skips `direct` runs; `apps/workspace`'s chat transport always
+  filters them out.
+  One trap: a direct run starts from `send_message`, a **synchronous** command,
+  so everything on that path must use `tauri::async_runtime` (the driver spawn
+  in `agent.rs` included) — a `tokio::spawn` there panics with "there is no
+  reactor running" and aborts the window, because a panic in a command thread
+  cannot unwind.
 - **New chat-agent tool:** schema + impl in `tools.rs`, dispatch in `turn.rs`,
   and the prompt in `turn.rs` (`system_prompt`) if the agent must know about it.
   Give it a line in `activity_label` (`turn.rs`): that is what the chat says it
@@ -298,7 +334,15 @@ Changing one side of a boundary is the most common way to break this repo.
   in the background while signed in; the server merges, never the client. A chat
   that is streaming is never uploaded or overwritten. A different account on the
   same machine quarantines the previous chats under `accounts/<id>/`; never
-  upload one account's history to another.
+  upload one account's history to another. A `coding` chat is local-only on
+  purpose: its folder, its engine process and its session file live on one
+  computer, so `push_chats` skips it (and clears it from the queue). Never
+  "fix" that by uploading one half.
+- **A direct coding agent is the signed-in user.** It gets the chat agent's own
+  tools through `bridge.rs`, whose token is minted per chat and only grants the
+  names in that agent's `tools.json`; the endpoint is loopback-only. Creating
+  one needs advanced mode, refuses without it in the backend (not just the UI),
+  and no direct agent may start or steer another one.
 - **Workspace permissions are server-side.** Viewer/editor/manager/owner is
   checked on every request; the UI's gating is cosmetic. The chat agent acts as
   the signed-in user and gets the same checks.

@@ -912,6 +912,12 @@ pub fn past_chats(hits: &[crate::store::SearchHit], query: &str) -> String {
     .to_string()
 }
 
+/// True for the tool names [`execute`] answers. The tool bridge uses it to
+/// route a call to the store that owns it.
+pub fn handles(name: &str) -> bool {
+    matches!(name, "remember" | "memory_search" | "forget")
+}
+
 /// Run one memory tool and return the JSON handed back to the model.
 pub fn execute(store: &MemoryStore, name: &str, args: &Value, chat_id: &str) -> String {
     match name {

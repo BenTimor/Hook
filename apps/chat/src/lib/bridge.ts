@@ -393,6 +393,24 @@ export const api = {
       ? invoke<AgentsOverview>("stop_chat_agents", { chatId })
       : mock.stopChatAgents(),
 
+  /** Start a conversation with a coding agent in a folder the user picked. */
+  createCodingChat: (folder: string): Promise<ChatMeta> =>
+    isTauri()
+      ? invoke<ChatMeta>("create_coding_chat", { folder })
+      : mock.createCodingChat(folder),
+
+  /** Point an existing coding chat at a different folder. */
+  setCodingChatFolder: (chatId: string, folder: string): Promise<ChatMeta> =>
+    isTauri()
+      ? invoke<ChatMeta>("set_coding_chat_folder", { chatId, folder })
+      : mock.setCodingChatFolder(chatId, folder),
+
+  /** Answer a question a directly-driven coding agent is blocked on. */
+  answerCodingAgent: (chatId: string, answer: string): Promise<void> =>
+    isTauri()
+      ? invoke<void>("answer_coding_agent", { chatId, answer })
+      : mock.answerCodingAgent(),
+
   /** Read an export and report what importing it would do. Writes nothing. */
   importScan: (path: string): Promise<ImportPreview> =>
     isTauri()
@@ -417,13 +435,13 @@ export const api = {
     return typeof picked === "string" ? picked : null;
   },
 
-  async pickFolder(): Promise<string | null> {
-    if (!isTauri()) return null;
+  async pickFolder(title = "Choose a folder for your projects"): Promise<string | null> {
+    if (!isTauri()) return "C:/Users/you/Documents/Hook/site";
     const { open } = await import("@tauri-apps/plugin-dialog");
     const picked = await open({
       directory: true,
       multiple: false,
-      title: "Choose a folder for your projects",
+      title,
     });
     return typeof picked === "string" ? picked : null;
   },

@@ -64,6 +64,16 @@ export interface ChatMeta {
   sourceId?: string;
   /** The source's own updatedAt at the last import. */
   sourceUpdatedAt?: number;
+  /**
+   * "coding" when the user talks to a coding agent directly instead of the
+   * chat agent. Such a chat is local to this computer and only shown while
+   * advanced mode is on.
+   */
+  kind?: "coding";
+  /** The folder a coding agent works in. */
+  projectPath?: string;
+  /** The engine session this coding chat continues. */
+  sessionId?: string;
 }
 
 export interface Chat {
@@ -230,6 +240,20 @@ export interface AgentSummary {
   finishedAt?: number;
   error?: string;
   waiting: boolean;
+  /** The user talks to this agent directly in its own chat. */
+  direct: boolean;
+  /** What a direct agent is blocked on, when it is waiting for a person. */
+  question?: AgentQuestion;
+}
+
+/** A dialog a coding agent is blocked on. */
+export interface AgentQuestion {
+  id: string;
+  method: string;
+  title: string;
+  message: string;
+  options: string[];
+  placeholder: string;
 }
 
 export interface AgentsOverview {

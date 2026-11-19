@@ -8,6 +8,15 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_TITLE: &str = "New chat";
 
+/// A conversation the user has with one coding agent directly, without the
+/// chat agent in between. It lives in the same list as every other chat; the
+/// kind is what sends its turns to `pi` instead of the model, what keeps it out
+/// of the other products' quick-access panel, and what hides it from the
+/// sidebar while advanced mode is off. It is also local-only: the agent's
+/// process, session file and folder exist on one machine, and half of that
+/// arriving on another would be worse than not arriving at all.
+pub const KIND_CODING: &str = "coding";
+
 pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -168,6 +177,31 @@ pub struct ChatMeta {
     /// re-import knows it may replace the contents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_updated_at: Option<i64>,
+    /// `"coding"` when the user talks to a coding agent directly. Absent on
+    /// every ordinary chat, so old files need no migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The folder a coding agent works in. Absolute and machine-local: it is
+    /// never uploaded, because another computer has no such folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+    /// The pi session this coding chat continues after a restart or a settle.
+    /// Also local: the session file lives in the app's data folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+impl ChatMeta {
+    /// The user talks to a coding agent directly in this conversation.
+    pub fn is_coding(&self) -> bool {
+        self.kind.as_deref() == Some(KIND_CODING)
+    }
+
+    /// Chats that belong to this computer only. The account never learns about
+    /// them: see `SyncEngine::push_chats`.
+    pub fn is_local_only(&self) -> bool {
+        self.is_coding()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,9 +234,28 @@ impl Chat {
                 source: None,
                 source_id: None,
                 source_updated_at: None,
+                kind: None,
+                project_path: None,
+                session_id: None,
             },
             messages: Vec::new(),
         }
+    }
+
+    /// A conversation with a coding agent in `path`, before it has said
+    /// anything. The title is the folder's name: it is the one thing the user
+    /// already knows about the work, and it survives a reinstall of the idea.
+    pub fn new_coding(path: &Path) -> Self {
+        let mut chat = Self::new();
+        let folder = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "Coding agent".to_string());
+        chat.meta.title = truncate(&folder, 120);
+        chat.meta.kind = Some(KIND_CODING.to_string());
+        chat.meta.project_path = Some(path.to_string_lossy().to_string());
+        chat
     }
 
     /// Recompute derived metadata from the message list.
@@ -352,6 +405,11 @@ impl Store {
         if let Ok(metas) = self.list() {
             let mut dirty = self.dirty.lock().unwrap_or_else(|e| e.into_inner());
             for meta in metas {
+                // A coding-agent chat belongs to this computer; queueing it
+                // would only make the status line report work that never moves.
+                if meta.is_local_only() {
+                    continue;
+                }
                 dirty.chats.insert(meta.id);
             }
         }
@@ -435,7 +493,7 @@ impl Store {
             sort_metas(metas);
         }
         drop(guard);
-        if dirty {
+        if dirty && !chat.meta.is_local_only() {
             self.mark_dirty(&chat.meta.id);
         }
         Ok(())
@@ -955,6 +1013,30 @@ mod tests {
         0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
         0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
+
+    #[test]
+    fn a_coding_chat_stays_on_this_computer() {
+        let root = std::env::temp_dir().join(format!("hook-img-{}", uuid::Uuid::new_v4()));
+        let store = Store::new(root.clone()).unwrap();
+        let path = root.join("demo project");
+        std::fs::create_dir_all(&path).unwrap();
+
+        let mut chat = Chat::new_coding(&path);
+        assert!(chat.meta.is_coding());
+        assert!(chat.meta.is_local_only());
+        assert_eq!(chat.meta.title, "demo project");
+        store.save(&mut chat).unwrap();
+        // Never queued for upload, so the account cannot be handed a folder
+        // path and a session file that only exist here.
+        assert!(store.dirty_ids().is_empty());
+
+        // An ordinary chat still is.
+        let mut ordinary = Chat::new();
+        store.save(&mut ordinary).unwrap();
+        assert_eq!(store.dirty_ids(), vec![ordinary.meta.id.clone()]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn base64_round_trips() {

@@ -146,7 +146,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn emit(state: &AppState, chat_id: &str, event: StreamEvent) {
+pub(crate) fn emit(state: &AppState, chat_id: &str, event: StreamEvent) {
     let _ = state.app.emit(
         "hook://chat",
         ChatEvent {
@@ -310,17 +310,8 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         // Only advertise tools this product can actually honour.
         if let Some(list) = set.as_array_mut() {
             if !state.capabilities.coding_agents {
-                const AGENT_TOOLS: [&str; 7] = [
-                    "start_coding_agent",
-                    "list_agents",
-                    "agent_status",
-                    "steer_agent",
-                    "answer_agent",
-                    "stop_agent",
-                    "list_coding_sessions",
-                ];
                 list.retain(|tool| {
-                    !AGENT_TOOLS.contains(&tool["function"]["name"].as_str().unwrap_or(""))
+                    !tools::AGENT_TOOLS.contains(&tool["function"]["name"].as_str().unwrap_or(""))
                 });
             }
         }
@@ -813,7 +804,7 @@ fn pending_notes<'a>(chat: &'a Chat, exclude_id: &str) -> Vec<&'a Message> {
 
 /// Whether the chat may use memory at all: the build allows it and the user has
 /// not turned it off.
-fn memory_on(settings: &crate::settings::SettingsStore, cfg: &config::HarnessConfig) -> bool {
+pub(crate) fn memory_on(settings: &crate::settings::SettingsStore, cfg: &config::HarnessConfig) -> bool {
     cfg.memory.enabled && settings.memory_enabled()
 }
 
@@ -961,7 +952,7 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
 /// asked of the model and the line cannot drift from what is actually running.
 /// Arguments that name the object make it specific; `no_update` is silent
 /// because it is a decision not to do anything.
-fn activity_label(name: &str, arguments: &str) -> Option<String> {
+pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
     let args = serde_json::from_str::<serde_json::Value>(arguments).unwrap_or_else(|_| json!({}));
     let text = |key: &str| -> Option<&str> {
         args.get(key)
@@ -1058,6 +1049,30 @@ fn activity_label(name: &str, arguments: &str) -> Option<String> {
             _ => "Checking invitations…".into(),
         },
         "workspace_preview" => "Showing a preview…".into(),
+        // The tools of the coding engine itself. The chat agent never calls
+        // these, but a direct coding-agent chat shows them in the same status
+        // line.
+        "bash" | "shell" => match text("command") {
+            Some(command) => format!("Running `{}`…", short(command, 52)),
+            None => "Running a command…".into(),
+        },
+        "read" => match text("path").or_else(|| text("file_path")) {
+            Some(path) => format!("Reading {}…", short(path, 52)),
+            None => "Reading a file…".into(),
+        },
+        "write" => match text("path").or_else(|| text("file_path")) {
+            Some(path) => format!("Writing {}…", short(path, 52)),
+            None => "Writing a file…".into(),
+        },
+        "edit" => match text("path").or_else(|| text("file_path")) {
+            Some(path) => format!("Editing {}…", short(path, 52)),
+            None => "Editing a file…".into(),
+        },
+        "grep" | "find" | "ls" => "Looking through the project…".into(),
+        "update_plan" => "Updating the checklist…".into(),
+        "show_preview" => "Showing a preview…".into(),
+        "sync_pull" => "Pulling the latest version…".into(),
+        "sync_push" => "Saving this work to your account…".into(),
         _ => "Working…".into(),
     };
     Some(label)
@@ -1257,6 +1272,11 @@ pub fn on_agent_event(state: Arc<AppState>, info: AgentInfo) {
         let _ = state.agents.stop(&info.id);
         return;
     };
+    // A coding-agent chat is the user's own conversation: its run writes the
+    // messages itself, and there is no chat agent to wake for it.
+    if chat.meta.is_coding() {
+        return;
+    }
 
     // Whatever the agent reported since the last batch rides along with this
     // wake, pictures included — so the chat agent can talk about what it sees.

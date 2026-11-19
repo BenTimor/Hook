@@ -37,6 +37,11 @@ export interface ComposerProps {
   onStop?: () => void;
   /** A reply is arriving: the send button becomes Stop. */
   busy?: boolean;
+  /**
+   * While a job is running, Send still works and steers it; Stop sits beside it.
+   * A coding-agent conversation is a conversation even mid-run.
+   */
+  steer?: boolean;
   /** The account and the chat are ready; before that the composer is inert. */
   ready?: boolean;
   images?: DraftImage[];
@@ -61,6 +66,7 @@ export function Composer({
   onSend,
   onStop,
   busy = false,
+  steer = false,
   ready = true,
   images = [],
   onAddImages,
@@ -95,7 +101,8 @@ export function Composer({
 
   const submit = () => {
     const text = value.trim();
-    if ((!text && images.length === 0) || !ready || busy) return;
+    if ((!text && images.length === 0) || !ready) return;
+    if (busy && !steer) return;
     onSend();
     if (ref.current) ref.current.style.height = "auto";
   };
@@ -185,7 +192,18 @@ export function Composer({
               }
             }}
           />
-          {busy ? (
+          {busy && steer && (
+            <button
+              className="send-btn"
+              data-stop="true"
+              title="Stop the agent"
+              aria-label="Stop the agent"
+              onClick={onStop}
+            >
+              <Square strokeWidth={2.4} fill="currentColor" />
+            </button>
+          )}
+          {busy && !steer ? (
             <button
               className="send-btn"
               data-stop="true"
@@ -198,8 +216,8 @@ export function Composer({
           ) : (
             <button
               className="send-btn"
-              title="Send"
-              aria-label="Send"
+              title={busy ? "Steer the agent" : "Send"}
+              aria-label={busy ? "Steer the agent" : "Send"}
               disabled={!canSend}
               onClick={submit}
             >

@@ -816,6 +816,7 @@ export const mock = {
           updatedAt: now,
           finishedAt: finished ? now - 41_000 : undefined,
           waiting,
+          direct: false,
           plan,
         },
       ],
@@ -824,6 +825,42 @@ export const mock = {
 
   async stopChatAgents(): Promise<AgentsOverview> {
     return { working: 0, live: 0, agents: [] };
+  },
+
+  /** Browser preview: a coding chat is an ordinary empty chat with the marker. */
+  async createCodingChat(folder: string): Promise<ChatMeta> {
+    const now = Date.now();
+    const chatId = id("coding");
+    const name =
+      folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Coding agent";
+    const chat: Chat = {
+      meta: {
+        id: chatId,
+        title: name,
+        createdAt: now,
+        updatedAt: now,
+        pinned: false,
+        messageCount: 0,
+        preview: "",
+        kind: "coding",
+        projectPath: folder,
+      },
+      messages: [],
+    };
+    chats[chatId] = chat;
+    return clone(chat.meta);
+  },
+
+  async setCodingChatFolder(chatId: string, folder: string): Promise<ChatMeta> {
+    const chat = chats[chatId];
+    if (!chat) throw "Chat not found";
+    chat.meta.projectPath = folder;
+    chat.meta.sessionId = undefined;
+    return clone(chat.meta);
+  },
+
+  async answerCodingAgent(): Promise<void> {
+    // Nothing is waiting in the browser preview.
   },
 
   async memoryList(): Promise<MemoryView> {

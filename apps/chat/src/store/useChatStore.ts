@@ -20,7 +20,7 @@ import type {
   SettingsView,
   StreamEvent,
 } from "../lib/types";
-import { sortMetas, upsertMeta } from "../lib/utils";
+import { sortMetas, upsertMeta, isCodingChat } from "../lib/utils";
 
 type StreamState = { messageId: string; text: string; reasoning: string };
 
@@ -69,6 +69,15 @@ interface ChatStore {
   refreshAuth: () => Promise<void>;
   select: (id: string | null) => Promise<void>;
   newChat: () => void;
+  /**
+   * Start a coding-agent conversation: pick a folder, then talk to the engine
+   * in it. Advanced mode only; the backend refuses otherwise.
+   */
+  newCodingChat: () => Promise<void>;
+  /** Point a coding chat at another folder (a moved or renamed project). */
+  changeCodingFolder: (id: string) => Promise<void>;
+  /** Answer a question the active coding agent is blocked on. */
+  answerAgent: (answer: string) => Promise<void>;
   send: (text: string) => Promise<void>;
   stop: () => Promise<void>;
   regenerate: () => Promise<void>;
@@ -501,6 +510,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
       try {
         const chat = await api.getChat(id);
+        // Coding agents are part of the advanced view. The list already hides
+        // them; this is the other half, for anything that still asks by name
+        // (`?chat=`, a stale shortcut).
+        if (isCodingChat(chat.meta) && !get().settings?.advancedMode) {
+          toast.error("Turn on advanced mode to open a coding agent.");
+          return;
+        }
         set({
           activeId: id,
           // Moving to another chat ends the inspection. A finished run only
@@ -525,16 +541,65 @@ export const useChatStore = create<ChatStore>((set, get) => {
         focusToken: state.focusToken + 1,
       })),
 
+    newCodingChat: async () => {
+      if (!get().auth?.signedIn) {
+        toast.error("Sign in to Hook to start a coding agent.");
+        return;
+      }
+      const folder = await api.pickFolder("Choose a folder for the coding agent");
+      if (!folder) return;
+      try {
+        const meta = await api.createCodingChat(folder);
+        set((state) => ({
+          chats: upsertMeta(state.chats, meta),
+          activeId: meta.id,
+          messages: [],
+          draft: "",
+          draftImages: [],
+          inspectAgentId: null,
+          focusToken: state.focusToken + 1,
+        }));
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
+    changeCodingFolder: async (id) => {
+      const chat = get().chats.find((entry) => entry.id === id);
+      if (!isCodingChat(chat)) return;
+      const folder = await api.pickFolder("Choose a folder for the coding agent");
+      if (!folder) return;
+      try {
+        const meta = await api.setCodingChatFolder(id, folder);
+        set((state) => ({ chats: upsertMeta(state.chats, meta) }));
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
+    answerAgent: async (answer) => {
+      const { activeId } = get();
+      if (!activeId || !answer.trim()) return;
+      try {
+        await api.answerCodingAgent(activeId, answer.trim());
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
     send: async (text) => {
       if (!get().auth?.signedIn) {
         toast.error("Sign in to Hook to send messages.");
         return;
       }
-      const trimmed = text.trim();
-      const images = get().draftImages;
-      if (!trimmed && images.length === 0) return;
       const { activeId } = get();
-      if (activeId && get().streams[activeId]) return;
+      // A coding agent's conversation accepts a message while it is working:
+      // that message steers the run instead of waiting for it.
+      const coding = isCodingChat(get().chats.find((chat) => chat.id === activeId));
+      const trimmed = text.trim();
+      const images = coding ? [] : get().draftImages;
+      if (!trimmed && images.length === 0) return;
+      if (activeId && get().streams[activeId] && !coding) return;
       set({ draft: "", draftImages: [], pendingNewChat: !activeId });
       try {
         const id = await api.sendMessage(
@@ -686,7 +751,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const previous = get().settings;
       // Paint the switch at once; the backend is what actually persists it.
       if (previous) set({ settings: { ...previous, advancedMode: enabled } });
-      if (!enabled) set({ inspectAgentId: null });
+      if (!enabled) {
+        set({ inspectAgentId: null });
+        // A coding-agent conversation is this switch's feature, and the simple
+        // view cannot draw it: its turns are tool traffic, not one reply after
+        // another, so it would read as empty bubbles that flash. Step back to
+        // the empty pane instead. The chat itself is untouched and comes back
+        // with the switch.
+        if (isCodingChat(get().chats.find((chat) => chat.id === get().activeId))) {
+          set({ activeId: null, messages: [] });
+          toast.message("Coding agents are hidden while advanced mode is off.");
+        }
+      }
       try {
         const settings = await api.setAdvancedMode(enabled);
         set({ settings });

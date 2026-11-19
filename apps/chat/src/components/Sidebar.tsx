@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pin, Plus, Search, Settings2, X } from "lucide-react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { ChevronDown, Pin, Plus, Search, Settings2, SquareTerminal, X } from "lucide-react";
 
 import { api } from "../lib/bridge";
 import type { SearchHit } from "../lib/types";
-import { groupChats, modKey } from "../lib/utils";
+import { groupChats, isCodingChat, modKey } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 import { isLiveAgent } from "../lib/agents";
 import { AgentTree } from "./AgentTree";
@@ -18,6 +19,7 @@ export function Sidebar() {
   const agents = useChatStore((s) => s.agents.agents);
   const select = useChatStore((s) => s.select);
   const newChat = useChatStore((s) => s.newChat);
+  const newCodingChat = useChatStore((s) => s.newCodingChat);
   const info = useChatStore((s) => s.info);
   const open = useChatStore((s) => s.sidebarOpen);
   const searchToken = useChatStore((s) => s.searchToken);
@@ -59,7 +61,17 @@ export function Sidebar() {
     };
   }, [query]);
 
-  const groups = useMemo(() => groupChats(chats), [chats]);
+  // Coding-agent conversations are part of the advanced view: turning it off
+  // hides them from the list, and back on brings them back. Nothing is deleted.
+  const visibleChats = useMemo(
+    () => (advanced ? chats : chats.filter((chat) => !isCodingChat(chat))),
+    [chats, advanced],
+  );
+  const visibleHits = useMemo(
+    () => (hits === null ? null : advanced ? hits : hits.filter((hit) => !isCodingChat(hit.chat))),
+    [hits, advanced],
+  );
+  const listGroups = useMemo(() => groupChats(visibleChats), [visibleChats]);
   const workingChats = useMemo(
     () =>
       new Set(
@@ -94,11 +106,46 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar-actions">
-        <button className="nav-btn" onClick={newChat}>
-          <Plus strokeWidth={2} />
-          New chat
-          <span className="kbd">{modKey}N</span>
-        </button>
+        <div className="new-chat-row">
+          <button className="nav-btn" onClick={newChat}>
+            <Plus strokeWidth={2} />
+            New chat
+            <span className="kbd">{modKey}N</span>
+          </button>
+          {advanced && (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className="nav-btn-caret"
+                  title="Other ways to start"
+                  aria-label="Other ways to start"
+                >
+                  <ChevronDown strokeWidth={2} />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  className="menu"
+                  align="end"
+                  sideOffset={4}
+                  collisionPadding={10}
+                >
+                  <DropdownMenu.Item className="menu-item" onSelect={newChat}>
+                    <Plus strokeWidth={1.8} />
+                    New chat
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="menu-item"
+                    onSelect={() => void newCodingChat()}
+                  >
+                    <SquareTerminal strokeWidth={1.8} />
+                    Coding agent…
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          )}
+        </div>
         <div className="search-field">
           <Search strokeWidth={1.9} />
           <input
@@ -133,9 +180,9 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar-scroll">
-        {hits !== null ? (
-          hits.length ? (
-            hits.map((hit) => (
+        {visibleHits !== null ? (
+          visibleHits.length ? (
+            visibleHits.map((hit) => (
               <button
                 key={hit.chat.id}
                 className="result"
@@ -147,6 +194,9 @@ export function Sidebar() {
               >
                 <span className="result-title">
                   {hit.chat.pinned && <Pin className="row-pin" strokeWidth={2} />}
+                  {isCodingChat(hit.chat) && (
+                    <SquareTerminal className="row-badge" strokeWidth={2} />
+                  )}
                   {hit.chat.title}
                 </span>
                 <span className="hit-snippet">{hit.snippet}</span>
@@ -155,8 +205,8 @@ export function Sidebar() {
           ) : (
             <div className="sidebar-empty">No matches for “{query.trim()}”</div>
           )
-        ) : groups.length ? (
-          groups.map((group) => (
+        ) : listGroups.length ? (
+          listGroups.map((group) => (
             <div key={group.label}>
               <div className="group-label">{group.label}</div>
               {group.chats.map((chat) => (

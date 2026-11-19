@@ -74,6 +74,10 @@ export function AgentTree() {
   const folders = useMemo(() => {
     const byProject = new Map<string, AgentSummary[]>();
     for (const agent of agents) {
+      // A directly-driven agent is already a chat in the list: listing it here
+      // as well would show the same conversation twice, and this tree is for
+      // the runs the chat agent started.
+      if (agent.direct) continue;
       const listed =
         agent.id === selected ||
         ACTIVE_STATES.has(agent.state) ||

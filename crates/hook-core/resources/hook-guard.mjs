@@ -58,7 +58,12 @@ function clampLabel(v) {
 // The project is stored in the user's account. These two tools are the only
 // supported way to touch the network: the git credential lives in Hook's
 // managed global config, never in the project or the remote URL.
-const SYNC_ENABLED = Boolean(process.env.GIT_CONFIG_GLOBAL);
+//
+// `HOOK_SYNC=0` means this folder is not one of the account's projects (the
+// user pointed a direct coding agent at some other folder), so the tools would
+// have no repository to talk to.
+const SYNC_ENABLED =
+  Boolean(process.env.GIT_CONFIG_GLOBAL) && process.env.HOOK_SYNC !== "0";
 const GIT_TIMEOUT_MS = 180_000;
 
 function runGit(args, timeoutMs = GIT_TIMEOUT_MS) {
@@ -99,6 +104,17 @@ This project is stored in the user's Hook account and can be worked on from any 
 
 
 const UPDATES_DIR = process.env.HOOK_UPDATES_DIR ?? "";
+
+/**
+ * The user is talking to this agent directly, in its own chat.
+ *
+ * Nothing relays its words and nothing reads its progress notes, so the guard
+ * changes shape: `report_progress` would be a mailbox nobody empties, and the
+ * chat agent's own tools (projects, memory, Workspace) arrive over Hook's
+ * loopback bridge instead of being Rust-only.
+ */
+const DIRECT = process.env.HOOK_DIRECT === "1";
+
 const MAX_PICTURES = 4;
 const MAX_PICTURE_BYTES = 8 * 1024 * 1024;
 const PICTURE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
@@ -236,6 +252,52 @@ function stagePicture(filesDir, source, files) {
   return { name: target };
 }
 
+/**
+ * The chat agent's own tools, handed to a directly-driven agent.
+ *
+ * Hook runs them (projects, memory, the Workspace API) and the guard only
+ * forwards the call over loopback: the engine cannot reach Rust, and the token
+ * in this file is what proves the call belongs to this chat. See
+ * `crates/hook-core/src/bridge.rs`.
+ */
+function bridgeHandle() {
+  if (!DIRECT || !UPDATES_DIR) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(join(UPDATES_DIR, "tools.json"), "utf8"));
+    const url = String(parsed?.url ?? "");
+    const token = String(parsed?.token ?? "");
+    const tools = Array.isArray(parsed?.tools) ? parsed.tools : [];
+    if (!url || !token || !tools.length) return null;
+    return { url, token, tools };
+  } catch {
+    return null;
+  }
+}
+
+/** What Hook already remembers about the user, from the same account store. */
+function memoryGuidance() {
+  if (!DIRECT || !UPDATES_DIR) return "";
+  try {
+    const text = readFileSync(join(UPDATES_DIR, "memory.txt"), "utf8").trim();
+    return text ? `\n\n${text}` : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Why this run looks different from a run the chat agent started. */
+function directGuidance() {
+  if (!DIRECT) return "";
+  return (
+    "\n\n## Talking to the user directly (Hook)" +
+    "\nThis conversation is only you and the user: there is no assistant in between and no one rewrites your words. What you write is what they read, so write to them, not to a log - short, plain sentences when you are done, and nothing at all while you are simply working." +
+    "\n- Never start another coding agent. You are the agent for this work; there is nothing to delegate to." +
+    "\n- You have your own file and shell tools, plus Hook's own tools for the user's projects, memory and Workspace. Use them as you would any other tool." +
+    "\n- The user may interrupt you with a new message while you work: treat it as guidance for the current work, not as a new, unrelated task." +
+    "\n- The Stop button stops you immediately. Do not ask permission to stop or to continue."
+  );
+}
+
 /** Search uses Hook's account service, which holds the provider key. */
 function webSearchGuidance() {
   if (!process.env.HOOK_API_BASE || !process.env.HOOK_API_TOKEN) return "";
@@ -264,10 +326,12 @@ export default function (pi) {
     return {
       systemPrompt:
         (event.systemPrompt ?? "") +
+        directGuidance() +
         guideline +
         webSearchGuidance() +
         (UPDATES_DIR ? planGuidance() + previewGuidance() : "") +
-        syncGuidance(),
+        syncGuidance() +
+        memoryGuidance(),
     };
   });
 
@@ -359,7 +423,9 @@ export default function (pi) {
   });
 
   // ── Progress reporting ───────────────────────────────────────────────────
-  if (UPDATES_DIR) {
+  // Only for an agent the chat agent relays. A direct conversation has the
+  // agent's own words, so a separate note would be a mailbox nobody empties.
+  if (UPDATES_DIR && !DIRECT) {
     // Keep the checklist in the freshest part of the context. The system prompt
     // is thousands of tokens behind by the time a step is finished; a line on
     // the tool result the model just read is not.
@@ -524,7 +590,9 @@ export default function (pi) {
         "Mark the finished step `done` and the next one `active` in the same `update_plan` call. Never leave a finished step marked active, and never batch the whole plan to the end.",
         "When a step turns out to hide several separate jobs, split it into smaller plain-language steps rather than keeping one step active for many tool calls.",
         "Keep the step names short, friendly and non-technical - the user reads them directly. No file names, tool names, commands, package names or jargon.",
-        "Keep the plan from the chat agent. Add a step only if the work genuinely needs it, and keep the total at eight or fewer.",
+        DIRECT
+          ? "Keep the plan you already set. Add a step only if the work genuinely needs it, and keep the total at eight or fewer."
+          : "Keep the plan from the chat agent. Add a step only if the work genuinely needs it, and keep the total at eight or fewer.",
         "Before you finish, make sure every step you completed is marked `done`.",
       ],
       parameters: {
@@ -868,6 +936,82 @@ Cite the URLs you use. Search results can be incomplete or disagree; say so when
         } catch (error) {
           return {
             content: [{ type: "text", text: `Web search failed: ${error.message}` }],
+            isError: true,
+            details: {},
+          };
+        }
+      },
+    });
+  }
+
+  registerBridgeTools(pi);
+}
+
+/**
+ * Register the tools Hook itself owns, for a chat where the user drives the
+ * agent directly: the chat agent's projects, memory and Workspace tools.
+ *
+ * The schemas come from Rust (the same `definitions()` the chat agent gets), so
+ * the two surfaces cannot drift; only the descriptions travel with them. Names
+ * the guard already provides are skipped: two tools with one name would shadow
+ * each other.
+ */
+function registerBridgeTools(pi) {
+  const bridge = bridgeHandle();
+  if (!bridge) return;
+  const taken = new Set([
+    "web_search",
+    "report_progress",
+    "show_preview",
+    "update_plan",
+    "sync_pull",
+    "sync_push",
+  ]);
+  for (const entry of bridge.tools) {
+    const spec = entry?.function ?? entry;
+    const name = String(spec?.name ?? "");
+    if (!/^[a-z][a-z0-9_]{1,63}$/.test(name) || taken.has(name)) continue;
+    taken.add(name);
+    const description = String(spec?.description ?? "");
+    const label = description.split(/[.:]/)[0].slice(0, 40) || name.replace(/_/g, " ");
+    pi.registerTool({
+      name,
+      label: label.charAt(0).toUpperCase() + label.slice(1),
+      description,
+      parameters: spec?.parameters ?? { type: "object", properties: {} },
+      async execute(_callId, params) {
+        try {
+          const response = await fetch(bridge.url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-hook-token": bridge.token,
+            },
+            body: JSON.stringify({ name, args: params ?? {} }),
+            // Memory, projects and Workspace calls are local or a single
+            // request to Hook's own service; a minute is generous.
+            signal: AbortSignal.timeout(60_000),
+          });
+          const text = await response.text();
+          if (!response.ok) {
+            return {
+              content: [{ type: "text", text: `${name} failed (${response.status}): ${text.slice(0, 400)}` }],
+              isError: true,
+              details: {},
+            };
+          }
+          return {
+            content: [{ type: "text", text: text || "Done." }],
+            details: {},
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${name} could not reach Hook: ${error?.message ?? error}`,
+              },
+            ],
             isError: true,
             details: {},
           };

@@ -13,6 +13,8 @@ interface ChatMeta {
   id: string;
   title: string;
   updatedAt: number;
+  /** "coding" for a conversation the user has with a coding agent directly. */
+  kind?: string;
 }
 
 interface Chat {
@@ -31,11 +33,16 @@ export const chatTransport: ChatTransport = {
   async listChats(): Promise<DockChat[]> {
     if (!isTauri()) return demoList;
     const chats = await invoke<ChatMeta[]>("list_chats");
-    return chats.map((chat) => ({
-      id: chat.id,
-      title: chat.title,
-      updatedAt: chat.updatedAt,
-    }));
+    // The dock is the chat agent's quick panel. A conversation with a coding
+    // agent belongs to the folder and the engine on this computer, and it is
+    // part of the chat window's advanced view, not this one.
+    return chats
+      .filter((chat) => chat.kind !== "coding")
+      .map((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        updatedAt: chat.updatedAt,
+      }));
   },
 
   async getChat(id: string): Promise<{ messages: DockMessage[] }> {
@@ -49,15 +56,17 @@ export const chatTransport: ChatTransport = {
       const needle = query.trim().toLowerCase();
       return demoList.filter((chat) => chat.title.toLowerCase().includes(needle));
     }
-    const hits = await invoke<Array<{ chat: { id: string; title: string; updatedAt: number } }>>(
+    const hits = await invoke<Array<{ chat: { id: string; title: string; updatedAt: number; kind?: string } }>>(
       "search_chats",
       { query },
     );
-    return hits.map((hit) => ({
-      id: hit.chat.id,
-      title: hit.chat.title,
-      updatedAt: hit.chat.updatedAt,
-    }));
+    return hits
+      .filter((hit) => hit.chat.kind !== "coding")
+      .map((hit) => ({
+        id: hit.chat.id,
+        title: hit.chat.title,
+        updatedAt: hit.chat.updatedAt,
+      }));
   },
 
   async send(chatId: string | null, text: string): Promise<string> {

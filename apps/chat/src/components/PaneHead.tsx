@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { PanelLeft, PanelRight, PanelRightClose } from "lucide-react";
+import { PanelLeft, PanelRight, PanelRightClose, SquareTerminal } from "lucide-react";
 
 import { win } from "../lib/bridge";
-import { modKey } from "../lib/utils";
+import { isCodingChat, modKey } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 import { AgentPill } from "./AgentPill";
 import { WindowControls } from "@hook/ui";
@@ -12,6 +12,8 @@ export function PaneHead() {
   const title = useChatStore(
     (s) => s.chats.find((c) => c.id === s.activeId)?.title ?? "New chat",
   );
+  const activeChat = useChatStore((s) => s.chats.find((c) => c.id === s.activeId));
+  const coding = isCodingChat(activeChat);
   const rename = useChatStore((s) => s.rename);
   const open = useChatStore((s) => s.sidebarOpen);
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
@@ -78,6 +80,15 @@ export function PaneHead() {
       )}
 
       <div className="spacer" />
+      {coding && (
+        <span
+          className="pane-chip"
+          title={activeChat?.projectPath ?? "Coding agent"}
+        >
+          <SquareTerminal strokeWidth={2} />
+          Coding agent
+        </span>
+      )}
       {preview && (
         <button
           className="icon-btn preview-toggle"

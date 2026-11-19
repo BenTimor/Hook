@@ -974,7 +974,9 @@ Products share `packages/ui` (tokens, chrome, primitives) and `packages/chat`
     <account>.json         the entries: text, kind, pin, source chat, revision
 
 %APPDATA%\app.hook.chat\      Hook's own data
-  chats\<id>.json          one readable JSON file per conversation
+  chats\<id>.json          one readable JSON file per conversation; a
+                           `"kind": "coding"` file is a coding-agent chat and
+                           stays on this machine
   trash\                   undoable deletions
   images\<chat id>\        pictures attached to messages (bytes on disk)
   settings.json            projects folder, memory switch, advanced mode
@@ -991,7 +993,10 @@ Products share `packages/ui` (tokens, chrome, primitives) and `packages/chat`
                            (managed git identity and the scoped git token),
                            settings.json
   updates\<agent id>\      progress notes, checklist updates and preview pointers
-                           the agents wrote, collected each second
+                           the agents wrote, collected each second; a direct
+                           agent's `tools.json` (bridge endpoint, token, tool
+                           list) and `memory.txt` (the pinned memories its
+                           prompt starts with)
   hook-guard.mjs           the guard loaded into every coding agent
 ```
 
@@ -1245,7 +1250,12 @@ off by default and stored in `settings.json`.
   the run is live (`agent_transcript` reads the pi session file in
   `agent-sessions/` plus an in-memory tail for the message being streamed).
   There are deliberately no steering controls: steering, answering and stopping
-  stay a conversation with the chat agent.
+  a run the chat agent started stay a conversation with the chat agent.
+- **New chat gains a second way to start.** With Advanced on, the button has a
+  menu with **Coding agent…**, which opens a conversation with the engine itself
+  (see **Talking to a coding agent directly**). Turning Advanced off hides those
+  conversations from the sidebar and closes one that is open; nothing is deleted,
+  and they come back with the switch.
 
 ## Coding agents
 
@@ -1415,6 +1425,51 @@ conversation while you keep chatting.
 Agents are children of Hook: closing the window kills their process trees and
 marks the run `interrupted`, so nothing keeps running behind your back.
 
+### Talking to a coding agent directly
+
+The chat agent is not the only way to start a coding agent. With **Advanced**
+on, the sidebar's **New chat** button has a menu with **Coding agent…**: it asks
+for a folder and opens a conversation with `pi` in it. There is no chat agent in
+that conversation — what the engine says is what you read.
+
+- **It is a chat, not a task-board entry.** The conversation sits in the normal
+  list, marked with a terminal, and draws its thinking, tool calls, status line,
+  plan and preview with the same components a chat turn uses. It does *not*
+  appear in the **Coding agents** tree, which stays a list of runs the chat
+  agent started.
+- **Any folder.** The picker accepts any folder on disk. One inside the projects
+  folder keeps its account repository and the `sync_pull` / `sync_push` tools;
+  any other folder is used as it is, and the guard is told not to advertise git
+  tools that have no repository. `ChatMeta.projectPath` holds the path, and
+  **Change folder…** in the chat's menu points it somewhere else (which starts a
+  fresh engine session, since the old session belonged to the old folder).
+- **The chat agent's own tools come along.** On top of its file, shell,
+  `web_search`, `update_plan` and `show_preview` tools, a direct agent gets what
+  the chat agent can do with Hook's data: `list_projects`, `create_project`,
+  `update_project_description`, `remember_in_project`, `remember` /
+  `memory_search` / `forget` and the `workspace_*` family. The pinned memory the
+  chat agent gets is in its prompt too. Two things are left out on purpose:
+  `report_progress` (nobody relays it — the answer itself is the update) and
+  every tool that starts, inspects or steers another coding agent (there are no
+  subagents in this direction).
+- **How those tools reach it.** The guard cannot call Rust, so `bridge.rs`
+  listens on loopback and the guard `fetch`es it with a token minted for that
+  chat. The schemas are written into the agent's mailbox (`tools.json`) from the
+  same `definitions()` the chat agent uses, so the two surfaces cannot drift, and
+  the endpoint only runs the tools that were advertised for that token.
+- **You steer it yourself.** While it works, Send hands your message to the
+  running agent and Stop kills it; a question it is blocked on appears in the
+  task board with its options. A settled run stays warm for five minutes, and a
+  later message resumes the same session (`ChatMeta.sessionId`), even after a
+  restart.
+- **Local only.** A coding-agent chat is never uploaded: the folder, the engine
+  process and the session file exist on one computer, and half of that arriving
+  on another would be worse than not arriving at all. Turning **Advanced** off
+  hides these conversations from the sidebar and closes one that is open back to
+  the empty pane (nothing is deleted; the chat returns with the switch, because
+  the simple view cannot draw a run's tool-by-tool turns). Hook Workspace's dock
+  never lists them.
+
 The Settings sheet (gear in the sidebar footer) holds the account, Import
 history, **Advanced** mode, Memory, Sync, the projects folder and updates.
 Provider and model settings — and everything about the coding engine — stay
@@ -1444,6 +1499,10 @@ crates/hook-core/src/          the backend every product links
   tools.rs      the tool schemas and their implementations
   agent.rs      engine RPC supervisor: spawn, states, plans, progress batching,
                 wakes, stop-chat, read-only session transcripts
+  coding.rs     a chat the user has with one coding agent directly: pi records →
+                chat messages, steer/stop/answer, local-only sessions
+  bridge.rs     loopback endpoint that runs the chat agent's own tools for a
+                directly-driven agent (token per chat, advertised names only)
   runtime.rs    locate the bundled engine, write its models.json
   guard.rs      the guard extension, materialized from the binary
   update.rs     release index, update policy, checksum-checked installer
@@ -1474,6 +1533,11 @@ is mounted before any JSON parser because pushes are binary streams.
 Details worth knowing:
 
 - **The renderer never sees the key.** All network calls happen in Rust.
+- **Two kinds of conversation.** A chat is either a model turn (`turn.rs`) or the
+  engine itself (`coding.rs`); `ChatMeta.kind` says which. Both write the same
+  `Message` list, which is why the thread, the work blocks, the task board and
+  the preview do not care — and why `packages/chat` never learns that `pi`
+  exists. A `coding` chat is local-only and hidden while Advanced is off.
 - **Streaming** arrives on one app-wide `hook://chat` event (user turns and
   agent-woken turns alike); deltas are coalesced per animation frame in the store
   so React re-renders at most ~60×/s, and several chats can stream at once.

@@ -96,11 +96,13 @@ function AgentTask({
   agent,
   now,
   onStop,
+  onAnswer,
   defaultCollapsed = false,
 }: {
   agent: AgentSummary;
   now: number;
   onStop: () => void;
+  onAnswer: (answer: string) => void;
   defaultCollapsed?: boolean;
 }) {
   const live = isLiveAgent(agent);
@@ -154,6 +156,31 @@ function AgentTask({
         )}
       </header>
 
+      {agent.question && (
+        <div className="agent-question">
+          <p className="agent-question-title">{agent.question.title}</p>
+          {agent.question.message && (
+            <p className="agent-question-detail">{agent.question.message}</p>
+          )}
+          {agent.question.method === "confirm" ? (
+            <div className="agent-question-actions">
+              <button onClick={() => onAnswer("yes")}>Yes</button>
+              <button onClick={() => onAnswer("no")}>No</button>
+            </div>
+          ) : agent.question.options.length > 0 ? (
+            <div className="agent-question-actions">
+              {agent.question.options.map((option) => (
+                <button key={option} onClick={() => onAnswer(option)}>
+                  {option}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="agent-question-detail">Answer below, or stop the agent.</p>
+          )}
+        </div>
+      )}
+
       {!collapsed &&
         (total > 0 ? (
           <ol className="agent-plan">
@@ -187,6 +214,7 @@ export function AgentBoard() {
   const activeId = useChatStore((s) => s.activeId);
   const agents = useChatStore((s) => s.agents.agents);
   const stopChatAgents = useChatStore((s) => s.stopChatAgents);
+  const answerAgent = useChatStore((s) => s.answerAgent);
 
   const mine = useMemo(
     () => (activeId ? agents.filter((agent) => agent.chatId === activeId) : []),
@@ -228,6 +256,7 @@ export function AgentBoard() {
           // three full checklists would eat the conversation.
           defaultCollapsed={shown.length > 1 && index > 0}
           onStop={() => void stopChatAgents()}
+          onAnswer={(answer) => void answerAgent(answer)}
         />
       ))}
     </div>

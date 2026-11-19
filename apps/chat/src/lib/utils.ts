@@ -15,6 +15,16 @@ export function upsertMeta(list: ChatMeta[], meta: ChatMeta): ChatMeta[] {
   return sortMetas(next);
 }
 
+/**
+ * A conversation with a coding agent the user drives themselves.
+ *
+ * It lives in the same list as every other chat, but it is the engine's own
+ * conversation: local to this computer, and part of the advanced view.
+ */
+export function isCodingChat(chat: ChatMeta | undefined | null): boolean {
+  return chat?.kind === "coding";
+}
+
 export type Bucket = { label: string; chats: ChatMeta[] };
 
 const DAY = 86_400_000;

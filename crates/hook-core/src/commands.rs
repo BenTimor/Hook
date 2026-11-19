@@ -26,6 +26,9 @@ pub struct AppState {
     pub preview: Arc<PreviewManager>,
     pub streams: Arc<Mutex<HashMap<String, CancelToken>>>,
     pub turns: TurnState,
+    /// The assistant message a directly-driven coding agent is still writing.
+    /// Only this process can finish it; see `coding.rs`.
+    pub coding: crate::coding::CodingState,
     /// The compiled-in harness config (provider, model, auth origin).
     pub cfg: Arc<config::HarnessConfig>,
     /// The signed-in account and its API token.
@@ -509,6 +512,21 @@ pub fn send_message(
         Some(id) => state.store.load(&id)?,
         None => Chat::new(),
     };
+
+    // A coding-agent chat is a conversation with `pi`, not a model turn. The
+    // same composer and the same command drive both, so the window never has
+    // to know which kind of conversation it is looking at.
+    if crate::coding::is_coding(&chat) {
+        if text.is_empty() {
+            return Err("The coding agent needs a message.".into());
+        }
+        // Pictures are a chat-model feature; the coding agent talks in text.
+        let state = state.inner().clone();
+        crate::coding::send(&state, &mut chat, &text)?;
+        state.sync.wake();
+        return Ok(chat.meta.id);
+    }
+
     if state.turns.is_busy(&chat.meta.id) {
         return Err("A reply is already streaming in this chat.".into());
     }
@@ -545,6 +563,9 @@ pub fn send_message(
 #[tauri::command]
 pub fn regenerate(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
     let mut chat = state.store.load(&chat_id)?;
+    if crate::coding::is_coding(&chat) {
+        return Err("A coding agent's replies come from the folder, not from Hook. Ask it again instead.".into());
+    }
     if state.turns.is_busy(&chat_id) {
         return Err("A reply is already streaming in this chat.".into());
     }
@@ -585,6 +606,9 @@ pub fn edit_message(
         return Err("Message is empty".into());
     }
     let mut chat = state.store.load(&chat_id)?;
+    if crate::coding::is_coding(&chat) {
+        return Err("A coding agent's messages cannot be edited; send a new one instead.".into());
+    }
     if state.turns.is_busy(&chat_id) {
         return Err("A reply is already streaming in this chat.".into());
     }
@@ -610,11 +634,51 @@ pub fn edit_message(
 
 #[tauri::command]
 pub fn stop_stream(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
+    let Ok(chat) = state.store.load(&chat_id) else {
+        return Ok(());
+    };
+    if crate::coding::is_coding(&chat) {
+        crate::coding::stop(state.inner(), &chat_id);
+        return Ok(());
+    }
     let token = lock(&state.streams).get(&chat_id).cloned();
     if let Some(token) = token {
         token.cancel();
     }
     Ok(())
+}
+
+/// Start a conversation with a coding agent in a folder the user picked.
+/// Advanced mode is the door: the window offers it, the backend enforces it.
+#[tauri::command]
+pub fn create_coding_chat(
+    state: State<'_, Arc<AppState>>,
+    folder: String,
+) -> Result<ChatMeta, String> {
+    let meta = crate::coding::create(state.inner(), &folder)?;
+    Ok(meta)
+}
+
+/// Point an existing coding chat at a different folder (a moved project, or a
+/// conversation that arrived with a path this computer does not have).
+#[tauri::command]
+pub fn set_coding_chat_folder(
+    state: State<'_, Arc<AppState>>,
+    chat_id: String,
+    folder: String,
+) -> Result<ChatMeta, String> {
+    let meta = crate::coding::set_folder(state.inner(), &chat_id, &folder)?;
+    Ok(meta)
+}
+
+/// Answer a question a directly-driven coding agent is blocked on.
+#[tauri::command]
+pub fn answer_coding_agent(
+    state: State<'_, Arc<AppState>>,
+    chat_id: String,
+    answer: String,
+) -> Result<(), String> {
+    crate::coding::answer(state.inner(), &chat_id, &answer)
 }
 
 #[derive(Serialize)]
@@ -802,6 +866,16 @@ pub fn stop_chat_agents(
     chat_id: String,
 ) -> Result<crate::agent::Overview, String> {
     state.agents.stop_chat(&chat_id);
+    // A coding-agent chat draws that run as its conversation, so it has to
+    // learn that the process is gone; the abort handshake may never answer.
+    if state
+        .store
+        .load(&chat_id)
+        .map(|chat| crate::coding::is_coding(&chat))
+        .unwrap_or(false)
+    {
+        crate::coding::close(state.inner(), &chat_id, "aborted");
+    }
     Ok(state.agents.overview())
 }
 

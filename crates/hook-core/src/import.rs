@@ -936,6 +936,9 @@ fn build_chat(conversation: &Parsed) -> Chat {
         source: Some(conversation.source.key().to_string()),
         source_id: Some(conversation.external_id.clone()),
         source_updated_at: Some(conversation.updated_at),
+        kind: None,
+        project_path: None,
+        session_id: None,
     };
     if meta.created_at <= 0 {
         meta.created_at = meta.updated_at;

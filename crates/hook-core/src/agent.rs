@@ -105,6 +105,11 @@ pub struct AgentInfo {
     /// The user-facing checklist for this run, in display order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plan: Vec<PlanStep>,
+    /// The run is driven by the user's own conversation rather than by the
+    /// chat agent. Nobody has to be woken for it, and it never appears in the
+    /// sidebar's coding-agent tree (it is already a chat).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub direct: bool,
 }
 
 impl AgentInfo {
@@ -156,6 +161,11 @@ pub struct AgentSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub waiting: bool,
+    /// The user talks to this agent directly in its own chat.
+    pub direct: bool,
+    /// The question this run is blocked on, when it is waiting for a person.
+    /// Only a directly-driven agent shows it: the chat agent relays its own.
+    pub question: Option<AgentQuestion>,
 }
 
 /// The whole picture for the title-bar indicator and the per-chat task board.
@@ -265,6 +275,13 @@ pub enum Signal {
     Changed,
     /// A coding agent pointed the preview panel at a page.
     Preview(PreviewReport),
+    /// One pi RPC record from a directly-driven agent, for its own chat. The
+    /// chat app turns these into messages; the chat agent never sees them.
+    Record {
+        chat_id: String,
+        agent_id: String,
+        record: serde_json::Value,
+    },
 }
 
 enum AgentCmd {
@@ -322,6 +339,16 @@ pub struct AgentManager {
     /// The bundled git, when present. Agents get it on PATH together with a
     /// managed global config that carries the git-scoped token.
     git: Option<GitRuntime>,
+    /// The loopback endpoint that executes the chat agent's tools for a
+    /// directly-driven coding agent (memory, projects, Workspace). Absent in
+    /// tests and in builds that never serve it.
+    bridge: Option<Arc<crate::bridge::ToolBridge>>,
+    /// What this product's coding agents may do. Only a directly-driven agent
+    /// reads it, to decide which of the chat agent's tools it gets.
+    capabilities: crate::Capabilities,
+    /// The account's memory, so a direct agent starts with what Hook already
+    /// remembers about the user. Optional: a test manager has none.
+    memory: Option<Arc<crate::memory::MemoryStore>>,
 }
 
 impl AgentManager {
@@ -380,6 +407,9 @@ impl AgentManager {
             signal_tx,
             auth: Arc::new(AuthStore::new(data_dir, "https://hookcode.io", false, "")),
             git: None,
+            bridge: None,
+            capabilities: crate::Capabilities::chat(),
+            memory: None,
         }
     }
 
@@ -392,6 +422,26 @@ impl AgentManager {
     /// Provide the bundled git (or a developer fallback).
     pub fn with_git(mut self, git: Option<GitRuntime>) -> Self {
         self.git = git;
+        self
+    }
+
+    /// Where a directly-driven agent's tool calls are executed. Without it the
+    /// agent still runs; it just gets the coding agent's own tools.
+    pub fn with_bridge(mut self, bridge: Arc<crate::bridge::ToolBridge>) -> Self {
+        self.bridge = Some(bridge);
+        self
+    }
+
+    /// Which of the chat agent's tools a direct agent may be offered.
+    pub fn with_capabilities(mut self, capabilities: crate::Capabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// The shared memory store, so a direct agent's prompt carries what Hook
+    /// already knows about the user.
+    pub fn with_memory(mut self, memory: Arc<crate::memory::MemoryStore>) -> Self {
+        self.memory = Some(memory);
         self
     }
 
@@ -565,6 +615,11 @@ impl AgentManager {
                 .agents
                 .values()
                 .filter(|entry| {
+                    // A directly-driven agent has no chat agent to wake: its
+                    // conversation is written by the records themselves.
+                    if entry.info.direct {
+                        return false;
+                    }
                     if entry.wake_pending {
                         return true;
                     }
@@ -620,6 +675,17 @@ impl AgentManager {
         lock(&self.inner).agents.get(agent_id).map(|e| e.info.clone())
     }
 
+    /// The run the user is talking to in one conversation, newest first. A
+    /// coding-agent chat has one direct agent at a time; older ones are history.
+    pub fn for_chat(&self, chat_id: &str) -> Option<AgentInfo> {
+        lock(&self.inner)
+            .agents
+            .values()
+            .filter(|entry| entry.info.chat_id == chat_id && entry.info.direct)
+            .max_by_key(|entry| entry.info.created_at)
+            .map(|entry| entry.info.clone())
+    }
+
     pub fn list(&self) -> Vec<AgentInfo> {
         let mut out: Vec<AgentInfo> = lock(&self.inner)
             .agents
@@ -659,6 +725,8 @@ impl AgentManager {
                     finished_at: info.finished_at,
                     error: info.error.clone(),
                     waiting: info.question.is_some() || info.state == STATE_NEEDS_INPUT,
+                    direct: info.direct,
+                    question: info.question.clone(),
                 }
             })
             .collect();
@@ -676,6 +744,8 @@ impl AgentManager {
         }
     }
 
+    /// Launch a coding agent inside one of the user's projects, on behalf of
+    /// the chat agent.
     pub fn start(
         &self,
         chat_id: &str,
@@ -685,16 +755,6 @@ impl AgentManager {
         resume_session: Option<&str>,
         plan_titles: &[String],
     ) -> Result<AgentInfo, String> {
-        let task = task.trim();
-        if task.is_empty() {
-            return Err("The coding agent needs a task.".into());
-        }
-        if let Some(id) = resume_session {
-            if !is_safe_session_id(id) {
-                return Err(format!("Invalid session id: {id}"));
-            }
-        }
-
         let root = self.settings.projects_dir();
         let project_path = self.projects.resolve(&root, project_ref)?;
         let project_name = project_path
@@ -705,6 +765,91 @@ impl AgentManager {
         // also assigns ids to folders that predate sync.
         let _ = self.projects.list(&root);
         let project_id = self.projects.id_for_path(&project_path).unwrap_or_default();
+        self.spawn(
+            chat_id,
+            project_path,
+            project_name,
+            project_id,
+            task,
+            title,
+            resume_session,
+            plan_titles,
+            false,
+        )
+    }
+
+    /// Launch a coding agent in a folder the user picked themselves. This is
+    /// the direct conversation: no chat agent writes the brief or the checklist,
+    /// the user is talking to `pi`.
+    pub fn start_direct(
+        &self,
+        chat_id: &str,
+        folder: &str,
+        task: &str,
+        title: Option<&str>,
+        resume_session: Option<&str>,
+    ) -> Result<AgentInfo, String> {
+        let folder = folder.trim();
+        if folder.is_empty() {
+            return Err("A coding agent needs a folder to work in.".into());
+        }
+        let path = PathBuf::from(folder);
+        if !path.is_absolute() {
+            return Err("The coding agent's folder must be a full path.".into());
+        }
+        let path = path
+            .canonicalize()
+            .map_err(|_| format!("The folder \"{folder}\" is not available on this computer."))?;
+        if !path.is_dir() {
+            return Err(format!("\"{folder}\" is not a folder."));
+        }
+        let path = crate::store::strip_verbatim(path);
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Coding agent".to_string());
+        // A folder inside the projects root is still a project: it keeps its
+        // account repository and the sync tools. Anything else runs as it is.
+        let project_id = self.projects.id_for_path(&path).unwrap_or_default();
+        self.spawn(
+            chat_id,
+            path,
+            name,
+            project_id,
+            task,
+            title,
+            resume_session,
+            &[],
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn(
+        &self,
+        chat_id: &str,
+        project_path: PathBuf,
+        project_name: String,
+        project_id: String,
+        task: &str,
+        title: Option<&str>,
+        resume_session: Option<&str>,
+        plan_titles: &[String],
+        direct: bool,
+    ) -> Result<AgentInfo, String> {
+        let task = task.trim();
+        if task.is_empty() {
+            return Err(if direct {
+                "Say something for the coding agent to do.".into()
+            } else {
+                "The coding agent needs a task.".into()
+            });
+        }
+        if let Some(id) = resume_session {
+            if !is_safe_session_id(id) {
+                return Err(format!("Invalid session id: {id}"));
+            }
+        }
 
         let max = self.coding.max_concurrent.max(1);
         if self.working_count() >= max {
@@ -777,6 +922,26 @@ impl AgentManager {
             serde_json::json!({ "steps": &plan }).to_string(),
         );
 
+        // A directly-driven agent gets the chat agent's tools (memory,
+        // projects, Workspace) over Hook's loopback bridge. The guard finds the
+        // endpoint and the tool list in the same mailbox.
+        if direct {
+            if let Some(bridge) = &self.bridge {
+                // What the agent may do is decided here, where the config, the
+                // product and the memory switch already are; the bridge only
+                // writes it down and runs the calls.
+                let memory = self.cfg.memory.enabled && self.settings.memory_enabled();
+                let tools =
+                    crate::tools::direct_bridge_definitions(&self.cfg, self.capabilities, memory);
+                let remembered = if memory {
+                    self.memory.as_ref().map(|store| store.marker_frame())
+                } else {
+                    None
+                };
+                bridge.prepare(chat_id, &updates_dir, tools, remembered);
+            }
+        }
+
         // Keep the engine's stderr: when it dies before doing anything, this
         // file is the only thing that explains why.
         let log_dir = self.data_dir.join("logs");
@@ -832,6 +997,10 @@ impl AgentManager {
             // window it runs inside.
             .env_remove("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
             .env("HOOK_UPDATES_DIR", &updates_dir)
+            .env("HOOK_DIRECT", if direct { "1" } else { "0" })
+            // Whether this folder is one of the account's projects, so the
+            // guard only advertises the git tools where they can work.
+            .env("HOOK_SYNC", if project_id.is_empty() { "0" } else { "1" })
             .env("PI_BASH_MAX_TIMEOUT", self.coding.bash_max_timeout.to_string())
             .env("PI_BASH_MIN_TIMEOUT", self.coding.bash_min_timeout.to_string());
         if let Some(git) = &self.git {
@@ -875,6 +1044,7 @@ impl AgentManager {
             error: None,
             question: None,
             plan,
+            direct,
         };
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -909,10 +1079,16 @@ impl AgentManager {
         let data_dir = self.data_dir.clone();
         let signal_tx = self.signal_tx.clone();
         let settings = self.settings.clone();
+        let bridge = if direct { self.bridge.clone() } else { None };
         let chat_id = chat_id.to_string();
-        tokio::spawn(async move {
+        // The app runtime, not `tokio::spawn`: a coding agent can be started
+        // from a synchronous IPC command (the user's own message in a
+        // coding-agent chat), where this thread has no Tokio context and
+        // `tokio::spawn` panics with "there is no reactor running".
+        tauri::async_runtime::spawn(async move {
             drive(
-                id, chat_id, inner, data_dir, signal_tx, settings, child, stdin, stdout, rx,
+                id, chat_id, inner, data_dir, signal_tx, settings, child, stdin, stdout, rx, direct,
+                bridge,
             )
             .await;
         });
@@ -1771,7 +1947,7 @@ fn plan_from_value(value: &serde_json::Value) -> Option<Vec<PlanStep>> {
 #[allow(clippy::too_many_arguments)]
 async fn drive(
     agent_id: String,
-    _chat_id: String,
+    chat_id: String,
     inner: Arc<Mutex<Inner>>,
     data_dir: PathBuf,
     signal_tx: mpsc::UnboundedSender<Signal>,
@@ -1780,6 +1956,8 @@ async fn drive(
     mut stdin: tokio::process::ChildStdin,
     stdout: tokio::process::ChildStdout,
     mut rx: mpsc::UnboundedReceiver<AgentCmd>,
+    direct: bool,
+    bridge: Option<Arc<crate::bridge::ToolBridge>>,
 ) {
     let mut lines = BufReader::new(stdout).lines();
     let engine_pid = child.id();
@@ -1807,15 +1985,26 @@ async fn drive(
                             if rest.starts_with("message_update\"") {
                                 // The advanced inspector shows thinking as it
                                 // streams, so those records are worth parsing.
-                                // With the switch off they stay skipped, exactly
-                                // as before: a thinking model sends hundreds.
-                                if !settings.advanced_mode() {
+                                // A direct chat has no other view: its thinking
+                                // is drawn in the conversation itself, so it
+                                // needs them whatever the switch says.
+                                if !settings.advanced_mode() && !direct {
                                     continue;
                                 }
                             }
                         }
                         let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
                         let outcome = apply_record(&inner, &agent_id, &record);
+                        // The user's own conversation is drawn from these
+                        // records, so a direct agent's turn is assembled here
+                        // as well as in agents.json.
+                        if direct {
+                            let _ = signal_tx.send(Signal::Record {
+                                chat_id: chat_id.clone(),
+                                agent_id: agent_id.clone(),
+                                record: record.clone(),
+                            });
+                        }
                         // Only rewrite agents.json when the record changed something that
                         // is actually stored: a token delta is not news.
                         if outcome.changed {
@@ -1923,9 +2112,11 @@ async fn drive(
                     if entry.info.error.is_none() {
                         entry.info.error = Some("The coding agent stopped unexpectedly.".into());
                     }
-                    wake = Some(Wake {
-                        agent_id: agent_id.clone(),
-                    });
+                    if !direct {
+                        wake = Some(Wake {
+                            agent_id: agent_id.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -1934,6 +2125,18 @@ async fn drive(
     if wake.is_some() {
         mark_wake(&inner, &agent_id);
         let _ = signal_tx.send(Signal::Changed);
+    }
+    if direct {
+        // The chat is a conversation, not a task board: it has to learn that
+        // the process is gone even when pi died before it could settle.
+        if let Some(bridge) = &bridge {
+            bridge.release(&chat_id);
+        }
+        let _ = signal_tx.send(Signal::Record {
+            chat_id: chat_id.clone(),
+            agent_id: agent_id.clone(),
+            record: serde_json::json!({ "type": "agent_exit" }),
+        });
     }
     let _ = signal_tx.send(Signal::Changed);
 }
@@ -2155,7 +2358,8 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                     info.question = Some(question);
                     info.updated_at = now_ms();
                     changed = true;
-                    wake = true;
+                    // The user is watching this conversation, not a chat agent.
+                    wake = !info.direct;
                 }
             }
             "agent_settled" => {
@@ -2179,12 +2383,15 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                     let truncated = entry.truncated;
                     if truncated {
                         // Report it: otherwise the run looks like it simply stopped
-                        // without doing anything.
+                        // without doing anything. A direct chat sees the engine's
+                        // own words, so nothing has to be queued for it.
                         entry.truncated = false;
-                        entry.pending.push(Update {
-                            note: "The run ran out of room while thinking and stopped before finishing anything. Nothing is broken - the work can be picked up from where it stopped.".into(),
-                            images: Vec::new(),
-                        });
+                        if !info.direct {
+                            entry.pending.push(Update {
+                                note: "The run ran out of room while thinking and stopped before finishing anything. Nothing is broken - the work can be picked up from where it stopped.".into(),
+                                images: Vec::new(),
+                            });
+                        }
                     } else if !record
                         .get("aborted")
                         .and_then(|v| v.as_bool())
@@ -2398,6 +2605,7 @@ name = "test-model"
             error: None,
             question: None,
             plan: Vec::new(),
+            direct: false,
         };
         inner.agents.insert(
             "ag_1".into(),
@@ -2517,6 +2725,7 @@ name = "test-model"
                         error: None,
                         question: None,
                         plan: Vec::new(),
+                        direct: false,
                     },
                     tx: None,
                     pid: None,
@@ -2791,6 +3000,7 @@ node \"%~dp0fake-pi.mjs\" %*
                     }
                 }
                 Ok(Some(Signal::Changed)) | Ok(Some(Signal::Preview(_))) | Ok(None) => {}
+                Ok(Some(Signal::Record { .. })) => {}
                 Err(_) => {}
             }
         }
@@ -2923,6 +3133,7 @@ node \"%~dp0fake-pi.mjs\" %*
                 error: None,
                 question: None,
                 plan,
+                direct: false,
             },
             tx: None,
             pid: None,

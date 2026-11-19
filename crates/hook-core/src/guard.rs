@@ -76,6 +76,24 @@ mod tests {
     }
 
     #[test]
+    fn a_direct_agent_gets_hooks_tools_and_nothing_to_relay() {
+        // The user talks to this agent themselves: the chat agent's own tools
+        // arrive over Hook's loopback bridge, and `report_progress` (a mailbox
+        // nobody empties) is not registered at all.
+        assert!(GUARD_SOURCE.contains("HOOK_DIRECT"));
+        assert!(GUARD_SOURCE.contains("registerBridgeTools(pi)"));
+        assert!(GUARD_SOURCE.contains("tools.json"));
+        assert!(GUARD_SOURCE.contains("x-hook-token"));
+        assert!(GUARD_SOURCE.contains("if (UPDATES_DIR && !DIRECT)"));
+        // The pinned memory the chat agent gets rides along in the system
+        // prompt, from the same account store.
+        assert!(GUARD_SOURCE.contains("memory.txt"));
+        assert!(GUARD_SOURCE.contains("Talking to the user directly"));
+        // A folder that is not one of the account's projects gets no git tools.
+        assert!(GUARD_SOURCE.contains("HOOK_SYNC !== \"0\""));
+    }
+
+    #[test]
     fn writes_the_guard_once() {
         let dir = std::env::temp_dir().join(format!("hook-guard-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();

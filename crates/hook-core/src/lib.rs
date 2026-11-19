@@ -12,6 +12,8 @@
 
 mod agent;
 mod auth;
+mod bridge;
+mod coding;
 mod commands;
 mod config;
 mod git;
@@ -144,6 +146,9 @@ pub fn builder(
             commands::agents_overview,
             commands::agent_transcript,
             commands::stop_chat_agents,
+            commands::answer_coding_agent,
+            commands::create_coding_chat,
+            commands::set_coding_chat_folder,
             commands::preview_state,
             commands::sync_status,
             commands::set_chat_context,
@@ -239,6 +244,9 @@ fn setup(
     }
 
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
+    // The loopback endpoint that gives a directly-driven coding agent the chat
+    // agent's tools. Served once the app state exists, below.
+    let bridge = Arc::new(bridge::ToolBridge::new());
     let agents = Arc::new(
         AgentManager::new(
             &data_dir,
@@ -250,7 +258,10 @@ fn setup(
             signal_tx,
         )
         .with_auth(auth.clone())
-        .with_git(git_runtime.clone()),
+        .with_git(git_runtime.clone())
+        .with_bridge(bridge.clone())
+        .with_capabilities(capabilities)
+        .with_memory(memory.clone()),
     );
 
     let preview_emit: preview::Emitter = {        let app = app.handle().clone();
@@ -289,6 +300,7 @@ fn setup(
         preview: Arc::new(preview::PreviewManager::new(preview_emit)),
         streams: Arc::new(Mutex::new(HashMap::new())),
         turns: turn::TurnState::default(),
+        coding: crate::coding::CodingState::default(),
         cfg: cfg.clone(),
         auth: auth.clone(),
         sync: sync.clone(),
@@ -302,6 +314,11 @@ fn setup(
         capabilities,
     });
     app.manage(state.clone());
+    // Now that the state it acts for exists, the tool bridge can take calls.
+    bridge.serve(state.clone());
+    // A coding-agent chat whose engine died with the last window would keep a
+    // "streaming" reply forever; turn it into the error it always was.
+    coding::recover(&state.store);
     sync.spawn();
 
     // One request tells us what the model can see. If the card says images, the
@@ -342,6 +359,15 @@ fn setup(
                             eprintln!("hook: preview rejected: {error}");
                         }
                     }
+                }
+                Signal::Record {
+                    chat_id,
+                    agent_id,
+                    record,
+                } => {
+                    // A directly-driven agent's conversation is assembled from
+                    // its own records; the chat agent never sees them.
+                    coding::on_record(&supervisor, &chat_id, &agent_id, &record);
                 }
             }
         }

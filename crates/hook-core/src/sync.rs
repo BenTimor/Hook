@@ -380,6 +380,27 @@ impl SyncEngine {
         }
         ids.sort();
         ids.dedup();
+        // A coding-agent chat is this computer's own: its folder, its session
+        // file and its engine process do not exist elsewhere, so uploading it
+        // would hand another machine a conversation it cannot continue. Ids
+        // still in the queue from an older build (a delete, a restore) are
+        // dropped here rather than retried forever.
+        let local: std::collections::HashSet<String> = self
+            .store
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|meta| meta.is_local_only())
+            .map(|meta| meta.id)
+            .collect();
+        if !local.is_empty() {
+            for id in &ids {
+                if local.contains(id) {
+                    self.store.clear_dirty(id);
+                }
+            }
+            ids.retain(|id| !local.contains(id));
+        }
         if ids.is_empty() {
             return Ok(());
         }

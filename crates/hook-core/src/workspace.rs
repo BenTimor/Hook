@@ -278,6 +278,12 @@ fn required(args: &Value, key: &str) -> Result<String, String> {
     string(args, key).ok_or_else(|| format!("Missing \"{key}\"."))
 }
 
+/// True for the tool names [`execute`] answers. The tool bridge uses it to
+/// route a call to the store that owns it.
+pub fn handles(name: &str) -> bool {
+    name.starts_with("workspace_")
+}
+
 /// Run one `workspace_*` tool call. The return value is the JSON the model sees.
 pub async fn execute(
     client: &WorkspaceClient,

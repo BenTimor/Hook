@@ -70,11 +70,17 @@ export function Thread<M extends ChatMessage>({
   );
 
   const last = blocks[blocks.length - 1];
-  const textArriving =
-    Boolean(streamText) ||
-    (last?.type === "answer" &&
-      last.message?.role === "assistant" &&
-      last.message.status === "streaming");
+  // "Text arriving" means text the user can read, not a reply that merely
+  // exists: a streaming message spends its first seconds empty, and a thinking
+  // model can spend many. The activity line is what fills that gap, so it
+  // steps aside only once there is something to read.
+  const streamingAnswer =
+    last?.type === "answer" &&
+    last.message?.role === "assistant" &&
+    last.message.status === "streaming"
+      ? last.message
+      : undefined;
+  const textArriving = (streamText ?? streamingAnswer?.content ?? "").trim() !== "";
   const showActivity = activity !== undefined && !textArriving;
 
   const lastAssistantId = useMemo(() => {

@@ -1,8 +1,19 @@
 import { useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Ellipsis, Pencil, Pin, PinOff, Trash2 } from "lucide-react";
+import {
+  Ellipsis,
+  FolderOpen,
+  FolderInput,
+  Pencil,
+  Pin,
+  PinOff,
+  SquareTerminal,
+  Trash2,
+} from "lucide-react";
 
+import { api } from "../lib/bridge";
 import type { ChatMeta } from "../lib/types";
+import { isCodingChat } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 
 interface Props {
@@ -16,6 +27,9 @@ export function ChatRow({ chat, active, streaming }: Props) {
   const rename = useChatStore((s) => s.rename);
   const togglePin = useChatStore((s) => s.togglePin);
   const remove = useChatStore((s) => s.remove);
+  const changeCodingFolder = useChatStore((s) => s.changeCodingFolder);
+
+  const coding = isCodingChat(chat);
 
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(chat.title);
@@ -55,6 +69,11 @@ export function ChatRow({ chat, active, streaming }: Props) {
       }}
     >
       {chat.pinned && <Pin className="row-pin" strokeWidth={2} />}
+      {coding && (
+        <span className="row-badge" title={`Coding agent — ${chat.projectPath ?? ""}`}>
+          <SquareTerminal strokeWidth={2} />
+        </span>
+      )}
 
       {renaming ? (
         <input
@@ -114,6 +133,26 @@ export function ChatRow({ chat, active, streaming }: Props) {
               <Pencil strokeWidth={1.8} />
               Rename
             </DropdownMenu.Item>
+            {coding && (
+              <>
+                <DropdownMenu.Item
+                  className="menu-item"
+                  onSelect={() => void changeCodingFolder(chat.id)}
+                >
+                  <FolderInput strokeWidth={1.8} />
+                  Change folder…
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="menu-item"
+                  onSelect={() => {
+                    if (chat.projectPath) void api.openPath(chat.projectPath);
+                  }}
+                >
+                  <FolderOpen strokeWidth={1.8} />
+                  Open folder
+                </DropdownMenu.Item>
+              </>
+            )}
             <DropdownMenu.Separator className="menu-sep" />
             <DropdownMenu.Item
               className="menu-item"
