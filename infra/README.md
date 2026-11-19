@@ -158,7 +158,8 @@ Who signed up — from the dev machine, no sqlite3 or Node needed locally:
 
 ```bash
 ./scripts/waitlist-people.sh             # table, newest first
-./scripts/waitlist-people.sh --csv       # email,joined_at,google_subject
+./scripts/waitlist-people.sh --csv       # profiles, choices, prices, progress
+./scripts/waitlist-people.sh --events    # individual onboarding actions as CSV
 ./scripts/waitlist-people.sh --count     # just the number
 
 ./scripts/waitlist-admin.sh --list                     # status + usage roll-up

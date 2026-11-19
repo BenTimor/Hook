@@ -51,7 +51,7 @@ const csv = (entries, headers) => {
 if (format === "--count") {
   console.log(rows.length);
 } else if (format === "--events") {
-  const headers = ["email", "google_subject", "recorded_at", "event_type", "details", "applied", "client_id", "sequence", "event_id"];
+  const headers = ["email", "google_subject", "recorded_at", "field", "event_type", "details", "applied", "client_id", "sequence", "event_id"];
   const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'onboarding_events'").get();
   const events = exists ? db.prepare(`SELECT s.email, e.* FROM onboarding_events e JOIN waitlist_signups s USING (google_subject) ORDER BY e.recorded_at DESC, e.rowid DESC`).all() : [];
   csv(events, headers);
@@ -61,9 +61,21 @@ if (format === "--count") {
   if (!rows.length) {
     console.log("No signups yet.");
   } else {
-    const head = ["EMAIL", "STATUS", "JOINED (UTC)", "INTERESTS", "PLAN", "PRICE", "STEP", "COMPLETED (UTC)"];
     const utc = (value) => value ? value.replace("T", " ").slice(0, 19) : "—";
-    const body = rows.map((r) => [r.email, utc(r.joined_at), JSON.parse(r.interests || "[]").join(", ") || "—", r.plan_preference || "—", r.plan_price_cents == null ? "—" : `${(r.plan_price_cents / 100).toFixed(2)} ${r.plan_currency}${r.plan_period}`, r.onboarding_step || "—", utc(r.onboarding_completed_at)]);
+    // One entry per column, so a header can never drift from its cell: adding
+    // STATUS to the header alone used to crash the whole table.
+    const columns = [
+      ["EMAIL", (r) => r.email],
+      ["STATUS", (r) => r.waitlist_status || "—"],
+      ["JOINED (UTC)", (r) => utc(r.joined_at)],
+      ["INTERESTS", (r) => JSON.parse(r.interests || "[]").join(", ") || "—"],
+      ["PLAN", (r) => r.plan_preference || "—"],
+      ["PRICE", (r) => r.plan_price_cents == null ? "—" : `${(r.plan_price_cents / 100).toFixed(2)} ${r.plan_currency}${r.plan_period}`],
+      ["STEP", (r) => r.onboarding_step || "—"],
+      ["COMPLETED (UTC)", (r) => utc(r.onboarding_completed_at)],
+    ];
+    const head = columns.map(([h]) => h);
+    const body = rows.map((r) => columns.map(([, value]) => String(value(r))));
     const width = head.map((h, i) => Math.max(h.length, ...body.map((b) => b[i].length)));
     const line = (cols) => cols.map((c, i) => c.padEnd(width[i])).join("  ").trimEnd();
     console.log(line(head));
