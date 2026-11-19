@@ -157,6 +157,9 @@ mistake: delete it, never commit it.
 - `apps/workspace/src/components/WorkspaceHome.tsx` — invitations, projects and
   getting-started actions. `InvitationCard.tsx` shares response states with the
   Invites inbox; sender profiles are optional fields from `GET /api/ws/invites`.
+- `apps/workspace/src/lib/documentImages.ts` — validates image sources and
+  sizes images added by the toolbar, clipboard or file drop in the Markdown
+  editor shared by documents and tasks.
 - `packages/ui/src/tokens.css` — the design foundation (tokens, base elements,
   window chrome, prose, buttons/inputs). Both products import it first.
 - `waitlist/content.json` — all landing-page copy and interest definitions.

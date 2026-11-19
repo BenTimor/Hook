@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { TextFieldDialog } from "@hook/ui";
+import { createPortal } from "react-dom";
+import { Dialog, TextFieldDialog } from "@hook/ui";
 import {
   Annotation,
   Compartment,
   EditorState,
   RangeSetBuilder,
   StateField,
+  type Transaction,
 } from "@codemirror/state";
 import {
   Decoration,
@@ -21,10 +23,10 @@ import {
 import { history, historyKeymap, indentWithTab, defaultKeymap, undo, redo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
-import { Bold, Italic, Underline, Heading1, Heading2, Heading3, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2 } from "lucide-react";
+import { Bold, Italic, Underline, Highlighter, Heading1, Heading2, Heading3, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2, ALargeSmall, ImagePlus } from "lucide-react";
 
-import type { DocumentMeta } from "../lib/types";
 import { openExternal } from "../lib/bridge";
+import { documentImageSource, embedDocumentImage } from "../lib/documentImages";
 
 /**
  * The document editor.
@@ -40,6 +42,28 @@ export interface DocumentEditorHandle {
   markdown: () => string;
 }
 
+const MAX_MARKDOWN_BYTES = 512 * 1024;
+
+function transferredImages(transfer: DataTransfer | null | undefined): File[] {
+  if (!transfer) return [];
+  const files = Array.from(transfer.files).filter((file) => file.type.startsWith("image/"));
+  if (files.length) return files;
+  return Array.from(transfer.items)
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+}
+
+function imageMarkdown(source: string, description: string): string {
+  const alt = (description || "Image").replace(/[\r\n]/g, " ").replace(/[\\\[\]]/g, "\\$&");
+  const destination = source.replace(/\(/g, "%28").replace(/\)/g, "%29");
+  return `![${alt}](${destination})`;
+}
+
+function imageSizeError() {
+  return new Error("These images would exceed the 512 KB text limit. Try smaller files or use links.");
+}
+
 export function DocumentEditor({
   document,
   raw,
@@ -47,20 +71,32 @@ export function DocumentEditor({
   forceSave = 0,
   onChange,
   onSave,
+  compact = false,
 }: {
-  document: DocumentMeta;
+  document: { id: string; markdown?: string };
   raw: boolean;
   readOnly: boolean;
   /** Increment to save the current buffer now (used after a conflict choice). */
   forceSave?: number;
   onChange: (dirty: boolean) => void;
   onSave: (markdown: string) => Promise<boolean>;
+  compact?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
+  const [imageOpen, setImageOpen] = useState(false);
+  const [imageUrl, setImageUrl] = useState("");
+  const [imageAlt, setImageAlt] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageError, setImageError] = useState("");
+  const [imageBusy, setImageBusy] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
+  const [colorMenu, setColorMenu] = useState<{ top: number; left: number } | null>(null);
+  const colorButton = useRef<HTMLButtonElement>(null);
+  const colorPopover = useRef<HTMLDivElement>(null);
   const linkSelection = useRef<{ from: number; to: number; label?: string } | null>(null);
   const view = useRef<EditorView | null>(null);
+  const pendingImages = useRef<{ editor: EditorView; position: number } | null>(null);
   const rawCompartment = useRef(new Compartment());
   const saveRef = useRef(onSave);
   const changeRef = useRef(onChange);
@@ -76,19 +112,35 @@ export function DocumentEditor({
     initial.current = document.markdown ?? "";
   }, [documentId, document.markdown]);
 
+  useEffect(() => {
+    if (!colorMenu) return;
+    const close = (event: PointerEvent) => {
+      if (!colorButton.current?.contains(event.target as Node) && !colorPopover.current?.contains(event.target as Node)) setColorMenu(null);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setColorMenu(null); colorButton.current?.focus(); }
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("pointerdown", close); window.removeEventListener("keydown", escape); };
+  }, [colorMenu]);
+
   /** Save after a pause; the parent owns the revision the write is based on. */
   const scheduleTimer = useRef<number | null>(null);
+  const editVersion = useRef(0);
   const schedule = (text: string, immediately = false) => {
+    const version = ++editVersion.current;
     if (scheduleTimer.current !== null) window.clearTimeout(scheduleTimer.current);
     if (immediately) {
       void saveRef.current(text).then((saved) => {
-        if (saved) changeRef.current(false);
+        if (saved && version === editVersion.current) changeRef.current(false);
       });
       return;
     }
     scheduleTimer.current = window.setTimeout(() => {
+      scheduleTimer.current = null;
       void saveRef.current(text).then((saved) => {
-        if (saved) changeRef.current(false);
+        if (saved && version === editVersion.current) changeRef.current(false);
       });
     }, 900);
   };
@@ -100,6 +152,8 @@ export function DocumentEditor({
       extensions: [
         history(),
         keymap.of([
+          { key: "Backspace", run: (target) => deleteAdjacentImage(target, false) },
+          { key: "Delete", run: (target) => deleteAdjacentImage(target, true) },
           { key: "Mod-b", run: (target) => toggleWrap(target, "**") },
           { key: "Mod-i", run: (target) => toggleWrap(target, "*") },
           { key: "Mod-k", run: (target) => { openLink(target); return true; } },
@@ -111,9 +165,9 @@ export function DocumentEditor({
         EditorView.lineWrapping,
         EditorView.editable.of(!readOnly),
         EditorState.readOnly.of(readOnly),
-        placeholder(readOnly ? "This document is empty." : "Start writing your document…"),
+        placeholder(readOnly ? "This document is empty." : compact ? "Add a description…" : "Start writing your document…"),
         markdown({ base: markdownLanguage, addKeymap: false }),
-        rawCompartment.current.of(raw ? [] : [livePreview, tablePreview, linkHover]),
+        rawCompartment.current.of(raw ? [] : formattedExtensions),
         EditorView.domEventHandlers({
           mousedown(event, editor) {
             if (event.button !== 0 || editor.state.readOnly ||
@@ -133,6 +187,10 @@ export function DocumentEditor({
           },
         }),
         EditorView.updateListener.of((update: ViewUpdate) => {
+          const pending = pendingImages.current;
+          if (update.docChanged && pending?.editor === update.view) {
+            pending.position = update.changes.mapPos(pending.position, 1);
+          }
           if (update.docChanged) changeRef.current(true);
           if (update.docChanged) schedule(update.state.doc.toString());
         }),
@@ -156,6 +214,11 @@ export function DocumentEditor({
     const instance = new EditorView({ state, parent: host.current });
     view.current = instance;
     return () => {
+      if (compact && scheduleTimer.current !== null) {
+        window.clearTimeout(scheduleTimer.current);
+        scheduleTimer.current = null;
+        void saveRef.current(instance.state.doc.toString());
+      }
       instance.destroy();
       view.current = null;
     };
@@ -187,7 +250,7 @@ export function DocumentEditor({
     const instance = view.current;
     if (!instance) return;
     instance.dispatch({
-      effects: rawCompartment.current.reconfigure(raw ? [] : [livePreview, tablePreview, linkHover]),
+      effects: rawCompartment.current.reconfigure(raw ? [] : formattedExtensions),
     });
   }, [raw]);
 
@@ -221,6 +284,7 @@ export function DocumentEditor({
     { label: "Bold", Icon: Bold, run: (editor: EditorView) => toggleWrap(editor, "**") },
     { label: "Italic", Icon: Italic, run: (editor: EditorView) => toggleWrap(editor, "*") },
     { label: "Underline", Icon: Underline, run: (editor: EditorView) => toggleWrap(editor, "<u>", "</u>") },
+    { label: "Highlight", Icon: Highlighter, run: (editor: EditorView) => toggleWrap(editor, "<mark>", "</mark>") },
     { label: "Strikethrough", Icon: Strikethrough, run: (editor: EditorView) => toggleWrap(editor, "~~") },
     { label: "Link", Icon: Link, run: (editor: EditorView) => { openLink(editor); return true; } },
     { label: "Bulleted list", Icon: List, run: (editor: EditorView) => toggleLinePrefix(editor, "bullet") },
@@ -232,8 +296,56 @@ export function DocumentEditor({
     { label: "Divider", Icon: Minus, run: (editor: EditorView) => insertBlock(editor, "---") },
     { label: "Table", Icon: Table2, run: (editor: EditorView) => insertBlock(editor, "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |") },
   ];
+  const addImages = async (editor: EditorView, position: number, files: File[], url = "", alt = "", fromDialog = false) => {
+    if (editor.state.readOnly || pendingImages.current?.editor === editor) return;
+    const pending = { editor, position };
+    pendingImages.current = pending;
+    setImageError("");
+    setImageBusy(true);
+    try {
+      const blocks: string[] = [];
+      if (files.length) {
+        let embeddedLength = 0;
+        for (const file of files) {
+          const source = await embedDocumentImage(file);
+          if (view.current !== editor) return;
+          embeddedLength += source.length;
+          if (embeddedLength > MAX_MARKDOWN_BYTES) throw imageSizeError();
+          blocks.push(imageMarkdown(source, alt || file.name));
+        }
+      } else {
+        const source = documentImageSource(url.trim());
+        if (!source || !/^https?:/i.test(source)) {
+          throw new Error("Enter a full image URL starting with https:// or http://.");
+        }
+        blocks.push(imageMarkdown(source, alt));
+      }
+      const { state } = editor;
+      let pos = state.doc.lineAt(pending.position).to;
+      state.field(tablePreview, false)?.between(pos, pos, (_from, to) => {
+        pos = Math.max(pos, to);
+      });
+      const insert = `${pos ? "\n\n" : ""}${blocks.join("\n\n")}\n\n`;
+      if (new TextEncoder().encode(insert).length + new TextEncoder().encode(state.doc.toString()).length > MAX_MARKDOWN_BYTES) {
+        throw imageSizeError();
+      }
+      editor.dispatch({ changes: { from: pos, insert }, selection: { anchor: pos + insert.length } });
+      if (fromDialog) {
+        setImageOpen(false);
+        requestAnimationFrame(() => { if (view.current === editor) editor.focus(); });
+      }
+    } catch (error) {
+      if (view.current === editor) setImageError(error instanceof Error ? error.message : "Could not add the image.");
+    } finally {
+      if (pendingImages.current === pending) {
+        pendingImages.current = null;
+        setImageBusy(false);
+      }
+    }
+  };
+
   return (
-    <div className="ws-editor-shell">
+    <div className={compact ? "ws-editor-shell ws-editor-compact" : "ws-editor-shell"}>
       <div className="ws-editor-toolbar" role="toolbar" aria-label="Document formatting">
         {tools.map(({ label, Icon, run }) => (
           <button key={label} className="ws-editor-tool" type="button" title={label} aria-label={label} disabled={readOnly}
@@ -242,12 +354,82 @@ export function DocumentEditor({
             <Icon aria-hidden="true" />
           </button>
         ))}
+        <button ref={colorButton} type="button" className="ws-editor-tool ws-color-trigger" aria-label="Text color" title="Text color" aria-expanded={Boolean(colorMenu)} disabled={readOnly}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (colorMenu) { setColorMenu(null); return; }
+            const rect = colorButton.current?.getBoundingClientRect();
+            if (rect) setColorMenu({ top: rect.bottom + 7, left: Math.max(8, Math.min(rect.left, window.innerWidth - 240)) });
+          }}><ALargeSmall aria-hidden="true" /><span /></button>
+        <button type="button" className="ws-editor-tool" title="Add image" aria-label="Add image" disabled={readOnly || imageBusy}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            setImageUrl("");
+            setImageAlt("");
+            setImageFile(null);
+            setImageError("");
+            setImageOpen(true);
+          }}><ImagePlus aria-hidden="true" /></button>
         {readOnly && <span className="ws-editor-readonly">View only</span>}
       </div>
+      {colorMenu && createPortal(
+        <div ref={colorPopover} className="ws-color-popover" role="group" aria-label="Choose text color" style={{ top: colorMenu.top, left: colorMenu.left }}>
+          <div className="ws-color-popover-title">Text color</div>
+          <div className="ws-color-options">
+            {[
+              { name: "Default", color: "" },
+              { name: "Green", color: "green" },
+              { name: "Blue", color: "blue" },
+              { name: "Red", color: "red" },
+              { name: "Purple", color: "purple" },
+            ].map(({ name, color }) => (
+              <button key={name} type="button" aria-label={name} title={name} className={`ws-color-swatch ${color ? `hook-color-${color}` : ""}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  const editor = view.current;
+                  if (editor) {
+                    if (!raw) editor.dispatch({ effects: rawCompartment.current.reconfigure(formattedExtensions) });
+                    setTextColor(editor, color);
+                    editor.focus();
+                  }
+                  setColorMenu(null);
+                }}><span aria-hidden="true">A</span></button>
+            ))}
+          </div>
+        </div>, window.document.body
+      )}
+      {!imageOpen && imageError && <p className="ws-image-error" role="alert">{imageError}</p>}
       <div
         className="ws-editor"
         data-source={raw}
         ref={host}
+        onPasteCapture={(event) => {
+          const editor = view.current;
+          if (!editor || editor.state.readOnly || !editor.contentDOM.contains(event.target as Node)) return;
+          const files = transferredImages(event.clipboardData);
+          if (!files.length) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void addImages(editor, editor.state.selection.main.to, files);
+        }}
+        onDragOverCapture={(event) => {
+          if (readOnly || !event.dataTransfer.types.includes("Files")) return;
+          const items = Array.from(event.dataTransfer.items);
+          if (items.length && !items.some((item) => item.kind === "file" && (!item.type || item.type.startsWith("image/")))) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = imageBusy ? "none" : "copy";
+        }}
+        onDropCapture={(event) => {
+          const editor = view.current;
+          if (!editor || editor.state.readOnly) return;
+          const files = transferredImages(event.dataTransfer);
+          if (!files.length) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const position = editor.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+          editor.focus();
+          void addImages(editor, position ?? editor.state.doc.length, files);
+        }}
         onKeyDownCapture={(event) => {
           const editor = view.current;
           if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey ||
@@ -275,6 +457,39 @@ export function DocumentEditor({
           });
         }}
       />
+      <Dialog open={imageOpen} title="Add an image" onClose={() => { if (!imageBusy) setImageOpen(false); }}
+        footer={<>
+          <button type="button" className="btn btn-ghost" disabled={imageBusy} onClick={() => setImageOpen(false)}>Cancel</button>
+          <button type="submit" className="btn btn-primary" form={`ws-image-${document.id}`}
+            disabled={imageBusy || (!imageFile && !imageUrl.trim())}>{imageBusy ? "Preparing…" : "Insert image"}</button>
+        </>}>
+        <form id={`ws-image-${document.id}`} className="ws-image-form" onSubmit={(event) => {
+          event.preventDefault();
+          const editor = view.current;
+          if (editor) void addImages(editor, editor.state.selection.main.to, imageFile ? [imageFile] : [], imageUrl, imageAlt.trim(), true);
+        }}>
+          <label className="dlg-field">
+            <span>Image link</span>
+            <input className="text-input" value={imageUrl} placeholder="https://example.com/image.png"
+              disabled={imageBusy || !!imageFile} onChange={(event) => setImageUrl(event.target.value)} />
+          </label>
+          <label className="dlg-field">
+            <span>Or choose a file</span>
+            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={imageBusy}
+              onChange={(event) => setImageFile(event.target.files?.[0] ?? null)} />
+          </label>
+          {imageFile && <button className="btn btn-ghost" type="button" disabled={imageBusy} onClick={(event) => {
+            const input = event.currentTarget.form?.querySelector<HTMLInputElement>('input[type="file"]');
+            if (input) input.value = "";
+            setImageFile(null);
+          }}>Clear file</button>}
+          <label className="dlg-field">
+            <span>Image description (optional)</span>
+            <input className="text-input" value={imageAlt} disabled={imageBusy} onChange={(event) => setImageAlt(event.target.value)} />
+          </label>
+          {imageError && <p role="alert">{imageError}</p>}
+        </form>
+      </Dialog>
       <TextFieldDialog open={linkOpen} title="Add a link" label="Web address" placeholder="https://example.com" value={linkUrl} onChange={setLinkUrl} confirm="Add link" onClose={() => setLinkOpen(false)} onConfirm={() => {
         const editor = view.current;
         const selection = linkSelection.current;
@@ -318,10 +533,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     let pos = from;
     while (pos <= to) {
       const line = doc.lineAt(pos);
-      let node = syntaxTree(view.state).resolveInner(line.from, 1);
-      while (node.parent && node.name !== "FencedCode" && node.name !== "CodeBlock") node = node.parent;
-      const codeBlock = node.name === "FencedCode" || node.name === "CodeBlock";
-      if (codeBlock) builder.add(line.from, line.from, codeLine);
+      if (isCodeBlock(view.state, line.from)) builder.add(line.from, line.from, codeLine);
       else decorateLine(builder, line.from, line.text);
       pos = line.to + 1;
     }
@@ -329,11 +541,26 @@ function buildDecorations(view: EditorView): DecorationSet {
   return builder.finish();
 }
 
+function isCodeBlock(state: EditorState, position: number): boolean {
+  let node = syntaxTree(state).resolveInner(position, 1);
+  while (node.parent && node.name !== "FencedCode" && node.name !== "CodeBlock") node = node.parent;
+  return node.name === "FencedCode" || node.name === "CodeBlock";
+}
+
 function decorateLine(
   builder: RangeSetBuilder<Decoration>,
   offset: number,
   text: string,
 ) {
+  const image = imageLineParts(text);
+  if (image) {
+    const source = documentImageSource(image[2]);
+    if (source) {
+      const alt = image[1].replace(/\\([\\\[\]])/g, "$1");
+      builder.add(offset, offset + text.length, Decoration.replace({ widget: new DocumentImageWidget(source, alt) }));
+      return;
+    }
+  }
   if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(text)) {
     builder.add(offset, offset, ruleLine);
     builder.add(offset, offset + text.length, hide);
@@ -360,6 +587,33 @@ function decorateLine(
   addInline(builder, offset, text);
 }
 
+function imageLineParts(text: string) {
+  const complete = /^ {0,3}!\[((?:\\.|[^\]\\])*)\]\(([^()\s]+)\)\s*$/.exec(text);
+  if (complete) return complete;
+  // A partial deletion in older versions could leave the embedded URL without
+  // a closing parenthesis. Keep that payload hidden and removable as an image.
+  return /^ {0,3}!\[((?:\\.|[^\]\\])*)\]\\?\((data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/]+=*)\)?\s*$/i.exec(text);
+}
+
+class DocumentImageWidget extends WidgetType {
+  constructor(readonly source: string, readonly alt: string) { super(); }
+  eq(other: DocumentImageWidget) { return this.source === other.source && this.alt === other.alt; }
+  toDOM() {
+    const wrapper = document.createElement("span");
+    wrapper.className = "ws-document-image";
+    const image = document.createElement("img");
+    image.alt = this.alt;
+    image.decoding = "async";
+    image.referrerPolicy = "no-referrer";
+    image.addEventListener("error", () => {
+      wrapper.textContent = this.alt ? `Image unavailable: ${this.alt}` : "Image unavailable";
+    });
+    image.src = this.source;
+    wrapper.append(image);
+    return wrapper;
+  }
+}
+
 const INLINE = [
   { pattern: /\*\*([^*]+)\*\*/g, klass: "cm-strong", delimiters: 2 },
   { pattern: /__([^_]+)__/g, klass: "cm-strong", delimiters: 2 },
@@ -368,6 +622,13 @@ const INLINE = [
   { pattern: /`([^`]+)`/g, klass: "cm-code", delimiters: 1 },
   { pattern: /~~([^~]+)~~/g, klass: "cm-strike", delimiters: 2 },
   { pattern: /<u>([^\n]+?)<\/u>/g, klass: "cm-underline", delimiters: 3, endDelimiters: 4 },
+  { pattern: /<mark>([^\n]+?)<\/mark>/g, klass: "cm-highlight", delimiters: 6, endDelimiters: 7 },
+  ...["green", "blue", "red", "purple"].map((color) => ({
+    pattern: new RegExp(`<span class="hook-color-${color}">([^\\n]+?)</span>`, "g"),
+    klass: `hook-color-${color}`,
+    delimiters: `<span class="hook-color-${color}">`.length,
+    endDelimiters: 7,
+  })),
 ];
 
 function addInline(builder: RangeSetBuilder<Decoration>, offset: number, text: string) {
@@ -433,17 +694,88 @@ function addInline(builder: RangeSetBuilder<Decoration>, offset: number, text: s
 const livePreview = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
+    images: DecorationSet;
     constructor(view: EditorView) {
       this.decorations = buildDecorations(view);
+      this.images = this.decorations.update(imageDecorations);
     }
     update(update: ViewUpdate) {
       if (update.docChanged || update.viewportChanged) {
         this.decorations = buildDecorations(update.view);
+        this.images = this.decorations.update(imageDecorations);
       }
     }
   },
-  { decorations: (value) => value.decorations },
+  {
+    decorations: (value) => value.decorations,
+    provide: (plugin) => EditorView.atomicRanges.of((view) => view.plugin(plugin)?.images ?? Decoration.none),
+  },
 );
+
+const imageDecorations = {
+  filter: (_from: number, _to: number, decoration: Decoration) => decoration.spec.widget instanceof DocumentImageWidget,
+};
+
+/** At a line break, remove the image instead of joining its Markdown with ordinary text. */
+function deleteAdjacentImage(view: EditorView, forward: boolean): boolean {
+  const { state } = view;
+  const images = view.plugin(livePreview)?.images;
+  const selection = state.selection.main;
+  if (!images || state.readOnly || !selection.empty || state.selection.ranges.length !== 1) return false;
+  const line = state.doc.lineAt(selection.head);
+  if (selection.head !== (forward ? line.to : line.from)) return false;
+  const adjacent = line.number + (forward ? 1 : -1);
+  if (adjacent < 1 || adjacent > state.doc.lines) return false;
+  const imageLine = state.doc.line(adjacent);
+  let found = false;
+  images.between(imageLine.from, imageLine.to, (from, to) => {
+    if (from === imageLine.from && to === imageLine.to) found = true;
+  });
+  if (!found) return false;
+  const changes = forward ? { from: line.to, to: imageLine.to } : { from: imageLine.from, to: line.from };
+  view.dispatch({ changes, scrollIntoView: true, userEvent: forward ? "delete.forward" : "delete.backward" });
+  return true;
+}
+
+/**
+ * Expand a user deletion so an image's whole Markdown entry goes at once.
+ *
+ * This must also cover the DOM-input path: WebView2 can report Backspace and
+ * Delete as a plain `input.type` change rather than a `delete.*` command, and
+ * that path only removes the raw character under the caret, leaving the rest of
+ * the encoded URL behind. Deleting either line break next to an image is treated
+ * the same way, because joining the hidden Markdown with a neighbour would
+ * reveal it without deleting anything.
+ */
+function deleteWholeImages(transaction: Transaction) {
+  if (!transaction.docChanged) return transaction;
+  if (!transaction.isUserEvent("delete") && !transaction.isUserEvent("input")) return transaction;
+  const { doc } = transaction.startState;
+  const touched = new Set<number>();
+  transaction.changes.iterChangedRanges((from, to, newFrom, newTo) => {
+    // Only deletions. Replacing a selection should not swallow the typed text.
+    if (from === to || newFrom !== newTo) return;
+    const first = doc.lineAt(from).number;
+    const last = doc.lineAt(to).number;
+    for (let number = first; number <= last; number++) {
+      const line = doc.line(number);
+      if (!line.text.includes("![")) continue;
+      const image = imageLineParts(line.text);
+      if (!image || !documentImageSource(image[2]) || isCodeBlock(transaction.startState, line.from)) continue;
+      const content = from < line.to && to > line.from;
+      const breakBefore = number > 1 && from <= line.from - 1 && to >= line.from;
+      const breakAfter = number < doc.lines && from <= line.to && to >= line.to + 1;
+      if (content || breakBefore || breakAfter) touched.add(number);
+    }
+  });
+  const changes = [...touched].sort((a, b) => a - b).flatMap((number) => {
+    const line = doc.line(number);
+    const from = transaction.changes.mapPos(line.from, -1);
+    const to = transaction.changes.mapPos(line.to, 1);
+    return from < to ? [{ from, to }] : [];
+  });
+  return changes.length ? [transaction, { changes, sequential: true }] : transaction;
+}
 
 function webLinkUrl(destination: string): URL | null {
   try {
@@ -605,6 +937,10 @@ const tablePreview = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+const formattedExtensions = [
+  livePreview, tablePreview, linkHover, EditorState.transactionFilter.of(deleteWholeImages),
+];
+
 function buildTables(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
@@ -631,6 +967,32 @@ function buildTables(state: EditorState): DecorationSet {
 }
 
 // ── Shortcuts ────────────────────────────────────────────────────────────────
+
+function setTextColor(view: EditorView, color: string): boolean {
+  if (view.state.readOnly) return false;
+  const { from, to } = view.state.selection.main;
+  if (from === to) return false;
+  const line = view.state.doc.lineAt(from);
+  const existing = /<span class="hook-color-(green|blue|red|purple)">([^\n]*?)<\/span>/g;
+  for (const match of line.text.matchAll(existing)) {
+    const start = line.from + match.index!;
+    const contentStart = start + match[0].indexOf(">") + 1;
+    const contentEnd = contentStart + match[2].length;
+    if (from < contentStart || to > contentEnd) continue;
+    const oldOpen = `<span class="hook-color-${match[1]}">`;
+    const newOpen = color ? `<span class="hook-color-${color}">` : "";
+    const wrap = (text: string, open: string) => text ? open ? `${open}${text}</span>` : text : "";
+    const before = wrap(view.state.sliceDoc(contentStart, from), oldOpen);
+    const selected = view.state.sliceDoc(from, to);
+    const after = wrap(view.state.sliceDoc(to, contentEnd), oldOpen);
+    const replacement = before + wrap(selected, newOpen) + after;
+    const anchor = start + before.length + newOpen.length;
+    view.dispatch({ changes: { from: start, to: start + match[0].length, insert: replacement }, selection: { anchor, head: anchor + selected.length } });
+    return true;
+  }
+  if (!color) return false;
+  return toggleWrap(view, `<span class="hook-color-${color}">`, "</span>");
+}
 
 function toggleWrap(view: EditorView, marker: string, endMarker = marker): boolean {
   if (view.state.readOnly) return false;

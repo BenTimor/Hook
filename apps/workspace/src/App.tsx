@@ -63,6 +63,7 @@ function Workspace({
   );
   const openProject = useWorkspaceStore((state) => state.openProject);
   const openBoard = useWorkspaceStore((state) => state.openBoard);
+  const openTask = useWorkspaceStore((state) => state.openTask);
   const openDocument = useWorkspaceStore((state) => state.openDocument);
   const createProject = useWorkspaceStore((state) => state.createProject);
 
@@ -154,7 +155,7 @@ function Workspace({
       ? [
           { label: project.name, onClick: () => void openProject(project.id) },
           ...(board
-            ? [{ label: board.name }]
+            ? [{ label: board.name, ...(task ? { onClick: () => void openTask(null) } : {}) }, ...(task ? [{ label: task.title }] : [])]
             : documentMeta
               ? [{ label: documentMeta.title || "Untitled" }]
               : []),
@@ -195,9 +196,9 @@ function Workspace({
             {back && project ? (
               <button
                 className="icon-btn ws-back"
-                title="Back to the project"
-                aria-label="Back to the project"
-                onClick={() => void openProject(project.id)}
+                title={task ? "Back to the board" : "Back to the project"}
+                aria-label={task ? "Back to the board" : "Back to the project"}
+                onClick={() => task ? void openTask(null) : void openProject(project.id)}
               >
                 <ArrowLeft strokeWidth={1.8} />
               </button>
@@ -258,7 +259,10 @@ function Workspace({
               onBack={() => void openProject(project.id)}
             />
           ) : board ? (
-            <BoardPage board={board} tasks={tasks} />
+            <>
+              <div className="ws-board-container" hidden={Boolean(task)}><BoardPage board={board} tasks={tasks} /></div>
+              {task && <TaskPanel key={task.id} task={task} />}
+            </>
           ) : (
             <ProjectHome
               key={`${auth.email ?? ""}:${project.id}`}
@@ -270,8 +274,6 @@ function Workspace({
           )}
         </div>
       </main>
-
-      {task ? <TaskPanel task={task} /> : null}
 
       <ChatDock
         transport={chatTransport}

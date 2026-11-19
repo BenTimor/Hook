@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { LayoutList, Plus, Rows3 } from "lucide-react";
+import { ArrowLeft, LayoutList, Plus, Rows3 } from "lucide-react";
 
 import type { Board, Member, Task } from "../lib/types";
 import { pendingPeople, personFor, personLabel, unknownPerson } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { BoardTable } from "./BoardTable";
+import { DocumentEditor } from "./DocumentEditor";
 
 /**
  * A board as its columns: one column per status option, cards in order.
  *
  * Moving a card is a status change, not a drag: the server owns the order and
  * a keyboard-accessible select beats a drag for the first version. The card
- * opens the task panel, where everything else is edited.
+ * opens the task view, where everything else is edited.
  */
 export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
   const createTask = useWorkspaceStore((state) => state.createTask);
@@ -168,7 +169,7 @@ function firstLine(markdown: string): string {
 }
 
 /**
- * The task panel. Description and title are edited in place and saved on blur,
+ * The task view. Description and title are edited in place and saved on blur,
  * so there is no Save button to forget.
  */
 export function TaskPanel({ task }: { task: Task }) {
@@ -189,16 +190,13 @@ export function TaskPanel({ task }: { task: Task }) {
   const addComment = useWorkspaceStore((state) => state.addComment);
 
   const [title, setTitle] = useState(task.title);
-  const [description, setDescription] = useState(task.description);
+  const [descriptionDirty, setDescriptionDirty] = useState(false);
+  const [sourceMode, setSourceMode] = useState(false);
+  const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
+  const project = useWorkspaceStore((state) => state.projects.find((item) => item.id === state.activeProjectId));
+  const readOnly = project?.role === "viewer";
   const [draft, setDraft] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const descriptionRef = useRef<HTMLTextAreaElement>(null);
-
-  // The feed can replace the task under us; follow it unless the field is
-  // focused, so a teammate's rename lands without eating what is being typed.
-  useEffect(() => {
-    if (document.activeElement !== descriptionRef.current) setDescription(task.description);
-  }, [task.description]);
   useEffect(() => {
     setTitle(task.title);
   }, [task.title]);
@@ -226,11 +224,14 @@ export function TaskPanel({ task }: { task: Task }) {
     : null;
 
   return (
-    <aside className="ws-task">
+    <section className="ws-task" aria-label="Task details">
+      <div className="ws-task-inner">
+      <button className="ws-task-back" onClick={() => void openTask(null)}><ArrowLeft /> Back to board</button>
       <header className="ws-task-head">
         <input
           className="ws-task-title"
           value={title}
+          readOnly={readOnly}
           onChange={(event) => setTitle(event.target.value)}
           onBlur={() => {
             const next = title.trim();
@@ -245,11 +246,10 @@ export function TaskPanel({ task }: { task: Task }) {
             }
           }}
         />
-        <button className="icon-btn" title="Close" onClick={() => void openTask(null)}>
-          <span aria-hidden="true">✕</span>
-        </button>
       </header>
 
+      <div className="ws-task-layout">
+      <div className="ws-task-main">
       <div className="ws-task-fields">
         {status ? (
           <label className="ws-field">
@@ -299,23 +299,30 @@ export function TaskPanel({ task }: { task: Task }) {
       </div>
 
       <div className="ws-task-section">
-        <div className="ws-task-label">Description</div>
-        <textarea
-          ref={descriptionRef}
-          className="ws-task-description"
-          value={description}
-          placeholder="Markdown works here."
-          onChange={(event) => setDescription(event.target.value)}
-          onBlur={() => {
-            if (description !== task.description) {
-              void updateTask(task.id, { description });
-            }
+        <div className="ws-task-section-heading">
+          <div><h2>Description</h2><p>Give this task the context it needs.</p></div>
+          <div className="ws-task-description-actions">
+            <span aria-live="polite">{descriptionDirty ? "Saving…" : "Saved"}</span>
+            <button type="button" className="ws-task-source" onClick={() => setSourceMode(!sourceMode)}>{sourceMode ? "Formatted" : "Markdown"}</button>
+          </div>
+        </div>
+        <DocumentEditor
+          document={{ id: task.id, markdown: task.description }}
+          raw={sourceMode}
+          readOnly={readOnly}
+          compact
+          onChange={setDescriptionDirty}
+          onSave={(markdown) => {
+            const pendingSave = saveQueue.current.catch(() => false).then(() => updateTask(task.id, { description: markdown }));
+            saveQueue.current = pendingSave;
+            return pendingSave;
           }}
         />
       </div>
+      </div>
 
-      <div className="ws-task-section">
-        <div className="ws-task-label">Comments</div>
+      <div className="ws-task-section ws-task-discussion">
+        <div className="ws-task-section-heading"><div><h2>Discussion</h2><p>Keep the conversation with the work.</p></div><span className="ws-task-comment-count">{comments.length}</span></div>
         {comments.map((comment) => (
           <div className="ws-comment" key={comment.id}>
             <div className="ws-comment-head">
@@ -352,6 +359,7 @@ export function TaskPanel({ task }: { task: Task }) {
           </button>
         </div>
       </div>
+      </div>
 
       <footer className="ws-task-foot">
         {confirmDelete ? (
@@ -379,7 +387,8 @@ export function TaskPanel({ task }: { task: Task }) {
           </button>
         )}
       </footer>
-    </aside>
+      </div>
+    </section>
   );
 }
 

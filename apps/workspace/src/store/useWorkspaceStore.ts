@@ -60,7 +60,7 @@ interface WorkspaceState {
 
   openTask: (id: string | null) => Promise<void>;
   createTask: (boardId: string, status: string) => Promise<Task | null>;
-  updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
+  updateTask: (id: string, patch: Partial<Task>) => Promise<boolean>;
   /** Rows are ordered by hand: position becomes the index in this list. */
   reorderTasks: (boardId: string, orderedIds: string[]) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
@@ -379,8 +379,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ),
         },
       }));
+      return true;
     } catch (error) {
       set({ error: message(error) });
+      return false;
     }
   },
 

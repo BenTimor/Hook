@@ -886,6 +886,9 @@ opened and edited work without duplicates. Favorites and recently opened items
 are saved on this device for the signed-in email and project; recently edited
 uses the items' server-provided edit times. Quick access tiles load board tasks
 or formatted document content for a preview when the tile comes into view.
+Opening or creating a board task shows its details, description and comments in
+a full task view. The description uses the document formatting toolbar and
+automatically saves edits. Back to board returns to the selected board view.
 
 The important structural decision: **the workspace service is the product; the
 window is a client.** `server/workspace.mjs` owns projects, memberships,
@@ -918,6 +921,12 @@ this rule are adopted when the service starts.
   round-trip to lose formatting. A formatting toolbar adds headings, lists,
   checklists, links, inline styles, code blocks, dividers and Markdown tables.
   The formatted editor is the default and lets people edit table cells directly.
+  Use **Add image** in a document or task description to insert a web image or
+  select a PNG, JPEG, GIF, or WebP file. You can also paste an image from the
+  clipboard or drop an image file onto the editor. Embedded images sync with
+  the Markdown and count toward its 512 KB limit. Large files are
+  resized to fit, and animated GIFs may become still images when resized.
+  In the formatted editor, Backspace and Delete remove an adjacent image as a unit.
   Hover over a web link for its address and open action, or Ctrl-click it to open.
   Document options also offers Markdown source editing and deletion. A write carries the revision it was based
   on; a stale one is refused with the current copy rather than silently overwriting

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { FileText, KanbanSquare } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 
 import { api } from "../lib/bridge";
+import { documentImageSource } from "../lib/documentImages";
 import type { Task } from "../lib/types";
 
 /** Load real content only when a tile comes into view; never change the open item. */
@@ -94,10 +95,15 @@ export function QuickPreview({
           {content.text?.trim() ? (
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeRaw, [rehypeSanitize, { ...defaultSchema, tagNames: [...(defaultSchema.tagNames ?? []), "u"] }]]}
+              rehypePlugins={[rehypeRaw, [rehypeSanitize, { ...defaultSchema, protocols: { ...defaultSchema.protocols, src: [...(defaultSchema.protocols?.src ?? []), "data"] }, tagNames: [...(defaultSchema.tagNames ?? []), "u", "mark"], attributes: { ...defaultSchema.attributes, span: [["className", "hook-color-green", "hook-color-blue", "hook-color-red", "hook-color-purple"]] } }]]}
+              urlTransform={(url, key, node) => node.tagName === "img" && key === "src"
+                ? documentImageSource(url) ?? ""
+                : defaultUrlTransform(url)}
               components={{
                 a: ({ children }) => <span className="ws-preview-link">{children}</span>,
-                img: ({ alt }) => <span>{alt || "Image"}</span>,
+                img: ({ alt, src }) => src
+                  ? <img className="ws-quick-preview-image" src={src} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" />
+                  : <span>{alt || "Image"}</span>,
                 input: ({ checked }) => <span className="ws-preview-checkbox">{checked ? "☑" : "☐"}</span>,
               }}
             >
