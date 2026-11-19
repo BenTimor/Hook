@@ -977,7 +977,7 @@ Products share `packages/ui` (tokens, chrome, primitives) and `packages/chat`
   chats\<id>.json          one readable JSON file per conversation
   trash\                   undoable deletions
   images\<chat id>\        pictures attached to messages (bytes on disk)
-  settings.json            projects folder, and whether memory is on
+  settings.json            projects folder, memory switch, advanced mode
   projects.json            the notes the chat agent keeps about projects
   agents.json              coding-agent runs and their states
   auth.json                a mirror of the shared account, so a downgrade works
@@ -1222,6 +1222,31 @@ the instructions never move). `projects.rs` covers the `AGENTS.md` block
 covers the sync half (newest wins, tombstones, an unshaped entry is refused,
 deleting the account clears memory).
 
+## Advanced mode
+
+Settings → **Advanced** turns on a debugging view of how answers are made. It is
+off by default and stored in `settings.json`.
+
+- **In a conversation**, every turn shows the model's thinking and the tools it
+  ran above the reply. While the turn runs the block stays open; when the final
+  reply lands it folds to one line (`Thinking · 2 tool calls`) and that line
+  reopens it. Tool calls get a readable title and the argument that identifies
+  the work (the command, the path, the query); expanding one shows the full
+  arguments and the result. Nothing new is written for this: reasoning and tool
+  calls were already in the chat file, and the history/prefix rules in
+  **Memory → Why the prefix is append-only** are unchanged.
+- **The sidebar** gains a **Coding agents** tree: one folder per project, with
+  rows for runs that are still working, plus a run that stopped (stopped,
+  failed, interrupted) in the open chat within the last few minutes. Older
+  stopped runs and successful ones stay out of the tree; the one you are
+  inspecting stays even if it finishes, until you switch chats. Clicking a row
+  opens a read-only inspector with the same rendering — the brief, the agent's
+  thinking, its narration, every tool call and result — and keeps polling while
+  the run is live (`agent_transcript` reads the pi session file in
+  `agent-sessions/` plus an in-memory tail for the message being streamed).
+  There are deliberately no steering controls: steering, answering and stopping
+  stay a conversation with the chat agent.
+
 ## Coding agents
 
 The chat agent can create projects, brief a coding agent, and report back in the
@@ -1390,9 +1415,10 @@ conversation while you keep chatting.
 Agents are children of Hook: closing the window kills their process trees and
 marks the run `interrupted`, so nothing keeps running behind your back.
 
-The Settings sheet (gear in the sidebar footer) holds one thing: the projects
-folder. Provider and model settings — and everything about the coding engine —
-stay compiled into the build.
+The Settings sheet (gear in the sidebar footer) holds the account, Import
+history, **Advanced** mode, Memory, Sync, the projects folder and updates.
+Provider and model settings — and everything about the coding engine — stay
+compiled into the build.
 
 ## Keyboard
 
@@ -1417,11 +1443,11 @@ crates/hook-core/src/          the backend every product links
   turn.rs       the assistant turn: model → tools → tools → answer, plus wakes
   tools.rs      the tool schemas and their implementations
   agent.rs      engine RPC supervisor: spawn, states, plans, progress batching,
-                wakes, stop-chat
+                wakes, stop-chat, read-only session transcripts
   runtime.rs    locate the bundled engine, write its models.json
   guard.rs      the guard extension, materialized from the binary
   update.rs     release index, update policy, checksum-checked installer
-  settings.rs   projects folder
+  settings.rs   projects folder, memory switch, advanced mode
   projects.rs   folder scanning, stable account ids, descriptions, containment
   git.rs        bundled git, managed config, repository preparation
   sync.rs       background chat/picture/project sync, server-side merge cursor
@@ -1431,7 +1457,8 @@ crates/hook-core/src/          the backend every product links
 apps/chat/                     the chat product
   src/lib/bridge.ts  typed invoke wrappers + app-wide event bus
   src/store/         zustand: chats, per-chat streams, agents, settings
-  src/components/    Sidebar, Thread, Composer, AgentBoard, SettingsSheet…
+  src/components/    Sidebar, Thread, Composer, AgentBoard, AgentTree,
+                     AgentInspector, SettingsSheet…
   src/styles/        this product's layout (the foundation lives in packages/ui)
 apps/workspace/                Hook Workspace
 packages/ui/                   tokens.css, window chrome, primitives, the mark

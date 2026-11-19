@@ -6,6 +6,7 @@ import type { SearchHit } from "../lib/types";
 import { groupChats, modKey } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 import { isLiveAgent } from "../lib/agents";
+import { AgentTree } from "./AgentTree";
 import { ChatRow } from "./ChatRow";
 import { HookMark } from "@hook/ui";
 
@@ -20,6 +21,7 @@ export function Sidebar() {
   const info = useChatStore((s) => s.info);
   const open = useChatStore((s) => s.sidebarOpen);
   const searchToken = useChatStore((s) => s.searchToken);
+  const advanced = useChatStore((s) => Boolean(s.settings?.advancedMode));
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
   const openSettings = useChatStore((s) => s.openSettings);
 
@@ -177,6 +179,8 @@ export function Sidebar() {
             Ask something to start one.
           </div>
         )}
+
+        {advanced && <AgentTree />}
       </div>
 
       <div className="sidebar-foot">

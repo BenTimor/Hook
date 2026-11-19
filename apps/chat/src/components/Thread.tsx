@@ -21,6 +21,10 @@ export function Thread() {
   const streamText = useChatStore((s) =>
     s.activeId ? s.streams[s.activeId]?.text : undefined,
   );
+  const streamReasoning = useChatStore((s) =>
+    s.activeId ? s.streams[s.activeId]?.reasoning : undefined,
+  );
+  const showDetails = useChatStore((s) => Boolean(s.settings?.advancedMode));
   const activity = useChatStore((s) =>
     s.activeId ? s.activity[s.activeId] : undefined,
   );
@@ -35,7 +39,9 @@ export function Thread() {
       <SharedThread
         messages={messages}
         streamText={streamText}
+        streamReasoning={streamReasoning}
         activity={activity}
+        showDetails={showDetails}
         onRegenerate={() => void regenerate()}
         onEdit={(id, text) => void edit(id, text)}
         onReport={setReporting}

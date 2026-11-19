@@ -536,3 +536,289 @@
   width: 11px;
   height: 11px;
 }
+
+/* ── Thinking and tool calls (advanced mode) ───────────────────────────── */
+
+/* One turn's work: a single quiet line until the answer lands, then folded
+   away. Every step inside is shared with the coding-agent inspector. */
+.work-group {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: rgba(var(--ink-rgb), 0.018);
+  margin-bottom: 11px;
+  overflow: hidden;
+}
+
+.work-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px 7px 10px;
+  text-align: left;
+  color: var(--ink-3);
+  transition: background 120ms, color 120ms;
+}
+
+.work-group-head:hover {
+  background: rgba(var(--ink-rgb), 0.035);
+  color: var(--ink-2);
+}
+
+.work-group-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(var(--accent-rgb), 0.09);
+  color: var(--accent);
+}
+
+.work-group-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.work-group-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.002em;
+}
+
+.work-group-live {
+  color: var(--ink-4);
+  font-weight: 400;
+}
+
+.work-group-chevron {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  color: var(--ink-4);
+  transition: transform 160ms var(--ease);
+}
+
+.work-group-head[aria-expanded="false"] .work-group-chevron {
+  transform: rotate(-90deg);
+}
+
+.work-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 1px 9px 9px;
+}
+
+.work-thinking {
+  border-radius: 9px;
+  background: rgba(var(--ink-rgb), 0.028);
+  padding: 7px 10px 8px;
+}
+
+.work-thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.work-thinking-head svg {
+  width: 12px;
+  height: 12px;
+}
+
+.work-thinking-live {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--accent);
+}
+
+.work-thinking-body {
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 12.6px;
+  line-height: 1.58;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.work-text {
+  padding: 1px 2px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.work-text .md {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.work-text .md > *:first-child {
+  margin-top: 0;
+}
+
+.work-text .md > *:last-child {
+  margin-bottom: 0;
+}
+
+.tool-call {
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: var(--panel-strong);
+  overflow: hidden;
+}
+
+.tool-call[data-running="true"] {
+  border-color: rgba(var(--accent-rgb), 0.22);
+}
+
+.tool-call[data-error="true"] {
+  border-color: rgba(192, 57, 43, 0.22);
+}
+
+.tool-call-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.tool-call-head:hover {
+  background: rgba(var(--ink-rgb), 0.03);
+}
+
+.tool-call-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(var(--ink-rgb), 0.05);
+  color: var(--ink-3);
+}
+
+.tool-call-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tool-call[data-running="true"] .tool-call-icon {
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent);
+}
+
+.tool-call[data-error="true"] .tool-call-icon {
+  background: rgba(192, 57, 43, 0.08);
+  color: var(--danger);
+}
+
+.tool-call-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tool-call-title {
+  font-size: 12.3px;
+  font-weight: 520;
+  color: var(--ink);
+}
+
+.tool-call-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.3px;
+  color: var(--ink-3);
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+}
+
+.tool-call-chevron {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--ink-4);
+  transition: transform 160ms var(--ease);
+}
+
+.tool-call-head[aria-expanded="true"] .tool-call-chevron {
+  transform: rotate(180deg);
+}
+
+.tool-call-spin {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(var(--accent-rgb), 0.2);
+  border-top-color: var(--accent);
+  animation: work-spin 780ms linear infinite;
+}
+
+.tool-call-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 8px 8px;
+}
+
+.tool-section-label {
+  margin-bottom: 3px;
+  font-size: 10px;
+  font-weight: 550;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.tool-pre {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: rgba(var(--ink-rgb), 0.035);
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.4px;
+  line-height: 1.52;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.tool-call[data-error="true"] .tool-pre {
+  background: rgba(192, 57, 43, 0.045);
+}
+
+@keyframes work-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-call-spin {
+    animation: none;
+  }
+}

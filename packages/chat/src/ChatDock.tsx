@@ -17,8 +17,6 @@ export interface DockChat {
 
 export interface DockMessage extends ChatMessage {
   role: "user" | "assistant" | "system" | "tool";
-  /** Present when a reply ended in a tool call: the turn is still going. */
-  toolCalls?: unknown[];
 }
 
 export interface DockEvent {

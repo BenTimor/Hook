@@ -3,6 +3,7 @@ import { AlertCircle, Check, Copy, Flag, Pencil, RefreshCw } from "lucide-react"
 
 import { copyText } from "./clipboard";
 import { Markdown } from "./Markdown";
+import { WorkGroup, type WorkStep } from "./WorkSteps";
 import type { ChatMessage } from "./types";
 import "./chat.css";
 
@@ -10,6 +11,10 @@ export interface MessageItemProps<M extends ChatMessage> {
   message: M;
   /** The text of a reply that is still arriving, if this is the one streaming. */
   streamText?: string;
+  /** Thinking and tool calls that led to this reply, folded above it. */
+  steps?: WorkStep[];
+  /** The turn is still running, so the work block stays open for now. */
+  workLive?: boolean;
   isLastAssistant?: boolean;
   onRegenerate?: () => void;
   onEdit?: (id: string, text: string) => void;
@@ -42,6 +47,8 @@ function ThinkingDots() {
 export function MessageItem<M extends ChatMessage>({
   message,
   streamText,
+  steps,
+  workLive,
   isLastAssistant,
   onRegenerate,
   onEdit,
@@ -146,6 +153,8 @@ export function MessageItem<M extends ChatMessage>({
 
   return (
     <div className="msg" data-role="assistant">
+      {steps && steps.length > 0 && <WorkGroup steps={steps} live={workLive} />}
+
       {empty ? <ThinkingDots /> : <Markdown content={body} streaming={streaming} />}
 
       {renderExtras?.(message)}

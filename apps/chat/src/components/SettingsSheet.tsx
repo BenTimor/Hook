@@ -84,6 +84,7 @@ export function SettingsSheet() {
   const close = useChatStore((s) => s.closeSettings);
   const settings = useChatStore((s) => s.settings);
   const chooseProjectsDir = useChatStore((s) => s.chooseProjectsDir);
+  const setAdvancedMode = useChatStore((s) => s.setAdvancedMode);
   const auth = useChatStore((s) => s.auth);
   const authBusy = useChatStore((s) => s.authBusy);
   const signOut = useChatStore((s) => s.signOut);
@@ -161,6 +162,26 @@ export function SettingsSheet() {
           </section>
 
           <ImportSection />
+
+          <section className="sheet-section">
+            <div className="sheet-label">
+              <span>Advanced</span>
+            </div>
+            <label className="memory-note advanced-toggle">
+              <input
+                type="checkbox"
+                checked={Boolean(settings?.advancedMode)}
+                onChange={(event) => void setAdvancedMode(event.target.checked)}
+              />
+              Show thinking and tool calls
+            </label>
+            <p className="sheet-help">
+              Every answer folds the model's thinking and the tools it ran into
+              one block you can open again, and the sidebar lists the coding
+              agents with a read-only view of what each one did. Off by default,
+              because it is a lot of detail.
+            </p>
+          </section>
 
           <MemorySection />
 

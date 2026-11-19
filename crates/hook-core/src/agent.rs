@@ -176,6 +176,65 @@ pub struct SessionSummary {
     pub preview: String,
 }
 
+/// One entry in a coding agent's transcript, as the advanced inspector draws
+/// it. The conversation and the inspector share the renderer, so the shape is
+/// deliberately small: what was thought, what was said, what was run.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptItem {
+    pub id: String,
+    /// `user`, `text`, `thinking` or `tool`.
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Tool name for `kind: "tool"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The tool's arguments, already parsed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<serde_json::Value>,
+    /// What the tool returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_error: bool,
+    /// `running`, `done` or `error`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTranscript {
+    pub id: String,
+    pub title: String,
+    pub project: String,
+    pub state: String,
+    /// The run still has a live process (it may be idle but kept warm for a
+    /// follow-up). The inspector uses the state to decide whether to poll.
+    pub live: bool,
+    pub items: Vec<TranscriptItem>,
+    /// Older entries were dropped to keep the payload bounded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+}
+
+/// Bounded on purpose: a long run can produce thousands of chunks and a tool
+/// can print megabytes. The inspector is for reading, not archiving.
+const MAX_TRANSCRIPT_ITEMS: usize = 600;
+const MAX_TRANSCRIPT_TEXT: usize = 12_000;
+const MAX_TRANSCRIPT_OUTPUT: usize = 16_000;
+
+/// The assistant message currently streaming, plus tool calls that have not
+/// reached the session file yet. Kept in memory only: the file on disk is the
+/// source of truth once a message ends.
+#[derive(Debug, Clone, Default)]
+struct LiveTranscript {
+    thinking: String,
+    text: String,
+    tools: Vec<TranscriptItem>,
+}
+
 /// One progress note a coding agent sent, with any pictures it attached.
 #[derive(Debug, Clone)]
 pub struct Update {
@@ -229,6 +288,9 @@ struct Entry {
     delivered: bool,
     /// The last assistant turn was cut off at the output limit.
     truncated: bool,
+    /// Thinking and tools the advanced inspector can already see, before pi
+    /// has flushed the completed message into the session file.
+    live: LiveTranscript,
 }
 
 #[derive(Default)]
@@ -298,6 +360,7 @@ impl AgentManager {
                             last_flush_at: now_ms(),
                             delivered: false,
                             truncated: false,
+                            live: LiveTranscript::default(),
                         },
                     );
                 }
@@ -828,6 +891,7 @@ impl AgentManager {
                     last_flush_at: now_ms(),
                     delivered: false,
                     truncated: false,
+                    live: LiveTranscript::default(),
                 },
             );
             persist(&self.data_dir, &inner);
@@ -844,10 +908,11 @@ impl AgentManager {
         let inner = self.inner.clone();
         let data_dir = self.data_dir.clone();
         let signal_tx = self.signal_tx.clone();
+        let settings = self.settings.clone();
         let chat_id = chat_id.to_string();
         tokio::spawn(async move {
             drive(
-                id, chat_id, inner, data_dir, signal_tx, child, stdin, stdout, rx,
+                id, chat_id, inner, data_dir, signal_tx, settings, child, stdin, stdout, rx,
             )
             .await;
         });
@@ -1074,6 +1139,93 @@ impl AgentManager {
         out.truncate(20);
         out
     }
+
+    /// The full transcript of one run: what it thought, said and ran. Read
+    /// from the pi session file, plus the live buffer for the message or tool
+    /// that has not been flushed yet. Advanced mode is the only caller.
+    pub fn transcript(&self, agent_id: &str) -> Result<AgentTranscript, String> {
+        let (info, live) = {
+            let inner = lock(&self.inner);
+            let entry = inner
+                .agents
+                .get(agent_id)
+                .ok_or_else(|| format!("No agent {agent_id}"))?;
+            (entry.info.clone(), entry.live.clone())
+        };
+
+        let mut items = Vec::new();
+        let mut truncated = false;
+        if let Some(file) = newest_session_file(&self.sessions_dir, &info.session_id) {
+            if let Ok(raw) = std::fs::read_to_string(&file) {
+                let parsed = parse_transcript(&raw);
+                items = parsed.0;
+                truncated = parsed.1;
+            }
+        }
+
+        // Merge the live tail. Thinking and narration come before the tools
+        // they led to.
+        if !live.thinking.trim().is_empty() {
+            items.push(TranscriptItem {
+                id: format!("{}-live-thinking", info.id),
+                kind: "thinking".into(),
+                text: Some(truncate(&live.thinking, MAX_TRANSCRIPT_TEXT)),
+                name: None,
+                args: None,
+                output: None,
+                is_error: false,
+                status: None,
+            });
+        }
+        if !live.text.trim().is_empty() {
+            items.push(TranscriptItem {
+                id: format!("{}-live-text", info.id),
+                kind: "text".into(),
+                text: Some(truncate(&live.text, MAX_TRANSCRIPT_TEXT)),
+                name: None,
+                args: None,
+                output: None,
+                is_error: false,
+                status: None,
+            });
+        }
+        // Completed tools that the file already has are updated rather than
+        // duplicated, so the output does not blink out between
+        // `tool_execution_end` and the toolResult being written.
+        let mut disk_tool = HashMap::new();
+        for (index, item) in items.iter().enumerate() {
+            if item.kind == "tool" {
+                disk_tool.insert(item.id.clone(), index);
+            }
+        }
+        for tool in live.tools {
+            match disk_tool.get(&tool.id) {
+                Some(&index) => {
+                    if tool.output.is_some() {
+                        items[index].output = tool.output;
+                        items[index].is_error = tool.is_error;
+                        items[index].status = tool.status;
+                    }
+                }
+                None => items.push(tool),
+            }
+        }
+        if items.len() > MAX_TRANSCRIPT_ITEMS {
+            items.drain(..items.len() - MAX_TRANSCRIPT_ITEMS);
+            truncated = true;
+        }
+
+        let live = info.is_live();
+        Ok(AgentTranscript {
+            id: info.id,
+            title: info.title,
+            project: info.project,
+            state: info.state,
+            live,
+            items,
+            truncated,
+        })
+    }
 }
 
 fn next_id(prefix: &str) -> String {
@@ -1130,6 +1282,176 @@ fn walk_jsonl(root: &Path, depth: usize) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// The newest session file for a run. A resumed session may have written
+/// several files with the same id over time; the latest one is the live story.
+fn newest_session_file(root: &Path, session_id: &str) -> Option<PathBuf> {
+    let suffix = format!("_{session_id}.jsonl");
+    walk_jsonl(root, 2)
+        .into_iter()
+        .filter(|file| {
+            file.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.ends_with(&suffix))
+                .unwrap_or(false)
+        })
+        .max_by_key(|file| {
+            std::fs::metadata(file)
+                .and_then(|meta| meta.modified())
+                .unwrap_or(std::time::UNIX_EPOCH)
+        })
+}
+
+/// Read the messages out of a pi session file. System messages (the prompt and
+/// the tool loadout) are not part of what the user came to inspect; everything
+/// else — the brief, thinking, narration, tool calls and their results — is.
+fn parse_transcript(raw: &str) -> (Vec<TranscriptItem>, bool) {
+    let mut items: Vec<TranscriptItem> = Vec::new();
+    let mut calls: HashMap<String, usize> = HashMap::new();
+
+    for line in raw.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(|t| t.as_str()) != Some("message") {
+            continue;
+        }
+        let Some(message) = value.get("message") else {
+            continue;
+        };
+        let role = message.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        let base = value.get("id").and_then(|v| v.as_str()).unwrap_or("m");
+
+        match role {
+            "user" => {
+                let text = text_of_message(message);
+                if text.trim().is_empty() {
+                    continue;
+                }
+                items.push(TranscriptItem {
+                    id: base.to_string(),
+                    kind: "user".into(),
+                    text: Some(truncate(&text, MAX_TRANSCRIPT_TEXT)),
+                    name: None,
+                    args: None,
+                    output: None,
+                    is_error: false,
+                    status: None,
+                });
+            }
+            "assistant" => {
+                let Some(blocks) = message.get("content").and_then(|c| c.as_array()) else {
+                    continue;
+                };
+                for (index, block) in blocks.iter().enumerate() {
+                    let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    let id = format!("{base}-{index}");
+                    match block_type {
+                        "thinking" => {
+                            let text = block
+                                .get("thinking")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or_default();
+                            if text.trim().is_empty() {
+                                continue;
+                            }
+                            items.push(TranscriptItem {
+                                id,
+                                kind: "thinking".into(),
+                                text: Some(truncate(text, MAX_TRANSCRIPT_TEXT)),
+                                name: None,
+                                args: None,
+                                output: None,
+                                is_error: false,
+                                status: None,
+                            });
+                        }
+                        "text" => {
+                            let text = block
+                                .get("text")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or_default();
+                            if text.trim().is_empty() {
+                                continue;
+                            }
+                            items.push(TranscriptItem {
+                                id,
+                                kind: "text".into(),
+                                text: Some(truncate(text, MAX_TRANSCRIPT_TEXT)),
+                                name: None,
+                                args: None,
+                                output: None,
+                                is_error: false,
+                                status: None,
+                            });
+                        }
+                        "toolCall" => {
+                            let call_id = block
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(&id)
+                                .to_string();
+                            calls.insert(call_id.clone(), items.len());
+                            items.push(TranscriptItem {
+                                id: call_id,
+                                kind: "tool".into(),
+                                text: None,
+                                name: block
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string),
+                                args: block.get("arguments").cloned(),
+                                output: None,
+                                is_error: false,
+                                status: Some("running".into()),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "toolResult" => {
+                let call_id = message
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let output = truncate(&text_of_message(message), MAX_TRANSCRIPT_OUTPUT);
+                let error = message
+                    .get("isError")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                match calls.get(call_id) {
+                    Some(&index) => {
+                        items[index].output = Some(output);
+                        items[index].is_error = error;
+                        items[index].status = Some(if error { "error" } else { "done" }.into());
+                    }
+                    None => items.push(TranscriptItem {
+                        id: call_id.to_string(),
+                        kind: "tool".into(),
+                        text: None,
+                        name: message
+                            .get("toolName")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
+                        args: None,
+                        output: Some(output),
+                        is_error: error,
+                        status: Some(if error { "error" } else { "done" }.into()),
+                    }),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut truncated = false;
+    if items.len() > MAX_TRANSCRIPT_ITEMS {
+        items.drain(..items.len() - MAX_TRANSCRIPT_ITEMS);
+        truncated = true;
+    }
+    (items, truncated)
 }
 
 fn read_session_summary(path: &Path) -> Option<(String, SessionSummary)> {
@@ -1453,6 +1775,7 @@ async fn drive(
     inner: Arc<Mutex<Inner>>,
     data_dir: PathBuf,
     signal_tx: mpsc::UnboundedSender<Signal>,
+    settings: Arc<SettingsStore>,
     mut child: Child,
     mut stdin: tokio::process::ChildStdin,
     stdout: tokio::process::ChildStdout,
@@ -1478,10 +1801,17 @@ async fn drive(
                         // not match the prefix takes the normal path.
                         let trimmed = line.trim();
                         if let Some(rest) = trimmed.strip_prefix("{\"type\":\"") {
-                            if rest.starts_with("message_update\"")
-                                || rest.starts_with("tool_execution_update\"")
-                            {
+                            if rest.starts_with("tool_execution_update\"") {
                                 continue;
+                            }
+                            if rest.starts_with("message_update\"") {
+                                // The advanced inspector shows thinking as it
+                                // streams, so those records are worth parsing.
+                                // With the switch off they stay skipped, exactly
+                                // as before: a thinking model sends hundreds.
+                                if !settings.advanced_mode() {
+                                    continue;
+                                }
                             }
                         }
                         let Ok(record) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
@@ -1663,12 +1993,101 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                 info.steps = info.steps.saturating_add(1);
                 info.last_step = Some(short_step(tool, &args));
                 info.updated_at = now_ms();
+                entry.live.tools.retain(|item| {
+                    item.id
+                        != record
+                            .get("toolCallId")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                });
+                entry.live.tools.push(TranscriptItem {
+                    id: record
+                        .get("toolCallId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    kind: "tool".into(),
+                    text: None,
+                    name: Some(tool.to_string()),
+                    args: Some(args),
+                    output: None,
+                    is_error: false,
+                    status: Some("running".into()),
+                });
                 changed = true;
+            }
+            "tool_execution_end" => {
+                // The session file learns about the result when pi writes the
+                // toolResult message; the live copy covers the gap, and the
+                // transcript merge prefers whichever has the output.
+                let id = record
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if let Some(item) = entry.live.tools.iter_mut().find(|item| item.id == id) {
+                    let error = record
+                        .get("isError")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    item.output = record
+                        .get("result")
+                        .map(|result| truncate(&text_of_message(result), MAX_TRANSCRIPT_OUTPUT));
+                    item.is_error = error;
+                    item.status = Some(if error { "error" } else { "done" }.into());
+                }
+            }
+            "message_start" => {
+                // A new assistant message is starting; the previous one (if it
+                // had not ended cleanly) is no longer streaming.
+                if record
+                    .get("message")
+                    .and_then(|m| m.get("role"))
+                    .and_then(|r| r.as_str())
+                    == Some("assistant")
+                {
+                    entry.live.thinking.clear();
+                    entry.live.text.clear();
+                }
+            }
+            "message_update" => {
+                if let Some(event) = record.get("assistantMessageEvent") {
+                    let kind = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    let delta = event.get("delta").and_then(|d| d.as_str());
+                    match kind {
+                        "thinking_delta" => {
+                            if let Some(delta) = delta {
+                                entry.live.thinking.push_str(delta);
+                            }
+                        }
+                        // `thinking_end` and `text_end` carry the authoritative
+                        // block; replace the assembled deltas with it.
+                        "thinking_end" => {
+                            if let Some(text) = event.get("content").and_then(|c| c.as_str()) {
+                                entry.live.thinking = text.to_string();
+                            }
+                        }
+                        "text_delta" => {
+                            if let Some(delta) = delta {
+                                entry.live.text.push_str(delta);
+                            }
+                        }
+                        "text_end" => {
+                            if let Some(text) = event.get("content").and_then(|c| c.as_str()) {
+                                entry.live.text = text.to_string();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
             "message_end" => {
                 if let Some(message) = record.get("message") {
                     let role = message.get("role").and_then(|r| r.as_str()).unwrap_or("");
                     if role == "assistant" {
+                        // The message is in the session file now; the live
+                        // buffer would only duplicate it.
+                        entry.live.thinking.clear();
+                        entry.live.text.clear();
                         let text = text_of_message(message);
                         if !text.trim().is_empty() {
                             info.last_message = Some(truncate(&text, 4000));
@@ -1741,6 +2160,8 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
             }
             "agent_settled" => {
                 changed = true;
+                // Everything is in the session file by the time pi settles.
+                entry.live = LiveTranscript::default();
                 if info.state == STATE_STOPPED {
                     // The abort we asked for landed. Keep the reason it stopped
                     // and the checklist exactly as the stop left it.
@@ -1862,6 +2283,86 @@ name = "test-model"
     }
 
     #[test]
+    fn transcript_keeps_thinking_tools_and_results() {
+        let raw = r#"
+{"type":"session","version":3,"id":"s1","cwd":"/project"}
+{"type":"message","id":"a1","message":{"role":"user","content":[{"type":"text","text":"Build the page"}]}}
+{"type":"message","id":"a2","message":{"role":"assistant","content":[{"type":"thinking","thinking":"First read the project."},{"type":"text","text":"Let me look around."},{"type":"toolCall","id":"call_1","name":"read","arguments":{"path":"src/App.tsx"}}]}}
+{"type":"message","id":"a3","message":{"role":"toolResult","toolCallId":"call_1","toolName":"read","content":[{"type":"text","text":"export default function App() {}"}],"isError":false}}
+{"type":"message","id":"a4","message":{"role":"assistant","content":[{"type":"text","text":"Done."}],"stopReason":"stop"}}
+"#;
+        let (items, truncated) = parse_transcript(raw);
+        assert!(!truncated);
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0].kind, "user");
+        assert_eq!(items[0].text.as_deref(), Some("Build the page"));
+        assert_eq!(items[1].kind, "thinking");
+        assert_eq!(items[1].text.as_deref(), Some("First read the project."));
+        assert_eq!(items[2].kind, "text");
+        assert_eq!(items[3].kind, "tool");
+        assert_eq!(items[3].name.as_deref(), Some("read"));
+        assert_eq!(items[3].args.as_ref().unwrap()["path"], "src/App.tsx");
+        assert_eq!(items[3].status.as_deref(), Some("done"));
+        assert_eq!(
+            items[3].output.as_deref(),
+            Some("export default function App() {}")
+        );
+        assert_eq!(items[4].kind, "text");
+        assert_eq!(items[4].text.as_deref(), Some("Done."));
+    }
+
+    #[test]
+    fn live_thinking_and_tools_reach_the_transcript_before_the_file() {
+        let mgr = manager();
+        lock(&mgr.inner)
+            .agents
+            .insert("ag_1".into(), plan_entry(Vec::new()));
+
+        apply_record(
+            &mgr.inner,
+            "ag_1",
+            &serde_json::json!({"type":"message_start","message":{"role":"assistant"}}),
+        );
+        apply_record(
+            &mgr.inner,
+            "ag_1",
+            &serde_json::json!({
+                "type":"message_update",
+                "assistantMessageEvent":{"type":"thinking_delta","delta":"Reading the layout."}
+            }),
+        );
+        apply_record(
+            &mgr.inner,
+            "ag_1",
+            &serde_json::json!({
+                "type":"tool_execution_start",
+                "toolCallId":"call_1",
+                "toolName":"read",
+                "args":{"path":"a.txt"}
+            }),
+        );
+        apply_record(
+            &mgr.inner,
+            "ag_1",
+            &serde_json::json!({
+                "type":"tool_execution_end",
+                "toolCallId":"call_1",
+                "toolName":"read",
+                "result":{"content":[{"type":"text","text":"hello"}]},
+                "isError":false
+            }),
+        );
+
+        let transcript = mgr.transcript("ag_1").unwrap();
+        assert_eq!(transcript.items.len(), 2);
+        assert_eq!(transcript.items[0].kind, "thinking");
+        assert_eq!(transcript.items[0].text.as_deref(), Some("Reading the layout."));
+        assert_eq!(transcript.items[1].kind, "tool");
+        assert_eq!(transcript.items[1].output.as_deref(), Some("hello"));
+        assert_eq!(transcript.items[1].status.as_deref(), Some("done"));
+    }
+
+    #[test]
     fn paths_are_normalised_for_comparison() {
         assert_eq!(
             normalize_path("C:\\Users\\me\\Documents\\Hook\\App\\"),
@@ -1909,6 +2410,7 @@ name = "test-model"
                 last_flush_at: now_ms(),
                 delivered: false,
                 truncated: false,
+                live: LiveTranscript::default(),
             },
         );
         drop(inner);
@@ -2023,6 +2525,7 @@ name = "test-model"
                     last_flush_at: now_ms(),
                     delivered: false,
                     truncated: false,
+                    live: LiveTranscript::default(),
                 },
             );
         }
@@ -2428,6 +2931,7 @@ node \"%~dp0fake-pi.mjs\" %*
             last_flush_at: now_ms(),
             delivered: false,
             truncated: false,
+            live: LiveTranscript::default(),
         }
     }
 

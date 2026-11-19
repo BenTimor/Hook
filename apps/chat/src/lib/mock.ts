@@ -13,6 +13,7 @@ import type {
   ImportSummary,
   MemoryEntry,
   MemoryView,
+  AgentTranscript,
   Message,
   PlanStep,
   PreviewView,
@@ -151,8 +152,60 @@ function build(): Record<string, Chat> {
   };
 
   add("c8", "Build the launch page", now - 4 * 60_000, false, [
-    msg("user", "Build a launch page for the new release, then show me what it looks like.", now - 5 * 60_000),
-    msg("assistant", "I'll set up the project, build the page and put a live preview on the right as it comes together.", now - 4 * 60_000),
+    msg(
+      "user",
+      "Build a launch page for the new release, then show me what it looks like.",
+      now - 5 * 60_000,
+    ),
+    // Advanced-mode preview: a turn that thought, read a file and ran a
+    // command before answering. Hidden in the simple view, folded in advanced.
+    {
+      id: "c8-a1",
+      role: "assistant",
+      content: "",
+      reasoning:
+        "The project is Astro with a shared layout. I should read the current page first so the launch page uses the same structure instead of inventing a second one.",
+      createdAt: now - 4 * 60_000 - 20_000,
+      status: "complete",
+      hidden: true,
+      toolCalls: [
+        {
+          id: "call_c8_read",
+          name: "read",
+          arguments: '{"path":"src/pages/index.astro"}',
+        },
+        {
+          id: "call_c8_build",
+          name: "bash",
+          arguments: '{"command":"pnpm build","timeout":120}',
+        },
+      ],
+    },
+    {
+      id: "c8-t1",
+      role: "tool",
+      content:
+        "---\nimport Layout from '../layouts/Layout.astro';\n---\n<Layout title=\"Site\">…",
+      createdAt: now - 4 * 60_000 - 12_000,
+      status: "complete",
+      hidden: true,
+      toolCallId: "call_c8_read",
+    },
+    {
+      id: "c8-t2",
+      role: "tool",
+      content:
+        "vite v5.4.2 building for production…\n✓ 41 modules transformed.\n✓ built in 3.18s",
+      createdAt: now - 4 * 60_000 - 6_000,
+      status: "complete",
+      hidden: true,
+      toolCallId: "call_c8_build",
+    },
+    msg(
+      "assistant",
+      "I'll set up the project, build the page and put a live preview on the right as it comes together.",
+      now - 4 * 60_000,
+    ),
   ]);
 
   add(
@@ -263,6 +316,11 @@ const mockAuth: AuthView = {
 
 const demoLogin = () =>
   new URLSearchParams(window.location.search).get("login") === "1";
+
+/** The advanced switch, kept in the tab so the browser preview behaves like
+ * the desktop one. `?advanced=1` starts with it on. */
+let MOCK_ADVANCED =
+  new URLSearchParams(window.location.search).get("advanced") === "1";
 
 /**
  * Browser preview only. The desktop keeps memories in the shared account folder
@@ -594,6 +652,7 @@ export const mock = {
   async getSettings(): Promise<SettingsView> {
     return {
       projectsDir: "C:/Users/you/Documents/Hook",
+      advancedMode: MOCK_ADVANCED,
       projects: [
         {
           id: "pj_mock_invoice",
@@ -621,6 +680,79 @@ export const mock = {
   async setProjectsDir(path: string): Promise<SettingsView> {
     const view = await mock.getSettings();
     return { ...view, projectsDir: path };
+  },
+
+  async setAdvancedMode(enabled: boolean): Promise<SettingsView> {
+    MOCK_ADVANCED = enabled;
+    return mock.getSettings();
+  },
+
+  async agentTranscript(agentId: string): Promise<AgentTranscript> {
+    // Design-time preview: enough of a run to style the inspector. The real
+    // transcript comes from the coding engine's session file.
+    return {
+      id: agentId,
+      title: "Build the launch page",
+      project: "site",
+      state: "running",
+      live: true,
+      items: [
+        {
+          id: "t-user",
+          kind: "user",
+          text: "Build a launch page for the new release, and check it on a phone before you finish.",
+        },
+        {
+          id: "t-think-1",
+          kind: "thinking",
+          text: "The site is Astro with Tailwind. I should read the existing layout first so the new page matches the rest of the site instead of inventing a second style.",
+        },
+        {
+          id: "t-read",
+          kind: "tool",
+          name: "read",
+          args: { path: "src/pages/index.astro" },
+          output:
+            "---\nimport Layout from '../layouts/Layout.astro';\n---\n<Layout title=\"Site\">…",
+          status: "done",
+        },
+        { id: "t-text-1", kind: "text", text: "Let me look at how the current page is put together." },
+        {
+          id: "t-write",
+          kind: "tool",
+          name: "write",
+          args: {
+            path: "src/pages/launch.astro",
+            content: "---\nimport Layout from '../layouts/Layout.astro';\n---\n<Layout title=\"Launch\">…",
+          },
+          output: "Wrote 42 lines to src/pages/launch.astro",
+          status: "done",
+        },
+        {
+          id: "t-bash",
+          kind: "tool",
+          name: "bash",
+          args: { command: "pnpm build", timeout: 120 },
+          output: "vite v5.4.2 building for production…\n✓ 41 modules transformed.\n✓ built in 3.18s",
+          status: "done",
+        },
+        {
+          id: "t-think-2",
+          kind: "thinking",
+          text: "The build passes. Next I want a narrow screenshot at 390px to be sure the headline and the cards stack without clipping.",
+        },
+        {
+          id: "t-shot",
+          kind: "tool",
+          name: "bash",
+          args: { command: "edge --headless --screenshot=launch-mobile.png --window-size=390,844 http://localhost:4321/launch" },
+          status: "running",
+        },
+        { id: "t-note", kind: "text", text: "The page is built; I am checking the phone layout now." },
+        { id: "t-now", kind: "thinking", text: "The headline wraps to three lines at 390px — I will tighten the type scale." },
+      ] satisfies AgentTranscript["items"],
+      truncated: false,
+    };
   },
 
   async agentsOverview(): Promise<AgentsOverview> {

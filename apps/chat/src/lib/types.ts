@@ -172,6 +172,8 @@ export interface Project {
 export interface SettingsView {
   projectsDir: string;
   projects: Project[];
+  /** Thinking, tool calls and the coding-agent inspector are shown. */
+  advancedMode: boolean;
 }
 
 export type MemoryKind = "user" | "feedback" | "project" | "reference";
@@ -234,6 +236,30 @@ export interface AgentsOverview {
   working: number;
   live: number;
   agents: AgentSummary[];
+}
+
+/** One entry in a coding agent's transcript, as the inspector draws it. */
+export interface AgentTranscriptItem {
+  id: string;
+  kind: "user" | "text" | "thinking" | "tool";
+  text?: string;
+  name?: string;
+  args?: unknown;
+  output?: string;
+  isError?: boolean;
+  status?: "running" | "done" | "error";
+}
+
+/** Read-only view of what a coding agent thought, said and ran. */
+export interface AgentTranscript {
+  id: string;
+  title: string;
+  project: string;
+  state: string;
+  /** The run is still alive, so the inspector keeps polling. */
+  live: boolean;
+  items: AgentTranscriptItem[];
+  truncated?: boolean;
 }
 
 /** One HTML page shown in the right-side preview panel. */

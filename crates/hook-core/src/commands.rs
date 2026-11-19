@@ -622,6 +622,9 @@ pub fn stop_stream(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(
 pub struct SettingsView {
     pub projects_dir: String,
     pub projects: Vec<Project>,
+    /// The conversation shows thinking and tool calls, and the sidebar shows
+    /// every coding-agent transcript. See `SettingsStore::advanced_mode`.
+    pub advanced_mode: bool,
 }
 
 fn settings_view(state: &AppState) -> SettingsView {
@@ -630,6 +633,7 @@ fn settings_view(state: &AppState) -> SettingsView {
     SettingsView {
         projects_dir: projects_dir.to_string_lossy().to_string(),
         projects,
+        advanced_mode: state.settings.advanced_mode(),
     }
 }
 
@@ -644,6 +648,17 @@ pub async fn set_projects_dir(
     path: String,
 ) -> Result<SettingsView, String> {
     state.settings.set_projects_dir(&path)?;
+    Ok(settings_view(&state))
+}
+
+/// Turn the debugging view on or off. The UI re-renders from the returned
+/// settings, so the switch and the conversation can never disagree.
+#[tauri::command]
+pub fn set_advanced_mode(
+    state: State<'_, Arc<AppState>>,
+    enabled: bool,
+) -> Result<SettingsView, String> {
+    state.settings.set_advanced_mode(enabled)?;
     Ok(settings_view(&state))
 }
 
@@ -766,6 +781,16 @@ pub fn open_path(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn agents_overview(state: State<'_, Arc<AppState>>) -> crate::agent::Overview {
     state.agents.overview()
+}
+
+/// One coding agent's thinking, narration and tool calls, for the advanced
+/// inspector. Read-only: steering still goes through the chat agent.
+#[tauri::command]
+pub fn agent_transcript(
+    state: State<'_, Arc<AppState>>,
+    agent_id: String,
+) -> Result<crate::agent::AgentTranscript, String> {
+    state.agents.transcript(&agent_id)
 }
 
 /// The Stop button in the task board: stop every live coding agent in this

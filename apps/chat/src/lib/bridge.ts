@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import { mock } from "./mock";
 import type {
+  AgentTranscript,
   AgentsOverview,
   AppInfo,
   AuthView,
@@ -315,11 +316,21 @@ export const api = {
       ? invoke<SettingsView>("set_projects_dir", { path })
       : mock.setProjectsDir(path),
 
+  setAdvancedMode: (enabled: boolean): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("set_advanced_mode", { enabled })
+      : mock.setAdvancedMode(enabled),
+
   openPath: (path: string): Promise<void> =>
     isTauri() ? invoke<void>("open_path", { path }) : Promise.resolve(),
 
   agentsOverview: (): Promise<AgentsOverview> =>
     isTauri() ? invoke<AgentsOverview>("agents_overview") : mock.agentsOverview(),
+
+  agentTranscript: (agentId: string): Promise<AgentTranscript> =>
+    isTauri()
+      ? invoke<AgentTranscript>("agent_transcript", { agentId })
+      : mock.agentTranscript(agentId),
 
   checkUpdate: (): Promise<UpdateInfo> =>
     isTauri() ? invoke<UpdateInfo>("check_update") : mock.checkUpdate(),

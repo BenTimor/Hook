@@ -6,6 +6,7 @@ import { isTauri } from "./lib/bridge";
 import { useChatStore } from "./store/useChatStore";
 import { UPDATE_CHECK_INTERVAL, useUpdateStore } from "./store/useUpdateStore";
 import { AgentBoard } from "./components/AgentBoard";
+import { AgentInspector } from "./components/AgentInspector";
 import { Composer } from "./components/Composer";
 import { Hero } from "./components/Hero";
 import { LoginScreen } from "./components/LoginScreen";
@@ -52,7 +53,11 @@ export default function App() {
       if (!signedIn) return;
       const mod = event.metaKey || event.ctrlKey;
       if (!mod) {
-        if (event.key === "Escape" && streaming) {
+        if (
+          event.key === "Escape" &&
+          streaming &&
+          !useChatStore.getState().inspectAgentId
+        ) {
           event.preventDefault();
           void stop();
         }
@@ -132,6 +137,7 @@ export default function App() {
         </div>
       </main>
       <PreviewPanel />
+      <AgentInspector />
       <SettingsSheet />
       <Toaster
         theme="light"

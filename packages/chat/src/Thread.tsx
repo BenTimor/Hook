@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { MessageItem } from "./MessageItem";
 import { TurnActivity } from "./TurnActivity";
+import { WorkGroup } from "./WorkSteps";
+import { buildBlocks } from "./turns";
 import type { ChatMessage } from "./types";
 import "./chat.css";
 
@@ -9,12 +11,19 @@ export interface ThreadProps<M extends ChatMessage> {
   messages: M[];
   /** The text of the reply that is still arriving, if there is one. */
   streamText?: string;
+  /** The reasoning of the reply that is still arriving, when the provider sends it. */
+  streamReasoning?: string;
   /**
    * What the running turn is doing, oldest label first. Undefined means no
    * turn is running here; an empty array means the turn started and has not
    * picked a tool yet, which reads as "Thinking".
    */
   activity?: string[];
+  /**
+   * Advanced mode: show the model's thinking and tool calls, and the coding
+   * agents' work, instead of only the answers.
+   */
+  showDetails?: boolean;
   onRegenerate?: () => void;
   onEdit?: (id: string, text: string) => void;
   onReport?: (message: M) => void;
@@ -31,7 +40,9 @@ export interface ThreadProps<M extends ChatMessage> {
 export function Thread<M extends ChatMessage>({
   messages,
   streamText,
+  streamReasoning,
   activity,
+  showDetails,
   onRegenerate,
   onEdit,
   onReport,
@@ -43,39 +54,36 @@ export function Thread<M extends ChatMessage>({
   const stick = useRef(true);
   const prevCount = useRef(0);
 
-  // Tool traffic is history, not conversation. The store already drops it, but
-  // this is the one place every product renders through, so the guarantee
-  // belongs here too: no caller can put a tool result on screen by accident.
-  // An empty streaming reply is the activity line's place, not a blank bubble
-  // with actions under it, so it is left to `TurnActivity`.
-  const shown = useMemo(
+  // A turn's thinking and tool calls fold into one block above its answer.
+  // Without advanced mode the builder drops that traffic before it can reach
+  // the screen, so this is also the place that guarantees no tool result is
+  // drawn by accident.
+  const blocks = useMemo(
     () =>
-      messages.filter(
-        (message) =>
-          !message.hidden &&
-          message.role !== "tool" &&
-          message.role !== "system" &&
-          !(
-            message.role === "assistant" &&
-            message.status === "streaming" &&
-            !(streamText !== undefined ? streamText : message.content)
-          ),
-      ),
-    [messages, streamText],
+      buildBlocks(messages, {
+        showDetails: Boolean(showDetails),
+        streamText,
+        streamReasoning,
+        turnRunning: activity !== undefined,
+      }),
+    [messages, showDetails, streamText, streamReasoning, activity],
   );
 
-  const last = shown[shown.length - 1];
+  const last = blocks[blocks.length - 1];
   const textArriving =
     Boolean(streamText) ||
-    (last?.role === "assistant" && last.status === "streaming");
+    (last?.type === "answer" &&
+      last.message?.role === "assistant" &&
+      last.message.status === "streaming");
   const showActivity = activity !== undefined && !textArriving;
 
   const lastAssistantId = useMemo(() => {
-    for (let i = shown.length - 1; i >= 0; i -= 1) {
-      if (shown[i].role === "assistant") return shown[i].id;
+    for (let i = blocks.length - 1; i >= 0; i -= 1) {
+      const block = blocks[i];
+      if (block.type === "answer" && block.message) return block.message.id;
     }
     return null;
-  }, [shown]);
+  }, [blocks]);
 
   useEffect(() => {
     const inner = innerRef.current;
@@ -91,14 +99,16 @@ export function Thread<M extends ChatMessage>({
   }, []);
 
   useEffect(() => {
-    if (shown.length > prevCount.current) {
-      const last = shown[shown.length - 1];
-      if (last?.role === "user") stick.current = true;
+    if (blocks.length > prevCount.current) {
+      const last = blocks[blocks.length - 1];
+      if (last?.type === "message" && last.message.role === "user") {
+        stick.current = true;
+      }
     }
-    prevCount.current = shown.length;
+    prevCount.current = blocks.length;
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [shown, streamText]);
+  }, [blocks, streamText, streamReasoning]);
 
   return (
     <div
@@ -110,18 +120,51 @@ export function Thread<M extends ChatMessage>({
       }}
     >
       <div className="thread-inner" ref={innerRef}>
-        {shown.map((message) => (
-          <MessageItem
-            key={message.id}
-            message={message}
-            streamText={message.status === "streaming" ? streamText : undefined}
-            isLastAssistant={message.id === lastAssistantId}
-            onRegenerate={onRegenerate}
-            onEdit={onEdit}
-            onReport={onReport}
-            renderExtras={renderExtras}
-          />
-        ))}
+        {blocks.map((block) => {
+          if (block.type === "message") {
+            return (
+              <MessageItem
+                key={block.key}
+                message={block.message}
+                isLastAssistant={false}
+                onEdit={onEdit}
+                renderExtras={renderExtras}
+              />
+            );
+          }
+
+          const message = block.message;
+          const streaming = message?.status === "streaming";
+          const body =
+            streaming && streamText !== undefined
+              ? streamText
+              : (message?.content ?? "");
+          // The activity line is the empty streaming reply's place. With
+          // advanced mode its thinking still belongs above it.
+          const emptyStreaming = streaming && !body;
+
+          if (!message || emptyStreaming) {
+            return block.steps.length ? (
+              <div className="msg" data-role="assistant" key={block.key}>
+                <WorkGroup steps={block.steps} live={block.live} />
+              </div>
+            ) : null;
+          }
+
+          return (
+            <MessageItem
+              key={block.key}
+              message={message}
+              steps={block.steps}
+              workLive={block.live}
+              streamText={streaming ? streamText : undefined}
+              isLastAssistant={message.id === lastAssistantId}
+              onRegenerate={onRegenerate}
+              onReport={onReport}
+              renderExtras={renderExtras}
+            />
+          );
+        })}
         {showActivity ? <TurnActivity labels={activity} /> : null}
       </div>
     </div>

@@ -5,7 +5,8 @@ use std::sync::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 
 /// Runtime preferences that are *not* part of the compiled-in harness config:
-/// where the user's projects live, and whether the chat may use memory.
+/// where the user's projects live, whether the chat may use memory, and whether
+/// the advanced view (thinking, tool calls, agent transcripts) is on.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -17,6 +18,11 @@ pub struct Settings {
     /// what every settings.json written before memory existed says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<bool>,
+    /// Show the model's thinking and tool calls, and the coding agents' own
+    /// transcripts. Off unless the user asks for it: it is a debugging view,
+    /// not the normal conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advanced_mode: Option<bool>,
 }
 
 pub struct SettingsStore {
@@ -103,6 +109,18 @@ impl SettingsStore {
         data.memory = Some(enabled);
         self.save_locked(&data)
     }
+
+    /// Whether the conversation shows thinking, tool calls and coding-agent
+    /// transcripts. Off unless the user turned it on.
+    pub fn advanced_mode(&self) -> bool {
+        lock(&self.data).advanced_mode.unwrap_or(false)
+    }
+
+    pub fn set_advanced_mode(&self, enabled: bool) -> Result<(), String> {
+        let mut data = lock(&self.data);
+        data.advanced_mode = Some(enabled);
+        self.save_locked(&data)
+    }
 }
 
 fn resolve_dir(path: &Path) -> Option<PathBuf> {
@@ -126,6 +144,23 @@ mod tests {
         assert!(!store.memory_enabled());
         let reopened = SettingsStore::new(&tmp);
         assert!(!reopened.memory_enabled());
+    }
+
+    #[test]
+    fn advanced_mode_is_off_until_it_is_turned_on() {
+        let tmp = std::env::temp_dir().join(format!("hook-settings-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let store = SettingsStore::new(&tmp);
+        assert!(!store.advanced_mode(), "a fresh install keeps the simple view");
+        // A file written before the switch existed has no key and must not
+        // read as "on".
+        fs::write(tmp.join("settings.json"), r#"{ "projectsDir": null }"#).unwrap();
+        assert!(!SettingsStore::new(&tmp).advanced_mode());
+        store.set_advanced_mode(true).unwrap();
+        assert!(store.advanced_mode());
+        assert!(SettingsStore::new(&tmp).advanced_mode());
+        store.set_advanced_mode(false).unwrap();
+        assert!(!SettingsStore::new(&tmp).advanced_mode());
     }
 
     #[test]

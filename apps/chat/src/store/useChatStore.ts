@@ -22,7 +22,7 @@ import type {
 } from "../lib/types";
 import { sortMetas, upsertMeta } from "../lib/utils";
 
-type StreamState = { messageId: string; text: string };
+type StreamState = { messageId: string; text: string; reasoning: string };
 
 interface ChatStore {
   info: AppInfo | null;
@@ -59,6 +59,8 @@ interface ChatStore {
   previewOpen: boolean;
   settings: SettingsView | null;
   settingsOpen: boolean;
+  /** The coding agent whose transcript the inspector is showing, if any. */
+  inspectAgentId: string | null;
 
   bootstrap: () => Promise<void>;
   signIn: () => Promise<void>;
@@ -84,6 +86,9 @@ interface ChatStore {
   openSettings: () => Promise<void>;
   closeSettings: () => void;
   refreshSettings: () => Promise<void>;
+  setAdvancedMode: (enabled: boolean) => Promise<void>;
+  /** Open or close the read-only coding-agent inspector. */
+  inspectAgent: (id: string | null) => void;
   /** Reload the sidebar after something wrote chats outside a turn. */
   refreshChats: () => Promise<void>;
   chooseProjectsDir: () => Promise<void>;
@@ -97,11 +102,10 @@ function textOf(error: unknown): string {
   return "Something went wrong.";
 }
 
-/** Tool traffic and agent notes live in history but never on screen. */
+/** System frames live in history but never on screen. The thread decides what
+ * else advanced mode may show, so tool traffic is kept here for it to use. */
 function visible(messages: Message[]): Message[] {
-  return messages.filter(
-    (m) => !m.hidden && m.role !== "tool" && m.role !== "system",
-  );
+  return messages.filter((m) => m.role !== "system");
 }
 
 function settle(messages: Message[], streaming: boolean): Message[] {
@@ -111,6 +115,7 @@ function settle(messages: Message[], streaming: boolean): Message[] {
 }
 
 let deltaQueue: Record<string, string> = {};
+let reasoningQueue: Record<string, string> = {};
 let rafId = 0;
 let booting = false;
 let unsubscribe: (() => void) | null = null;
@@ -120,11 +125,12 @@ let unsubscribeSync: (() => void) | null = null;
 export const useChatStore = create<ChatStore>((set, get) => {
   /** Load everything that belongs to the signed-in window. */
   const loadWorkspace = async () => {
-    const [info, chats, agents, preview] = await Promise.all([
+    const [info, chats, agents, preview, settings] = await Promise.all([
       api.appInfo(),
       api.listChats(),
       api.agentsOverview(),
       api.previewState(),
+      api.getSettings(),
     ]);
     set({
       info,
@@ -133,6 +139,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
       agents,
       preview,
       previewOpen: Boolean(preview?.active),
+      // Loaded at boot so advanced mode (and the projects folder) survives a
+      // restart instead of waiting for Settings to be opened.
+      settings,
     });
   };
 
@@ -151,6 +160,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       previewOpen: false,
       settings: null,
       settingsOpen: false,
+      inspectAgentId: null,
     });
   };
 
@@ -176,14 +186,30 @@ export const useChatStore = create<ChatStore>((set, get) => {
     rafId = requestAnimationFrame(() => {
       rafId = 0;
       const queued = deltaQueue;
+      const reasoning = reasoningQueue;
       deltaQueue = {};
+      reasoningQueue = {};
       set((state) => {
         const streams = { ...state.streams };
         let touched = false;
         for (const [chatId, text] of Object.entries(queued)) {
           const prev = streams[chatId];
           if (!prev) continue;
-          streams[chatId] = { messageId: prev.messageId, text: prev.text + text };
+          streams[chatId] = {
+            messageId: prev.messageId,
+            text: prev.text + text,
+            reasoning: prev.reasoning,
+          };
+          touched = true;
+        }
+        for (const [chatId, text] of Object.entries(reasoning)) {
+          const prev = streams[chatId];
+          if (!prev) continue;
+          streams[chatId] = {
+            messageId: prev.messageId,
+            text: prev.text,
+            reasoning: prev.reasoning + text,
+          };
           touched = true;
         }
         return touched ? { streams } : {};
@@ -209,7 +235,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
             streams: streaming
               ? {
                   ...state.streams,
-                  [chatId]: { messageId: streaming.id, text: "" },
+                  [chatId]: { messageId: streaming.id, text: "", reasoning: "" },
                 }
               : state.streams,
             ...(shows
@@ -234,6 +260,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
           }
           return { activity };
         });
+        break;
+      }
+      case "reasoning": {
+        if (!get().streams[chatId]) break;
+        reasoningQueue[chatId] = (reasoningQueue[chatId] ?? "") + event.text;
+        flushDeltas();
         break;
       }
       case "delta": {
@@ -310,6 +342,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     previewOpen: false,
     settings: null,
     settingsOpen: false,
+    inspectAgentId: null,
 
     bootstrap: async () => {
       if (booting) return;
@@ -347,7 +380,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
               .catch(() => {
                 // It was deleted on another computer.
                 if (get().activeId === activeId)
-                  set({ activeId: null, messages: [] });
+                  set({ activeId: null, messages: [], inspectAgentId: null });
               });
           })
           .catch(() => {});
@@ -463,13 +496,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
     select: async (id) => {
       if (get().activeId === id) return;
       if (id === null) {
-        set({ activeId: null, messages: [] });
+        set({ activeId: null, messages: [], inspectAgentId: null });
         return;
       }
       try {
         const chat = await api.getChat(id);
         set({
           activeId: id,
+          // Moving to another chat ends the inspection. A finished run only
+          // stays in the sidebar tree while the user is still looking at it.
+          inspectAgentId: null,
           messages: settle(
             chat.messages,
             Boolean(get().streams[id] || get().activity[id]),
@@ -485,6 +521,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         activeId: null,
         messages: [],
         draft: "",
+        inspectAgentId: null,
         focusToken: state.focusToken + 1,
       })),
 
@@ -505,7 +542,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           trimmed,
           images.map(({ dataUrl, width, height }) => ({ dataUrl, width, height })),
         );
-        if (!activeId) set({ activeId: id });
+        if (!activeId) set({ activeId: id, inspectAgentId: null });
       } catch (error) {
         set({ draft: trimmed, draftImages: images, pendingNewChat: false });
         toast.error(textOf(error));
@@ -591,7 +628,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           chats: state.chats.filter((c) => c.id !== id),
           streams,
           activity,
-          ...(wasActive ? { activeId: null, messages: [] } : {}),
+          ...(wasActive ? { activeId: null, messages: [], inspectAgentId: null } : {}),
         };
       });
       try {
@@ -644,6 +681,22 @@ export const useChatStore = create<ChatStore>((set, get) => {
         toast.error(textOf(error));
       }
     },
+
+    setAdvancedMode: async (enabled) => {
+      const previous = get().settings;
+      // Paint the switch at once; the backend is what actually persists it.
+      if (previous) set({ settings: { ...previous, advancedMode: enabled } });
+      if (!enabled) set({ inspectAgentId: null });
+      try {
+        const settings = await api.setAdvancedMode(enabled);
+        set({ settings });
+      } catch (error) {
+        set({ settings: previous });
+        toast.error(textOf(error));
+      }
+    },
+
+    inspectAgent: (id) => set({ inspectAgentId: id }),
 
     refreshChats: async () => {
       try {

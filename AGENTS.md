@@ -97,7 +97,9 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 - `crates/hook-core/src/tools.rs` — chat-agent tool schemas and implementations.
 - `crates/hook-core/src/agent.rs` — supervisor for `pi` subprocesses over RPC:
   spawn, states, plans, progress batching, wakes, stop. It also points agents at
-  the bundled git and the managed `agent-home/gitconfig`.
+  the bundled git and the managed `agent-home/gitconfig`. `transcript()` reads a
+  run's pi session file (plus an in-memory tail from `message_update`) for the
+  advanced inspector; it is read-only.
 - `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
   builder both apps call. A capability trims the prompt and the toolset; it must
   never change the data model.
@@ -117,11 +119,15 @@ No ESLint, Prettier or rustfmt config. Match the file you are editing.
 - `packages/chat/src/{Thread,MessageItem,TurnActivity,Composer}.tsx` — the
   conversation and the input, prop-driven and store-free. `TurnActivity` is the
   line that says what a running turn is doing ("Thinking…", "Searching the web
-  for …"); the store hands it the labels and it owns the pacing. `apps/chat/src/
+  for …"); the store hands it the labels and it owns the pacing. In advanced
+  mode `Thread` groups each turn's thinking and tool calls into one fold above
+  the answer (`turns.ts`), drawn by `WorkSteps.tsx`, so the conversation and the
+  coding-agent inspector share one renderer. `apps/chat/src/
   components/{Thread,Composer}.tsx` are the thin store adapters; a product
   supplies the pictures (`renderExtras`) and what Report means (`onReport`).
-  `chat.css` holds their styles and `dock.css` the 380px overrides, so both apps
-  look the same.
+  `apps/chat/src/components/{AgentTree,AgentInspector}.tsx` are the sidebar tree
+  and the read-only transcript drawer. `chat.css` holds their styles and
+  `dock.css` the 380px overrides, so both apps look the same.
 - `packages/chat/src/ChatDock.tsx` — the collapsible chat panel every product
   embeds, built from those same pieces. It takes a `ChatTransport`, so it knows
   nothing about which app it is running in;
@@ -167,6 +173,15 @@ Changing one side of a boundary is the most common way to break this repo.
   it at both sizes (the chat window and the 380px dock) → the adapters in
   `apps/chat/src/components` if the store gains a prop. Never fork a component
   into one app: the dock and the window are meant to be the same thing.
+- **Advanced-mode change (thinking, tool calls, coding-agent inspector):**
+  `settings.rs` (`advanced_mode`) → `commands.rs` (`set_advanced_mode`) →
+  `bridge.ts` / `types.ts` / `mock.ts` → the settings in the store →
+  `Thread showDetails` → `packages/chat/src/turns.ts` and `WorkSteps.tsx`.
+  The agent half is `agent.rs::transcript` + `commands::agent_transcript` →
+  `AgentInspector.tsx`; live thinking comes from the `message_update` records
+  that are otherwise skipped. Hidden messages and tool results must stay in
+  history and be filtered only at render time — `visible()` in the store keeps
+  them for exactly this reason.
 - **New chat-agent tool:** schema + impl in `tools.rs`, dispatch in `turn.rs`,
   and the prompt in `turn.rs` (`system_prompt`) if the agent must know about it.
   Give it a line in `activity_label` (`turn.rs`): that is what the chat says it
