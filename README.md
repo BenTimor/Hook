@@ -673,6 +673,21 @@ listing states the requirement.
 Windows 11 24H2 on does). An older SDK rejects the manifest instead of producing
 a package that fails the same way at install time.
 
+### The taskbar icon
+
+A packaged app's taskbar, Start and search icon is drawn on a square *plate*
+filled with `uap:VisualElements/@BackgroundColor` unless the package carries
+the per-size, unplated AppList assets. Hook's mark is a rounded square, so the
+plate showed through its four corners: with `BackgroundColor="transparent"`
+that is the user's accent colour, which looked like a red ring around the
+taskbar button on a red-accent machine. The manifest therefore names the mark's
+own `#20201E`, and `pnpm msix:icons` renders
+`Square44x44Logo.targetsize-<n>[_altform-unplated|_altform-lightunplated].png`
+(14 sizes × 3 themes) from `apps/<product>/src-tauri/icons/icon.png`. Those
+files are part of the icon set, not a build output: `tauri icon` does not make
+them, so rerun `pnpm msix:icons` whenever the mark changes. The names follow the
+`Square44x44Logo` attribute — rename one and rename the other.
+
 ### Updating a Store install
 
 MSIX never services a package that is in use. An update that finds Hook running

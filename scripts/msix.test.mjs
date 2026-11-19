@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -64,5 +64,63 @@ test("every placeholder in a template is one the packager fills", () => {
       [],
       `${product.msix} has placeholders build-msix.mjs never replaces`,
     );
+  }
+});
+
+/**
+ * A packaged app's taskbar/Start icon is drawn on a square "plate" filled with
+ * uap:VisualElements/@BackgroundColor unless the package carries per-size,
+ * unplated AppList variants. "transparent" resolves to the user's accent
+ * colour, and because Hook's mark is a rounded square the plate showed through
+ * its corners — a red ring on a red-accent machine. Keep both halves of the
+ * fix: a real colour in the manifest and the generated asset set next to the
+ * icon the manifest points at.
+ */
+const APPS_LIST_SIZES = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 256];
+const APPS_LIST_FORMS = ["", "_altform-unplated", "_altform-lightunplated"];
+
+function pngSize(path) {
+  const bytes = readFileSync(path);
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    `${path} is not a PNG`,
+  );
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+test("the taskbar icon never sits on an accent-coloured plate", () => {
+  for (const product of products) {
+    const xml = manifestFor(product);
+    const background = xml.match(/BackgroundColor="([^"]+)"/)?.[1];
+    assert.ok(background, `${product.msix} has no VisualElements BackgroundColor`);
+    assert.notEqual(
+      background.toLowerCase(),
+      "transparent",
+      `${product.msix} lets the user's accent colour plate the taskbar icon`,
+    );
+
+    const base = xml.match(/Square44x44Logo="Assets\\([^"]+)\.png"/)?.[1];
+    assert.ok(base, `${product.msix} does not name Square44x44Logo under Assets\\`);
+    for (const size of APPS_LIST_SIZES) {
+      for (const form of APPS_LIST_FORMS) {
+        const icon = join(
+          root,
+          product.dir,
+          "src-tauri/icons",
+          `${base}.targetsize-${size}${form}.png`,
+        );
+        assert.ok(
+          existsSync(icon),
+          `${product.dir} is missing ${base}.targetsize-${size}${form}.png; run \`pnpm msix:icons\``,
+        );
+        const { width, height } = pngSize(icon);
+        assert.deepEqual(
+          { width, height },
+          { width: size, height: size },
+          `${icon} is not ${size}x${size}`,
+        );
+      }
+    }
   }
 });

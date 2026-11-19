@@ -74,10 +74,18 @@
 
   <Applications>
     <Application Id="Hook" Executable="{{EXECUTABLE}}" EntryPoint="Windows.FullTrustApplication">
+      <!--
+        Not "transparent": Windows fills the app-list/taskbar icon plate with
+        this colour, and transparent resolves to the user's accent colour —
+        which painted a red ring around the rounded corners of Hook's mark.
+        The Square44x44Logo.targetsize-*_altform-* assets drop the plate
+        entirely (scripts/msix-icons.mjs); this is the fallback for surfaces
+        that keep one, and the Store description page uses it too.
+      -->
       <uap:VisualElements
         DisplayName="HookCode"
         Description="HookCode — a local AI chat harness with coding agents."
-        BackgroundColor="transparent"
+        BackgroundColor="#20201E"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
       >

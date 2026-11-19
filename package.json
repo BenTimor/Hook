@@ -13,6 +13,7 @@
     "app:build": "pnpm --dir apps/chat run app:build",
     "app:portable": "pnpm --dir apps/chat run app:portable",
     "app:msix": "pnpm --dir apps/chat run app:msix",
+    "msix:icons": "node scripts/msix-icons.mjs",
     "workspace:dev": "pnpm --dir apps/workspace run dev",
     "workspace:build": "pnpm --dir apps/workspace run build",
     "workspace:app": "pnpm --dir apps/workspace run app",

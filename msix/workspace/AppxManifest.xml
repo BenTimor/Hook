@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Template for Hook Workspace's Microsoft Store identity.
-  scripts/build-msix.mjs --product workspace fills the placeholders from
+  scripts/build-msix.mjs for the workspace product fills the placeholders from
   msix/workspace/identity.json and the product's package.json.
 
   Identity.Name and Identity.Publisher must match the values Partner Center
@@ -68,10 +68,13 @@
 
   <Applications>
     <Application Id="HookWorkspace" Executable="{{EXECUTABLE}}" EntryPoint="Windows.FullTrustApplication">
+      <!-- Same as the chat package: "transparent" makes Windows paint the
+           taskbar plate in the user's accent colour, which showed as a ring
+           around the rounded mark. See msix/chat/AppxManifest.xml. -->
       <uap:VisualElements
         DisplayName="Hook Workspace"
         Description="Hook Workspace — projects, boards, tasks and documents with Hook beside them."
-        BackgroundColor="transparent"
+        BackgroundColor="#20201E"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
       >
