@@ -81,6 +81,12 @@ pnpm mock
 
 No ESLint, Prettier or rustfmt config. Match the file you are editing.
 
+Commands run under bash on Windows, not `cmd.exe`, so redirect to
+`/dev/null` and never `>nul`. `nul` is the null device in `cmd.exe` only; from
+bash it creates a file named `nul` in the working directory, and `nul` is a
+reserved device name on Windows. A stray `nul` at the repo root is that
+mistake: delete it, never commit it.
+
 ## Where things live
 
 - `crates/hook-core/src/turn.rs` — the assistant turn (model → tools → answer),
