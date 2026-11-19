@@ -710,7 +710,12 @@ fn merge_docs(local: &Doc, disk: &Doc) -> Doc {
         if !seen.insert(entry.id.clone()) {
             continue;
         }
-        let newer = [local, disk]
+        // `max_by_key` keeps the last of equal maxima, so the local copy is
+        // listed second: it holds the change this process is saving right now.
+        // A millisecond clock can give an add and the delete straight after it
+        // the same stamp, and the file must not resurrect what was just
+        // removed.
+        let newer = [disk, local]
             .iter()
             .filter_map(|doc| doc.entries.iter().find(|candidate| candidate.id == entry.id))
             .max_by_key(|candidate| candidate.updated_at)
@@ -1190,6 +1195,44 @@ mod tests {
         let delta = store.delta_frame(seen).expect("a delta");
         assert!(delta.contains("No longer true"), "{delta}");
         assert!(delta.contains("Lives in Berlin."), "{delta}");
+    }
+
+    #[test]
+    fn a_change_saved_in_the_same_millisecond_is_not_undone_by_the_file() {
+        // The clock is milliseconds, so an add and the delete saved right after
+        // it can carry the same `updatedAt`. Folding the file back in has to
+        // keep what this process just wrote, or the deletion never leaves.
+        let entry = Entry {
+            id: "m1".into(),
+            text: "Lives in Berlin.".into(),
+            kind: "user".into(),
+            pinned: true,
+            chat_id: None,
+            created_at: 1_000,
+            updated_at: 1_000,
+            rev: 1,
+            deleted: false,
+        };
+        let disk = Doc {
+            rev: 2,
+            entries: vec![entry.clone()],
+            pending: Vec::new(),
+        };
+        let local = Doc {
+            rev: 3,
+            entries: vec![Entry {
+                deleted: true,
+                pinned: false,
+                rev: 3,
+                ..entry
+            }],
+            pending: Vec::new(),
+        };
+        let merged = merge_docs(&local, &disk);
+        assert!(
+            merged.entries[0].deleted,
+            "the deletion must survive the merge"
+        );
     }
 
     #[test]
