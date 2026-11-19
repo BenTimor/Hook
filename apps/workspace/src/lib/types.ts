@@ -59,7 +59,10 @@ export interface Task {
   title: string;
   description: string;
   status: string;
+  /** The first assignee, mirrored for older clients and agent tools. */
   assignee: string | null;
+  /** Everyone the task is assigned to, in the order they were added. */
+  assignees: string[];
   fields: Record<string, unknown>;
   position: number;
   createdBy: string;

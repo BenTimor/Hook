@@ -21,7 +21,8 @@ import { requireApiUser } from "./tokens.mjs";
  *   ws_invites    addressed to an email, accepted/declined in the product
  *   ws_folders    pure organization inside a project
  *   ws_boards     a task container with typed columns; one status column
- *   ws_tasks      `status` is the column option, `fields` holds the rest
+ *   ws_tasks      `status` is the column option, `assignees` the people,
+ *                 `fields` holds the rest
  *   ws_comments   `author_kind` says whether a person or their Hook agent wrote
  *   ws_documents  Markdown is the source of truth; `rev` catches stale writes
  *
@@ -38,6 +39,7 @@ export const LIMITS = {
   foldersPerProject: 500,
   boardsPerProject: 200,
   tasksPerProject: 20_000,
+  assigneesPerTask: 20,
   documentsPerProject: 5_000,
   documentBytes: 512 * 1024,
   commentBytes: 16 * 1024,
@@ -140,6 +142,7 @@ function migrate(db) {
       description TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT '',
       assignee TEXT,
+      assignees TEXT NOT NULL DEFAULT '[]',
       fields TEXT NOT NULL DEFAULT '{}',
       position INTEGER NOT NULL DEFAULT 0,
       created_by TEXT NOT NULL,
@@ -184,6 +187,12 @@ function migrate(db) {
     CREATE UNIQUE INDEX IF NOT EXISTS ws_invites_pending
       ON ws_invites (project_id, email) WHERE status = 'pending';
   `);
+  // A task used to carry one assignee. The column stays for older readers;
+  // `assignees` is the list every current client writes and reads.
+  const taskColumns = db.prepare("PRAGMA table_info(ws_tasks)").all();
+  if (!taskColumns.some((column) => column.name === "assignees")) {
+    db.exec("ALTER TABLE ws_tasks ADD COLUMN assignees TEXT NOT NULL DEFAULT '[]'");
+  }
   db.prepare("INSERT OR IGNORE INTO ws_seq (id, next) VALUES (1, 0)").run();
 }
 
@@ -691,21 +700,26 @@ export function createWorkspaceRouter({ db, env = {} }) {
            DO UPDATE SET role = excluded.role, deleted_at = NULL, seq = excluded.seq`,
         ).run(invite.project_id, subject, invite.role, at, seq);
         // Work handed to the address while the invitation was pending belongs
-        // to the account now: until this moment the email was the assignee.
-        // Each row gets its own seq so every device adopts it from the feed.
+        // to the account now: until this moment the email was one of the
+        // assignees. Each row gets its own seq so every device adopts it from
+        // the feed.
         const assigned = db
           .prepare(
-            `SELECT id FROM ws_tasks
-              WHERE project_id = ? AND deleted_at IS NULL AND lower(assignee) = ?`,
+            `SELECT id, assignee, assignees FROM ws_tasks
+              WHERE project_id = ? AND deleted_at IS NULL`,
           )
-          .all(invite.project_id, invite.email);
+          .all(invite.project_id);
         for (const task of assigned) {
-          db.prepare("UPDATE ws_tasks SET assignee = ?, updated_at = ?, seq = ? WHERE id = ?").run(
-            subject,
-            at,
-            nextSeq(db),
-            task.id,
+          const before = taskAssignees(task);
+          if (!before.some((value) => emailKey(value) === invite.email)) continue;
+          const after = resolveAssignees(
+            db,
+            invite.project_id,
+            before.map((value) => (emailKey(value) === invite.email ? subject : value)),
           );
+          db.prepare(
+            "UPDATE ws_tasks SET assignee = ?, assignees = ?, updated_at = ?, seq = ? WHERE id = ?",
+          ).run(after[0] ?? null, JSON.stringify(after), at, nextSeq(db), task.id);
         }
       }
     });
@@ -923,9 +937,8 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const columns = JSON.parse(board.columns);
     const status = normaliseStatus(columns, req.body?.status, null);
     if (status === undefined) return badRequest(res, "That status is not on this board's columns.");
-    const assignee = req.body?.assignee === null || req.body?.assignee === undefined
-      ? null
-      : resolveAssignee(db, projectId, req.body.assignee);
+    const assignees = assigneesFrom(db, projectId, req.body, limit);
+    if (assignees === undefined) return badRequest(res, "Those assignees are not valid.");
     const fields = normaliseFields(columns, req.body?.fields);
     if (fields === undefined) return badRequest(res, "One of those field values is not valid.");
 
@@ -936,7 +949,8 @@ export function createWorkspaceRouter({ db, env = {} }) {
       title,
       description,
       status: status ?? defaultStatus(columns),
-      assignee,
+      assignee: assignees[0] ?? null,
+      assignees: JSON.stringify(assignees),
       fields: JSON.stringify(fields),
       position: Number.isSafeInteger(req.body?.position) ? req.body.position : 0,
       created_by: who.subject,
@@ -980,10 +994,11 @@ export function createWorkspaceRouter({ db, env = {} }) {
       if (status === undefined) return badRequest(res, "That status is not on this board's columns.");
       fields.status = status;
     }
-    if (req.body?.assignee !== undefined) {
-      fields.assignee = req.body.assignee === null
-        ? null
-        : resolveAssignee(db, task.project_id, req.body.assignee);
+    if (req.body?.assignees !== undefined || req.body?.assignee !== undefined) {
+      const assignees = assigneesFrom(db, task.project_id, req.body, limit);
+      if (assignees === undefined) return badRequest(res, "Those assignees are not valid.");
+      fields.assignees = JSON.stringify(assignees);
+      fields.assignee = assignees[0] ?? null;
     }
     if (req.body?.fields !== undefined) {
       const merged = { ...JSON.parse(task.fields), ...(req.body.fields ?? {}) };
@@ -1379,34 +1394,91 @@ function resolveAssignee(db, projectId, value) {
   return memberSubjectForEmail(db, projectId, email) ?? email;
 }
 
+/** The list a task holds, falling back to the single value from older rows. */
+function taskAssignees(row) {
+  let list = [];
+  if (row.assignees) {
+    try {
+      const parsed = JSON.parse(row.assignees);
+      if (Array.isArray(parsed)) {
+        list = parsed
+          .filter((value) => typeof value === "string" && value.trim())
+          .map((value) => value.trim());
+      }
+    } catch {
+      // A malformed row falls back to the legacy column.
+    }
+  }
+  return list.length || !row.assignee ? list : [row.assignee];
+}
+
+function resolveAssignees(db, projectId, values) {
+  const seen = new Set();
+  const assignees = [];
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const resolved = resolveAssignee(db, projectId, value);
+    if (!resolved) continue;
+    const key = resolved.includes("@") ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    assignees.push(resolved);
+  }
+  return assignees;
+}
+
+/**
+ * Read a create/patch body's assignees.
+ *
+ * `assignees` is the current shape; `assignee` stays accepted so an older
+ * window or the chat agent can still write one person. Returns `undefined`
+ * when the input is invalid.
+ */
+function assigneesFrom(db, projectId, body, limits) {
+  let values;
+  if (body?.assignees !== undefined) {
+    if (!Array.isArray(body.assignees)) return undefined;
+    values = body.assignees;
+  } else if (body?.assignee !== undefined) {
+    values = body.assignee === null ? [] : [body.assignee];
+  } else {
+    return [];
+  }
+  if (values.length > (limits?.assigneesPerTask ?? 20)) return undefined;
+  if (values.some((value) => typeof value !== "string")) return undefined;
+  return resolveAssignees(db, projectId, values);
+}
+
 /**
  * Tasks that still point at an address whose person has since joined.
  *
  * Idempotent and only writes rows that actually change, so the first start
  * after this rule existed repairs the old rows (and tells every device through
- * the changes feed) and every later start does nothing.
+ * the changes feed) and every later start does nothing. It also fills the
+ * `assignees` column for rows written before it existed.
  */
 function adoptAssignees(db) {
   const rows = db
     .prepare(
-      `SELECT id, project_id, assignee FROM ws_tasks
-        WHERE deleted_at IS NULL AND instr(assignee, '@') > 0`,
+      `SELECT id, project_id, assignee, assignees FROM ws_tasks
+        WHERE deleted_at IS NULL`,
     )
     .all();
   if (rows.length === 0) return;
   const at = now();
   transaction(db, () => {
     for (const row of rows) {
-      const email = emailKey(row.assignee);
-      if (!email) continue;
-      const subject = memberSubjectForEmail(db, row.project_id, email);
-      if (!subject || subject === row.assignee) continue;
-      db.prepare("UPDATE ws_tasks SET assignee = ?, updated_at = ?, seq = ? WHERE id = ?").run(
-        subject,
-        at,
-        nextSeq(db),
-        row.id,
-      );
+      const before = taskAssignees(row);
+      const after = resolveAssignees(db, row.project_id, before);
+      if (
+        JSON.stringify(before) === JSON.stringify(after) &&
+        (row.assignee ?? null) === (after[0] ?? null)
+      ) {
+        continue;
+      }
+      db.prepare(
+        "UPDATE ws_tasks SET assignee = ?, assignees = ?, updated_at = ?, seq = ? WHERE id = ?",
+      ).run(after[0] ?? null, JSON.stringify(after), at, nextSeq(db), row.id);
     }
   });
 }
@@ -1451,6 +1523,7 @@ function shapeBoard(row) {
 }
 
 function shapeTask(row) {
+  const assignees = taskAssignees(row);
   return {
     id: row.id,
     projectId: row.project_id,
@@ -1458,7 +1531,8 @@ function shapeTask(row) {
     title: row.title,
     description: row.description,
     status: row.status,
-    assignee: row.assignee,
+    assignee: assignees[0] ?? null,
+    assignees,
     fields: JSON.parse(row.fields),
     position: row.position,
     createdBy: row.created_by,
@@ -1555,18 +1629,21 @@ function shapeChange(row) {
         position: row.position,
       });
       break;
-    case "task":
+    case "task": {
+      const assignees = taskAssignees(row);
       Object.assign(change, {
         boardId: row.board_id,
         title: row.title,
         description: row.description,
         status: row.status,
-        assignee: row.assignee,
+        assignee: assignees[0] ?? null,
+        assignees,
         fields: row.fields ? JSON.parse(row.fields) : {},
         position: row.position,
         createdBy: row.created_by,
       });
       break;
+    }
     case "comment":
       Object.assign(change, {
         taskId: row.task_id,

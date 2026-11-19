@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, LayoutList, Plus, Rows3 } from "lucide-react";
 
 import type { Board, Member, Task } from "../lib/types";
-import { pendingPeople, personFor, personLabel, unknownPerson } from "../lib/people";
+import { pendingPeople, personLabel, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { AssigneesPicker, PersonAvatar } from "./AssigneesPicker";
 import { BoardTable } from "./BoardTable";
 import { DocumentEditor } from "./DocumentEditor";
+import { TaskStatus } from "./TaskStatus";
 
 /**
  * A board as its columns: one column per status option, cards in order.
@@ -202,191 +204,192 @@ export function TaskPanel({ task }: { task: Task }) {
   }, [task.title]);
 
   const status = board?.columns.find((column) => column.type === "status");
-  // Every task has an assignee; only some boards give it a column of its own.
+  // Every task has assignees; only some boards give them a column of their own.
   const assigneeColumn = board?.columns.find((column) => column.type === "person") ?? {
     id: "assignee",
-    name: "Assignee",
+    name: "Assignees",
     type: "person" as const,
   };
-  // Whoever the task points at right now, however it is written: a member
-  // (by subject), a member whose address an older task still carries, or
-  // someone invited who has not accepted yet — shown by address alone.
-  const assigned = personFor(members, task.assignee);
+  const assigned = taskAssignees(task);
   const invited = pendingPeople(members, pending);
-  const assignedEmail = task.assignee?.toLowerCase() ?? null;
-  const assignedInvite = invited.find((invite) => invite.email === assignedEmail) ?? null;
-  const assignedLabel = task.assignee
-    ? assigned
-      ? personLabel(assigned)
-      : assignedInvite
-        ? assignedInvite.email
-        : unknownPerson(task.assignee)
-    : null;
+  const creator = personLabel(members.find((member) => member.subject === task.createdBy));
 
   return (
     <section className="ws-task" aria-label="Task details">
       <div className="ws-task-inner">
-      <button className="ws-task-back" onClick={() => void openTask(null)}><ArrowLeft /> Back to board</button>
-      <header className="ws-task-head">
-        <input
-          className="ws-task-title"
-          value={title}
-          readOnly={readOnly}
-          onChange={(event) => setTitle(event.target.value)}
-          onBlur={() => {
-            const next = title.trim();
-            if (next && next !== task.title) void updateTask(task.id, { title: next });
-            else setTitle(task.title);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-            if (event.key === "Escape") {
-              setTitle(task.title);
-              event.currentTarget.blur();
-            }
-          }}
-        />
-      </header>
-
-      <div className="ws-task-layout">
-      <div className="ws-task-main">
-      <div className="ws-task-fields">
-        {status ? (
-          <label className="ws-field">
-            <span>{status.name}</span>
-            <select
-              className="text-input"
-              value={task.status}
-              onChange={(event) => void updateTask(task.id, { status: event.target.value })}
-            >
-              {status.options?.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        {assigneeColumn ? (
-          <label className="ws-field">
-            <span>{assigneeColumn.name}</span>
-            <select
-              className="text-input"
-              value={task.assignee ?? ""}
-              onChange={(event) =>
-                void updateTask(task.id, { assignee: event.target.value || null })
-              }
-            >
-              <option value="">Unassigned</option>
-              {task.assignee ? <option value={task.assignee}>{assignedLabel}</option> : null}
-              {members
-                .filter((member) => member.subject !== task.assignee)
-                .map((member) => (
-                  <option key={member.subject} value={member.subject}>
-                    {personLabel(member)}
-                  </option>
-                ))}
-              {invited
-                .filter((invite) => invite.email !== assignedEmail)
-                .map((invite) => (
-                  <option key={invite.id} value={invite.email}>
-                    {invite.email}
-                  </option>
-                ))}
-            </select>
-          </label>
-        ) : null}
-      </div>
-
-      <div className="ws-task-section">
-        <div className="ws-task-section-heading">
-          <div><h2>Description</h2><p>Give this task the context it needs.</p></div>
-          <div className="ws-task-description-actions">
-            <span aria-live="polite">{descriptionDirty ? "Saving…" : "Saved"}</span>
-            <button type="button" className="ws-task-source" onClick={() => setSourceMode(!sourceMode)}>{sourceMode ? "Formatted" : "Markdown"}</button>
-          </div>
+        <div className="ws-task-topbar">
+          <button className="ws-task-back" onClick={() => void openTask(null)}>
+            <ArrowLeft /> {board?.name ?? "Back to board"}
+          </button>
+          <span className="ws-task-topbar-label">Task</span>
         </div>
-        <DocumentEditor
-          document={{ id: task.id, markdown: task.description }}
-          raw={sourceMode}
-          readOnly={readOnly}
-          compact
-          onChange={setDescriptionDirty}
-          onSave={(markdown) => {
-            const pendingSave = saveQueue.current.catch(() => false).then(() => updateTask(task.id, { description: markdown }));
-            saveQueue.current = pendingSave;
-            return pendingSave;
-          }}
-        />
-      </div>
-      </div>
 
-      <div className="ws-task-section ws-task-discussion">
-        <div className="ws-task-section-heading"><div><h2>Discussion</h2><p>Keep the conversation with the work.</p></div><span className="ws-task-comment-count">{comments.length}</span></div>
-        {comments.map((comment) => (
-          <div className="ws-comment" key={comment.id}>
-            <div className="ws-comment-head">
-              <span>{authorName(members, comment.author)}</span>
-              {comment.authorKind === "agent" && (
-                <span className="ws-agent-tag">via Hook agent</span>
-              )}
-            </div>
-            <p>{comment.body}</p>
-          </div>
-        ))}
-        <div className="ws-comment-compose">
-          <textarea
-            className="ws-comment-input"
-            value={draft}
-            placeholder="Write a comment…"
-            onChange={(event) => setDraft(event.target.value)}
+        <header className="ws-task-head">
+          <input
+            className="ws-task-title"
+            value={title}
+            readOnly={readOnly}
+            onChange={(event) => setTitle(event.target.value)}
+            onBlur={() => {
+              const next = title.trim();
+              if (next && next !== task.title) void updateTask(task.id, { title: next });
+              else setTitle(task.title);
+            }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft.trim()) {
-                void addComment(task.id, draft.trim());
-                setDraft("");
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") {
+                setTitle(task.title);
+                event.currentTarget.blur();
               }
             }}
           />
-          <button
-            className="btn"
-            disabled={!draft.trim()}
-            onClick={() => {
-              void addComment(task.id, draft.trim());
-              setDraft("");
-            }}
-          >
-            Comment
-          </button>
-        </div>
-      </div>
-      </div>
+        </header>
 
-      <footer className="ws-task-foot">
-        {confirmDelete ? (
-          <>
-            <span>Delete this task for everyone?</span>
-            <button
-              className="btn btn-ghost"
-              onClick={() => setConfirmDelete(false)}
-            >
-              Keep
-            </button>
-            <button
-              className="btn"
-              onClick={() => {
-                void deleteTask(task.id);
-                setConfirmDelete(false);
-              }}
-            >
-              Delete
-            </button>
-          </>
-        ) : (
-          <button className="btn btn-ghost" onClick={() => setConfirmDelete(true)}>
-            Delete task
-          </button>
-        )}
-      </footer>
+        <div className="ws-task-layout">
+          <div className="ws-task-main">
+            <div className="ws-task-section">
+              <div className="ws-task-section-heading">
+                <div><h2>Description</h2><p>Give this task the context it needs.</p></div>
+                <div className="ws-task-description-actions">
+                  <span aria-live="polite">{descriptionDirty ? "Saving…" : "Saved"}</span>
+                  <button type="button" className="ws-task-source" onClick={() => setSourceMode(!sourceMode)}>{sourceMode ? "Formatted" : "Markdown"}</button>
+                </div>
+              </div>
+              <DocumentEditor
+                document={{ id: task.id, markdown: task.description }}
+                raw={sourceMode}
+                readOnly={readOnly}
+                compact
+                onChange={setDescriptionDirty}
+                onSave={(markdown) => {
+                  const pendingSave = saveQueue.current.catch(() => false).then(() => updateTask(task.id, { description: markdown }));
+                  saveQueue.current = pendingSave;
+                  return pendingSave;
+                }}
+              />
+            </div>
+
+            <div className="ws-task-section ws-task-discussion">
+              <div className="ws-task-section-heading">
+                <div><h2>Discussion</h2><p>Keep the conversation with the work.</p></div>
+                <span className="ws-task-comment-count">{comments.length}</span>
+              </div>
+              {comments.length === 0 ? (
+                <p className="ws-task-empty">No comments yet. Start the conversation below.</p>
+              ) : (
+                comments.map((comment) => {
+                  const name = authorName(members, comment.author);
+                  return (
+                    <div className="ws-comment" key={comment.id}>
+                      <div className="ws-comment-head">
+                        <PersonAvatar small value={comment.author} label={name} />
+                        <span>{name}</span>
+                        {comment.authorKind === "agent" && (
+                          <span className="ws-agent-tag">via Hook agent</span>
+                        )}
+                      </div>
+                      <p>{comment.body}</p>
+                    </div>
+                  );
+                })
+              )}
+              <div className="ws-comment-compose">
+                <textarea
+                  className="ws-comment-input"
+                  value={draft}
+                  placeholder="Write a comment…"
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft.trim()) {
+                      void addComment(task.id, draft.trim());
+                      setDraft("");
+                    }
+                  }}
+                />
+                <button
+                  className="btn"
+                  disabled={!draft.trim()}
+                  onClick={() => {
+                    void addComment(task.id, draft.trim());
+                    setDraft("");
+                  }}
+                >
+                  Comment
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <aside className="ws-task-side" aria-label="Task properties">
+            <div className="ws-task-properties">
+              <div className="ws-task-properties-heading"><h2>Details</h2></div>
+              {status ? (
+                <div className="ws-property">
+                  <span className="ws-property-label">{status.name}</span>
+                  <TaskStatus
+                    column={status}
+                    value={task.status}
+                    readOnly={readOnly}
+                    onChange={(value) => void updateTask(task.id, { status: value })}
+                  />
+                </div>
+              ) : null}
+              <div className="ws-property">
+                <span className="ws-property-label">{assigneeColumn.name}</span>
+                <AssigneesPicker
+                  values={assigned}
+                  members={members}
+                  invited={invited}
+                  readOnly={readOnly}
+                  label={assigneeColumn.name}
+                  onChange={(next) => void updateTask(task.id, { assignees: next, assignee: next[0] ?? null })}
+                />
+              </div>
+              <div className="ws-property ws-property-row">
+                <span className="ws-property-label">Created by</span>
+                <span className="ws-property-value ws-property-person">
+                  <PersonAvatar small value={task.createdBy} label={creator} />
+                  <span>{creator}</span>
+                </span>
+              </div>
+              <div className="ws-property ws-property-row">
+                <span className="ws-property-label">Created</span>
+                <span className="ws-property-value">{formatDate(task.createdAt)}</span>
+              </div>
+              <div className="ws-property ws-property-row">
+                <span className="ws-property-label">Updated</span>
+                <span className="ws-property-value">{formatDate(task.updatedAt)}</span>
+              </div>
+            </div>
+          </aside>
+
+          <footer className="ws-task-foot">
+            {confirmDelete ? (
+              <>
+                <span>Delete this task for everyone?</span>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  Keep
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    void deleteTask(task.id);
+                    setConfirmDelete(false);
+                  }}
+                >
+                  Delete
+                </button>
+              </>
+            ) : (
+              <button className="btn btn-ghost" onClick={() => setConfirmDelete(true)}>
+                Delete task
+              </button>
+            )}
+          </footer>
+        </div>
       </div>
     </section>
   );
@@ -395,4 +398,13 @@ export function TaskPanel({ task }: { task: Task }) {
 function authorName(members: Member[], subject: string): string {
   const member = members.find((candidate) => candidate.subject === subject);
   return personLabel(member);
+}
+
+function formatDate(value: number): string {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
 }

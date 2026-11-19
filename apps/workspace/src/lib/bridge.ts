@@ -91,6 +91,7 @@ const demo = {
       description: "Inter, a serif for quotes, and nothing else.",
       status: "opt_done",
       assignee: null,
+      assignees: [],
       fields: {},
       position: 0,
       createdBy: "local-preview",
@@ -106,6 +107,7 @@ const demo = {
       description: "",
       status: "opt_doing",
       assignee: null,
+      assignees: [],
       fields: {},
       position: 0,
       createdBy: "local-preview",
@@ -331,6 +333,11 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         };
       }
       const board = demo.boards.find((candidate) => candidate.id === id);
+      const assignees = Array.isArray(payload.assignees)
+        ? payload.assignees.map(String)
+        : typeof payload.assignee === "string"
+          ? [payload.assignee]
+          : [];
       const task: Task = {
         id: demoId("tk"),
         projectId: board?.projectId ?? DEMO_PROJECT.id,
@@ -338,7 +345,8 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         title: String(payload.title ?? "New task"),
         description: String(payload.description ?? ""),
         status: String(payload.status ?? "opt_todo"),
-        assignee: (payload.assignee as string | null) ?? null,
+        assignee: assignees[0] ?? null,
+        assignees,
         fields: {},
         position: demo.tasks.filter((task) => task.boardId === id).length,
         createdBy: "local-preview",
@@ -357,9 +365,18 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
   if (root === "tasks") {
     const task = demo.tasks.find((candidate) => candidate.id === id);
     if (method === "PATCH") {
-      demo.tasks = demo.tasks.map((candidate) =>
-        candidate.id === id ? { ...candidate, ...payload, updatedAt: demoNow() } : candidate,
-      );
+      demo.tasks = demo.tasks.map((candidate) => {
+        if (candidate.id !== id) return candidate;
+        const next: Task = { ...candidate, ...payload, updatedAt: demoNow() };
+        if (Array.isArray(payload.assignees)) {
+          next.assignees = payload.assignees.map(String);
+          next.assignee = next.assignees[0] ?? null;
+        } else if (payload.assignee !== undefined) {
+          next.assignees = typeof payload.assignee === "string" ? [payload.assignee] : [];
+          next.assignee = next.assignees[0] ?? null;
+        }
+        return next;
+      });
       return { task: demo.tasks.find((candidate) => candidate.id === id) };
     }
     if (method === "DELETE") {
@@ -492,7 +509,13 @@ export const api = {
     call<{ task: Task; comments: Comment[] }>("GET", `/tasks/${id}`),
   createTask: (
     boardId: string,
-    task: { title: string; description?: string; status?: string; assignee?: string | null },
+    task: {
+      title: string;
+      description?: string;
+      status?: string;
+      assignee?: string | null;
+      assignees?: string[];
+    },
   ) => call<{ task: Task }>("POST", `/boards/${boardId}/tasks`, task),
   updateTask: (id: string, patch: Partial<Task>) =>
     call<{ task: Task }>("PATCH", `/tasks/${id}`, patch),

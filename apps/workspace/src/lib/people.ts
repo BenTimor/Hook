@@ -1,4 +1,4 @@
-import type { Invite, Member } from "./types";
+import type { Invite, Member, Task } from "./types";
 
 /**
  * What to call a person.
@@ -29,6 +29,27 @@ export function personFor(
   if (direct) return direct;
   const email = value.toLowerCase();
   return members.find((member) => member.email?.toLowerCase() === email) ?? null;
+}
+
+/**
+ * Everyone assigned to a task.
+ *
+ * `assignees` is the list current servers and windows write; `assignee` keeps
+ * a single-person task from before it existed readable.
+ */
+export function taskAssignees(
+  task: Pick<Task, "assignee" | "assignees">,
+): string[] {
+  if (Array.isArray(task.assignees)) {
+    return task.assignees.filter((value) => typeof value === "string" && value);
+  }
+  return task.assignee ? [task.assignee] : [];
+}
+
+/** The best readable label for one assignment value. */
+export function assigneeLabel(members: Member[], value: string): string {
+  const member = personFor(members, value);
+  return member ? personLabel(member) : unknownPerson(value);
 }
 
 /**

@@ -887,8 +887,9 @@ are saved on this device for the signed-in email and project; recently edited
 uses the items' server-provided edit times. Quick access tiles load board tasks
 or formatted document content for a preview when the tile comes into view.
 Opening or creating a board task shows its details, description and comments in
-a full task view. The description uses the document formatting toolbar and
-automatically saves edits. Back to board returns to the selected board view.
+a full task view with a properties sidebar for status, multiple assignees and
+dates. The description uses the document formatting toolbar and automatically
+saves edits. Back to board returns to the selected board view.
 
 The important structural decision: **the workspace service is the product; the
 window is a client.** `server/workspace.mjs` owns projects, memberships,
@@ -904,15 +905,16 @@ accepted the invitation and is already a manager — the Workspace dialog says
 that it is permanent and cannot be undone.
 
 - **Work is assigned by account, or by address before the account joins.** A
-task's `assignee` is a member's account subject. Someone invited has no subject
-on the project until they accept, so a task assigned to them carries the address
-the invitation went to, and that is all anyone sees of them. The members
-endpoint returns those addresses under `pending` (for the people who can
-invite, like the invitations list); accepting the invitation rewrites every
-task carrying the address to the account, each with a new `seq`, so it becomes
-their name on every board and every device. An address that already belongs to
-a member is stored as the subject in the first place, and rows written before
-this rule are adopted when the service starts.
+task holds an `assignees` list, so several people can own it; `assignee` mirrors
+the first entry for older clients and tools. Each value is a member's account
+subject. Someone invited has no subject on the project until they accept, so a
+task assigned to them carries the address the invitation went to, and that is
+all anyone sees of them. The members endpoint returns those addresses under
+`pending` (for the people who can invite, like the invitations list); accepting
+the invitation rewrites every matching entry to the account, each with a new
+`seq`, so it becomes their name on every board and every device. An address that
+already belongs to a member is stored as the subject in the first place, and
+rows written before this rule are adopted when the service starts.
 
 - **One cursor.** Every workspace row carries `seq` from one global counter;
   `GET /api/ws/changes?since=N` returns rows in projects the caller belongs to,

@@ -2,15 +2,16 @@ import { useState } from "react";
 import { GripVertical, Plus } from "lucide-react";
 
 import type { Board, Column, Task } from "../lib/types";
-import { pendingPeople, personFor, personLabel, unknownPerson } from "../lib/people";
+import { pendingPeople, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { AssigneesPicker } from "./AssigneesPicker";
 
 const EMPTY: never[] = [];
 
 /** The value a column shows for a task, and how to write it back. */
 function valueOf(task: Task, column: Column): string {
   if (column.type === "status") return task.status;
-  if (column.type === "person") return task.assignee ?? "";
+  if (column.type === "person") return taskAssignees(task)[0] ?? "";
   const raw = task.fields?.[column.id];
   if (raw === null || raw === undefined) return "";
   if (typeof raw === "string") return raw;
@@ -75,10 +76,6 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
   const setColumnValue = (task: Task, column: Column, value: string) => {
     if (column.type === "status") {
       void updateTask(task.id, { status: value });
-      return;
-    }
-    if (column.type === "person") {
-      void updateTask(task.id, { assignee: value || null });
       return;
     }
     const fields = { ...task.fields };
@@ -187,43 +184,18 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
               }
 
               if (column.type === "person") {
-                // The value is whatever the task holds — a subject, or the
-                // address of someone invited who has not accepted yet — so the
-                // current one is pinned with the best label we can give it.
-                const member = personFor(members, value);
-                const email = value ? value.toLowerCase() : null;
-                const invite = invited.find((entry) => entry.email === email);
-                const label = value
-                  ? member
-                    ? personLabel(member)
-                    : invite
-                      ? invite.email
-                      : unknownPerson(value)
-                  : null;
                 return (
-                  <div className="ws-cell" key={column.id}>
-                    <select
-                      className="ws-cell-select"
-                      value={value}
-                      onChange={(event) => setColumnValue(task, column, event.target.value)}
-                    >
-                      <option value="">Unassigned</option>
-                      {value ? <option value={value}>{label}</option> : null}
-                      {members
-                        .filter((entry) => entry.subject !== value)
-                        .map((entry) => (
-                          <option key={entry.subject} value={entry.subject}>
-                            {personLabel(entry)}
-                          </option>
-                        ))}
-                      {invited
-                        .filter((entry) => entry.email !== email)
-                        .map((entry) => (
-                          <option key={entry.id} value={entry.email}>
-                            {entry.email}
-                          </option>
-                        ))}
-                    </select>
+                  <div className="ws-cell ws-cell-people" key={column.id}>
+                    <AssigneesPicker
+                      compact
+                      values={taskAssignees(task)}
+                      members={members}
+                      invited={invited}
+                      label={column.name}
+                      onChange={(next) =>
+                        void updateTask(task.id, { assignees: next, assignee: next[0] ?? null })
+                      }
+                    />
                   </div>
                 );
               }

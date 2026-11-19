@@ -477,6 +477,97 @@ test("tasks keep their board's typed columns, and comments record who really wro
   assert.equal(detail.body.comments.length, 2);
 });
 
+test("a task keeps several assignees, de-duplicated, with the first mirrored for older clients", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Sprint 1" },
+  });
+  const boardId = board.body.board.id;
+
+  const created = await request(`/boards/${boardId}/tasks`, {
+    method: "POST",
+    body: {
+      title: "Pair on the sign-up form",
+      assignees: ["ws-owner", "ws-editor", "EDITOR@example.test"],
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.body.task.assignees, ["ws-owner", "ws-editor"]);
+  assert.equal(created.body.task.assignee, "ws-owner");
+
+  const replaced = await request(`/tasks/${created.body.task.id}`, {
+    method: "PATCH",
+    body: { assignees: ["ws-editor", "editor@example.test", "ws-owner"] },
+  });
+  assert.deepEqual(replaced.body.task.assignees, ["ws-editor", "ws-owner"]);
+  assert.equal(replaced.body.task.assignee, "ws-editor");
+
+  // The legacy single-assignee write still works and clears the rest.
+  const legacy = await request(`/tasks/${created.body.task.id}`, {
+    method: "PATCH",
+    body: { assignee: "ws-owner" },
+  });
+  assert.deepEqual(legacy.body.task.assignees, ["ws-owner"]);
+  assert.equal(legacy.body.task.assignee, "ws-owner");
+
+  const cleared = await request(`/tasks/${created.body.task.id}`, {
+    method: "PATCH",
+    body: { assignees: [] },
+  });
+  assert.deepEqual(cleared.body.task.assignees, []);
+  assert.equal(cleared.body.task.assignee, null);
+
+  const malformed = await request(`/tasks/${created.body.task.id}`, {
+    method: "PATCH",
+    body: { assignees: "ws-owner" },
+  });
+  assert.equal(malformed.status, 400);
+});
+
+test("accepting an invitation rewrites its address inside a multi-assignee task", async (t) => {
+  const { request } = await setup(t);
+  const createdProject = await request("/projects", {
+    method: "POST",
+    body: { name: "Website redesign" },
+  });
+  const project = createdProject.body.project;
+  await request(`/projects/${project.id}/invites`, {
+    method: "POST",
+    body: { email: "editor@example.test", role: "editor" },
+  });
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Sprint 1" },
+  });
+  const task = await request(`/boards/${board.body.board.id}/tasks`, {
+    method: "POST",
+    body: {
+      title: "Wire the sign-up form",
+      assignees: ["ws-owner", "editor@example.test"],
+    },
+  });
+  assert.deepEqual(task.body.task.assignees, ["ws-owner", "editor@example.test"]);
+
+  const before = await request("/changes");
+  const inbox = await request("/invites", { token: EDITOR });
+  await request(`/invites/${inbox.body.invites[0].id}/accept`, {
+    method: "POST",
+    token: EDITOR,
+  });
+
+  const after = await request(`/tasks/${task.body.task.id}`);
+  assert.deepEqual(after.body.task.assignees, ["ws-owner", "ws-editor"]);
+  assert.equal(after.body.task.assignee, "ws-owner");
+
+  const changes = await request(`/changes?since=${before.body.cursor}`);
+  const row = changes.body.changes.find(
+    (change) => change.kind === "task" && change.id === task.body.task.id,
+  );
+  assert.deepEqual(row.assignees, ["ws-owner", "ws-editor"]);
+});
+
 test("a stale document write is refused and the current copy comes back", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);

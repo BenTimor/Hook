@@ -169,7 +169,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_tasks",
-            "Tasks on a board: title, Markdown description, status, assignee and custom column values. Create several in one turn when the user asks for a list of work.",
+            "Tasks on a board: title, Markdown description, status, assignees and custom column values. Create several in one turn when the user asks for a list of work.",
             json!({
                 "type": "object",
                 "properties": {
@@ -179,7 +179,8 @@ pub fn definitions() -> Vec<Value> {
                     "title": { "type": "string" },
                     "description": { "type": "string", "description": "Markdown." },
                     "status": { "type": "string", "description": "One of the board's status option ids." },
-                    "assignee": { "type": "string", "description": "Account subject of a project member. For someone invited who has not accepted yet, the email address: workspace_members lists those under pending, and the assignment becomes their name when they accept." },
+                    "assignee": { "type": "string", "description": "One account subject of a project member. Prefer `assignees` when a task should have several people. For someone invited who has not accepted yet, the email address: workspace_members lists those under pending, and the assignment becomes their name when they accept." },
+                    "assignees": { "type": "array", "items": { "type": "string" }, "description": "One or more account subjects (or pending invitation email addresses). Each is resolved to the person's account when they accept." },
                     "fields": { "type": "object", "description": "Values keyed by column id." },
                     "position": { "type": "integer" }
                 },
@@ -421,6 +422,9 @@ async fn tasks(client: &WorkspaceClient, args: &Value) -> ToolResult {
                     body[key] = json!(value);
                 }
             }
+            if let Some(assignees) = args.get("assignees").filter(|value| value.is_array()) {
+                body["assignees"] = assignees.clone();
+            }
             if let Some(fields) = args.get("fields").filter(|value| value.is_object()) {
                 body["fields"] = fields.clone();
             }
@@ -436,6 +440,9 @@ async fn tasks(client: &WorkspaceClient, args: &Value) -> ToolResult {
                 if let Some(value) = string(args, key) {
                     body[key] = json!(value);
                 }
+            }
+            if let Some(assignees) = args.get("assignees").filter(|value| value.is_array()) {
+                body["assignees"] = assignees.clone();
             }
             if let Some(fields) = args.get("fields").filter(|value| value.is_object()) {
                 body["fields"] = fields.clone();

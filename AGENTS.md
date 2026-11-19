@@ -288,10 +288,12 @@ Changing one side of a boundary is the most common way to break this repo.
   `crates/hook-core/src/workspace.rs` → the `ws_request` command →
   `apps/workspace/src/lib/bridge.ts` → store/components → README
   **Hook Workspace**. A new entity needs its own row in the changes feed, or a
-  device will never learn about it. An `assignee` is a member's subject, or the
-  address of someone invited who has not accepted — accepting the invitation
-  rewrites those tasks — so anything that writes an assignee must go through
-  `resolveAssignee` and anything that lists people needs the `pending` half.
+  device will never learn about it. A task's `assignees` list holds each
+  member's subject, or the address of someone invited who has not accepted —
+  accepting the invitation rewrites every matching entry — and the legacy
+  `assignee` column mirrors the first person for older readers. Anything that
+  writes assignees must go through `assigneesFrom` / `resolveAssignees`, and
+  anything that lists people needs the `pending` half.
 - **New landing-page route or field:** `server/*.mjs` router → `waitlist/` UI →
   `server/*.test.mjs`. Keep old rows readable — tests deliberately seed an
   older schema.
