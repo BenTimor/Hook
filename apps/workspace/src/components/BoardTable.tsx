@@ -2,7 +2,7 @@ import { useState } from "react";
 import { GripVertical, Plus } from "lucide-react";
 
 import type { Board, Column, Task } from "../lib/types";
-import { personLabel, unknownPerson } from "../lib/people";
+import { pendingPeople, personFor, personLabel, unknownPerson } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 
 const EMPTY: never[] = [];
@@ -33,6 +33,10 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
   const members = useWorkspaceStore((state) =>
     board.projectId ? (state.members[board.projectId] ?? EMPTY) : EMPTY,
   );
+  const pending = useWorkspaceStore((state) =>
+    board.projectId ? (state.pending[board.projectId] ?? EMPTY) : EMPTY,
+  );
+  const invited = pendingPeople(members, pending);
   const activeTaskId = useWorkspaceStore((state) => state.activeTaskId);
 
   const [dragId, setDragId] = useState<string | null>(null);
@@ -183,6 +187,19 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
               }
 
               if (column.type === "person") {
+                // The value is whatever the task holds — a subject, or the
+                // address of someone invited who has not accepted yet — so the
+                // current one is pinned with the best label we can give it.
+                const member = personFor(members, value);
+                const email = value ? value.toLowerCase() : null;
+                const invite = invited.find((entry) => entry.email === email);
+                const label = value
+                  ? member
+                    ? personLabel(member)
+                    : invite
+                      ? invite.email
+                      : unknownPerson(value)
+                  : null;
                 return (
                   <div className="ws-cell" key={column.id}>
                     <select
@@ -191,14 +208,21 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
                       onChange={(event) => setColumnValue(task, column, event.target.value)}
                     >
                       <option value="">Unassigned</option>
-                      {value && !members.some((member) => member.subject === value) ? (
-                        <option value={value}>{unknownPerson(value)}</option>
-                      ) : null}
-                      {members.map((member) => (
-                        <option key={member.subject} value={member.subject}>
-                          {personLabel(member)}
-                        </option>
-                      ))}
+                      {value ? <option value={value}>{label}</option> : null}
+                      {members
+                        .filter((entry) => entry.subject !== value)
+                        .map((entry) => (
+                          <option key={entry.subject} value={entry.subject}>
+                            {personLabel(entry)}
+                          </option>
+                        ))}
+                      {invited
+                        .filter((entry) => entry.email !== email)
+                        .map((entry) => (
+                          <option key={entry.id} value={entry.email}>
+                            {entry.email}
+                          </option>
+                        ))}
                     </select>
                   </div>
                 );

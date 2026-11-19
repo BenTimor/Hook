@@ -1997,7 +1997,9 @@
   color: var(--ink-4);
 }
 
-.ws-you {
+/* A small tag inside a person's name: "you", "invited". */
+.ws-you,
+.ws-invited {
   padding: 1px 6px;
   border-radius: 999px;
   background: rgba(var(--ink-rgb), 0.06);

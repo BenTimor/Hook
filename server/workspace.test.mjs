@@ -9,7 +9,7 @@ import express from "express";
 
 import { createPlatform } from "./platform.mjs";
 import { hashToken } from "./tokens.mjs";
-import { can } from "./workspace.mjs";
+import { can, createWorkspaceRouter } from "./workspace.mjs";
 
 const OWNER = "hk_ws_test_owner_0123456789abcdefgh";
 const EDITOR = "hk_ws_test_editor_0123456789abcdefg";
@@ -183,6 +183,127 @@ test("an invitation is accepted in the product and grants exactly its role", asy
     body: { email: "friend@example.test", role: "viewer" },
   });
   assert.equal(invite.status, 403);
+});
+
+test("a task is assigned to an invitation by address until it is accepted", async (t) => {
+  const { request } = await setup(t);
+  const created = await request("/projects", {
+    method: "POST",
+    body: { name: "Website redesign" },
+  });
+  const project = created.body.project;
+  await request(`/projects/${project.id}/invites`, {
+    method: "POST",
+    body: { email: "editor@example.test", role: "editor" },
+  });
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Sprint 1" },
+  });
+
+  // Until they accept, the address is the only handle there is — normalised,
+  // because that is how the invitation is addressed.
+  const task = await request(`/boards/${board.body.board.id}/tasks`, {
+    method: "POST",
+    body: { title: "Wire the sign-up form", assignee: "Editor@Example.test" },
+  });
+  assert.equal(task.status, 201);
+  assert.equal(task.body.task.assignee, "editor@example.test");
+
+  const members = await request(`/projects/${project.id}/members`);
+  assert.deepEqual(
+    members.body.pending.map((invite) => [invite.email, invite.role]),
+    [["editor@example.test", "editor"]],
+  );
+
+  // Invitation addresses are for the people who can invite, not for everyone.
+  await request(`/projects/${project.id}/invites`, {
+    method: "POST",
+    body: { email: "outsider@example.test", role: "viewer" },
+  });
+  const inbox = await request("/invites", { token: OUTSIDER });
+  await request(`/invites/${inbox.body.invites[0].id}/accept`, {
+    method: "POST",
+    token: OUTSIDER,
+  });
+  const asViewer = await request(`/projects/${project.id}/members`, { token: OUTSIDER });
+  assert.deepEqual(asViewer.body.pending, []);
+  assert.equal(asViewer.body.members.length, 2);
+});
+
+test("accepting an invitation hands every task assigned to the address to the account", async (t) => {
+  const { request } = await setup(t);
+  const created = await request("/projects", {
+    method: "POST",
+    body: { name: "Website redesign" },
+  });
+  const project = created.body.project;
+  await request(`/projects/${project.id}/invites`, {
+    method: "POST",
+    body: { email: "editor@example.test", role: "editor" },
+  });
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Sprint 1" },
+  });
+  const task = await request(`/boards/${board.body.board.id}/tasks`, {
+    method: "POST",
+    body: { title: "Wire the sign-up form", assignee: "editor@example.test" },
+  });
+
+  const before = await request("/changes");
+  const inbox = await request("/invites", { token: EDITOR });
+  await request(`/invites/${inbox.body.invites[0].id}/accept`, {
+    method: "POST",
+    token: EDITOR,
+  });
+
+  const after = await request(`/tasks/${task.body.task.id}`);
+  assert.equal(after.body.task.assignee, "ws-editor");
+
+  // The owner's window learns about it from the feed, without reloading.
+  const changes = await request(`/changes?since=${before.body.cursor}`);
+  const row = changes.body.changes.find(
+    (change) => change.kind === "task" && change.id === task.body.task.id,
+  );
+  assert.equal(row.assignee, "ws-editor");
+
+  const members = await request(`/projects/${project.id}/members`);
+  assert.deepEqual(members.body.pending, []);
+
+  // From now on an address that already belongs to the project stores the
+  // account, whoever wrote it.
+  const byEmail = await request(`/tasks/${task.body.task.id}`, {
+    method: "PATCH",
+    body: { assignee: "EDITOR@example.test" },
+  });
+  assert.equal(byEmail.body.task.assignee, "ws-editor");
+});
+
+test("a task left on an address is repaired when the service starts", async (t) => {
+  const { request, directory } = await setup(t);
+  const project = await sharedProject(request);
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Sprint 1" },
+  });
+  const task = await request(`/boards/${board.body.board.id}/tasks`, {
+    method: "POST",
+    body: { title: "Filed before the invitation was answered" },
+  });
+
+  // The row a task had when it was written before acceptances were adopted.
+  const db = new DatabaseSync(join(directory, "signups.sqlite"));
+  db.prepare("UPDATE ws_tasks SET assignee = ? WHERE id = ?").run(
+    "editor@example.test",
+    task.body.task.id,
+  );
+  // A deploy restarts the service on the same database.
+  createWorkspaceRouter({ db });
+  db.close();
+
+  const after = await request(`/tasks/${task.body.task.id}`);
+  assert.equal(after.body.task.assignee, "ws-editor");
 });
 
 test("a viewer reads but never writes", async (t) => {

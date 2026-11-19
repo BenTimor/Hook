@@ -179,7 +179,7 @@ pub fn definitions() -> Vec<Value> {
                     "title": { "type": "string" },
                     "description": { "type": "string", "description": "Markdown." },
                     "status": { "type": "string", "description": "One of the board's status option ids." },
-                    "assignee": { "type": "string", "description": "Account subject of a project member, or null." },
+                    "assignee": { "type": "string", "description": "Account subject of a project member. For someone invited who has not accepted yet, the email address: workspace_members lists those under pending, and the assignment becomes their name when they accept." },
                     "fields": { "type": "object", "description": "Values keyed by column id." },
                     "position": { "type": "integer" }
                 },
@@ -219,7 +219,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_members",
-            "The people in a project and their roles: viewer (read only), editor (create and edit boards, tasks, documents), manager (editor plus inviting viewers and editors), owner (everything, including deleting the project and transferring ownership). You can invite, change roles and remove people, but never transfer ownership.",
+            "The people in a project and their roles: viewer (read only), editor (create and edit boards, tasks, documents), manager (editor plus inviting viewers and editors), owner (everything, including deleting the project and transferring ownership). `pending` holds the people who were invited but have not accepted: only their email is known, and that is the address a task is assigned to. You can invite, change roles and remove people, but never transfer ownership.",
             json!({
                 "type": "object",
                 "properties": {

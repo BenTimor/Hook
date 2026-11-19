@@ -299,6 +299,9 @@ function parseColumns(raw) {
 
 export function createWorkspaceRouter({ db, env = {} }) {
   migrate(db);
+  // Tasks written before an invitation was accepted may still point at the
+  // address it was sent to; adopt them once, on the way up.
+  adoptAssignees(db);
   const router = Router();
   // Documents are up to 512 KB of Markdown; everything else is much smaller.
   router.use(json({ limit: "1mb" }));
@@ -498,7 +501,13 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const id = req.params.id;
     const who = actor(req, res, id, "read");
     if (!who) return;
-    res.json({ members: listMembers(db, id) });
+    res.json({
+      members: listMembers(db, id),
+      // Someone invited has no account on this project yet, so the address is
+      // the only handle on them — and how a task reaches them. The list is for
+      // the people who can invite, like the invitations endpoint itself.
+      pending: can(who.role, "invite") ? listPendingInvites(db, id) : [],
+    });
   });
 
   router.patch("/projects/:id/members/:subject", (req, res) => {
@@ -549,15 +558,7 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const id = req.params.id;
     const who = actor(req, res, id, "manageMembers");
     if (!who) return;
-    const invites = db
-      .prepare(
-        `SELECT * FROM ws_invites
-         WHERE project_id = ? AND status = 'pending'
-         ORDER BY created_at DESC`,
-      )
-      .all(id)
-      .map(shapeInvite);
-    res.json({ invites });
+    res.json({ invites: listPendingInvites(db, id) });
   });
 
   router.post("/projects/:id/invites", (req, res) => {
@@ -689,6 +690,23 @@ export function createWorkspaceRouter({ db, env = {} }) {
            ON CONFLICT(project_id, subject)
            DO UPDATE SET role = excluded.role, deleted_at = NULL, seq = excluded.seq`,
         ).run(invite.project_id, subject, invite.role, at, seq);
+        // Work handed to the address while the invitation was pending belongs
+        // to the account now: until this moment the email was the assignee.
+        // Each row gets its own seq so every device adopts it from the feed.
+        const assigned = db
+          .prepare(
+            `SELECT id FROM ws_tasks
+              WHERE project_id = ? AND deleted_at IS NULL AND lower(assignee) = ?`,
+          )
+          .all(invite.project_id, invite.email);
+        for (const task of assigned) {
+          db.prepare("UPDATE ws_tasks SET assignee = ?, updated_at = ?, seq = ? WHERE id = ?").run(
+            subject,
+            at,
+            nextSeq(db),
+            task.id,
+          );
+        }
       }
     });
     res.json({ ok: true, status });
@@ -907,7 +925,7 @@ export function createWorkspaceRouter({ db, env = {} }) {
     if (status === undefined) return badRequest(res, "That status is not on this board's columns.");
     const assignee = req.body?.assignee === null || req.body?.assignee === undefined
       ? null
-      : String(req.body.assignee);
+      : resolveAssignee(db, projectId, req.body.assignee);
     const fields = normaliseFields(columns, req.body?.fields);
     if (fields === undefined) return badRequest(res, "One of those field values is not valid.");
 
@@ -963,7 +981,9 @@ export function createWorkspaceRouter({ db, env = {} }) {
       fields.status = status;
     }
     if (req.body?.assignee !== undefined) {
-      fields.assignee = req.body.assignee === null ? null : String(req.body.assignee);
+      fields.assignee = req.body.assignee === null
+        ? null
+        : resolveAssignee(db, task.project_id, req.body.assignee);
     }
     if (req.body?.fields !== undefined) {
       const merged = { ...JSON.parse(task.fields), ...(req.body.fields ?? {}) };
@@ -1314,6 +1334,81 @@ function listMembers(db, projectId) {
                 m.joined_at`,
     )
     .all(projectId);
+}
+
+/** Invitations nobody has answered yet: an address, a role, and nothing else. */
+function listPendingInvites(db, projectId) {
+  return db
+    .prepare(
+      `SELECT * FROM ws_invites
+        WHERE project_id = ? AND status = 'pending'
+        ORDER BY created_at DESC`,
+    )
+    .all(projectId)
+    .map(shapeInvite);
+}
+
+/** The account a project already has at this address, or null. */
+function memberSubjectForEmail(db, projectId, email) {
+  const row = db
+    .prepare(
+      `SELECT m.subject
+         FROM ws_members m
+         JOIN waitlist_signups s ON s.google_subject = m.subject
+        WHERE m.project_id = ? AND m.deleted_at IS NULL AND lower(s.email) = ?
+        LIMIT 1`,
+    )
+    .get(projectId, email);
+  return row?.subject ?? null;
+}
+
+/**
+ * What an `assignee` string means.
+ *
+ * A member is referenced by their account subject. Someone who was invited but
+ * has not accepted has no subject in this project yet, so a task points at the
+ * address the invitation went to; `acceptInvite` rewrites those rows. An
+ * address that already belongs to a member resolves to the subject here, so an
+ * agent that read the address from the invitation never stores it.
+ */
+function resolveAssignee(db, projectId, value) {
+  const raw = typeof value === "string" ? value.trim() : String(value);
+  if (!raw) return null;
+  const email = emailKey(raw);
+  if (!email) return raw;
+  return memberSubjectForEmail(db, projectId, email) ?? email;
+}
+
+/**
+ * Tasks that still point at an address whose person has since joined.
+ *
+ * Idempotent and only writes rows that actually change, so the first start
+ * after this rule existed repairs the old rows (and tells every device through
+ * the changes feed) and every later start does nothing.
+ */
+function adoptAssignees(db) {
+  const rows = db
+    .prepare(
+      `SELECT id, project_id, assignee FROM ws_tasks
+        WHERE deleted_at IS NULL AND instr(assignee, '@') > 0`,
+    )
+    .all();
+  if (rows.length === 0) return;
+  const at = now();
+  transaction(db, () => {
+    for (const row of rows) {
+      const email = emailKey(row.assignee);
+      if (!email) continue;
+      const subject = memberSubjectForEmail(db, row.project_id, email);
+      if (!subject || subject === row.assignee) continue;
+      db.prepare("UPDATE ws_tasks SET assignee = ?, updated_at = ?, seq = ? WHERE id = ?").run(
+        subject,
+        at,
+        nextSeq(db),
+        row.id,
+      );
+    }
+  });
 }
 
 /** Folders are the one table whose rows are not shaped by hand anywhere else. */

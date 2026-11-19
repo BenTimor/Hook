@@ -4,7 +4,7 @@ import { Mail, UserPlus } from "lucide-react";
 import { Dialog } from "@hook/ui";
 
 import type { Project, Role } from "../lib/types";
-import { personLabel } from "../lib/people";
+import { pendingPeople, personLabel } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { InvitationCard } from "./InvitationCard";
 
@@ -25,6 +25,7 @@ const ROLES: Array<{ id: Role; label: string; note: string }> = [
  */
 export function MembersPanel({ project }: { project: Project }) {
   const members = useWorkspaceStore((state) => state.members[project.id] ?? EMPTY);
+  const pending = useWorkspaceStore((state) => state.pending[project.id] ?? EMPTY);
   const invite = useWorkspaceStore((state) => state.invite);
   const changeRole = useWorkspaceStore((state) => state.setRole);
   const removeMember = useWorkspaceStore((state) => state.removeMember);
@@ -39,6 +40,9 @@ export function MembersPanel({ project }: { project: Project }) {
   const isOwner = project.role === "owner";
   const isManager = isOwner || project.role === "manager";
   const managers = members.filter((member) => member.role === "manager");
+  // Invited, not joined: the address is the only thing there is to call them,
+  // and a task assigned to it already reaches them.
+  const invited = pendingPeople(members, pending);
 
   /** What this viewer may hand out, per the server's rules. */
   const grantable = isOwner
@@ -48,7 +52,10 @@ export function MembersPanel({ project }: { project: Project }) {
   return (
     <div className="ws-people">
       <div className="ws-people-head">
-        <span>{members.length} in this project</span>
+        <span>
+          {members.length} in this project
+          {invited.length > 0 ? ` · ${invited.length} invited` : ""}
+        </span>
         {isManager && (
           <button className="btn" onClick={() => setInviteOpen(true)}>
             <UserPlus /> Invite someone
@@ -123,10 +130,41 @@ export function MembersPanel({ project }: { project: Project }) {
         })}
       </ul>
 
+      {invited.length > 0 ? (
+        <>
+          <div className="ws-people-head">
+            <span>Invited, not accepted yet</span>
+          </div>
+          <ul className="ws-people-list">
+            {invited.map((entry) => (
+              <li className="ws-person" key={entry.id}>
+                <div className="ws-person-who">
+                  <span className="ws-avatar" aria-hidden="true">
+                    {entry.email.slice(0, 1).toUpperCase()}
+                  </span>
+                  <div>
+                    <div className="ws-person-name">
+                      {entry.email}
+                      <span className="ws-invited">invited</span>
+                    </div>
+                    <div className="ws-person-email">
+                      A task assigned to this address becomes theirs when they join
+                    </div>
+                  </div>
+                </div>
+                <div className="ws-person-actions">
+                  <span className="ws-role-static">{capitalize(entry.role)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
       <Dialog
         open={inviteOpen}
         title="Invite someone"
-        description="They accept it in Hook Workspace. Until then they see no boards or documents."
+        description="They accept it in Hook Workspace. Until then they see no boards or documents — you can still assign tasks to their email, and those assignments become theirs when they accept."
         onClose={() => setInviteOpen(false)}
         footer={
           <>

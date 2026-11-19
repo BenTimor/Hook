@@ -885,6 +885,17 @@ manager cannot mint another manager, and ownership only moves to someone who
 accepted the invitation and is already a manager — the Workspace dialog says
 that it is permanent and cannot be undone.
 
+- **Work is assigned by account, or by address before the account joins.** A
+task's `assignee` is a member's account subject. Someone invited has no subject
+on the project until they accept, so a task assigned to them carries the address
+the invitation went to, and that is all anyone sees of them. The members
+endpoint returns those addresses under `pending` (for the people who can
+invite, like the invitations list); accepting the invitation rewrites every
+task carrying the address to the account, each with a new `seq`, so it becomes
+their name on every board and every device. An address that already belongs to
+a member is stored as the subject in the first place, and rows written before
+this rule are adopted when the service starts.
+
 - **One cursor.** Every workspace row carries `seq` from one global counter;
   `GET /api/ws/changes?since=N` returns rows in projects the caller belongs to,
   tombstones included, bounded by rows and bytes. Clients keep the last `seq`.

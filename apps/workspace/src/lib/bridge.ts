@@ -221,7 +221,10 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         case "folders":
           return { folders: demo.folders.filter((folder) => folder.projectId === id) };
         case "members":
-          return { members: demo.members };
+          return {
+            members: demo.members,
+            pending: demo.invites.filter((invite) => invite.projectId === id),
+          };
         case "invites":
           return { invites: demo.invites };
         default:
@@ -532,7 +535,7 @@ export const api = {
   deleteDocument: (id: string) => call<{ ok: true }>("DELETE", `/documents/${id}`),
 
   members: (projectId: string) =>
-    call<{ members: Member[] }>("GET", `/projects/${projectId}/members`),
+    call<{ members: Member[]; pending: Invite[] }>("GET", `/projects/${projectId}/members`),
   invite: (projectId: string, email: string, role: string) =>
     call<{ invite: Invite }>("POST", `/projects/${projectId}/invites`, { email, role }),
   setRole: (projectId: string, subject: string, role: string) =>

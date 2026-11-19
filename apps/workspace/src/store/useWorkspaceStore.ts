@@ -34,6 +34,8 @@ interface WorkspaceState {
   comments: ById<Comment[]>;
   documents: ById<DocumentMeta[]>;
   members: ById<Member[]>;
+  /** Invitations nobody answered yet: the address is the only handle on them. */
+  pending: ById<Invite[]>;
   folders: ById<Folder[]>;
 
   cursor: number;
@@ -125,6 +127,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   comments: {},
   documents: {},
   members: {},
+  pending: {},
   folders: {},
   cursor: 0,
   syncing: false,
@@ -192,6 +195,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         boards: { ...state.boards, [projectId]: sortByPosition(boards.boards) },
         documents: { ...state.documents, [projectId]: documents.documents },
         members: { ...state.members, [projectId]: members.members },
+        // An older service has no pending list; a project without one simply
+        // offers no addresses to assign to.
+        pending: { ...state.pending, [projectId]: members.pending ?? [] },
         folders: { ...state.folders, [projectId]: sortByPosition(folders.folders) },
       }));
     } catch (error) {
@@ -651,7 +657,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async refreshMembers(projectId) {
     try {
       const members = await api.members(projectId);
-      set((state) => ({ members: { ...state.members, [projectId]: members.members } }));
+      set((state) => ({
+        members: { ...state.members, [projectId]: members.members },
+        pending: { ...state.pending, [projectId]: members.pending ?? [] },
+      }));
     } catch (error) {
       set({ error: message(error) });
     }
@@ -850,6 +859,10 @@ function applyChange(
       // nameless placeholder would otherwise win and the table would show
       // "Member" (or, before, the account number) forever.
       if (!state.members[projectId]) return;
+      // Accepting an invitation turns the address into a member, so the same
+      // address must stop being offered as a pending invitee.
+      const email = (change.email as string | null)?.toLowerCase() ?? null;
+      const pending = state.pending[projectId];
       set({
         members: {
           ...state.members,
@@ -863,6 +876,16 @@ function applyChange(
                 joinedAt: Number(change.joinedAt) || undefined,
               }),
         },
+        ...(email && pending
+          ? {
+              pending: {
+                ...state.pending,
+                [projectId]: pending.filter(
+                  (invite) => invite.email.toLowerCase() !== email,
+                ),
+              },
+            }
+          : {}),
       });
       return;
     }

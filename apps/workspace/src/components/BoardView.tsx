@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { LayoutList, Plus, Rows3 } from "lucide-react";
 
 import type { Board, Member, Task } from "../lib/types";
-import { personLabel, unknownPerson } from "../lib/people";
+import { pendingPeople, personFor, personLabel, unknownPerson } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { BoardTable } from "./BoardTable";
 
@@ -175,6 +175,9 @@ export function TaskPanel({ task }: { task: Task }) {
   const members = useWorkspaceStore((state) =>
     state.activeProjectId ? (state.members[state.activeProjectId] ?? EMPTY) : EMPTY,
   );
+  const pending = useWorkspaceStore((state) =>
+    state.activeProjectId ? (state.pending[state.activeProjectId] ?? EMPTY) : EMPTY,
+  );
   const board = useWorkspaceStore((state) => {
     if (!state.activeProjectId) return null;
     return (state.boards[state.activeProjectId] ?? []).find((item) => item.id === task.boardId) ?? null;
@@ -207,6 +210,20 @@ export function TaskPanel({ task }: { task: Task }) {
     name: "Assignee",
     type: "person" as const,
   };
+  // Whoever the task points at right now, however it is written: a member
+  // (by subject), a member whose address an older task still carries, or
+  // someone invited who has not accepted yet — shown by address alone.
+  const assigned = personFor(members, task.assignee);
+  const invited = pendingPeople(members, pending);
+  const assignedEmail = task.assignee?.toLowerCase() ?? null;
+  const assignedInvite = invited.find((invite) => invite.email === assignedEmail) ?? null;
+  const assignedLabel = task.assignee
+    ? assigned
+      ? personLabel(assigned)
+      : assignedInvite
+        ? assignedInvite.email
+        : unknownPerson(task.assignee)
+    : null;
 
   return (
     <aside className="ws-task">
@@ -261,14 +278,21 @@ export function TaskPanel({ task }: { task: Task }) {
               }
             >
               <option value="">Unassigned</option>
-              {task.assignee && !members.some((member) => member.subject === task.assignee) ? (
-                <option value={task.assignee}>{unknownPerson(task.assignee)}</option>
-              ) : null}
-              {members.map((member) => (
-                <option key={member.subject} value={member.subject}>
-                  {personLabel(member)}
-                </option>
-              ))}
+              {task.assignee ? <option value={task.assignee}>{assignedLabel}</option> : null}
+              {members
+                .filter((member) => member.subject !== task.assignee)
+                .map((member) => (
+                  <option key={member.subject} value={member.subject}>
+                    {personLabel(member)}
+                  </option>
+                ))}
+              {invited
+                .filter((invite) => invite.email !== assignedEmail)
+                .map((invite) => (
+                  <option key={invite.id} value={invite.email}>
+                    {invite.email}
+                  </option>
+                ))}
             </select>
           </label>
         ) : null}
