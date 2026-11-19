@@ -14,6 +14,9 @@
 # has to be installed on the VPS or on your machine. Revoking takes effect on
 # the account's next API request: the proxy re-checks status every time.
 #
+# The database stores UTC; every timestamp below is printed in Israel time
+# (Asia/Jerusalem, DST included).
+#
 #   DEPLOY_HOST=root@1.2.3.4 ./scripts/waitlist-admin.sh --list
 #
 set -euo pipefail
@@ -24,7 +27,7 @@ COMMAND="${1:---list}"
 ARG="${2:-}"
 
 if [ "$COMMAND" = "--help" ] || [ "$COMMAND" = "-h" ]; then
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
@@ -52,7 +55,19 @@ const db = new DatabaseSync(dbPath, { readOnly: !write });
 db.exec("PRAGMA busy_timeout = 5000;");
 db.exec("PRAGMA foreign_keys = ON;");
 
-const utc = (value) => (value ? value.replace("T", " ").slice(0, 16) : "—");
+// The database writes UTC (strftime ... 'now' with a trailing Z). Show it in
+// Israel time so an admin reading the table does not have to add the offset.
+const stamp = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Jerusalem",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const utc = (value) =>
+  value ? stamp.format(new Date(value)).replace(",", "") : "—";
 const num = (value) => Intl.NumberFormat("en-US").format(Number(value) || 0);
 const rate = (hit, miss) => {
   const total = Number(hit) + Number(miss);
@@ -192,7 +207,7 @@ if (command === "--approve") {
     )
     .all();
   table(
-    ["EMAIL", "STATUS", "REQUESTS", "INPUT", "OUTPUT", "CACHE HIT", "LAST REQUEST"],
+    ["EMAIL", "STATUS", "REQUESTS", "INPUT", "OUTPUT", "CACHE HIT", "LAST REQUEST (IL)"],
     rows.map((row) => [
       row.email,
       row.status,
@@ -222,7 +237,7 @@ ${totalsLine(rows)}`);
     )
     .all();
   table(
-    ["EMAIL", "CHAT", "REQUESTS", "INPUT", "OUTPUT", "CACHE HIT", "LAST SEEN"],
+    ["EMAIL", "CHAT", "REQUESTS", "INPUT", "OUTPUT", "CACHE HIT", "LAST SEEN (IL)"],
     rows.map((row) => [
       row.email,
       row.chat_id,
@@ -252,7 +267,7 @@ ${totalsLine(rows)}`);
     )
     .all();
   table(
-    ["EMAIL", "AGENT", "CHAT", "REQUESTS", "INPUT", "OUTPUT", "CACHE HIT", "LAST SEEN"],
+    ["EMAIL", "AGENT", "CHAT", "REQUESTS", "INPUT", "OUTPUT", "CACHE HIT", "LAST SEEN (IL)"],
     rows.map((row) => [
       row.email,
       row.agent_id,
@@ -286,7 +301,7 @@ ${totalsLine(rows)}`);
     )
     .all();
   table(
-    ["EMAIL", "STATUS", "JOINED", "APPROVED", "REQUESTS", "INPUT", "OUTPUT", "CACHE HIT"],
+    ["EMAIL", "STATUS", "JOINED (IL)", "APPROVED (IL)", "REQUESTS", "INPUT", "OUTPUT", "CACHE HIT"],
     rows.map((row) => [
       row.email,
       row.status,

@@ -255,6 +255,9 @@ pair, not from a guess. Analyse it with:
 ./scripts/waitlist-admin.sh --usage-agents   # per coding-agent run
 ```
 
+Rows are stored with UTC timestamps; the tables print them in Israel time
+(`Asia/Jerusalem`, DST included).
+
 The proxy also enforces a small per-account concurrency and requests-per-minute
 limit. Revocation is checked on every request, so `--revoke` takes effect without
 restarting anything.
