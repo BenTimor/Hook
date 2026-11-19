@@ -47,7 +47,8 @@ function UpdateProgress({
  * launch (the banner stays gone for the session, the check runs again later).
  *
  * The Store channel has no download or progress: the Microsoft Store owns the
- * install, so the button opens the product page instead.
+ * install. It also closes Hook first, because MSIX will not replace a package
+ * that is still running — the Store only says "try again" when it is.
  */
 export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
   const info = useUpdateStore((s) => s.info);
@@ -55,6 +56,7 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
   const phase = useUpdateStore((s) => s.phase);
   const progress = useUpdateStore((s) => s.progress);
   const dismissedVersion = useUpdateStore((s) => s.dismissedVersion);
+  const closing = useUpdateStore((s) => s.closing);
   const error = useUpdateStore((s) => s.error);
   const install = useUpdateStore((s) => s.install);
   const dismiss = useUpdateStore((s) => s.dismiss);
@@ -97,8 +99,8 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
                 ? "Hook downloads the new version, checks it, and restarts itself. Your chats stay on this machine."
                 : store
                   ? required
-                    ? `Hook ${info.minimum} is now the oldest supported version. Update from the Microsoft Store to keep using Hook — your account, chats and projects stay exactly where they are.`
-                    : `You're on ${info.current}. The new version is delivered by the Microsoft Store and installs itself.`
+                    ? `Hook ${info.minimum} is now the oldest supported version. Hook closes so the Microsoft Store can replace it — reopen Hook when the Store finishes. Your account, chats and projects stay exactly where they are.`
+                    : `You're on ${info.current}. Hook closes so the Microsoft Store can install ${info.latest}; reopen it when the Store is done. Your chats stay on this machine.`
                   : !signedIn
                     ? `Hook ${info.minimum} is now the oldest supported version. Sign in and Hook installs the update for you — your account, chats and projects stay exactly where they are.`
                     : required
@@ -130,15 +132,16 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
                       This update is required to keep using Hook.
                     </span>
                   ) : (
-                    <button className="btn" onClick={dismiss}>
+                    <button className="btn" onClick={dismiss} disabled={closing}>
                       Later
                     </button>
                   )}
                   <button
                     className="btn btn-primary"
                     onClick={() => void install()}
+                    disabled={closing}
                   >
-                    Update from Microsoft Store
+                    {closing ? "Closing Hook…" : "Close Hook and update"}
                   </button>
                 </>
               ) : !signedIn ? (
@@ -196,13 +199,21 @@ export function UpdatePrompt({ showBanner = true }: { showBanner?: boolean }) {
         <span>
           {info.notes ??
             (store
-              ? `You're on ${info.current}. The Store installs it for you.`
+              ? `You're on ${info.current}. Hook closes while the Store installs it.`
               : `You're on ${info.current}.`)}
           {!store && info.size ? ` · ${formatSize(info.size)}` : ""}
         </span>
       </div>
-      <button className="btn btn-primary" onClick={() => void install()}>
-        {store ? "Open Microsoft Store" : "Update now"}
+      <button
+        className="btn btn-primary"
+        onClick={() => void install()}
+        disabled={closing}
+      >
+        {store
+          ? closing
+            ? "Closing Hook…"
+            : "Close Hook and update"
+          : "Update now"}
       </button>
       <button className="icon-btn" onClick={dismiss} title="Later">
         <X strokeWidth={2} />

@@ -15,6 +15,8 @@ interface UpdateStore {
   progress: { received: number; total: number | null } | null;
   /** "Later" hides the banner for this version, not for a required update. */
   dismissedVersion: string | null;
+  /** A Store build quits so the Store can replace a package that is not in use. */
+  closing: boolean;
   error: string | null;
   check: (options?: { silent?: boolean }) => Promise<UpdateInfo | null>;
   install: () => Promise<void>;
@@ -37,6 +39,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   phase: null,
   progress: null,
   dismissedVersion: null,
+  closing: false,
   error: null,
 
   check: async (options = {}) => {
@@ -68,12 +71,23 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   install: async () => {
     if (get().installing) return;
 
-    // The Store owns the install for packaged builds: open its product page.
     if (get().info?.channel === "store") {
+      if (get().closing) return;
+      // MSIX will not service a package that is in use (ERROR_PACKAGES_IN_USE,
+      // which the Store only reports as "try again"), so Hook closes as part of
+      // handing over: `openStoreUpdate` opens the Store page, then exits.
+      set({ closing: true, error: null });
       try {
         await api.openStoreUpdate();
+        // Hook exits here; the Store installs the new package.
+        if (!isTauri()) {
+          set({ closing: false });
+          toast("The Microsoft Store opens from the desktop app.");
+        }
       } catch (error) {
-        toast.error(textOf(error));
+        const message = textOf(error);
+        set({ closing: false, error: message });
+        toast.error(message);
       }
       return;
     }

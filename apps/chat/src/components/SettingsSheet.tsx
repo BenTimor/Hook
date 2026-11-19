@@ -91,6 +91,7 @@ export function SettingsSheet() {
   const update = useUpdateStore((s) => s.info);
   const checking = useUpdateStore((s) => s.checking);
   const installing = useUpdateStore((s) => s.installing);
+  const closing = useUpdateStore((s) => s.closing);
   const checkUpdate = useUpdateStore((s) => s.check);
   const installUpdate = useUpdateStore((s) => s.install);
 
@@ -236,14 +237,16 @@ export function SettingsSheet() {
                 <button
                   className="btn btn-primary"
                   onClick={() => void installUpdate()}
-                  disabled={installing}
+                  disabled={installing || closing}
                 >
                   <ArrowUpCircle strokeWidth={1.9} />
-                  {installing
-                    ? "Updating…"
-                    : update?.channel === "store"
-                      ? "Open Microsoft Store"
-                      : "Update now"}
+                  {closing
+                    ? "Closing Hook…"
+                    : installing
+                      ? "Updating…"
+                      : update?.channel === "store"
+                        ? "Close Hook and update"
+                        : "Update now"}
                 </button>
               ) : (
                 <button
@@ -258,7 +261,7 @@ export function SettingsSheet() {
             </div>
             <p className="sheet-help">
               {update?.channel === "store"
-                ? "Updates are delivered by the Microsoft Store. Your chats and projects stay where they are."
+                ? "Updates come from the Microsoft Store. Hook closes so the Store can replace it — reopen it when the Store finishes. Your chats and projects stay where they are."
                 : "Updates install from inside Hook and restart it. Your chats and projects stay where they are."}
               {update && update.minimum !== "0.0.0" ? (
                 <> Hook {update.minimum} is the oldest supported version.</>

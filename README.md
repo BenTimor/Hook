@@ -554,7 +554,9 @@ A packaged Microsoft Store build uses its own pair (`store.latest` /
 
 `store.latest` stays empty until Microsoft certifies the named version; an empty
 value means Store builds are never told an update exists. Raise
-`store.minimumVersion` only to force Store installs below it to update.
+`store.minimumVersion` only to force Store installs below it to update. The
+Store's own install has a constraint the direct channel does not: see
+[Updating a Store install](#updating-a-store-install).
 
 "Update now" downloads the installer with the signed-in token, checks it against
 the published SHA-256, and hands it to the NSIS installer in passive update mode
@@ -662,6 +664,36 @@ direct builds share chats, sign-in and project notes — and uninstalling the
 Store app does not delete them. It needs the Evergreen WebView2 Runtime, which is
 preinstalled on Windows 11 and on Windows 10 machines with Edge; the Store
 listing states the requirement.
+
+`makeappx` is taken from the newest installed Windows SDK, which must know the
+`uap17` namespace the manifest uses (the 10.0.26100 SDK does; anything from
+Windows 11 24H2 on does). An older SDK rejects the manifest instead of producing
+a package that fails the same way at install time.
+
+### Updating a Store install
+
+MSIX never services a package that is in use. An update that finds Hook running
+fails with `ERROR_PACKAGES_IN_USE` (`0x80073D02`) — and the Store reports that as
+a failed update with no reason at all, which reads as "try again". Closing Hook
+is what makes it work, because the package's files (the exe and the bundled
+`resources/pi-runtime` and `resources/git` that agent subprocesses load) are
+locked while it runs. Two things keep that from being the user's problem:
+
+- The manifest declares `<uap17:UpdateWhileInUse>defer</uap17:UpdateWhileInUse>`
+  in `<Properties>`. Windows then **holds** the update and finishes it the next
+  time Hook closes, instead of failing. Honoured on Windows 11 24H2 (build
+  26100) and later; older Windows ignores it, so it is listed in
+  `IgnorableNamespaces`.
+- The in-app Store button closes Hook before it hands over
+  (`open_store_update` → `update::open_store_for_update`), so the deployment
+  never meets a locked package on any Windows version. `on_exit` stops the
+  coding agents and the preview server first, which is what actually releases
+  the package files. Reopening Hook is the user's job — Windows will not
+  relaunch a full-trust app after a Store install.
+
+Neither reaches an install whose package predates the change; that one update
+still needs Hook closed by hand. `scripts/msix.test.mjs` fails if a template
+loses the element, the namespace or a placeholder the packager fills.
 
 ### Store policy 11.16: live generative AI
 

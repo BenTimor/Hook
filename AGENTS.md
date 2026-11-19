@@ -248,10 +248,11 @@ Changing one side of a boundary is the most common way to break this repo.
   `.github/workflows/checks.yml`. One index per product:
   `/api/releases` (chat, historical) and `/api/releases/<product>`.
 - **Store/update channel changes:** `msix/<product>/AppxManifest.xml` +
-  `msix/<product>/identity.json` → `scripts/build-msix.mjs` → `update.rs`
-  channel detection/`store_url` → the Store branches in `UpdatePrompt` and the
-  update store → `release.config.json` `store` fields → README **Microsoft
-  Store**.
+  `msix/<product>/identity.json` → `scripts/build-msix.mjs` →
+  `scripts/msix.test.mjs` → `update.rs` channel detection,
+  `open_store_for_update` → the Store branches in `UpdatePrompt`, the update
+  store and `SettingsSheet` → `release.config.json` `store` fields → README
+  **Updating a Store install**.
 
 ## Hard constraints
 
@@ -318,8 +319,14 @@ Changing one side of a boundary is the most common way to break this repo.
   (`pnpm app:msix`, or `pnpm release -- --store`) from the commit that was
   published — CI does not package it. The MSIX manifest opts out of AppData
   virtualization for its own `%APPDATA%\app.hook.<product>`; keep that so the two
-  channels share data instead of forking it. The Store product name for the chat
-  app is **HookCode** (the manifest display name); the app UI stays Hook.
+  channels share data instead of forking it. MSIX also refuses to service a
+  package in use (`ERROR_PACKAGES_IN_USE`, `0x80073D02`, which the Store reports
+  as a bare "try again"), so the manifest sets
+  `uap17:UpdateWhileInUse=defer` (Windows 11 24H2+, ignorable before it) and
+  `open_store_update` closes Hook before opening the Store page. Keep both, the
+  namespace in `IgnorableNamespaces`, and `scripts/msix.test.mjs` green. The
+  Store product name for the chat app is **HookCode** (the manifest display
+  name); the app UI stays Hook.
 - **Store policy 11.16 is mandatory.** Live generative AI needs: the Report
   action on assistant replies, the AI disclosure in the listing, the Partner
   Center declaration, and a way to review reports (`scripts/ai-reports.sh`).

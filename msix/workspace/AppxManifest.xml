@@ -14,7 +14,8 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
   xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
-  IgnorableNamespaces="uap rescap desktop6 virtualization"
+  xmlns:uap17="http://schemas.microsoft.com/appx/manifest/uap/windows10/17"
+  IgnorableNamespaces="uap rescap desktop6 virtualization uap17"
 >
   <Identity
     Name="{{IDENTITY_NAME}}"
@@ -27,6 +28,16 @@
     <DisplayName>Hook Workspace</DisplayName>
     <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
+
+    <!--
+      MSIX never services a package that is in use: an update that finds the
+      app running fails with ERROR_PACKAGES_IN_USE (0x80073D02), which the
+      Store reduces to "try again". `defer` tells Windows to hold the update
+      and finish it once the app closes instead. It is honoured on Windows 11
+      24H2 (build 26100) and later; older Windows ignores the element, which is
+      why the in-app Store button closes the app before it hands over.
+    -->
+    <uap17:UpdateWhileInUse>defer</uap17:UpdateWhileInUse>
 
     <!--
       The workspace cache and the shared account live in AppData under

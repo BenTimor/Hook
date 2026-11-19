@@ -293,6 +293,28 @@ pub fn open_store(cfg: &HarnessConfig) -> Result<(), String> {
     }
 }
 
+/// Open the Store's update surface and quit, so the Store is never asked to
+/// replace files this process holds open.
+///
+/// MSIX refuses to service a package that is in use (`ERROR_PACKAGES_IN_USE`,
+/// `0x80073D02`) and the Store only reports "try again". `uap17:UpdateWhileInUse`
+/// makes Windows defer such an update on Windows 11 24H2+, but older Windows has
+/// no such option, so the user's click closes Hook first either way. `on_exit`
+/// stops the coding agents and the preview server before the process goes away,
+/// which is what releases `resources/pi-runtime` and `resources/git`.
+pub fn open_store_for_update(app: &AppHandle, cfg: &HarnessConfig) -> Result<(), String> {
+    open_store(cfg)?;
+    // The shell launches the Store as its own process, but the protocol handler
+    // needs a moment before this one disappears. Long enough to be reliable,
+    // short enough that the window does not look stuck.
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        handle.exit(0);
+    });
+    Ok(())
+}
+
 fn base(cfg: &HarnessConfig) -> &str {
     cfg.auth.base_url.trim_end_matches('/')
 }

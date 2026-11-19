@@ -807,10 +807,14 @@ pub async fn report_message(
     crate::reports::submit(&state.cfg, &token, &payload).await
 }
 
-/// Open the Microsoft Store's update surface for a packaged (MSIX) build.
+/// Open the Microsoft Store's update surface for a packaged (MSIX) build and
+/// quit: the Store cannot replace a package that is still running.
 #[tauri::command]
-pub fn open_store_update(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    crate::update::open_store(&state.cfg)
+pub fn open_store_update(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    crate::update::open_store_for_update(&app, &state.cfg)
 }
 
 /// Download the newest installer, verify it, launch it and exit Hook. The
