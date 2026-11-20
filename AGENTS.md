@@ -431,6 +431,8 @@ Changing one side of a boundary is the most common way to break this repo.
 - Local data layout (`%APPDATA%\app.hook*`) → **Where the data lives**
 - Landing page, OAuth, model proxy → **Web waitlist** + `infra/README.md`
 - Coverage → **Tests**
+- Hook Browser (designed, not built) → `docs/browser-architecture.md`,
+  `docs/browser-poc-plan.md`
 
 **Keep docs in sync.** When a change alters commands, config keys, file layout,
 data paths, runtime behavior or a user-visible flow, update this file and the

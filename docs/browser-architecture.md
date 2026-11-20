@@ -1,15 +1,17 @@
-# Browser — architecture
+# Hook Browser — architecture
 
-> **Status: design only.** Nothing in this document is implemented. It records
-> the approach and the reasoning behind it so the decisions are not relitigated
-> every few months. Feature UX is deliberately out of scope.
+> **Status: designed, not built.** Nothing in this document is implemented. It
+> records the approach and the reasoning behind it so the decisions are not
+> relitigated every few months. Feature UX is deliberately out of scope; the
+> order of work for the first proof of concept is `docs/browser-poc-plan.md`.
 
-The browser is the third Hook product: a Chromium-based browser that is used by
-the user and driven by agents, sharing the account, the backend, the design
+**Hook Browser** is the third Hook product: a Chromium-based browser that is used
+by the user and driven by agents, sharing the account, the backend, the design
 system and the chat surface that `apps/chat` and `apps/workspace` already share.
 
-Names used below (`apps/browser`, `src/hook`, `hook-core`) are placeholders until
-the product is named.
+Paths below are final, not placeholders: the overlay lives at `Hook/browser/`
+and appears inside the Chromium checkout as `src/hook/`; `apps/browser` is held
+for the product shell once the fork builds.
 
 ## Why Chromium
 
@@ -26,6 +28,13 @@ Everything else was rejected on that ground or on maturity:
 | CEF | Extensions are unpacked-only and partial; the whole browser UI is yours to rebuild. |
 | Gecko / Firefox fork | Genuinely lighter above ~30 tabs, but no Chrome Web Store. |
 | Servo / Ladybird | No extension model, not production-ready. |
+
+Gecko was reconsidered on build speed — it builds in tens of minutes where
+Chromium takes hours — and rejected on the licence. Gecko is MPL-2.0, which is
+file-level copyleft: shipping a closed binary obliges us to publish our changes
+to the MPL-covered files it contains. Chromium's BSD-3 asks only that notices be
+kept, so Hook Browser can ship closed today and be opened on our own terms later.
+Build time is a cost we pay; the licence is a constraint on the product.
 
 The second reason is control: memory policy, ad blocking, tab lifecycle and
 agent integration all live below the layer an extension can reach.
@@ -94,6 +103,17 @@ src/hook/
                       or run as an out-of-process binary
   tests/              our own browser tests
 ```
+
+### Where the tree lives
+
+The checkout is never committed: it is around 100 GB with its own `.git`, past
+GitHub's per-file and per-push limits, and anything ignored is destroyed by
+`git clean -xfd`. It sits outside the repository at a short root — Chromium's own
+advice, because `third_party/…` paths hit `MAX_PATH` under a deep root — and the
+overlay is a directory junction into it, so editing `Hook/browser/overlay/src/hook/…`
+edits the bytes the build compiles. What is committed is the overlay, the patch
+stack, the pinned tag and the scripts that materialise the tree; `gclient`'s
+`custom_deps` does the same wiring on CI.
 
 The overlay is expected to stay modest — tens of thousands of lines, not the
 million that Brave's carries, because most product surface is WebUI and reused
@@ -169,12 +189,21 @@ WebUI talks to the browser process over mojom bindings, which replaces the
 `invoke` surface the Tauri products use. The browser process talks to `hook-core`
 over the bridge.
 
+What the user is looking at already has a channel: `set_chat_context`
+(`commands.rs`) is read by `context_frame` (`turn.rs`) and appended as one
+trailing message, which is the append-only-safe place for per-request state. The
+browser reports the active tab's title, index, domain and highlight through the
+same command; nothing about the prompt changes, and no browser tool is involved.
+
 ## Reuse
 
 `packages/ui` (tokens, plain CSS) and `packages/chat` (`ChatDock`, `Thread`,
-`MessageItem`, `Composer`) are React with no Tauri dependency, so they compile
-into WebUI assets and render in a `chrome://` surface largely as-is. Only the
-transports change behind them. Forking a chat component into the browser would
+`MessageItem`, `Composer`) are React and are meant to have no host dependency, so
+they compile into WebUI assets and render in a `chrome://` surface largely as-is.
+Two module-scope imports currently break that claim — `packages/chat/src/open.ts`
+and `packages/ui/src/window.ts` import `@tauri-apps/api` — and both become an
+injected opener and a host check before the browser links either package. Only
+the transports change behind them. Forking a chat component into the browser would
 break the property that all three products look and behave alike — the same rule
 AGENTS.md already states for the two existing apps.
 
@@ -290,14 +319,17 @@ stays affordable. They are also another slow loop; run them in CI, not locally.
 
 ## Open decisions
 
-- Product name, and therefore app directory, overlay directory and MSIX identity.
+Settled, with the reasoning, in `docs/browser-poc-plan.md`: the name (Hook
+Browser), the engine (Chromium, for the extension store and for BSD-3 allowing a
+closed fork), reuse of `ChatDock` rather than a browser-only chat surface, and no
+thin precursor — the overlay is proven before any product surface is built.
+
+Still open:
+
 - Widevine: license it, or ship without DRM playback.
 - Vault scope: local-only, or synced — and if synced, on which construction.
-- Whether the browser ships its own AI-only surfaces or reuses `ChatDock` and the
-  dock overrides as-is.
+- Whether the tabstrip is restyled in Views or left close to upstream.
 - Chromium release channel and how security patch releases are tracked.
-- Whether a thin precursor (companion or extension) is used to validate browser
-  UX before the fork reaches daily-driver quality.
 
 ## Non-goals for now
 
