@@ -1,6 +1,5 @@
-import { ChevronDown } from "lucide-react";
-
 import type { Column } from "../lib/types";
+import { SelectMenu } from "./SelectMenu";
 
 export type StatusTone = "done" | "active" | "blocked" | "todo" | "neutral";
 
@@ -18,7 +17,7 @@ export function statusTone(label: string): StatusTone {
   return "neutral";
 }
 
-/** A compact status pill that keeps the native select underneath. */
+/** A compact status pill with the same custom menu as every other dropdown. */
 export function TaskStatus({
   column,
   value,
@@ -30,7 +29,10 @@ export function TaskStatus({
   readOnly: boolean;
   onChange: (value: string) => void;
 }) {
-  const options = column.options ?? [];
+  const options = (column.options ?? []).map((option) => ({
+    id: option.id,
+    label: option.label || "Untitled",
+  }));
   const current = options.find((option) => option.id === value);
   const label = current?.label || "No status";
 
@@ -44,17 +46,13 @@ export function TaskStatus({
   }
 
   return (
-    <label className="ws-status-pill" data-tone={statusTone(label)}>
-      <span className="ws-status-dot" aria-hidden="true" />
-      <span>{label}</span>
-      <ChevronDown className="ws-status-chevron" aria-hidden="true" />
-      <select value={value} aria-label={column.name} onChange={(event) => onChange(event.target.value)}>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label || "Untitled"}
-          </option>
-        ))}
-      </select>
-    </label>
+    <SelectMenu
+      variant="status"
+      tone={statusTone(label)}
+      value={value}
+      options={options}
+      label={column.name}
+      onChange={onChange}
+    />
   );
 }

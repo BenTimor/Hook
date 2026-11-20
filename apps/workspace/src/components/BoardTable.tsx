@@ -5,6 +5,7 @@ import type { Board, Column, Task } from "../lib/types";
 import { pendingPeople, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { AssigneesPicker } from "./AssigneesPicker";
+import { SelectMenu } from "./SelectMenu";
 
 const EMPTY: never[] = [];
 
@@ -271,22 +272,19 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
                 );
               }
 
-              const options = column.options ?? [];
+              const options = (column.options ?? []).map((option) => ({
+                id: option.id,
+                label: option.label || "Untitled",
+              }));
               return (
                 <div className="ws-cell" key={column.id}>
-                  <select
-                    className="ws-cell-select"
-                    data-type={column.type}
+                  <SelectMenu
+                    variant="cell"
                     value={value}
-                    onChange={(event) => setColumnValue(task, column, event.target.value)}
-                  >
-                    {column.type === "select" ? <option value="">—</option> : null}
-                    {options.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label || "Untitled"}
-                      </option>
-                    ))}
-                  </select>
+                    options={column.type === "select" ? [{ id: "", label: "—" }, ...options] : options}
+                    label={column.name}
+                    onChange={(next) => setColumnValue(task, column, next)}
+                  />
                 </div>
               );
             })}

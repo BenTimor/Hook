@@ -7,6 +7,7 @@ import type { Project, Role } from "../lib/types";
 import { pendingPeople, personLabel } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { InvitationCard } from "./InvitationCard";
+import { SelectMenu } from "./SelectMenu";
 
 const EMPTY: never[] = [];
 
@@ -93,19 +94,13 @@ export function MembersPanel({ project }: { project: Project }) {
 
               <div className="ws-person-actions">
                 {canChange ? (
-                  <select
-                    className="text-input ws-role"
+                  <SelectMenu
+                    className="ws-role"
                     value={member.role}
-                    onChange={(event) =>
-                      void changeRole(project.id, member.subject, event.target.value)
-                    }
-                  >
-                    {grantable.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.label}
-                      </option>
-                    ))}
-                  </select>
+                    options={grantable.map((entry) => ({ id: entry.id, label: entry.label }))}
+                    label={`Role for ${label}`}
+                    onChange={(next) => void changeRole(project.id, member.subject, next)}
+                  />
                 ) : (
                   <span className="ws-role-static">
                     {member.role === "owner" ? "Owner" : capitalize(member.role)}
