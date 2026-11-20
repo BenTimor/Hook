@@ -12,9 +12,9 @@ import { TaskStatus } from "./TaskStatus";
 /**
  * A board as its columns: one column per status option, cards in order.
  *
- * Moving a card is a status change, not a drag: the server owns the order and
- * a keyboard-accessible select beats a drag for the first version. The card
- * opens the task view, where everything else is edited.
+ * Dragging a card to another column changes its status; opening the card still
+ * edits everything else. The status select in the task view remains the
+ * keyboard-accessible path to the same change.
  */
 export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
   const createTask = useWorkspaceStore((state) => state.createTask);
@@ -76,21 +76,83 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
 export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) {
   const openTask = useWorkspaceStore((state) => state.openTask);
   const createTask = useWorkspaceStore((state) => state.createTask);
+  const updateTask = useWorkspaceStore((state) => state.updateTask);
   const activeTaskId = useWorkspaceStore((state) => state.activeTaskId);
   const [pending, setPending] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const dragRef = useRef<string | null>(null);
+  const [overColumn, setOverColumn] = useState<string | null>(null);
+  // Show the card in its destination immediately; the task row catches up
+  // when the server answers.
+  const [moving, setMoving] = useState<Record<string, string>>({});
+  const [arrived, setArrived] = useState<string | null>(null);
 
   const status = board.columns.find((column) => column.type === "status");
   const columns = status?.options ?? [];
+  const statusOf = (task: Task) => moving[task.id] ?? task.status;
   const extra = tasks.filter(
-    (task) => !columns.some((option) => option.id === task.status),
+    (task) => !columns.some((option) => option.id === statusOf(task)),
   );
 
+  const moveTask = async (taskId: string, columnId: string) => {
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    if (!task || statusOf(task) === columnId) return;
+    const position = tasks
+      .filter((candidate) => candidate.id !== taskId && statusOf(candidate) === columnId)
+      .reduce((next, candidate) => Math.max(next, candidate.position + 1), 0);
+    setMoving((current) => ({ ...current, [taskId]: columnId }));
+    setArrived(taskId);
+    window.setTimeout(() => setArrived((current) => (current === taskId ? null : current)), 320);
+    await updateTask(taskId, { status: columnId, position });
+    setMoving((current) => {
+      const next = { ...current };
+      delete next[taskId];
+      return next;
+    });
+  };
+
   return (
-    <div className="ws-board">
+    <div
+      className="ws-board"
+      data-dragging={Boolean(dragId)}
+      onDragOver={(event) => {
+        if (!dragRef.current) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        dragRef.current = null;
+        setDragId(null);
+        setOverColumn(null);
+      }}
+    >
       {columns.map((column) => {
-        const items = tasks.filter((task) => task.status === column.id);
+        const items = tasks.filter((task) => statusOf(task) === column.id);
         return (
-          <section className="ws-column" key={column.id}>
+          <section
+            className="ws-column"
+            key={column.id}
+            data-over={overColumn === column.id && Boolean(dragId)}
+            onDragOver={(event) => {
+              if (!dragRef.current) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              if (overColumn !== column.id) setOverColumn(column.id);
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+              if (overColumn === column.id) setOverColumn(null);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const id = event.dataTransfer.getData("text/plain") || dragRef.current;
+              dragRef.current = null;
+              setDragId(null);
+              setOverColumn(null);
+              if (id) void moveTask(id, column.id);
+            }}
+          >
             <header className="ws-column-head">
               <span className="ws-column-name">{column.label}</span>
               <span className="ws-column-count">{items.length}</span>
@@ -112,8 +174,23 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
                 <button
                   className="ws-card"
                   key={task.id}
+                  draggable
                   data-active={task.id === activeTaskId}
+                  data-dragging={dragId === task.id}
+                  data-arrived={arrived === task.id}
                   onClick={() => void openTask(task.id)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", task.id);
+                    dragRef.current = task.id;
+                    setDragId(task.id);
+                    setOverColumn(null);
+                  }}
+                  onDragEnd={() => {
+                    dragRef.current = null;
+                    setDragId(null);
+                    setOverColumn(null);
+                  }}
                 >
                   <span className="ws-card-title">{task.title}</span>
                   {task.description ? (

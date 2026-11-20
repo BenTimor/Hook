@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { GripVertical, Plus } from "lucide-react";
 
 import type { Board, Column, Task } from "../lib/types";
@@ -41,8 +41,32 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
   const activeTaskId = useWorkspaceStore((state) => state.activeTaskId);
 
   const [dragId, setDragId] = useState<string | null>(null);
-  const [overId, setOverId] = useState<string | null>(null);
+  const dragRef = useRef<string | null>(null);
+  const [over, setOver] = useState<{ id: string; after: boolean } | null>(null);
   const [adding, setAdding] = useState(false);
+  const table = useRef<HTMLDivElement>(null);
+  const rowTops = useRef(new Map<string, number>());
+
+  // A short FLIP animation after a drop: rows slide from their old position to
+  // the new one instead of jumping.
+  useLayoutEffect(() => {
+    const rows = table.current?.querySelectorAll<HTMLElement>(".ws-trow[data-task-id]");
+    if (!rows) return;
+    const next = new Map<string, number>();
+    for (const row of rows) {
+      const id = row.dataset.taskId;
+      if (!id) continue;
+      const top = row.offsetTop;
+      next.set(id, top);
+      const previous = rowTops.current.get(id);
+      if (previous === undefined || previous === top) continue;
+      row.animate(
+        [{ transform: `translateY(${previous - top}px)` }, { transform: "translateY(0)" }],
+        { duration: 220, easing: "cubic-bezier(.2,.8,.2,1)" },
+      );
+    }
+    rowTops.current = next;
+  });
 
   // A board without a person column still has assignees on its tasks, and a
   // table is where you expect to see them, so the table lends the column.
@@ -61,14 +85,16 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
       .join(" ")}`,
   };
 
-  const drop = (targetId: string) => {
-    const source = dragId;
+  const drop = (targetId: string | null, after: boolean) => {
+    const source = dragRef.current;
+    dragRef.current = null;
     setDragId(null);
-    setOverId(null);
+    setOver(null);
     if (!source || source === targetId) return;
     const ids = tasks.map((task) => task.id).filter((id) => id !== source);
-    const index = ids.indexOf(targetId);
-    if (index < 0) return;
+    let index = targetId ? ids.indexOf(targetId) : -1;
+    if (index < 0) index = ids.length;
+    else if (after) index += 1;
     ids.splice(index, 0, source);
     void reorderTasks(board.id, ids);
   };
@@ -85,8 +111,38 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
   };
 
   return (
-    <div className="ws-table-wrap">
-      <div className="ws-table">
+    <div
+      className="ws-table-wrap"
+      data-dragging={Boolean(dragId)}
+      onDragOver={(event) => {
+        if (!dragRef.current) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+        setOver(null);
+      }}
+      onDrop={(event) => {
+        if (!dragRef.current) return;
+        event.preventDefault();
+        const target = event.target instanceof Element ? event.target : null;
+        const row = target?.closest<HTMLElement>(".ws-trow[data-task-id]");
+        const id = row?.dataset.taskId ?? null;
+        if (!row || !id) {
+          const first = table.current?.querySelector<HTMLElement>(".ws-trow[data-task-id]");
+          if (first?.dataset.taskId && event.clientY < first.getBoundingClientRect().top) {
+            drop(first.dataset.taskId, false);
+          } else {
+            drop(null, true);
+          }
+          return;
+        }
+        const rect = row.getBoundingClientRect();
+        drop(id, event.clientY > rect.top + rect.height / 2);
+      }}
+    >
+      <div className="ws-table" ref={table}>
         <div className="ws-thead" style={grid}>
           <span className="ws-th ws-th-title">Task</span>
           {columns.map((column) => (
@@ -105,20 +161,23 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
             key={task.id}
             className="ws-trow"
             style={grid}
+            data-task-id={task.id}
             data-active={task.id === activeTaskId}
             data-dragging={dragId === task.id}
-            data-over={Boolean(dragId) && dragId !== task.id && overId === task.id}
+            data-over={
+              dragId && dragId !== task.id && over?.id === task.id
+                ? over.after
+                  ? "after"
+                  : "before"
+                : undefined
+            }
             onDragOver={(event) => {
-              if (!dragId) return;
+              if (!dragRef.current) return;
               event.preventDefault();
-              if (overId !== task.id) setOverId(task.id);
-            }}
-            onDragLeave={() => {
-              if (overId === task.id) setOverId(null);
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              drop(task.id);
+              event.dataTransfer.dropEffect = "move";
+              const rect = event.currentTarget.getBoundingClientRect();
+              const after = event.clientY > rect.top + rect.height / 2;
+              if (over?.id !== task.id || over.after !== after) setOver({ id: task.id, after });
             }}
           >
             <div className="ws-cell ws-cell-title">
@@ -132,11 +191,23 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = "move";
                   event.dataTransfer.setData("text/plain", task.id);
+                  const row = event.currentTarget.closest<HTMLElement>(".ws-trow");
+                  if (row) {
+                    const rect = row.getBoundingClientRect();
+                    event.dataTransfer.setDragImage(
+                      row,
+                      event.clientX - rect.left,
+                      event.clientY - rect.top,
+                    );
+                  }
+                  dragRef.current = task.id;
                   setDragId(task.id);
+                  setOver(null);
                 }}
                 onDragEnd={() => {
+                  dragRef.current = null;
                   setDragId(null);
-                  setOverId(null);
+                  setOver(null);
                 }}
               >
                 <GripVertical strokeWidth={1.8} />
