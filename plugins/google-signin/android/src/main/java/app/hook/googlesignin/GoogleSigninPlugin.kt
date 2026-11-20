@@ -1,6 +1,7 @@
 package app.hook.googlesignin
 
 import android.app.Activity
+import android.util.Log
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
@@ -34,6 +35,10 @@ import kotlinx.coroutines.launch
 class GoogleSigninPlugin(private val activity: Activity) : Plugin(activity) {
     private val scope = CoroutineScope(Dispatchers.Main)
 
+    private companion object {
+        const val TAG = "HookGoogleSignin"
+    }
+
     /** A phone with Play services can show the sheet; that is the only test. */
     @Command
     fun available(invoke: Invoke) {
@@ -62,18 +67,23 @@ class GoogleSigninPlugin(private val activity: Activity) : Plugin(activity) {
                 val response = CredentialManager.create(activity).getCredential(activity, request)
                 val credential = response.credential
                 if (credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    Log.e(TAG, "unexpected credential type: ${credential.type}")
                     invoke.reject("The account sheet returned an unexpected credential.", "failed")
                     return@launch
                 }
                 val google = GoogleIdTokenCredential.createFrom(credential.data)
                 val result = JSObject()
                 result.put("idToken", google.idToken)
+                Log.i(TAG, "account sheet returned an id token")
                 invoke.resolve(result)
             } catch (error: GetCredentialCancellationException) {
+                Log.i(TAG, "the sheet was dismissed")
                 invoke.reject("Sign-in was cancelled.", "cancelled")
             } catch (error: GetCredentialException) {
+                Log.e(TAG, "the sheet failed: ${error.javaClass.simpleName}: ${error.message}")
                 invoke.reject(error.message ?: "Google sign-in failed.", "failed")
             } catch (error: Exception) {
+                Log.e(TAG, "the exchange with Google failed: ${error.javaClass.simpleName}: ${error.message}")
                 invoke.reject(error.message ?: "Google sign-in failed.", "failed")
             }
         }

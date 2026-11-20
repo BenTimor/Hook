@@ -69,9 +69,21 @@ fn load_or_create_device(data_dir: &Path) -> String {
 /// A product's own data directory is `%APPDATA%\app.hook.<product>`; the account
 /// lives one level up, next to all of them, so installing a second product finds
 /// the first one's sign-in instead of asking again.
+///
+/// A phone has no such folder. Android's app data directory is
+/// `/data/user/0/<package>` and its parent belongs to the system, so the desktop
+/// rule would try to write `/data/user/0/app.hook/` and be refused. Each app on a
+/// phone has its own container, there is no sibling to share with, and the
+/// per-app `auth.json` this store also keeps is the whole answer.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn shared_account_path(data_dir: &Path) -> Option<PathBuf> {
     let parent = data_dir.parent()?;
     Some(parent.join("app.hook").join("account.json"))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn shared_account_path(_data_dir: &Path) -> Option<PathBuf> {
+    None
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -665,9 +677,13 @@ impl AuthStore {
             .await
             .map_err(|e| format!("Could not reach hookcode.io: {e}"))?;
         if !response.status().is_success() {
-            return Err(
-                error_message(response, "Google could not sign this account in.").await
-            );
+            let status = response.status();
+            let message =
+                error_message(response, "Google could not sign this account in.").await;
+            // A phone has no console; this is what `adb logcat` reads when the
+            // account picker worked and the exchange did not.
+            eprintln!("hook: google sign-in refused ({status}): {message}");
+            return Err(message);
         }
         let session: GoogleSession = response
             .json()

@@ -24,6 +24,9 @@ export function SignIn() {
   const signIn = useMobileChat((s) => s.signIn);
   const signInWithGoogle = useMobileChat((s) => s.signInWithGoogle);
   const cancel = useMobileChat((s) => s.cancelSignIn);
+  // A failed sign-in is exactly the moment the reason matters most, and this
+  // screen is what is on top when it happens.
+  const error = useMobileChat((s) => s.error);
 
   const [google, setGoogle] = useState(false);
   const [byCode, setByCode] = useState(false);
@@ -109,6 +112,7 @@ export function SignIn() {
         )}
 
         {auth?.message ? <p className="signin-error">{auth.message}</p> : null}
+        {error ? <p className="signin-error">{error}</p> : null}
       </div>
     </section>
   );

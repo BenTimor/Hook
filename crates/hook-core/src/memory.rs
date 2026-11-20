@@ -116,11 +116,20 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// The shared folder both products write to, next to `account.json`.
+///
+/// Not on a phone: the parent of an app's data directory is the system's, so
+/// memory becomes app-private — which is also what the account file is there.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn shared_dir(data_dir: &Path) -> PathBuf {
     match data_dir.parent() {
         Some(parent) => parent.join("app.hook").join("memory"),
         None => data_dir.join("memory"),
     }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn shared_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("memory")
 }
 
 fn account_key(account: &str) -> String {
