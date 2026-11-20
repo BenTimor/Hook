@@ -12,18 +12,10 @@ export interface ToolCall {
   arguments: string;
 }
 
-export interface Attachment {
-  id: string;
-  file: string;
-  mime: string;
-  width: number;
-  height: number;
-  bytes: number;
-  /** "user" or "screenshot" — purely cosmetic in the UI. */
-  kind?: string;
-  /** Content address used by the sync service. */
-  sha256?: string;
-}
+// The picture shape is shared with the surface that draws it, so the strip and
+// the lightbox cannot disagree about what an attachment is.
+export type { ChatAttachment as Attachment } from "@hook/chat";
+import type { ChatAttachment as Attachment } from "@hook/chat";
 
 /** A picture the user has staged in the composer, before sending. */
 export interface DraftImage {
@@ -130,6 +122,24 @@ export interface ReportRequest {
   content: string;
   /** Null unless the user ticks "include the whole conversation". */
   transcript: ReportMessage[] | null;
+}
+
+/**
+ * Reporting something a person wrote, seen through a preview. A task's comments
+ * are other people's words, so this is a separate shape from an AI report: the
+ * entity is what identifies it, not a message in the conversation.
+ */
+export interface ContentReport {
+  chatId: string;
+  target: {
+    kind: "task" | "document" | "board";
+    id: string;
+    projectId?: string;
+    title: string;
+  };
+  reason: ReportReason;
+  note: string | null;
+  content: string;
 }
 
 /** Conversation and project sync, as shown in Settings. */
@@ -287,53 +297,26 @@ export interface AgentTranscript {
 }
 
 /** One HTML page shown in the right-side preview panel. */
-export interface WorkspaceTask {
-  id: string;
-  projectId: string;
-  boardId: string;
-  title: string;
-  description: string;
-  status: string;
-  assignee?: string | null;
-  fields?: Record<string, unknown>;
-  updatedAt: number;
-}
-
-export interface WorkspaceDocument {
-  id: string;
-  projectId: string;
-  title: string;
-  markdown: string;
-  rev: number;
-  updatedAt: number;
-}
-
-export interface WorkspaceColumn {
-  id: string;
-  name: string;
-  type: string;
-  options?: Array<{ id: string; label: string }>;
-}
-
-export interface WorkspaceBoard {
-  id: string;
-  projectId: string;
-  name: string;
-  description?: string;
-  columns: WorkspaceColumn[];
-}
-
-export interface WorkspaceComment {
-  id: string;
-  author: string;
-  authorKind: "user" | "agent";
-  viaChatId?: string | null;
-  body: string;
-  createdAt: number;
-}
-
 /** What the preview panel is showing: a project page, or a Workspace entity. */
 export type PreviewKind = "page" | "document" | "task" | "board";
+
+// The entity shapes and the components that draw them live in `packages/chat`,
+// because the phone shows the same board/task/document in a sheet. Keeping one
+// definition is what stops the two surfaces drifting apart.
+export type {
+  WorkspaceBoard,
+  WorkspaceColumn,
+  WorkspaceComment,
+  WorkspaceDocument,
+  WorkspaceTask,
+} from "@hook/chat";
+
+import type {
+  WorkspaceBoard,
+  WorkspaceComment,
+  WorkspaceDocument,
+  WorkspaceTask,
+} from "@hook/chat";
 
 export interface PreviewView {
   active: true;

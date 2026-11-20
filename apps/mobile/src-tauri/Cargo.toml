@@ -1,0 +1,29 @@
+[package]
+name = "hook-mobile"
+version = "0.1.0"
+description = "Hook on a phone — the conversation and the account's Workspace"
+authors = ["you"]
+edition = "2021"
+rust-version = "1.77"
+
+# A mobile target is linked as a library, not launched as a process: Android
+# loads `staticlib` through the NDK bridge and iOS links the same code into the
+# app. The desktop app deliberately omits these two; this one exists for them.
+[lib]
+name = "hook_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+hook-core = { path = "../../../crates/hook-core" }
+# Sign in with the phone's own account sheet. The commands are Kotlin; this
+# crate only gives them a name the renderer can invoke and a permission set.
+tauri-plugin-google-signin = { path = "../../../plugins/google-signin" }
+# Declared here as well as in hook-core: tauri-build discovers the plugin
+# permission sets (`opener:default`, `dialog:default`) from this crate's
+# dependency graph, and capabilities/default.json asks for them.
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2.0.0-rc.8"

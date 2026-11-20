@@ -1,0 +1,121 @@
+/* ── Hook Workspace previews ────────────────────────────────────────────────
+   A document, a task or a board, rendered from data rather than an iframe. The
+   desktop draws it in its side panel and the phone draws it in a sheet; only
+   the frame around these rules differs. */
+
+.preview-doc,
+.preview-entity {
+  height: 100%;
+  overflow: auto;
+  padding: 16px 18px 28px;
+}
+
+.preview-doc .md,
+.preview-entity .md {
+  font-size: 14px;
+}
+
+.preview-entity-title {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-weight: 580;
+  letter-spacing: -0.018em;
+  color: var(--ink);
+}
+
+.preview-entity-note {
+  margin: 0 0 12px;
+  font-size: 12.8px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+.preview-comments {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.preview-comments-title {
+  margin-bottom: 10px;
+  font-size: 10.5px;
+  font-weight: 620;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.preview-comment {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: rgba(var(--ink-rgb), 0.03);
+}
+
+.preview-comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 540;
+  color: var(--ink-3);
+}
+
+.preview-agent-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 560;
+  letter-spacing: 0.01em;
+}
+
+.preview-board {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.preview-board-column {
+  width: 190px;
+  flex: 0 0 190px;
+  padding: 8px;
+  border-radius: 11px;
+  background: rgba(var(--ink-rgb), 0.035);
+}
+
+.preview-board-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 3px 8px;
+  font-size: 11.5px;
+  font-weight: 570;
+  color: var(--ink-2);
+}
+
+.preview-board-head span {
+  color: var(--ink-4);
+  font-weight: 500;
+}
+
+.preview-board-card {
+  padding: 8px 9px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--ivory);
+  font-size: 12.4px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.preview-board-empty {
+  padding: 6px 3px;
+  font-size: 11.5px;
+  color: var(--ink-4);
+}

@@ -16,6 +16,7 @@ RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/chat/package.json apps/chat/package.json
 COPY apps/workspace/package.json apps/workspace/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/ui/package.json packages/ui/package.json
 COPY packages/chat/package.json packages/chat/package.json
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
@@ -38,6 +39,7 @@ RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/chat/package.json apps/chat/package.json
 COPY apps/workspace/package.json apps/workspace/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/ui/package.json packages/ui/package.json
 COPY packages/chat/package.json packages/chat/package.json
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \

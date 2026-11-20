@@ -10,6 +10,7 @@ import type {
   Chat,
   ChatEvent,
   ChatMeta,
+  ContentReport,
   ImportPreview,
   ImportProgress,
   ImportSummary,
@@ -345,6 +346,12 @@ export const api = {
     isTauri()
       ? invoke<void>("report_message", { payload })
       : mock.reportMessage(),
+
+  /** Flag a task, document or board shown in the preview (user-generated text). */
+  reportContent: (payload: ContentReport): Promise<void> =>
+    isTauri()
+      ? invoke<void>("report_content", { payload })
+      : mock.reportContent(),
 
   previewState: (): Promise<PreviewView | null> =>
     isTauri()

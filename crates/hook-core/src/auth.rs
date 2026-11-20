@@ -240,6 +240,14 @@ struct ApiUser {
     approved: bool,
 }
 
+/// The answer to a native sign-in: the same session the device flow returns.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleSession {
+    token: String,
+    user: ApiUser,
+}
+
 #[derive(Deserialize)]
 struct MeResponse {
     user: ApiUser,
@@ -606,6 +614,75 @@ impl AuthStore {
         if self.generation.load(Ordering::SeqCst) == generation {
             *lock(&self.pending) = None;
         }
+    }
+
+    /// The Google client id this deployment expects a *native* ID token to name.
+    ///
+    /// Asked of the server at sign-in rather than compiled into the app: the
+    /// phone talks to whichever server the build points at, and a client id
+    /// baked into an APK would be one deployment's.
+    pub async fn google_client_id(&self) -> Result<Option<String>, String> {
+        if !self.required {
+            return Ok(None);
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Config {
+            google_client_id: Option<String>,
+        }
+        let response = self
+            .client
+            .get(format!("{}/api/auth/config", self.base_url))
+            .send()
+            .await
+            .map_err(|e| format!("Could not reach hookcode.io: {e}"))?;
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+        let config: Config = response
+            .json()
+            .await
+            .map_err(|e| format!("Unexpected sign-in response: {e}"))?;
+        Ok(config.google_client_id.filter(|id| !id.trim().is_empty()))
+    }
+
+    /// Sign in with the ID token the phone's own account sheet returned.
+    ///
+    /// The token is checked by the server before it becomes a session, so it is
+    /// a bearer in transit and nothing more. Choosing the account picker
+    /// supersedes a pending device code: the person made a choice, and a code
+    /// they are no longer looking at must not win later.
+    pub async fn login_with_google(&self, id_token: &str) -> Result<AuthView, String> {
+        if !self.required {
+            return Err("Local preview does not use sign-in.".into());
+        }
+        let response = self
+            .client
+            .post(format!("{}/api/auth/google", self.base_url))
+            .header("x-hook-device", self.device_id())
+            .json(&serde_json::json!({ "idToken": id_token }))
+            .send()
+            .await
+            .map_err(|e| format!("Could not reach hookcode.io: {e}"))?;
+        if !response.status().is_success() {
+            return Err(
+                error_message(response, "Google could not sign this account in.").await
+            );
+        }
+        let session: GoogleSession = response
+            .json()
+            .await
+            .map_err(|e| format!("Unexpected sign-in response: {e}"))?;
+        self.cancel();
+        self.save_session(&StoredSession {
+            token: session.token,
+            email: session.user.email,
+            name: session.user.name,
+            subject: session.user.subject,
+            signed_in_at: now_ms(),
+            git_token: None,
+        })?;
+        Ok(self.view())
     }
 
     pub fn save_session(&self, session: &StoredSession) -> Result<(), String> {

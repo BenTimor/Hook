@@ -1,0 +1,41 @@
+{
+  "name": "@hook/mobile-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Hook on a phone — the conversation and the account's Workspace, in your pocket",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "tauri": "tauri",
+    "app": "node ../../scripts/tauri.mjs dev",
+    "android": "node ../../scripts/tauri.mjs android dev",
+    "android:build": "node ../../scripts/tauri.mjs android build",
+    "ios": "node ../../scripts/tauri.mjs ios dev",
+    "ios:build": "node ../../scripts/tauri.mjs ios build"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "catalog:",
+    "@fontsource-variable/jetbrains-mono": "catalog:",
+    "@hook/chat": "workspace:*",
+    "@hook/ui": "workspace:*",
+    "@tauri-apps/api": "catalog:",
+    "lucide-react": "catalog:",
+    "motion": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-markdown": "catalog:",
+    "remark-gfm": "catalog:",
+    "shiki": "catalog:",
+    "zustand": "catalog:"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

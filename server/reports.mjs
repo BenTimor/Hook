@@ -23,9 +23,35 @@ const MAX_REASON = 20;
 const MAX_ID = 120;
 const MAX_NOTE = 2_000;
 const MAX_MESSAGE = 200_000;
+const MAX_TITLE = 200;
 const MAX_TRANSCRIPT_MESSAGES = 400;
 const MAX_TRANSCRIPT_CHARS = 400_000;
 const MAX_REPORTS_PER_HOUR = 10;
+
+/**
+ * The preview entities a person can flag. Kept in step with
+ * `packages/chat/src/preview/types.ts` and `crates/hook-core/src/reports.rs`.
+ */
+const REPORT_TARGETS = new Set(["task", "document", "board"]);
+
+/**
+ * A report is either a model reply or something a person wrote. The second kind
+ * exists because a task's comments arrive through the preview, and both stores
+ * require a flag for user-generated content that does not depend on a model.
+ */
+function targetOf(value) {
+  if (!value || typeof value !== "object") return null;
+  const kind = text(value.kind, MAX_REASON);
+  if (!REPORT_TARGETS.has(kind)) return null;
+  const id = text(value.id, MAX_ID);
+  if (!id) return null;
+  return {
+    kind,
+    id,
+    title: text(value.title, MAX_TITLE),
+    projectId: text(value.projectId, MAX_ID) || null,
+  };
+}
 
 function text(value, max) {
   return typeof value === "string" ? value.slice(0, max) : "";
@@ -60,6 +86,15 @@ export function createReportsRouter({ db, auth }) {
     const content = text(body.content, MAX_MESSAGE);
     if (!content.trim()) {
       return res.status(400).json({ error: "missing_content" });
+    }
+
+    // A content report names what was flagged. Anything else is a reply.
+    const target = targetOf(body.target);
+    if (body.target && !target) {
+      return res.status(400).json({ error: "invalid_target" });
+    }
+    if (target && !body.target.title) {
+      return res.status(400).json({ error: "invalid_target" });
     }
 
     // The transcript is opt-in: null means "just the reported reply".
@@ -99,17 +134,20 @@ export function createReportsRouter({ db, auth }) {
     db.prepare(
       `INSERT INTO ai_reports
          (google_subject, chat_id, message_id, reason, note, content,
-          transcript, app_version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          transcript, app_version, subject_kind, target)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       account.row.google_subject,
       text(body.chatId, MAX_ID),
-      text(body.messageId, MAX_ID),
+      // A reply has a message id; a content report has the entity id instead.
+      target ? target.id : text(body.messageId, MAX_ID),
       reason,
       text(body.note, MAX_NOTE) || null,
       content,
       transcript,
       text(body.appVersion, 40) || null,
+      target ? "content" : "ai",
+      target ? JSON.stringify(target) : null,
     );
 
     res.status(201).json({ ok: true });

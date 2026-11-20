@@ -12,6 +12,29 @@ import { createPlatform } from "./platform.mjs";
 const secret = "hook-platform-test-secret-with-at-least-32-characters";
 const clientId = "hook-platform.apps.googleusercontent.com";
 
+// What the phone's account sheet would hand back. The verifier below looks a
+// token up here instead of asking Google; ids must be long enough to pass the
+// endpoint's shape check on the raw token.
+const googleToken = (name) => `${name}.${"x".repeat(140)}`;
+const googleAccounts = new Map([
+  [
+    googleToken("approved"),
+    { sub: "approved-1", email: "approved@example.test", email_verified: true },
+  ],
+  [
+    googleToken("waiting"),
+    { sub: "waiting-1", email: "waiting@example.test", email_verified: true },
+  ],
+  [
+    googleToken("unverified"),
+    { sub: "approved-1", email: "approved@example.test", email_verified: false },
+  ],
+  [
+    googleToken("stranger"),
+    { sub: "nobody-1", email: "nobody@example.test", email_verified: true },
+  ],
+]);
+
 function receiptFor(subject) {
   const payload = Buffer.from(
     JSON.stringify({ joined: true, subject, expires: Date.now() + 60_000 }),
@@ -106,19 +129,31 @@ test("approved users can sign in a device, use the proxy, see usage, download an
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   const origin = `http://127.0.0.1:${server.address().port}`;
 
-  const api = createPlatform({
-    WAITLIST_ORIGIN: origin,
-    WAITLIST_DB_PATH: dbPath,
-    GOOGLE_CLIENT_ID: clientId,
-    GOOGLE_CLIENT_SECRET: "fixture",
-    WAITLIST_SESSION_SECRET: secret,
-    DEEPSEEK_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
-    DEEPSEEK_API_KEY: "upstream-secret",
-    DEEPSEEK_MODEL: "deepseek-flash",
-    HOOK_MODEL_ID: "hook",
-    DOWNLOAD_DIR: releases,
-    RELEASE_CONFIG: join(directory, "release.config.json"),
-  });
+  const api = createPlatform(
+    {
+      WAITLIST_ORIGIN: origin,
+      WAITLIST_DB_PATH: dbPath,
+      GOOGLE_CLIENT_ID: clientId,
+      GOOGLE_CLIENT_SECRET: "fixture",
+      WAITLIST_SESSION_SECRET: secret,
+      DEEPSEEK_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+      DEEPSEEK_API_KEY: "upstream-secret",
+      DEEPSEEK_MODEL: "deepseek-flash",
+      HOOK_MODEL_ID: "hook",
+      DOWNLOAD_DIR: releases,
+      RELEASE_CONFIG: join(directory, "release.config.json"),
+    },
+    {
+      // Checking a real ID token means fetching Google's certificates; the
+      // suite never leaves the machine, so the verifier is a lookup table.
+      verifyGoogle: async (idToken, audience) => {
+        assert.equal(audience, clientId);
+        const account = googleAccounts.get(idToken);
+        if (!account) throw new Error("invalid token");
+        return account;
+      },
+    },
+  );
   app.use("/api", api.router);
 
   const db = new DatabaseSync(dbPath);
@@ -202,8 +237,7 @@ test("approved users can sign in a device, use the proxy, see usage, download an
     });
 
     let token = "";
-    await t.test("the app receives one token, and that token identifies the user", async () => {
-      const polled = await request("/auth/device/poll", {
+    await t.test("the app receives one token, and that token identifies the user", async () => {      const polled = await request("/auth/device/poll", {
         method: "POST",
         body: { deviceCode: device.deviceCode },
       });
@@ -223,6 +257,74 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       const mePayload = await me.json();
       assert.equal(mePayload.authenticated, true);
       assert.equal(mePayload.user.subject, "approved-1");
+    });
+
+    await t.test("a phone asks which Google client to use, without a session", async () => {
+      const response = await request("/auth/config");
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { googleClientId: clientId });
+    });
+
+    await t.test("a native Google token signs an approved account in", async () => {
+      const response = await request("/auth/google", {
+        method: "POST",
+        body: { idToken: googleToken("approved") },
+      });
+      assert.equal(response.status, 200);
+      const payload = await response.json();
+      assert.match(payload.token, /^hk_[A-Za-z0-9_-]{40,}$/);
+      assert.equal(payload.user.email, "approved@example.test");
+
+      // The same token the device flow would have produced: the rest of the
+      // API cannot tell which door the account came in by.
+      const me = await request("/auth/me", { token: payload.token });
+      assert.equal(me.status, 200);
+      const row = db
+        .prepare(
+          "SELECT label, scope FROM api_tokens WHERE google_subject = ? ORDER BY rowid DESC LIMIT 1",
+        )
+        .get("approved-1");
+      assert.equal(row.label, "Hook mobile");
+      assert.equal(row.scope, "app");
+    });
+
+    await t.test("native sign-in refuses anything but a verified approved account", async () => {
+      const waiting = await request("/auth/google", {
+        method: "POST",
+        body: { idToken: googleToken("waiting") },
+      });
+      assert.equal(waiting.status, 403);
+      assert.equal((await waiting.json()).error, "not_approved");
+
+      const stranger = await request("/auth/google", {
+        method: "POST",
+        body: { idToken: googleToken("stranger") },
+      });
+      assert.equal(stranger.status, 403);
+
+      // Google said the address was not verified: no account, whatever the row.
+      const unverified = await request("/auth/google", {
+        method: "POST",
+        body: { idToken: googleToken("unverified") },
+      });
+      assert.equal(unverified.status, 401);
+
+      const forged = await request("/auth/google", {
+        method: "POST",
+        body: { idToken: googleToken("forged") },
+      });
+      assert.equal(forged.status, 401);
+      assert.equal((await forged.json()).error, "invalid_token");
+    });
+
+    await t.test("native sign-in rejects a token that is not a token", async () => {
+      const short = await request("/auth/google", {
+        method: "POST",
+        body: { idToken: "x" },
+      });
+      assert.equal(short.status, 400);
+      const missing = await request("/auth/google", { method: "POST", body: {} });
+      assert.equal(missing.status, 400);
     });
 
     await t.test("the models endpoint describes the one proxied model", async () => {
@@ -393,6 +495,68 @@ test("approved users can sign in a device, use the proxy, see usage, download an
         .get();
       assert.equal(report.transcript, null);
       assert.equal(report.note, null);
+    });
+
+    await t.test("a person's words can be reported through a preview", async () => {
+      const response = await request("/reports", {
+        method: "POST",
+        token,
+        body: {
+          chatId: "chat_1",
+          target: {
+            kind: "task",
+            id: "task_9",
+            projectId: "prj_1",
+            title: "Fix the invoice run",
+          },
+          reason: "hate",
+          note: "A comment on this task.",
+          content: "Mallory: the words that were written",
+        },
+      });
+      assert.equal(response.status, 201);
+
+      const report = db
+        .prepare("SELECT * FROM ai_reports ORDER BY id DESC LIMIT 1")
+        .get();
+      // One queue, two kinds: the row says which, and the entity id stands in
+      // for a message id so a reviewer can find the task.
+      assert.equal(report.subject_kind, "content");
+      assert.equal(report.message_id, "task_9");
+      assert.equal(report.transcript, null);
+      assert.deepEqual(JSON.parse(report.target), {
+        kind: "task",
+        id: "task_9",
+        title: "Fix the invoice run",
+        projectId: "prj_1",
+      });
+    });
+
+    await t.test("a content report must name a known entity and a title", async () => {
+      const unknownKind = await request("/reports", {
+        method: "POST",
+        token,
+        body: {
+          chatId: "chat_1",
+          target: { kind: "planet", id: "x", title: "x" },
+          reason: "other",
+          content: "something",
+        },
+      });
+      assert.equal(unknownKind.status, 400);
+      assert.equal((await unknownKind.json()).error, "invalid_target");
+
+      const untitled = await request("/reports", {
+        method: "POST",
+        token,
+        body: {
+          chatId: "chat_1",
+          target: { kind: "board", id: "board_2" },
+          reason: "other",
+          content: "something",
+        },
+      });
+      assert.equal(untitled.status, 400);
     });
 
     await t.test("reports are rejected without an approved account or a valid reason", async () => {

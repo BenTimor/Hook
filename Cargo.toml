@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/hook-core", "apps/chat/src-tauri", "apps/workspace/src-tauri"]
+members = [
+    "crates/hook-core",
+    "apps/chat/src-tauri",
+    "apps/workspace/src-tauri",
+    "apps/mobile/src-tauri",
+    "plugins/google-signin",
+]
 
 # Every product is a release build. The binary stays small, but the profile is
 # tuned for build time: an installer is dominated by the ~200 MB of MinGit, Node

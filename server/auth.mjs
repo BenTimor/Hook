@@ -84,6 +84,87 @@ export function createAuthRouter({ db, auth }) {
   const findUserCode = db
     ? db.prepare("SELECT * FROM desktop_logins WHERE user_code = ?")
     : null;
+  const findSignup = db
+    ? db.prepare("SELECT * FROM waitlist_signups WHERE google_subject = ?")
+    : null;
+
+  /** The one way an app token is minted, whichever door the account came in by. */
+  function mintAppToken(subject, label, req) {
+    const token = `hk_${randomBytes(32).toString("base64url")}`;
+    db.prepare(
+      `INSERT INTO api_tokens (token_hash, google_subject, label, scope, device_id)
+       VALUES (?, ?, ?, 'app', ?)`,
+    ).run(hashToken(token), subject, label, deviceId(req));
+    return token;
+  }
+
+  // A phone may not hammer the ID-token verifier: each call is a set of Google
+  // certificate fetches, and the token is checked, not our own arithmetic.
+  const googleStarts = new Map();
+  function allowGoogle(req) {
+    const forwarded = req.get("x-forwarded-for");
+    const key = (forwarded ? forwarded.split(",")[0] : req.ip) || "unknown";
+    const now = Date.now();
+    const entry = googleStarts.get(key);
+    if (!entry || now - entry.at > START_WINDOW_MS) {
+      googleStarts.set(key, { at: now, count: 1 });
+      return true;
+    }
+    entry.count += 1;
+    if (googleStarts.size > 10_000) googleStarts.clear();
+    return entry.count <= START_LIMIT;
+  }
+
+  /**
+   * What a native client needs before it can call Google: the web (server)
+   * client id its ID token must be issued for. Public — it is in every page of
+   * the site — and answered without a session, because the caller has none yet.
+   * Reading it here rather than baking it into a build keeps one deployment's
+   * client out of another's app.
+   */
+  router.get("/config", (_req, res) => {
+    res.json({ googleClientId: auth.clientId ?? null });
+  });
+
+  /**
+   * Native sign-in. The phone's own account sheet answers a Google ID token;
+   * this checks who it belongs to and hands back the same app token the device
+   * flow issues, under the same approval rule. No browser, no code to type.
+   *
+   * The token's audience is the web client id, and only an app signed with the
+   * registered package name and certificate can obtain one — so "verified by
+   * Google, for our client, from our app" is what the check buys.
+   */
+  router.post("/google", async (req, res) => {
+    if (!db || !auth.verifyGoogleIdToken)
+      return res.status(503).json({ error: "unavailable" });
+    if (!allowGoogle(req)) return res.status(429).json({ error: "rate_limited" });
+
+    const idToken =
+      typeof req.body?.idToken === "string" ? req.body.idToken : "";
+    if (idToken.length < 100 || idToken.length > 8192)
+      return res.status(400).json({ error: "invalid_token" });
+
+    let account;
+    try {
+      account = await auth.verifyGoogleIdToken(idToken);
+    } catch {
+      return res.status(401).json({ error: "invalid_token" });
+    }
+    if (!account?.sub || !account.email || account.email_verified !== true)
+      return res.status(401).json({ error: "unverified" });
+
+    const row = findSignup.get(account.sub);
+    if (!row || row.waitlist_status !== "approved")
+      return res.status(403).json({ error: "not_approved" });
+
+    // A verified token proves an email; the account row is what proves it is
+    // the same person who signed up, so the identity is reconciled from the row.
+    res.json({
+      token: mintAppToken(row.google_subject, "Hook mobile", req),
+      user: publicUser(row),
+    });
+  });
 
   router.post("/device/start", (req, res) => {
     if (!db) return res.status(503).json({ error: "unavailable" });
@@ -130,13 +211,13 @@ export function createAuthRouter({ db, auth }) {
     if (row.status !== "approved" || !row.google_subject)
       return res.json({ status: "pending" });
 
-    const token = `hk_${randomBytes(32).toString("base64url")}`;
     const user = db
       .prepare("SELECT * FROM waitlist_signups WHERE google_subject = ?")
       .get(row.google_subject);
     if (!user || user.waitlist_status !== "approved")
       return res.json({ status: "expired" });
 
+    let token = "";
     db.exec("BEGIN IMMEDIATE");
     try {
       const claimed = db
@@ -149,15 +230,7 @@ export function createAuthRouter({ db, auth }) {
         db.exec("ROLLBACK");
         return res.json({ status: "claimed" });
       }
-      db.prepare(
-        `INSERT INTO api_tokens (token_hash, google_subject, label, scope, device_id)
-         VALUES (?, ?, ?, 'app', ?)`,
-      ).run(
-        hashToken(token),
-        row.google_subject,
-        "Hook desktop",
-        deviceId(req),
-      );
+      token = mintAppToken(row.google_subject, "Hook desktop", req);
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");

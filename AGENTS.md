@@ -27,6 +27,7 @@ single pnpm + Cargo workspace.
 | --- | --- | --- | --- | --- |
 | **Hook** (AI chat + coding agents) | `apps/chat/` | `pnpm app` | `pnpm app:build` / `pnpm app:portable` | `pnpm release` |
 | **Hook Workspace** (projects, boards, tasks, docs) | `apps/workspace/` | `pnpm workspace:app` | `pnpm workspace:app:build` | `pnpm release` |
+| **HookCode** (phone: chat + Workspace, no coding agents) | `apps/mobile/` | `pnpm mobile:android` / `pnpm mobile:ios` | `pnpm mobile:build` | App Store Connect / Play Console |
 | Landing page | `waitlist/` | `pnpm waitlist:dev` → :5173 | `pnpm waitlist:build` → `dist-waitlist/` | `.github/workflows/deploy-waitlist.yml` |
 | Account service | `server/` | `pnpm waitlist:start` | Docker image | `scripts/deploy-waitlist.sh` |
 
@@ -38,6 +39,10 @@ crates/hook-core/    the backend every product links: account, chats + sync,
 packages/ui/         tokens.css, window chrome, buttons/inputs, dialogs, the mark
 packages/chat/       the chat surface: Markdown, CodeBlock, Thread, MessageItem,
                      Composer, and the ChatDock panel every product embeds
+packages/chat/src/preview/
+                     the Hook Workspace preview: a board, a task and a document,
+                     drawn from the JSON `workspace_preview` returns. The
+                     desktop puts it in its side panel, the phone in a sheet.
 ```
 
 `server/` and `waitlist/` deliberately stay at the repo root: they are one deploy
@@ -55,6 +60,9 @@ pnpm dev                          # chat UI in a plain browser (mock backend)
 pnpm app                          # chat product: real Tauri window, hot reload
 pnpm workspace:dev                # Workspace UI in a plain browser
 pnpm workspace:app                # Workspace: real Tauri window
+pnpm mobile:dev                   # phone UI in a plain browser (mock backend)
+pnpm mobile:android               # phone product on an emulator or device
+pnpm mobile:ios                   # phone product on a simulator (macOS, Xcode)
 pnpm typecheck                    # every package + the landing page (the only static gate)
 pnpm app:build                    # chat NSIS installer (fetches engine + git first)
 pnpm workspace:app:build          # Workspace NSIS installer
@@ -87,6 +95,17 @@ bash it creates a file named `nul` in the working directory, and `nul` is a
 reserved device name on Windows. A stray `nul` at the repo root is that
 mistake: delete it, never commit it.
 
+**Never kill processes by image name.** `taskkill /F /IM node.exe /T`,
+`pkill -f node` or `Stop-Process -Name node` matches every Node process on the
+machine — the dev servers, the desktop app, and the coding agent (or whatever
+harness) you are running inside. Killing your own process tree ends the task
+mid-command and can leave a dev server, a lockfile or a half-written build
+behind. Stop the process you actually started: run it with a PID you kept
+(`cmd & echo $!`), or kill the port it owns
+(`netstat -ano | grep :1420`, then `taskkill //F //PID <pid>`). This is the same
+class of mistake as `>nul`: a Windows habit that is silently destructive from
+bash.
+
 ## Where things live
 
 - `crates/hook-core/src/turn.rs` — the assistant turn (model → tools → answer),
@@ -107,8 +126,12 @@ mistake: delete it, never commit it.
   run's pi session file (plus an in-memory tail from `message_update`) for the
   advanced inspector; it is read-only.
 - `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
-  builder both apps call. A capability trims the prompt and the toolset; it must
-  never change the data model.
+  builder every product calls. A capability trims the prompt and the toolset; it
+  must never change the data model. The five fields are places an answer can
+  appear or things a device can reach: `preview_pages` (an HTML file served from
+  a project), `preview_workspace` (a board, task or document — just account
+  data), `coding_agents`, `workspace_tools`, `projects` (a folder on this
+  machine). `Capabilities::mobile()` is the phone: Workspace yes, folder no.
 - `crates/hook-core/src/auth.rs` — device flow, the shared
   `%APPDATA%\app.hook\account.json`, per-product mirrors, git-token rotation.
 - `crates/hook-core/src/{store,sync}.rs` — chats on disk and the background
@@ -152,6 +175,22 @@ mistake: delete it, never commit it.
   embeds, built from those same pieces. It takes a `ChatTransport`, so it knows
   nothing about which app it is running in;
   `apps/workspace/src/lib/chatTransport.ts` is that adapter.
+- `packages/chat/src/preview/` — `WorkspacePreview` and its three renderers,
+  `reportableFrom` and `ReportContentDialog`. The JSON is what
+  `workspace_preview` returned; the components own no frame, so `PreviewPanel`
+  (desktop, side panel) and `apps/mobile/src/components/PreviewSheet.tsx`
+  (phone, bottom sheet) draw the same thing. A task's comments are other
+  people's words: that is what `ReportContentDialog` is for, not the AI report.
+- `packages/chat/src/images/` — the picture strip and its lightbox. A product
+  supplies `load`, the only part that knows where the bytes are; `onOpen` and
+  `onSaveAs` are optional, so a phone draws neither button. The chat window
+  reads from the chat's image folder, the phone from the same folder inside its
+  own container.
+- `apps/mobile/` — HookCode on a phone. Two screens (list, thread), two sheets
+  (preview, settings) and `mobile.css`, which is the phone's re-skin of the
+  shared surface the way `dock.css` is the 380px one. `src-tauri` passes
+  `Product::Mobile` + `Capabilities::mobile()`; there are no agents, no folder
+  picker and no installer, and `scripts/release.sh` does not build it.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
   `hook://sync`, `hook://import`, `hook://update`).
@@ -192,6 +231,15 @@ Changing one side of a boundary is the most common way to break this repo.
 - **New IPC command:** `crates/hook-core/src/commands.rs` → `generate_handler!` in
   `crates/hook-core/src/lib.rs` → the product's `bridge.ts` wrapper → `types.ts`
   → the `mock.ts` fallback → store/component. Both `isTauri()` branches must work.
+  A command that only the phone has still goes in `hook-core` (it is the same
+  account code) and its `Capabilities` decide whether the prompt mentions it.
+- **Native sign-in:** `plugins/google-signin` (Kotlin Credential Manager +
+  `register_android_plugin` in its `lib.rs`) → `apps/mobile/src/lib/api.ts` →
+  `POST /api/auth/config` and `POST /api/auth/google` in `server/auth.mjs` → the
+  same `api_tokens` row the device flow writes. The Android OAuth client
+  (package `app.hook.mobile` + the SHA-1 of the signing key) must exist in the
+  same GCP project as the web client, or Google refuses to show the sheet; the
+  server hands the client id to the app so nothing is baked into a build.
 - **Chat surface change:** `packages/chat/src` (component + `chat.css`) → check
   it at both sizes (the chat window and the 380px dock) → the adapters in
   `apps/chat/src/components` if the store gains a prop. Never fork a component
@@ -254,9 +302,16 @@ Changing one side of a boundary is the most common way to break this repo.
   `crates/hook-core/src/lib.rs`, plus its own version passed to
   `hook_core::builder(product, capabilities, env!("CARGO_PKG_VERSION"))` → an
   entry in `scripts/products.mjs` → root scripts → its own `msix/<id>/`. Every
-  product is built and published by
+  *desktop* product is built and published by
   `pnpm release` (`scripts/release.sh`); add its `package.json` to the manifest
-  copies in `Dockerfile` so a workspace install still resolves.
+  copies in `Dockerfile` so a workspace install still resolves. A product with
+  `kind: "mobile"` is different on purpose: it needs
+  `crate-type = ["staticlib", "cdylib", "rlib"]`, `tauri android init` /
+  `tauri ios init` once, and it ships through App Store Connect and the Play
+  Console. `scripts/release.sh` keeps its own list and does not build it.
+  "Product" in this repo means a business product sharing the account — Hook,
+  Hook Workspace, HookCode on a phone, and the future browser — not every
+  `apps/*` directory.
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
   `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`
   + `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`
@@ -285,6 +340,26 @@ Changing one side of a boundary is the most common way to break this repo.
   (what the chat agent tells the coding agent) → Settings status → README
   **Sync between computers** and `infra/README.md`. Add to `server/sync.test.mjs`
   / `server/git.test.mjs` and the sync unit tests in `sync.rs`.
+- **Phone product change:** `apps/mobile/src` (the phone's chrome and
+  `mobile.css`) → `packages/chat` if the shared surface needs a prop → the
+  Capabilities it passes in `apps/mobile/src-tauri/src/lib.rs`. A phone has no
+  project folder, so `projects`, `coding_agents` and `preview_pages` stay off
+  and the prompt sections that describe them are trimmed — do not add a phone
+  branch to a component that already lives in `packages/chat`. Store builds
+  come from Xcode and Gradle, never from `pnpm release`; `scripts/products.mjs`
+  marks the product `kind: "mobile"` for that reason.
+- **The Android project is generated, and two of its defaults are wrong.**
+  `src-tauri/gen/android` is disposable: run `tauri android init`, then
+  `pnpm tauri icon src-tauri/icons/source.png`, then build. Init copies the
+  *template's* launcher icon, so skipping the icon step ships Tauri's mark under
+  a Hook name. And init must be invoked through `npx` (or `pnpm tauri`), never
+  `node scripts/tauri.mjs`: the CLI writes `BuildTask.kt` from how it was
+  launched, and through the wrapper it writes `node tauri`, which cannot resolve
+  and fails every Gradle build ([tauri#9536](https://github.com/tauri-apps/tauri/issues/9536)).
+  `apps/mobile/package.json` carries the `tauri` script that the `npx` form
+  needs. 16 KB page alignment (Android 15 refuses 4 KB libraries) is requested
+  in `src-tauri/build.rs`, not in a cargo config file — `cargo-ndk` sets
+  `CARGO_TARGET_*_RUSTFLAGS`, and an environment value beats the config.
 - **Workspace entity or permission change:** `server/workspace.mjs` +
   `server/workspace.test.mjs` → the shared client and tool family in
   `crates/hook-core/src/workspace.rs` → the `ws_request` command →
@@ -301,11 +376,19 @@ Changing one side of a boundary is the most common way to break this repo.
   older schema.
 - **New visual token or primitive:** `packages/ui/src/tokens.css`. The window is
   frameless and the glass is pure CSS, not an OS backdrop material. Plain CSS,
-  no Tailwind utilities: the products keep hand-authored class names.
-- **AI reporting / Store policy 11.16:** `ReportDialog.tsx` + `MessageItem.tsx`
-  → `bridge.ts`/`types.ts` → `commands::report_message` → `reports.rs` →
-  `server/reports.mjs` → the `ai_reports` table → `scripts/ai-reports.sh`.
-  Keep the "include the whole conversation" toggle opt-in.
+  no Tailwind utilities: the products keep hand-authored class names. A token
+  declared **only** in `@theme` does not exist for a product that does not run
+  the Tailwind plugin — the phone does not, so `--font-sans` was undefined there
+  and every message rendered in Times. Declare it in `:root` and repeat it in
+  `@theme` for the utility build.
+- **AI reporting / Store policy 11.16, and reporting people:** `ReportDialog.tsx`
+  + `MessageItem.tsx` → `bridge.ts`/`types.ts` → `commands::report_message` →
+  `reports.rs` → `server/reports.mjs` → the `ai_reports` table →
+  `scripts/ai-reports.sh`. Keep the "include the whole conversation" toggle
+  opt-in. A *content* report (a task comment or a document someone else wrote,
+  seen in the preview) is the same queue with `subject_kind = 'content'` and a
+  `target` JSON column: `ReportContentDialog.tsx` → `commands::report_content`
+  → the same row. Both stores require the second kind, not just the first.
 - **New release/update behavior:** `scripts/products.mjs` →
   `server/releases.mjs` → `server/download.mjs` → `update.rs` →
   `src/lib/types.ts` → `bridge.ts` → the update store/component →

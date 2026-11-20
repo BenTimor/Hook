@@ -25,7 +25,9 @@ function propertiesOf(xml) {
   return match[0];
 }
 
-const products = Object.values(PRODUCTS);
+// Only a desktop product is packaged as MSIX. A phone build has no Partner
+// Center identity and no `msix/<id>/` folder; the stores own that pipeline.
+const products = Object.values(PRODUCTS).filter((product) => product.kind === "desktop");
 
 test("every product defers Store updates while the app is in use", () => {
   for (const product of products) {

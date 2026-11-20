@@ -1,0 +1,6 @@
+[default]
+description = """
+Sign in with the phone's own Google account sheet. The sheet returns a Google
+ID token; the server decides whether that token belongs to an approved account.
+"""
+permissions = ["allow-available", "allow-sign-in"]

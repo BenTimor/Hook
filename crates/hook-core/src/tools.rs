@@ -20,6 +20,18 @@ pub const AGENT_TOOLS: [&str; 7] = [
     "list_coding_sessions",
 ];
 
+/// The tools that reach a *folder on this computer*. A phone has no projects
+/// directory — the folders live on the desktops signed into the account — so
+/// these are removed together with the prompt section that explains them.
+/// `remember_in_project` is here rather than in the memory set because what it
+/// writes is a line in the project's own `AGENTS.md`.
+pub const PROJECT_TOOLS: [&str; 4] = [
+    "list_projects",
+    "create_project",
+    "update_project_description",
+    "remember_in_project",
+];
+
 /// Tool surface offered to the chat model. The chat agent never touches files
 /// directly: it organises projects and delegates all code work to a coding
 /// agent, then reports back in prose.
@@ -238,6 +250,9 @@ pub fn direct_bridge_definitions(
         for tool in list {
             let name = tool["function"]["name"].as_str().unwrap_or("");
             if AGENT_TOOLS.contains(&name) || name == "web_search" || name == "no_update" {
+                continue;
+            }
+            if !caps.projects && PROJECT_TOOLS.contains(&name) {
                 continue;
             }
             out.push(tool.clone());
@@ -713,9 +728,11 @@ mod tests {
         let bare = direct_bridge_definitions(
             cfg,
             crate::Capabilities {
-                preview: false,
+                preview_pages: false,
+                preview_workspace: false,
                 coding_agents: true,
                 workspace_tools: false,
+                projects: true,
             },
             false,
         );

@@ -9,6 +9,27 @@ export { WorkGroup, ReasoningStepView, ToolStepView } from "./WorkSteps";
 export { buildBlocks, toolStepFromTranscript } from "./turns";
 export { Composer } from "./Composer";
 export { ReportDialog } from "./ReportDialog";
+export { REPORT_REASONS } from "./ReportDialog";
+export { Lightbox, MessageImages } from "./images";
+export type { ChatAttachment, LightboxProps, MessageImagesProps } from "./images";
+export {
+  BoardPreview,
+  DocumentPreview,
+  TaskPreview,
+  WorkspacePreview,
+  reportableFrom,
+} from "./preview";
+export { ReportContentDialog } from "./preview";
+export type {
+  PreviewTarget,
+  WorkspaceBoard,
+  WorkspaceColumn,
+  WorkspaceComment,
+  WorkspaceDocument,
+  WorkspacePreviewBody,
+  WorkspacePreviewKind,
+  WorkspaceTask,
+} from "./preview";
 export { ChatDock } from "./ChatDock";
 export { greeting } from "./greeting";
 export type { MessageItemProps } from "./MessageItem";

@@ -29,6 +29,14 @@
 }
 
 :root {
+  /* The type stacks are declared twice on purpose: `@theme` only exists for
+     Tailwind, and a product that does not run the Tailwind plugin (the phone)
+     would otherwise have no `--font-sans` at all — `font-family: var(--font-sans)`
+     is then invalid at computed-value time and the browser falls back to Times.
+     `:root` is the source of truth; `@theme` repeats it for the utility build. */
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, monospace;
+
   --canvas: #f5efe5;
   --canvas-soft: #eee5d8;
   --ivory: #fffdf9;

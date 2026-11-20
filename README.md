@@ -219,6 +219,15 @@ as a bearer token; the bundled pi runtime receives it through `HOOK_API_TOKEN`
 and references it from its `models.json`. Signing out revokes the token on the
 server and closes live coding agents.
 
+A phone signs in with its **own account sheet** instead. `GET /api/auth/config`
+answers the web client id (public, and it is in every page of the site), Android
+Credential Manager shows the Google accounts on the device, and
+`POST /api/auth/google` checks the ID token it returns against the same
+`waitlist_signups` approval the device flow uses before minting the same kind of
+`hk_…` token. Nothing leaves the app for the browser, and the app asks the
+server for the client id rather than carrying one build's. The device flow stays
+in the phone as "Use a code instead", and it is still the only path on desktop.
+
 ### Model proxy and usage
 
 `/api/v1/chat/completions` is OpenAI-compatible, so the chat agent and pi use it
@@ -605,6 +614,14 @@ The Store requires this mechanism (policy 11.16); see **Microsoft Store
 (MSIX)** below. Workspace will need the same listing disclosure and Partner
 Center declaration before it can be submitted.
 
+A preview can also show something a *person* wrote — a task's comments, a
+document — and that is user-generated content, which App Store guideline 1.2
+and the Play Console's UGC policy require a flag for. The same dialog does it
+(`ReportContentDialog`): same reasons, same review queue, `subject_kind`
+`"content"` and a `target` naming the entity instead of a message id, with the
+comment or document as the evidence. `./scripts/ai-reports.sh --list` marks
+which kind each row is.
+
 ## Microsoft Store (MSIX)
 
 Hook also ships as an MSIX through the Microsoft Store. Microsoft signs that
@@ -979,10 +996,60 @@ rows written before this rule are adopted when the service starts.
   chat app keeps its historical URLs. Installers are uploaded under versioned
   names and the index is swapped last, exactly like the chat app.
 
+## Hook on a phone
+
+HookCode on a phone (`apps/mobile`, identifier `app.hook.mobile`) is the third
+product and the first one that is not a desktop installer. It is the same
+conversation and the same account, with the chat agent's hands in Hook
+Workspace — and nothing that needs a folder on a disk.
+
+It is the same code, not a second implementation:
+
+- **The backend is `hook-core` with `Capabilities::mobile()`.** Workspace tools,
+  memory, `web_search` and `search_past_chats` are on. `coding_agents`,
+  `projects` and `preview_pages` are off, and the prompt sections that describe
+  them — `## Coding agents`, `## Projects`, `## Preview panel` — are removed
+  before the model sees them, so the agent is never told to brief a coding agent
+  it cannot start or to open a folder it cannot reach.
+- **The turn runs on the device.** The same `turn.rs` loop, the same tools, the
+  same `/api/v1` endpoint. Nothing server-side was added to make this work, and
+  there is no second system prompt to keep in step. The trade is that iOS
+  suspends the app: a reply that is still streaming when the screen locks is
+  persisted as it stands and finishes as an error you can retry, rather than
+  completing in the background.
+- **The chat surface is `packages/chat`.** `mobile.css` is the phone's re-skin of
+  the same thread and composer, the way `dock.css` is the 380px re-skin. The
+  composer uses the WebView's own `<input type="file">`, which opens the camera
+  or the photo library without a plugin.
+- **The preview is a sheet.** `workspace_preview` already returns the board,
+  task or document as JSON, and `packages/chat/src/preview` draws it. The
+  desktop puts that in a 440px column; a phone has nowhere to put a column, so
+  the same components come up from the bottom. `preview_pages` is off because the
+  HTML page a coding agent writes is served from a project folder this device
+  does not have — which is exactly why `Capabilities` separates the two.
+- **Signing in is the device flow, unless the device has a sheet of its own.**
+  The desktop asks for a code, opens the browser, and polls. A phone calls
+  `GET /api/auth/config` for the web client id, opens Android's Credential
+  Manager sheet (`plugins/google-signin`), and posts the ID token to
+  `POST /api/auth/google`, which mints the same app token under the same approval
+  rule. There is no deep link and no second account flow. The token belongs in
+  the OS keystore, not in a file the way `account.json` works on Windows.
+- **No installer.** Xcode and Gradle build it; the App Store and the Play
+  Console distribute it. `scripts/release.sh` does not touch it, and
+  `scripts/products.mjs` marks it `kind: "mobile"` so nothing assumes an NSIS
+  bundle exists.
+
+A phone cannot run a coding agent: iOS forbids executing a bundled interpreter
+and has no background execution to speak of, and Android only allows it through
+machinery (a userland in the app's storage, or a bundled node in the native
+library directory) that turns the app into a different product. Coding agents
+stay on a computer that is on; the phone is where you read, approve and steer
+them.
+
 ## One account, several products
 
-Hook is a family of desktop products, and the account is the family's centre of
-gravity:
+Hook is a family of products that share one account, and the account is the
+family's centre of gravity:
 
 - **One sign-in.** `%APPDATA%\app.hook\account.json` holds the session and this
   installation's device id. Any product reads it at launch, so installing the
@@ -1558,7 +1625,7 @@ crates/hook-core/src/          the backend every product links
   sync.rs       background chat/picture/project sync, server-side merge cursor
   auth.rs       device flow and the account file shared by every product
   commands.rs   the IPC surface
-  lib.rs        Product + Capabilities, the app builder both products call
+  lib.rs        Product + Capabilities, the app builder every product calls
 apps/chat/                     the chat product
   src/lib/bridge.ts  typed invoke wrappers + app-wide event bus
   src/store/         zustand: chats, per-chat streams, agents, settings
@@ -1566,7 +1633,12 @@ apps/chat/                     the chat product
                      AgentInspector, SettingsSheet…
   src/styles/        this product's layout (the foundation lives in packages/ui)
 apps/workspace/                Hook Workspace
+apps/mobile/                   HookCode on a phone (no agents, no folder)
+  src/components/    ChatList, Conversation, PreviewSheet, SettingsSheet
+  src/mobile.css     the phone's re-skin of the shared thread and composer
 packages/ui/                   tokens.css, window chrome, primitives, the mark
+packages/chat/                 Thread, Composer, ChatDock, Markdown…
+  src/preview/       a board, a task and a document, drawn from preview JSON
 ```
 
 The account service holds two more modules that every desktop product talks

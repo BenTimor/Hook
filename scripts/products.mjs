@@ -29,6 +29,8 @@ export const PRODUCTS = {
     identifier: "app.hook.chat",
     /** MSIX partner-centre folder. */
     msix: "msix/chat",
+    /** How this product reaches a user. */
+    kind: "desktop",
   },
   workspace: {
     id: "workspace",
@@ -37,6 +39,23 @@ export const PRODUCTS = {
     binary: "Hook Workspace",
     identifier: "app.hook.workspace",
     msix: "msix/workspace",
+    kind: "desktop",
+  },
+  /**
+   * HookCode on a phone. It is a Hook product in the business sense — same
+   * account, same conversations, same Workspace — but not a desktop installer:
+   * App Store Connect and the Play Console distribute it, and
+   * `scripts/release.sh` deliberately leaves it out of its default product
+   * list. The source hash still covers it, so a shared-package change that
+   * would alter a phone build is visible in the same place as the rest.
+   */
+  mobile: {
+    id: "mobile",
+    dir: "apps/mobile",
+    name: "HookCode",
+    binary: "HookCode",
+    identifier: "app.hook.mobile",
+    kind: "mobile",
   },
 };
 
@@ -79,8 +98,7 @@ export function appInputs(product) {
     `${product.dir}/src-tauri/tauri.conf.json`,
     `${product.dir}/src-tauri/capabilities`,
     `${product.dir}/src-tauri/icons`,
-    `${product.dir}/src-tauri/src`,
-    "scripts/app-source-hash.mjs",
+    `${product.dir}/src-tauri/src`,    "scripts/app-source-hash.mjs",
     "scripts/fetch-git.mjs",
     "scripts/fetch-pi-runtime.mjs",
     "scripts/products.mjs",

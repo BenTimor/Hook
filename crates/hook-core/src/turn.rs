@@ -315,6 +315,14 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     !tools::AGENT_TOOLS.contains(&tool["function"]["name"].as_str().unwrap_or(""))
                 });
             }
+            // A project is a folder on this computer. A device without one has
+            // nothing to list, create or remember in, so the tools would only
+            // produce errors the model has to explain away.
+            if !state.capabilities.projects {
+                list.retain(|tool| {
+                    !tools::PROJECT_TOOLS.contains(&tool["function"]["name"].as_str().unwrap_or(""))
+                });
+            }
         }
         set
     });
@@ -863,13 +871,26 @@ fn system_prompt(cfg: &config::HarnessConfig, caps: crate::Capabilities, memory:
     // A product only advertises what it actually has. Hook Workspace embeds the
     // same chat without a preview panel, so telling the agent about one would
     // produce instructions the user can never see happen.
-    if !caps.preview {
+    if !caps.preview_pages {
         text = without_section(text, "## Preview panel");
     }
     if !caps.coding_agents {
         text = without_section(text, "## Coding agents");
         text = without_section(text, "## Steering a running agent");
         text = without_section(text, "## Progress");
+    }
+    // A project is a folder on this machine. Without a projects directory the
+    // tools are gone, so telling the agent how to use them would be a lie.
+    if !caps.projects {
+        text = without_section(text, "## Projects");
+    }
+    // Workspace entities are account data, so a phone keeps the preview; it just
+    // has no panel for the HTML page a coding agent writes.
+    if !caps.preview_workspace {
+        text = without_line(
+            text,
+            "workspace_preview puts a task, board or document beside the chat.",
+        );
     }
     if !memory {
         text = without_section(text, "## Memory");
@@ -888,6 +909,24 @@ fn without_section(prompt: String, heading: &str) -> String {
 ## ")
         .map(|offset| after + offset + 1)
         .unwrap_or(prompt.len());
+    without_range(prompt, start, end)
+}
+
+/// Remove the one line starting with `prefix`, and its newline. Used where a
+/// section is mostly true but a single sentence describes a surface this
+/// product does not have — the alternative is a second copy of the prompt.
+fn without_line(prompt: String, prefix: &str) -> String {
+    let Some(start) = prompt.find(prefix) else {
+        return prompt;
+    };
+    let end = prompt[start..]
+        .find('\n')
+        .map(|offset| start + offset + 1)
+        .unwrap_or(prompt.len());
+    without_range(prompt, start, end)
+}
+
+fn without_range(prompt: String, start: usize, end: usize) -> String {
     let mut out = String::with_capacity(prompt.len());
     out.push_str(&prompt[..start]);
     out.push_str(&prompt[end..]);
@@ -926,7 +965,7 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
         .unwrap_or("Preview")
         .to_string();
 
-    if !state.capabilities.preview {
+    if !state.capabilities.preview_workspace {
         return json!({
             "shown": false,
             "reason": "This window has no preview panel.",
@@ -2070,23 +2109,52 @@ mod capability_tests {
         let bare = system_prompt(
             &cfg,
             crate::Capabilities {
-                preview: false,
+                preview_pages: false,
+                preview_workspace: false,
                 coding_agents: false,
                 workspace_tools: false,
+                projects: false,
             },
             false,
         );
         for heading in [
+            "## Projects",
             "## Coding agents",
             "## Steering a running agent",
             "## Progress",
             "## Memory",
+            "## Preview panel",
         ] {
             assert!(!bare.contains(heading), "{heading} should be gone");
         }
         // The style rules at the end must survive: dropping a section must not
         // swallow its neighbours.
         assert!(bare.contains("## Style"));
+    }
+
+    /// The phone has the Workspace preview but no page panel, and the Workspace
+    /// section is the one place a single line describes a surface it lacks.
+    #[test]
+    fn mobile_keeps_workspace_and_drops_the_page_panel() {
+        let cfg = config();
+        let phone = system_prompt(&cfg, crate::Capabilities::mobile(), false);
+        assert!(phone.contains("## Hook Workspace"));
+        assert!(!phone.contains("## Preview panel"));
+        assert!(!phone.contains("## Projects"));
+        assert!(phone.contains("workspace_preview puts a task, board or document"));
+        // ...and a product without the Workspace preview keeps the section but
+        // loses that one line, without touching the ones around it.
+        let no_preview = system_prompt(
+            &cfg,
+            crate::Capabilities {
+                preview_workspace: false,
+                ..crate::Capabilities::mobile()
+            },
+            false,
+        );
+        assert!(no_preview.contains("## Hook Workspace"));
+        assert!(!no_preview.contains("workspace_preview puts a task"));
+        assert!(no_preview.contains("Hook Workspace holds the user's projects"));
     }
 }
 

@@ -27,6 +27,9 @@ const REASONS: { id: ReportReason; label: string }[] = [
   { id: "other", label: "Something else" },
 ];
 
+/** The reason list every report uses, AI output or a person's words. */
+export const REPORT_REASONS = REASONS;
+
 const MAX_TRANSCRIPT_CHARS = 300_000;
 const MAX_TRANSCRIPT_MESSAGES = 300;
 

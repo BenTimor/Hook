@@ -13,9 +13,13 @@ import { createWorkspaceRouter } from "./workspace.mjs";
  * for coding agents, conversation sync, the approval-gated Windows download and
  * the DeepSeek proxy. Everything is mounted under `/api` so Caddy has one
  * upstream rule.
+ *
+ * `options.verifyGoogle` replaces the real ID-token check. Only tests use it:
+ * verifying a token means fetching Google's certificates, which a test suite
+ * must not do.
  */
-export function createPlatform(env) {
-  const waitlist = createWaitlistApi(env);
+export function createPlatform(env, { verifyGoogle } = {}) {
+  const waitlist = createWaitlistApi(env, { verifyGoogle });
   const router = Router();
 
   router.use((_req, res, next) => {

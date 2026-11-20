@@ -42,12 +42,14 @@ if (process.platform !== "win32") {
   throw new Error("MSIX icons are generated on Windows (System.Drawing); the MSIX is only built there.");
 }
 
-// `--product` is optional here: the default is every product, because both apps
-// share the mark and a Store submission may be prepared for either.
+// `--product` is optional here: the default is every desktop product, because
+// both of them share the mark and a Store submission may be prepared for
+// either. A phone product has no `msix/<id>/` folder — its icon set comes from
+// the same PNGs, written by Xcode and Gradle instead.
 const products =
   process.argv.includes("--product")
     ? [productFromArgs()]
-    : Object.values(PRODUCTS);
+    : Object.values(PRODUCTS).filter((product) => product.kind === "desktop");
 
 /**
  * Resize in one PowerShell process rather than 42 per product. `SourceCopy`

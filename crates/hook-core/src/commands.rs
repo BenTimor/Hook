@@ -67,7 +67,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub version: String,
-    /// "chat" or "workspace" — which product this backend is serving.
+    /// "chat", "workspace" or "mobile" — which product this backend is serving.
     pub product: &'static str,
 }
 
@@ -259,6 +259,7 @@ pub fn app_info(state: State<'_, Arc<AppState>>) -> Result<AppInfo, String> {
         product: match state.product {
             crate::Product::Chat => "chat",
             crate::Product::Workspace => "workspace",
+            crate::Product::Mobile => "mobile",
         },
     })
 }
@@ -365,6 +366,38 @@ pub fn auth_cancel_login(app: AppHandle, state: State<'_, Arc<AppState>>) -> Aut
     let view = state.auth.view();
     emit_auth(&app, &view);
     view
+}
+
+/// The Google client id a native sign-in must name, when this build has an
+/// account service and that service has Google credentials.
+#[tauri::command]
+pub async fn auth_google_config(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<String>, String> {
+    state.auth.google_client_id().await
+}
+
+/// Sign in with the ID token the phone's own account sheet returned.
+///
+/// The desktop never calls this: it has no account picker, and its device flow
+/// is the path a browser-only machine needs. A phone does, and the server checks
+/// the token the same way it checks the browser's.
+#[tauri::command]
+pub async fn auth_google(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id_token: String,
+) -> Result<AuthView, String> {
+    let state = state.inner().clone();
+    let view = state.auth.login_with_google(&id_token).await?;
+    emit_auth(&app, &view);
+    // A finished sign-in is when the account's conversations start arriving.
+    state.sync.wake();
+    let ready = state.clone();
+    tauri::async_runtime::spawn(async move {
+        refresh_capabilities(&ready).await;
+    });
+    Ok(view)
 }
 
 /// Check the cached token against hookcode.io. A revoked or unapproved account
@@ -902,6 +935,25 @@ pub async fn report_message(
         .auth
         .token()
         .ok_or("Sign in to report a message.")?;
+    payload.app_version = crate::update::current_version();
+    crate::reports::submit(&state.cfg, &token, &payload).await
+}
+
+/// Report something a person wrote, seen in a preview.
+///
+/// A task's comments and a document are user-generated content, so both stores
+/// ask for a flag that does not depend on a model having said anything. It goes
+/// to the same review queue as an AI report, with the target instead of a
+/// message id.
+#[tauri::command]
+pub async fn report_content(
+    state: State<'_, Arc<AppState>>,
+    mut payload: crate::reports::ContentReportRequest,
+) -> Result<(), String> {
+    let token = state
+        .auth
+        .token()
+        .ok_or("Sign in to report this content.")?;
     payload.app_version = crate::update::current_version();
     crate::reports::submit(&state.cfg, &token, &payload).await
 }

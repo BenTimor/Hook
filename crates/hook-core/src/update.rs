@@ -336,6 +336,11 @@ async fn fetch_index(cfg: &HarnessConfig, product: crate::Product) -> Result<Rel
     let url = match product {
         crate::Product::Chat => format!("{}/api/releases", base(cfg)),
         crate::Product::Workspace => format!("{}/api/releases/workspace", base(cfg)),
+        // The phone installs through its store, and the store decides when a
+        // build is replaced. There is no installer to offer, so this index is
+        // never read; the product's own release channel lives in App Store
+        // Connect and Play Console, not in `release.config.json`.
+        crate::Product::Mobile => format!("{}/api/releases/mobile", base(cfg)),
     };
     let client = http_client(Some(MANIFEST_TIMEOUT))?;
     let response = client

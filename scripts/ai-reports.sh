@@ -51,7 +51,7 @@ const oneLine = (value) => String(value || "").replace(/\s+/g, " ").trim();
 if (command === "--list") {
   const rows = db
     .prepare(
-      `SELECT r.id, r.created_at, r.status, r.reason, r.content,
+      `SELECT r.id, r.created_at, r.status, r.reason, r.content, r.subject_kind,
               s.email, s.waitlist_status
        FROM ai_reports r
        JOIN waitlist_signups s ON s.google_subject = r.google_subject
@@ -64,8 +64,9 @@ if (command === "--list") {
     process.exit(0);
   }
   for (const row of rows) {
+    const kind = row.subject_kind === "content" ? "content " : "reply   ";
     console.log(
-      `#${String(row.id).padEnd(5)} ${utc(row.created_at)}  ${row.status.padEnd(8)}  ${row.reason.padEnd(9)}  ${row.email} (${row.waitlist_status})  ${oneLine(row.content).slice(0, 90)}`,
+      `#${String(row.id).padEnd(5)} ${utc(row.created_at)}  ${row.status.padEnd(8)}  ${kind}  ${row.reason.padEnd(9)}  ${row.email} (${row.waitlist_status})  ${oneLine(row.content).slice(0, 90)}`,
     );
   }
   const open = db
@@ -94,6 +95,18 @@ if (command === "--list") {
   console.log(`account: ${row.email} (${row.waitlist_status})`);
   console.log(`chat: ${row.chat_id || "—"}  message: ${row.message_id || "—"}`);
   console.log(`reason: ${row.reason}  app: ${row.app_version || "—"}`);
+  if (row.target) {
+    // A report of something a person wrote: say which entity it came from, so
+    // a reviewer does not go looking for a reply in the conversation.
+    try {
+      const target = JSON.parse(row.target);
+      console.log(
+        `target: ${target.kind}${target.projectId ? ` ${target.projectId}/` : " "}${target.id}  "${target.title}"`,
+      );
+    } catch {
+      console.log(`target: ${row.target}`);
+    }
+  }
   console.log(`note: ${row.note || "—"}`);
   console.log("\n--- reported reply ---\n");
   console.log(row.content);

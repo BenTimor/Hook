@@ -122,6 +122,61 @@ const PREVIEW_HTML = `<!doctype html>
 
 const PREVIEW_URL = `data:text/html;charset=utf-8,${encodeURIComponent(PREVIEW_HTML)}`;
 
+/**
+ * A Workspace board, task and document for the design-time preview
+ * (`?preview=board`). The shapes are the ones `workspace_preview` returns, so
+ * the panel can be laid out without a coding agent and without a signed-in
+ * account.
+ */
+const DEMO_BOARD = {
+  id: "board_demo",
+  projectId: "prj_demo",
+  name: "Q1 launch",
+  description: "Everything that has to ship before the release.",
+  columns: [
+    {
+      id: "status",
+      name: "Status",
+      type: "status",
+      options: [
+        { id: "todo", label: "To do" },
+        { id: "doing", label: "In progress" },
+        { id: "done", label: "Done" },
+      ],
+    },
+  ],
+};
+
+const DEMO_TASKS = [
+  {
+    id: "task_1",
+    projectId: "prj_demo",
+    boardId: "board_demo",
+    title: "Ship the pricing page",
+    description: "Final copy, one screenshot of the studio, and the annual toggle.",
+    status: "doing",
+    updatedAt: Date.now(),
+  },
+  {
+    id: "task_2",
+    projectId: "prj_demo",
+    boardId: "board_demo",
+    title: "Write the release notes",
+    description: "",
+    status: "todo",
+    updatedAt: Date.now(),
+  },
+  {
+    id: "task_3",
+    projectId: "prj_demo",
+    boardId: "board_demo",
+    title: "Fix the invoice totals",
+    description: "",
+    status: "done",
+    updatedAt: Date.now(),
+  },
+];
+
 
 function build(): Record<string, Chat> {
   const now = Date.now();
@@ -427,6 +482,10 @@ export const mock = {
 
   async reportMessage(): Promise<void> {
     // The preview shows the dialog; sending it only needs a short pause.
+    await sleep(250);
+  },
+
+  async reportContent(): Promise<void> {
     await sleep(250);
   },
 
@@ -963,10 +1022,76 @@ export const mock = {
 
   async previewState(): Promise<PreviewView | null> {
     // Design-time preview: `?preview=1` opens the panel with a sample page,
-    // `?preview=waiting` shows the state before the coding agent writes it and
-    // `?preview=done` shows the panel after the run settled.
+    // `?preview=waiting` shows the state before the coding agent writes it,
+    // `?preview=done` shows the panel after the run settled, and
+    // `?preview=board|task|document` shows a Hook Workspace entity.
     const demo = new URLSearchParams(window.location.search).get("preview");
     if (!demo) return null;
+    if (demo === "board") {
+      return {
+        active: true,
+        chatId: "c8",
+        kind: "board",
+        board: DEMO_BOARD,
+        tasks: DEMO_TASKS,
+        title: DEMO_BOARD.name,
+        version: 1,
+        open: true,
+        waiting: false,
+        live: false,
+      };
+    }
+    if (demo === "task") {
+      return {
+        active: true,
+        chatId: "c8",
+        kind: "task",
+        task: DEMO_TASKS[0],
+        comments: [
+          {
+            id: "comment_1",
+            author: "Mallory",
+            authorKind: "user",
+            body: "Can we ship this on the 14th?",
+            createdAt: Date.now() - 3_600_000,
+          },
+          {
+            id: "comment_2",
+            author: "Hook",
+            authorKind: "agent",
+            viaChatId: "c8",
+            body: "Moved it to *In progress* and left a note on the page.",
+            createdAt: Date.now() - 1_800_000,
+          },
+        ],
+        title: DEMO_TASKS[0].title,
+        version: 1,
+        open: true,
+        waiting: false,
+        live: false,
+      };
+    }
+    if (demo === "document") {
+      return {
+        active: true,
+        chatId: "c8",
+        kind: "document",
+        document: {
+          id: "doc_1",
+          projectId: "prj_demo",
+          title: "Release checklist",
+          markdown:
+            "# Release checklist\n\n- [x] Pricing page\n- [ ] Release notes\n- [ ] Invoice totals\n\n> Ask Mallory about the 14th.",
+          rev: 3,
+          updatedAt: Date.now(),
+        },
+        title: "Release checklist",
+        version: 1,
+        open: true,
+        waiting: false,
+        live: false,
+      };
+    }
     const waiting = demo === "waiting";
     const live = demo !== "done";
     return {

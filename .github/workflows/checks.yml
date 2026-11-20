@@ -18,6 +18,7 @@ on:
     paths:
       - "apps/chat/**"
       - "apps/workspace/**"
+      - "apps/mobile/**"
       - "packages/**"
       - "crates/hook-core/**"
       - "harness.config.ci.toml"
@@ -83,6 +84,12 @@ jobs:
 
       - name: Build the Workspace window
         run: pnpm workspace:build
+
+      # The phone shell is a third Vite graph. It is not packaged here — that
+      # needs Xcode and the Android SDK — but a broken import must fail on the
+      # push that broke it, not in a device build three weeks later.
+      - name: Build the phone window
+        run: pnpm mobile:build
 
   rust-test:
     name: Rust tests

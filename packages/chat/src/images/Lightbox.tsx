@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "../lib/bridge";
-import type { Attachment } from "../lib/types";
+import type { ChatAttachment } from "./types";
 
-type Props = {
-  chatId: string | null;
-  attachments: Attachment[];
+export interface LightboxProps {
+  attachments: ChatAttachment[];
   urls: Record<string, string>;
   startIndex: number;
   onClose: () => void;
-};
+  /**
+   * Hand the picture to the OS. Both hooks are optional: a phone has nothing
+   * to "open in your image viewer", so those buttons simply are not drawn.
+   */
+  onOpen?: (attachment: ChatAttachment) => Promise<void>;
+  /** Save a copy and report the chosen name, or null if the dialog was closed. */
+  onSaveAs?: (attachment: ChatAttachment, suggestedName: string) => Promise<string | null>;
+}
 
 function sizeLabel(bytes: number) {
   if (!bytes) return "";
@@ -18,17 +23,27 @@ function sizeLabel(bytes: number) {
 }
 
 /** A friendly default name for "Save as…"; the backend adds the extension. */
-function suggestedName(attachment: Attachment, index: number) {
+function suggestedName(attachment: ChatAttachment, index: number) {
   const stem = attachment.kind === "screenshot" ? "screenshot" : "hook-image";
   return index === 0 ? stem : `${stem}-${index + 1}`;
 }
 
 /**
- * Big view of a picture. Shows one attachment at a time, lets the reader open
- * it in their own image viewer, save a copy wherever they like, or blow it up
- * to the whole window.
+ * Big view of a picture. Shows one attachment at a time, lets the reader ask
+ * their machine to open or save it, or blow it up to the whole window.
+ *
+ * It is the same component in the chat window and on a phone; the only thing a
+ * product supplies is what "open" and "save" mean, and on a phone they mean
+ * nothing at all.
  */
-export function Lightbox({ chatId, attachments, urls, startIndex, onClose }: Props) {
+export function Lightbox({
+  attachments,
+  urls,
+  startIndex,
+  onClose,
+  onOpen,
+  onSaveAs,
+}: LightboxProps) {
   const [index, setIndex] = useState(startIndex);
   const [full, setFull] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -88,19 +103,19 @@ export function Lightbox({ chatId, attachments, urls, startIndex, onClose }: Pro
   }, [attachments.length, full, many, onClose]);
 
   const open = async () => {
-    if (!chatId || !current) return;
+    if (!current || !onOpen) return;
     try {
-      await api.openImage(chatId, current.id);
+      await onOpen(current);
     } catch {
       flash("Couldn't open it");
     }
   };
 
   const save = async () => {
-    if (!chatId || !current || saving) return;
+    if (!current || !onSaveAs || saving) return;
     setSaving(true);
     try {
-      const saved = await api.saveImageAs(chatId, current.id, suggestedName(current, index));
+      const saved = await onSaveAs(current, suggestedName(current, index));
       if (saved) flash("Saved");
     } catch {
       flash("Couldn't save it");
@@ -140,7 +155,11 @@ export function Lightbox({ chatId, attachments, urls, startIndex, onClose }: Pro
           {url ? (
             <img
               src={url}
-              alt={current.kind === "screenshot" ? "Screenshot from the coding agent" : "Attached picture"}
+              alt={
+                current.kind === "screenshot"
+                  ? "Screenshot from the coding agent"
+                  : "Attached picture"
+              }
               draggable={false}
             />
           ) : (
@@ -175,13 +194,26 @@ export function Lightbox({ chatId, attachments, urls, startIndex, onClose }: Pro
       )}
 
       <div className="lightbox-bar">
-        <button type="button" className="lightbox-action" onClick={open}>
-          Open
-        </button>
-        <button type="button" className="lightbox-action" onClick={save} disabled={saving}>
-          {saving ? "Saving…" : "Save as…"}
-        </button>
-        <button type="button" className="lightbox-action" onClick={() => setFull((value) => !value)}>
+        {onOpen ? (
+          <button type="button" className="lightbox-action" onClick={open}>
+            Open
+          </button>
+        ) : null}
+        {onSaveAs ? (
+          <button
+            type="button"
+            className="lightbox-action"
+            onClick={save}
+            disabled={saving}
+          >
+            {saving ? "Saving…" : "Save as…"}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="lightbox-action"
+          onClick={() => setFull((value) => !value)}
+        >
           {full ? "Exit full screen" : "Full screen"}
         </button>
         {note ? (

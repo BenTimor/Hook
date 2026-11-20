@@ -1,0 +1,746 @@
+/*
+ * Hook on a phone.
+ *
+ * The conversation, the composer and the Workspace preview are the shared ones
+ * from `@hook/chat`; this file is the phone's chrome and the changes a hand
+ * needs that a pointer does not. It follows the same idea as `dock.css`: the
+ * surface is not forked, it is restyled for a different container.
+ *
+ * Three rules that are not cosmetic:
+ *   1. No `backdrop-filter`. Android WebView composites it on the CPU and the
+ *      scroll stutters; the glass becomes opaque canvas instead.
+ *   2. Nothing may sit under the home indicator or the notch. Every edge that
+ *      touches the screen uses `env(safe-area-inset-*)`.
+ *   3. `100dvh`, never `100vh`: mobile URL bars shrink the viewport, and a
+ *      `100vh` shell puts the composer behind the browser chrome.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  background: var(--canvas);
+  /* A phone has no hover, so anything that only appears on hover is invisible.
+     `chat.css` opts message text back in; the shell stays non-selectable so a
+     long press does not start a text selection instead of a button. */
+  user-select: none;
+}
+
+#root {
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.app {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+}
+
+.screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.splash {
+  background: var(--canvas);
+}
+
+/* ── Bars ──────────────────────────────────────────────────────────────── */
+
+.bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 52px;
+  padding: calc(env(safe-area-inset-top) + 6px) 10px 6px;
+  border-bottom: 1px solid var(--line);
+  background: var(--canvas);
+  z-index: 3;
+}
+
+.bar-root {
+  justify-content: space-between;
+  padding-left: 14px;
+}
+
+.bar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.bar-brand svg {
+  width: 22px;
+  height: 22px;
+}
+
+.bar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15.5px;
+  font-weight: 570;
+  letter-spacing: -0.01em;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink-2);
+  transition: background 120ms;
+}
+
+.icon-btn:active {
+  background: rgba(var(--ink-rgb), 0.06);
+}
+
+.icon-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Keeps the title centred when the right-hand action is absent. */
+.icon-btn-spacer {
+  width: 44px;
+  flex: 0 0 44px;
+}
+
+/* ── The list ──────────────────────────────────────────────────────────── */
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 8px 96px;
+}
+
+.row-wrap {
+  display: flex;
+  align-items: center;
+  border-radius: 13px;
+}
+
+.row-wrap:active {
+  background: rgba(var(--ink-rgb), 0.05);
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 13px 4px 13px 12px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  text-align: left;
+  color: var(--ink);
+}
+
+.row-more {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  margin-right: 2px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-4);
+}
+
+.row-more:active {
+  background: rgba(var(--ink-rgb), 0.07);
+  color: var(--ink-2);
+}
+
+.row-more svg {
+  width: 18px;
+  height: 18px;
+}
+
+.row-pin {
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  color: var(--ink-4);
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.row-title {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 560;
+  letter-spacing: -0.012em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-preview {
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-when {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  padding: 64px 28px;
+  text-align: center;
+  color: var(--ink-3);
+}
+
+.empty-title {
+  margin-bottom: 6px;
+  font-size: 16px;
+  font-weight: 580;
+  color: var(--ink);
+}
+
+.empty p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.fab-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: 10px 16px calc(env(safe-area-inset-bottom) + 12px);
+  /* The list scrolls under the button rather than stopping above it. */
+  background: linear-gradient(to top, var(--canvas) 62%, transparent);
+  pointer-events: none;
+}
+
+.fab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ivory);
+  font-size: 14.5px;
+  font-weight: 560;
+  box-shadow: var(--shadow-md);
+  pointer-events: auto;
+  transition: transform 140ms var(--ease), background 140ms;
+}
+
+.fab:active {
+  transform: scale(0.97);
+  background: var(--accent-hover);
+}
+
+.fab svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* ── The conversation ──────────────────────────────────────────────────── */
+
+.conversation {
+  background: var(--canvas);
+}
+
+.mobile-thread {
+  padding: 0;
+}
+
+.mobile-thread .thread-inner {
+  max-width: none;
+  padding: 14px 14px 10px;
+  gap: 22px;
+}
+
+.mobile-thread .bubble {
+  max-width: 88%;
+  padding: 9px 13px 10px;
+  font-size: 15px;
+  border-radius: 17px 17px 6px 17px;
+}
+
+.mobile-thread .md {
+  font-size: 15px;
+  line-height: 1.62;
+}
+
+.mobile-thread .md pre {
+  /* A wide code block scrolls inside the message instead of widening it. */
+  max-width: calc(100vw - 64px);
+}
+
+/* No hover on a phone: the copy / edit / report line has to be visible, and
+   the bubble needs room underneath for it. */
+@media (hover: none) {
+  .mobile-thread .msg {
+    padding-bottom: 22px;
+  }
+
+  .mobile-thread .msg-actions {
+    opacity: 1;
+    height: 22px;
+  }
+}
+
+.mobile-composer {
+  flex: 0 0 auto;
+  padding: 0 10px calc(env(safe-area-inset-bottom) + 10px);
+  background: var(--canvas);
+}
+
+.mobile-composer .composer-wrap {
+  max-width: none;
+}
+
+.mobile-composer .composer {
+  border-radius: 18px;
+  background: var(--ivory);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 -1px 0 var(--line-soft), var(--shadow-sm);
+}
+
+.mobile-composer .composer-row {
+  padding: 4px 4px 4px 10px;
+}
+
+.mobile-composer .composer-row textarea {
+  min-height: 38px;
+  padding: 9px 2px;
+  font-size: 16px; /* below 16 iOS zooms the whole page on focus */
+  max-height: 42dvh;
+}
+
+.mobile-composer .composer-row .send-btn,
+.mobile-composer .attach-btn {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 2px;
+}
+
+.mobile-composer .send-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mobile-composer .attach-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mobile-composer .composer-hint {
+  display: none;
+}
+
+/* ── Sheets ────────────────────────────────────────────────────────────── */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(var(--ink-rgb), 0.32);
+  animation: sheet-fade 160ms var(--ease);
+}
+
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 78dvh;
+  max-height: calc(100dvh - env(safe-area-inset-top) - 12px);
+  border-radius: 20px 20px 0 0;
+  background: var(--canvas);
+  box-shadow: 0 -18px 48px -28px rgba(var(--ink-rgb), 0.42);
+  animation: sheet-up 240ms var(--ease);
+}
+
+.sheet-tall {
+  height: 62dvh;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(14px);
+    opacity: 0.6;
+  }
+}
+
+.sheet-grip {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 4px;
+  margin: 8px auto 2px;
+  border-radius: 999px;
+  background: rgba(var(--ink-rgb), 0.18);
+}
+
+.sheet-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 8px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.sheet-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet-title {
+  overflow: hidden;
+  font-size: 15.5px;
+  font-weight: 590;
+  letter-spacing: -0.012em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.sheet-note {
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--ink-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* A board is wider than the screen on purpose: the columns scroll sideways,
+   which is how a kanban is read on a phone. */
+.sheet-body .preview-board {
+  padding: 0 14px 12px;
+}
+
+.sheet-body .preview-entity,
+.sheet-body .preview-doc {
+  /* The sheet body is the scroller here, not the entity: a fixed `height: 100%`
+     inside an auto-height parent would collapse the document to one screen. */
+  height: auto;
+  overflow: visible;
+  padding: 14px 16px 24px;
+}
+
+.sheet-body .preview-entity .md,
+.sheet-body .preview-doc .md {
+  font-size: 15px;
+}
+
+/* ── Settings ──────────────────────────────────────────────────────────── */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px calc(env(safe-area-inset-bottom) + 16px);
+}
+
+/* A row's actions: a short sheet, not a menu anchored to a thumb. */
+.sheet-actions {
+  height: auto;
+  max-height: 62dvh;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px calc(env(safe-area-inset-bottom) + 10px);
+}
+
+.action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  color: var(--ink);
+}
+
+.action:active {
+  background: rgba(var(--ink-rgb), 0.06);
+}
+
+.action svg {
+  width: 18px;
+  height: 18px;
+  color: var(--ink-3);
+}
+
+.action-danger,
+.action-danger svg {
+  color: var(--danger);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  text-align: left;
+  color: var(--ink);
+}
+
+.setting-static {
+  justify-content: space-between;
+}
+
+.setting-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.setting-copy strong {
+  font-size: 14.5px;
+  font-weight: 550;
+}
+
+.setting-copy em {
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+.switch {
+  appearance: none;
+  width: 48px;
+  height: 29px;
+  flex: 0 0 48px;
+  border-radius: 999px;
+  background: rgba(var(--ink-rgb), 0.15);
+  transition: background 160ms var(--ease);
+  position: relative;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 23px;
+  height: 23px;
+  border-radius: 50%;
+  background: var(--ivory);
+  box-shadow: var(--shadow-xs);
+  transition: transform 160ms var(--ease);
+}
+
+.switch:checked {
+  background: var(--accent);
+}
+
+.switch:checked::after {
+  transform: translateX(19px);
+}
+
+.setting-signout {
+  margin-top: 22px;
+  gap: 8px;
+  color: var(--danger);
+  border-color: rgba(192, 57, 43, 0.24);
+}
+
+/* ── Sign in ───────────────────────────────────────────────────────────── */
+
+.signin {
+  align-items: center;
+  justify-content: center;
+  padding: calc(env(safe-area-inset-top) + 24px) 22px
+    calc(env(safe-area-inset-bottom) + 24px);
+  background: var(--canvas);
+}
+
+.signin-card {
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* The desktop puts the mark on a frosted panel; a phone has no room for a
+   second frame, and `HookMark` already draws its own rounded square — putting
+   the accent colour behind it showed two different darks as a box in a box. */
+.signin-mark {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 20px;
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background: var(--ivory);
+  box-shadow: var(--shadow-md);
+}
+
+.signin-mark svg {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+}
+
+.signin h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.signin-copy {
+  margin: 0 0 24px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.device-code {
+  margin-bottom: 18px;
+  padding: 12px 20px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 13px;
+  background: var(--ivory);
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 0.16em;
+  color: var(--ink);
+  user-select: text;
+}
+
+.signin-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 46px;
+  font-size: 15px;
+}
+
+.signin-cancel {
+  width: 100%;
+  height: 42px;
+  margin-top: 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-3);
+}
+
+.signin-wait {
+  margin: 16px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-4);
+}
+
+.signin-error {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+/* ── Toast ─────────────────────────────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: calc(env(safe-area-inset-bottom) + 76px);
+  z-index: 80;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(36, 36, 30, 0.94);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
+  color: var(--ivory);
+  box-shadow: var(--shadow-lg);
+  animation: sheet-fade 160ms var(--ease);
+}

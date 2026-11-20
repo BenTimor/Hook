@@ -63,37 +63,69 @@ pub fn guard_source() -> &'static str {
 pub enum Product {
     Chat,
     Workspace,
+    /// Hook on a phone. The same conversation, no folder on this device.
+    Mobile,
 }
 
 /// What this product's chat agent may do, and therefore what the prompt and the
-/// toolset advertise. Hook Workspace embeds the same chat without a preview
-/// panel, so the agent must not be told a preview exists.
+/// toolset advertise.
+///
+/// Every field is a *place the answer can appear* or a *thing this device can
+/// reach*, not a feature of the product. A capability trims the prompt and the
+/// toolset; it must never change the data model. Getting this wrong is how a
+/// phone ends up told to brief a coding agent it has no way to start, or to put
+/// a page in a panel that is not there.
 #[derive(Clone, Copy, Debug)]
 pub struct Capabilities {
-    /// A panel that can show an HTML preview or a Markdown document.
-    pub preview: bool,
+    /// A panel that can show an HTML page served from a coding agent's project.
+    /// It needs files on this machine, so it is off wherever there are none.
+    pub preview_pages: bool,
+    /// The same panel, showing a Hook Workspace document, task or board. It is
+    /// only data from the account, which is why a phone can have this half.
+    pub preview_workspace: bool,
     /// Launch and steer `pi` coding agents inside project folders.
     pub coding_agents: bool,
     /// Read and write Hook Workspace projects, boards, tasks and documents.
     pub workspace_tools: bool,
+    /// Project folders on this machine: list, create, describe, remember in.
+    /// Without a projects directory these tools can only fail, so a device with
+    /// no folder of its own must not advertise them.
+    pub projects: bool,
 }
 
 impl Capabilities {
     /// The full chat product: everything on.
     pub const fn chat() -> Self {
         Self {
-            preview: true,
+            preview_pages: true,
+            preview_workspace: true,
             coding_agents: true,
             workspace_tools: true,
+            projects: true,
         }
     }
 
     /// Hook Workspace: the same chat and coding agents, no preview panel.
     pub const fn workspace() -> Self {
         Self {
-            preview: false,
+            preview_pages: false,
+            preview_workspace: false,
             coding_agents: true,
             workspace_tools: true,
+            projects: true,
+        }
+    }
+
+    /// Hook on a phone: the conversation and the account's Workspace data, no
+    /// folder, no engine, no page served from disk. The preview surface exists
+    /// and shows boards, tasks and documents, because those arrive over the API.
+    pub const fn mobile() -> Self {
+        Self {
+            preview_pages: false,
+            preview_workspace: true,
+            coding_agents: false,
+            workspace_tools: true,
+            projects: false,
         }
     }
 }
@@ -144,6 +176,8 @@ pub fn builder(
             commands::auth_status,
             commands::auth_login,
             commands::auth_cancel_login,
+            commands::auth_google_config,
+            commands::auth_google,
             commands::auth_refresh,
             commands::auth_logout,
             commands::open_url,
@@ -164,6 +198,7 @@ pub fn builder(
             commands::install_update,
             commands::open_store_update,
             commands::report_message,
+            commands::report_content,
             commands::memory_list,
             commands::memory_save,
             commands::memory_update,
@@ -227,8 +262,9 @@ fn setup(
         &cfg.provider.api_key,
     ));
     // Mint the git-only token at launch so the first coding agent does not have
-    // to wait for a sync cycle.
-    {
+    // to wait for a sync cycle. A product without a coding agent never needs it,
+    // and a phone should not hold a credential it cannot use.
+    if capabilities.coding_agents {
         let auth = auth.clone();
         tauri::async_runtime::spawn(async move {
             let _ = auth.ensure_git_token().await;
@@ -239,12 +275,27 @@ fn setup(
     // from the model card, not from the build: the endpoint says what the model
     // can do, and a provider that cannot answer simply reports nothing.
     let vision = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let engine = runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir);
-    let git_runtime = git::resolve(app.path().resource_dir().ok().as_deref(), &data_dir);
-    if let Some(git) = &git_runtime {
-        eprintln!("hook: git at {}", git.program.display());
+    // Both of these only exist so a coding agent can be started: the engine is
+    // the `pi` bundle, and git is what a project pushes with. A product without
+    // one (the phone) skips the lookup entirely, so it never reports a missing
+    // engine it was never going to use.
+    let engine = if capabilities.coding_agents {
+        runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir)
     } else {
-        eprintln!("hook: git is missing; project sync is unavailable");
+        // No engine is bundled with this build; saying so is more honest than
+        // looking for one and reporting it missing.
+        Err("This product has no coding engine.".to_string())
+    };
+    let git_runtime = if capabilities.coding_agents {
+        git::resolve(app.path().resource_dir().ok().as_deref(), &data_dir)
+    } else {
+        None
+    };
+    if capabilities.coding_agents {
+        match &git_runtime {
+            Some(git) => eprintln!("hook: git at {}", git.program.display()),
+            None => eprintln!("hook: git is missing; project sync is unavailable"),
+        }
     }
 
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();

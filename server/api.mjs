@@ -116,7 +116,7 @@ function preferencesFrom(body) {
   };
 }
 
-export function createWaitlistApi(env) {
+export function createWaitlistApi(env, { verifyGoogle } = {}) {
   const site = new URL(env.WAITLIST_ORIGIN || "http://localhost:5173");
   const local =
     site.protocol === "http:" &&
@@ -538,6 +538,13 @@ export function createWaitlistApi(env) {
       writeCookie,
       profileFor,
       publicProfile,
+      // What a phone needs to run the native Google sheet: the client id its ID
+      // token must name, and the verifier that checks one. Both are absent when
+      // this deployment has no Google credentials at all.
+      clientId: configured ? clientId : null,
+      verifyGoogleIdToken: verifyGoogle
+        ? (idToken) => verifyGoogle(idToken, clientId)
+        : null,
     },
   };
 }
@@ -667,6 +674,12 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       content TEXT NOT NULL,
       transcript TEXT,
       app_version TEXT,
+      -- "ai" for a model reply, "content" for something a person wrote and a
+      -- user reported through a preview (App Store 1.2 / Play UGC). One review
+      -- queue on purpose: the same person reads both.
+      subject_kind TEXT NOT NULL DEFAULT 'ai',
+      -- JSON {"kind","id","title","projectId"} when subject_kind is "content".
+      target TEXT,
       status TEXT NOT NULL DEFAULT 'open',
       created_at TEXT NOT NULL DEFAULT (${NOW}),
       resolved_at TEXT
@@ -692,6 +705,21 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       );
     if (!tokenColumns.has("device_id"))
       db.exec("ALTER TABLE api_tokens ADD COLUMN device_id TEXT");
+
+    // Reports of other people's words share the AI queue; an existing database
+    // predates the two columns that say which kind a row is.
+    const reportColumns = new Set(
+      db
+        .prepare("PRAGMA table_info(ai_reports)")
+        .all()
+        .map((column) => column.name),
+    );
+    if (!reportColumns.has("subject_kind"))
+      db.exec(
+        "ALTER TABLE ai_reports ADD COLUMN subject_kind TEXT NOT NULL DEFAULT 'ai'",
+      );
+    if (!reportColumns.has("target"))
+      db.exec("ALTER TABLE ai_reports ADD COLUMN target TEXT");
 
     db.exec(`
     -- A per-account monotonic cursor. Every accepted change bumps it, so one
