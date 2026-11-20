@@ -448,9 +448,9 @@ Changing one side of a boundary is the most common way to break this repo.
 - **Workspace permissions are server-side.** Viewer/editor/manager/owner is
   checked on every request; the UI's gating is cosmetic. The chat agent acts as
   the signed-in user and gets the same checks.
-- **Git quotas are server-side.** 200 MB per project, 1 GB per account, 50 MB per
-  push (`server/git.mjs` + `server/git-policy.mjs`). Do not remove the pre-receive
-  hook; a push must be rejected before anything is written.
+- **Git quotas are server-side.** 200 MB per project, 1 GB per account, 100 MB
+  per push (`server/git.mjs` + `server/git-policy.mjs`). Do not remove the
+  pre-receive hook; a push must be rejected before anything is written.
 - Never edit generated or bundled trees: `target/`, `apps/*/src-tauri/gen/`,
   `apps/*/src-tauri/resources/pi-runtime/` (restored by `pnpm engine`),
   `apps/*/src-tauri/resources/git/` (restored by `pnpm git`), `dist/`,

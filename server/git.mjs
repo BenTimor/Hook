@@ -46,7 +46,7 @@ function gitBinary(env = {}) {
 /** Storage limits. Read from env so tests can exercise the hooks cheaply. */
 function limits(env = {}) {
   return {
-    push: Number(env.GIT_MAX_PUSH_BYTES) || 50 * 1024 * 1024,
+    push: Number(env.GIT_MAX_PUSH_BYTES) || 100 * 1024 * 1024,
     repo: Number(env.GIT_REPO_MAX_BYTES) || 200 * 1024 * 1024,
     user: Number(env.GIT_USER_MAX_BYTES) || 1024 * 1024 * 1024,
     repos: Number(env.GIT_MAX_REPOS) || 250,

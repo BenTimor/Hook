@@ -1146,7 +1146,7 @@ independent mechanisms are at work:
   and push when they finish, so a project started on one computer arrives on
   the next one. The account stores one bare repository per project; a pre-receive
   hook rejects pushes that would take a project over 200 MB or an account over
-  1 GB.
+  1 GB, and a single push is capped at 100 MB.
 
 - **Memory.** One row per entry over `/api/sync/memory`, folded into the same
   `/api/sync/changes` cursor as chats and projects. Last write wins on the
