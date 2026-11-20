@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Code2, MoreHorizontal, PanelRight, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, Code2, MessageCircleMore, MoreHorizontal, Trash2, X } from "lucide-react";
 import { HookMark, TextFieldDialog, WindowControls, useWindowState } from "@hook/ui";
 import { ChatDock } from "@hook/chat";
 
@@ -223,11 +223,13 @@ function Workspace({
           <div className="ws-head-right">
             <button
               className="icon-btn"
+              data-active={dockOpen}
               title={dockOpen ? "Hide Hook" : "Ask Hook"}
               aria-label={dockOpen ? "Hide Hook" : "Ask Hook"}
+              aria-pressed={dockOpen}
               onClick={() => setDockOpen((open) => !open)}
             >
-              <PanelRight />
+              <MessageCircleMore />
             </button>
             <WindowControls />
           </div>

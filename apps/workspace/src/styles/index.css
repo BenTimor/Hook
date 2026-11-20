@@ -141,6 +141,8 @@
   gap: 4px;
   -webkit-app-region: no-drag;
 }
+.ws-head-right .icon-btn[data-active="true"] { background: var(--accent-soft); color: var(--accent); }
+.ws-head-right .icon-btn[data-active="true"]:hover { background: var(--accent-soft); color: var(--accent); }
 
 .ws-crumbs {
   display: flex;
