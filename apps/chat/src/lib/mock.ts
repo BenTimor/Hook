@@ -338,7 +338,7 @@ const MOCK_MEMORY: MemoryEntry[] = [
     chatId: null,
     createdAt: Date.now() - 40 * DAY,
     updatedAt: Date.now() - 40 * DAY,
-    age: "1 months ago",
+    age: "2 months ago",
   },
   {
     id: "mem-style",
@@ -348,7 +348,7 @@ const MOCK_MEMORY: MemoryEntry[] = [
     chatId: null,
     createdAt: Date.now() - 12 * DAY,
     updatedAt: Date.now() - 12 * DAY,
-    age: "1 weeks ago",
+    age: "1 week ago",
   },
   {
     id: "mem-stack",
