@@ -9,6 +9,7 @@ import { BoardFilter, type BoardFilters } from "./BoardFilter";
 import { BoardStatusDialog } from "./BoardStatusDialog";
 import { BoardTable } from "./BoardTable";
 import { DocumentEditor } from "./DocumentEditor";
+import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { optionColor, TaskStatus } from "./TaskStatus";
 
 /**
@@ -168,6 +169,7 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
   const openTask = useWorkspaceStore((state) => state.openTask);
   const createTask = useWorkspaceStore((state) => state.createTask);
   const updateTask = useWorkspaceStore((state) => state.updateTask);
+  const deleteTask = useWorkspaceStore((state) => state.deleteTask);
   const activeTaskId = useWorkspaceStore((state) => state.activeTaskId);
   const [pending, setPending] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -177,6 +179,7 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
   // when the server answers.
   const [moving, setMoving] = useState<Record<string, string>>({});
   const [arrived, setArrived] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
 
   const status = board.columns.find((column) => column.type === "status");
   const columns = status?.options ?? [];
@@ -201,6 +204,24 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
       return next;
     });
   };
+
+  const menuEntries: MenuEntry[] = menu
+    ? [
+        {
+          kind: "action",
+          label: "Open task",
+          onSelect: () => void openTask(menu.task.id),
+        },
+        { kind: "separator" },
+        {
+          kind: "action",
+          label: "Delete task",
+          icon: <Trash2 />,
+          danger: true,
+          onSelect: () => void deleteTask(menu.task.id),
+        },
+      ]
+    : [];
 
   return (
     <div
@@ -283,6 +304,10 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
                     setDragId(null);
                     setOverColumn(null);
                   }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setMenu({ x: event.clientX, y: event.clientY, task });
+                  }}
                 >
                   <span className="ws-card-title">{task.title}</span>
                   {task.description ? (
@@ -303,7 +328,15 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
           </header>
           <div className="ws-column-body">
             {tasks.map((task) => (
-              <button className="ws-card" key={task.id} onClick={() => void openTask(task.id)}>
+              <button
+                className="ws-card"
+                key={task.id}
+                onClick={() => void openTask(task.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setMenu({ x: event.clientX, y: event.clientY, task });
+                }}
+              >
                 <span className="ws-card-title">{task.title}</span>
               </button>
             ))}
@@ -318,13 +351,29 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
           </header>
           <div className="ws-column-body">
             {extra.map((task) => (
-              <button className="ws-card" key={task.id} onClick={() => void openTask(task.id)}>
+              <button
+                className="ws-card"
+                key={task.id}
+                onClick={() => void openTask(task.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setMenu({ x: event.clientX, y: event.clientY, task });
+                }}
+              >
                 <span className="ws-card-title">{task.title}</span>
               </button>
             ))}
           </div>
         </section>
       )}
+      {menu ? (
+        <PopupMenu
+          x={menu.x}
+          y={menu.y}
+          entries={menuEntries}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
     </div>
   );
 }

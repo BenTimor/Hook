@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { GripVertical, Plus } from "lucide-react";
+import { GripVertical, Plus, Trash2 } from "lucide-react";
 
 import type { Board, Column, Task } from "../lib/types";
 import { pendingPeople, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { AssigneesPicker } from "./AssigneesPicker";
+import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { SelectMenu } from "./SelectMenu";
 
 const EMPTY: never[] = [];
@@ -32,6 +33,7 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
   const createTask = useWorkspaceStore((state) => state.createTask);
   const updateTask = useWorkspaceStore((state) => state.updateTask);
   const reorderTasks = useWorkspaceStore((state) => state.reorderTasks);
+  const deleteTask = useWorkspaceStore((state) => state.deleteTask);
   const members = useWorkspaceStore((state) =>
     board.projectId ? (state.members[board.projectId] ?? EMPTY) : EMPTY,
   );
@@ -43,8 +45,13 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
 
   const [dragId, setDragId] = useState<string | null>(null);
   const dragRef = useRef<string | null>(null);
+  const skipClick = useRef(false);
   const [over, setOver] = useState<{ id: string; after: boolean } | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [quickTitle, setQuickTitle] = useState<string | null>(null);
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
+  const quickSaving = useRef(false);
+  const quickCancelled = useRef(false);
   const table = useRef<HTMLDivElement>(null);
   const rowTops = useRef(new Map<string, number>());
 
@@ -91,6 +98,13 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
     dragRef.current = null;
     setDragId(null);
     setOver(null);
+    if (source) {
+      // A drop can be followed by a click; it should not also open the task.
+      skipClick.current = true;
+      window.setTimeout(() => {
+        skipClick.current = false;
+      }, 0);
+    }
     if (!source || source === targetId) return;
     const ids = tasks.map((task) => task.id).filter((id) => id !== source);
     let index = targetId ? ids.indexOf(targetId) : -1;
@@ -98,6 +112,25 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
     else if (after) index += 1;
     ids.splice(index, 0, source);
     void reorderTasks(board.id, ids);
+  };
+
+  const saveQuick = async () => {
+    if (quickCancelled.current) {
+      quickCancelled.current = false;
+      return;
+    }
+    if (quickSaving.current || quickTitle === null) return;
+    const title = quickTitle.trim();
+    if (!title) {
+      setQuickTitle(null);
+      return;
+    }
+    quickSaving.current = true;
+    setQuickBusy(true);
+    const created = await createTask(board.id, firstStatus, { title, activate: false });
+    quickSaving.current = false;
+    setQuickBusy(false);
+    if (created) setQuickTitle(null);
   };
 
   const setColumnValue = (task: Task, column: Column, value: string) => {
@@ -110,6 +143,24 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
     else fields[column.id] = column.type === "number" ? Number(value) : value;
     void updateTask(task.id, { fields });
   };
+
+  const menuEntries: MenuEntry[] = menu
+    ? [
+        {
+          kind: "action",
+          label: "Open task",
+          onSelect: () => void openTask(menu.task.id),
+        },
+        { kind: "separator" },
+        {
+          kind: "action",
+          label: "Delete task",
+          icon: <Trash2 />,
+          danger: true,
+          onSelect: () => void deleteTask(menu.task.id),
+        },
+      ]
+    : [];
 
   return (
     <div
@@ -179,6 +230,24 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
               const rect = event.currentTarget.getBoundingClientRect();
               const after = event.clientY > rect.top + rect.height / 2;
               if (over?.id !== task.id || over.after !== after) setOver({ id: task.id, after });
+            }}
+            onClick={(event) => {
+              if (skipClick.current) return;
+              const target = event.target instanceof Element ? event.target : null;
+              if (
+                target?.closest(
+                  "button, input, select, textarea, a, [role='button'], [contenteditable='true']",
+                )
+              ) {
+                return;
+              }
+              void openTask(task.id);
+            }}
+            onContextMenu={(event) => {
+              const target = event.target instanceof Element ? event.target : null;
+              if (target?.closest("input, textarea, [contenteditable='true']")) return;
+              event.preventDefault();
+              setMenu({ x: event.clientX, y: event.clientY, task });
             }}
           >
             <div className="ws-cell ws-cell-title">
@@ -292,25 +361,65 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
           </div>
         ))}
 
-        <button
-          className="ws-trow-add"
-          style={grid}
-          disabled={adding}
-          onClick={async () => {
-            setAdding(true);
-            await createTask(board.id, firstStatus);
-            setAdding(false);
-          }}
-        >
-          <span className="ws-cell ws-cell-add">
-            <Plus strokeWidth={2} />
-            New task
-          </span>
-          {columns.map((column) => (
-            <span className="ws-cell" key={column.id} />
-          ))}
-        </button>
+        {quickTitle !== null ? (
+          <div className="ws-trow ws-trow-quick" style={grid}>
+            <div className="ws-cell ws-cell-title ws-quick-cell">
+              <span className="ws-quick-mark" aria-hidden="true">
+                <Plus strokeWidth={2} />
+              </span>
+              <input
+                className="ws-quick-input"
+                autoFocus
+                value={quickTitle}
+                placeholder="Task name"
+                aria-label="New task title"
+                disabled={quickBusy}
+                onChange={(event) => setQuickTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    quickCancelled.current = false;
+                    void saveQuick();
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    quickCancelled.current = true;
+                    setQuickTitle(null);
+                  }
+                }}
+                onBlur={() => void saveQuick()}
+              />
+            </div>
+            {columns.map((column) => (
+              <span className="ws-cell" key={column.id} />
+            ))}
+          </div>
+        ) : (
+          <button
+            className="ws-trow-add"
+            style={grid}
+            onClick={() => {
+              quickCancelled.current = false;
+              setQuickTitle("");
+            }}
+          >
+            <span className="ws-cell ws-cell-add">
+              <Plus strokeWidth={2} />
+              New task
+            </span>
+            {columns.map((column) => (
+              <span className="ws-cell" key={column.id} />
+            ))}
+          </button>
+        )}
       </div>
+      {menu ? (
+        <PopupMenu
+          x={menu.x}
+          y={menu.y}
+          entries={menuEntries}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
     </div>
   );
 }

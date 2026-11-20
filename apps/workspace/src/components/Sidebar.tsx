@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   ChevronRight,
   FilePlus2,
+  LogOut,
   FileText,
   Folder as FolderIcon,
   FolderPlus,
@@ -10,7 +11,6 @@ import {
   Mail,
   MoreHorizontal,
   Plus,
-  Settings,
   Users,
 } from "lucide-react";
 
@@ -18,6 +18,7 @@ import { Dialog, HookMark, TextFieldDialog } from "@hook/ui";
 
 import type { Board, DocumentMeta, Folder, Project, Role } from "../lib/types";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { PersonAvatar } from "./AssigneesPicker";
 import { CreateItemDialog, type CreateRequest } from "./CreateItem";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
 
@@ -54,6 +55,7 @@ function readExpanded(): Record<string, boolean> {
  */
 export function Sidebar({
   email,
+  name,
   homeActive,
   invitesActive,
   onHome,
@@ -62,6 +64,7 @@ export function Sidebar({
   onLogout,
 }: {
   email: string | null;
+  name: string | null;
   homeActive: boolean;
   invitesActive: boolean;
   onHome: () => void;
@@ -78,6 +81,7 @@ export function Sidebar({
   const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
   const activeBoardId = useWorkspaceStore((state) => state.activeBoardId);
   const activeDocumentId = useWorkspaceStore((state) => state.activeDocumentId);
+  const displayName = name?.trim() || email?.split("@")[0] || "Account";
 
   const openProject = useWorkspaceStore((state) => state.openProject);
   const openBoard = useWorkspaceStore((state) => state.openBoard);
@@ -698,11 +702,15 @@ export function Sidebar({
         </div>
 
         <div className="ws-rail-foot">
-          <button className="ws-nav-row" onClick={onLogout}>
-            <Settings />
-            <span className="ws-account" title={email ?? undefined}>
-              {email}
-            </span>
+          <button
+            className="ws-nav-row ws-account-row"
+            onClick={onLogout}
+            title={`Sign out ${displayName}${email ? ` (${email})` : ""}`}
+            aria-label={`Sign out ${displayName}`}
+          >
+            <PersonAvatar small value={email ?? displayName} label={displayName} />
+            <span className="ws-account-name">{displayName}</span>
+            <LogOut aria-hidden="true" />
           </button>
         </div>
       </aside>

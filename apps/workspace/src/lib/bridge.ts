@@ -348,7 +348,9 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         assignee: assignees[0] ?? null,
         assignees,
         fields: {},
-        position: demo.tasks.filter((task) => task.boardId === id).length,
+        position: Number.isSafeInteger(payload.position)
+          ? Number(payload.position)
+          : demo.tasks.filter((task) => task.boardId === id).length,
         createdBy: "local-preview",
         createdAt: demoNow(),
         updatedAt: demoNow(),
@@ -530,6 +532,7 @@ export const api = {
       status?: string;
       assignee?: string | null;
       assignees?: string[];
+      position?: number;
     },
   ) => call<{ task: Task }>("POST", `/boards/${boardId}/tasks`, task),
   updateTask: (id: string, patch: Partial<Task>) =>

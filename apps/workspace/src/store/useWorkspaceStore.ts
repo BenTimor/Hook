@@ -61,7 +61,11 @@ interface WorkspaceState {
   deleteBoard: (id: string) => Promise<void>;
 
   openTask: (id: string | null) => Promise<void>;
-  createTask: (boardId: string, status: string) => Promise<Task | null>;
+  createTask: (
+    boardId: string,
+    status: string,
+    options?: { title?: string; activate?: boolean; position?: number },
+  ) => Promise<Task | null>;
   updateTask: (id: string, patch: Partial<Task>) => Promise<boolean>;
   /** Rows are ordered by hand: position becomes the index in this list. */
   reorderTasks: (boardId: string, orderedIds: string[]) => Promise<void>;
@@ -371,15 +375,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async createTask(boardId, status) {
+  async createTask(boardId, status, options = {}) {
     try {
-      const created = await api.createTask(boardId, { title: "New task", status });
+      const position =
+        options.position ??
+        (get().tasks[boardId] ?? []).reduce((next, task) => Math.max(next, task.position + 1), 0);
+      const created = await api.createTask(boardId, {
+        title: options.title?.trim() || "New task",
+        status,
+        position,
+      });
       set((state) => ({
         tasks: {
           ...state.tasks,
           [boardId]: sortByPosition([...(state.tasks[boardId] ?? []), created.task]),
         },
-        activeTaskId: created.task.id,
+        // Quick add creates a row in place; the other entry points still open
+        // the new task.
+        activeTaskId: options.activate === false ? state.activeTaskId : created.task.id,
       }));
       return created.task;
     } catch (error) {

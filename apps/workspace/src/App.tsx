@@ -176,6 +176,7 @@ function Workspace({
     <div className="shell" data-maximized={maximized}>
       <Sidebar
         email={auth.email ?? null}
+        name={auth.name ?? null}
         homeActive={!project && !invitesOpen}
         invitesActive={invitesOpen}
         onHome={() => {

@@ -910,7 +910,9 @@ saves edits. Back to board returns to the selected board view. **Statuses** on a
 board are editable: add, rename, reorder, recolour or remove them from the board
 header, and tasks in a removed status move to the first remaining one. **Filter**
 narrows both the table and board views by status or any select column (such as
-Priority), and can combine several columns.
+Priority), and can combine several columns. The last row of the table is an
+inline quick add: click **New task**, type a title and press Enter to append it
+without opening the task view.
 
 The important structural decision: **the workspace service is the product; the
 window is a client.** `server/workspace.mjs` owns projects, memberships,
