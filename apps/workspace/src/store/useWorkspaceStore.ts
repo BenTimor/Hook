@@ -4,6 +4,7 @@ import { api } from "../lib/bridge";
 import type {
   Board,
   Change,
+  Column,
   Comment,
   DocumentMeta,
   Folder,
@@ -55,6 +56,7 @@ interface WorkspaceState {
   openBoard: (id: string | null, projectId?: string) => Promise<void>;
   createBoard: (projectId: string, name: string, folderId?: string | null) => Promise<Board | null>;
   renameBoard: (id: string, name: string) => Promise<void>;
+  updateBoardColumns: (id: string, columns: Column[]) => Promise<Board | null>;
   moveBoard: (id: string, folderId: string | null) => Promise<void>;
   deleteBoard: (id: string) => Promise<void>;
 
@@ -310,6 +312,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }));
     } catch (error) {
       set({ error: message(error) });
+    }
+  },
+
+  async updateBoardColumns(id, columns) {
+    try {
+      const updated = await api.updateBoard(id, { columns });
+      set((state) => ({
+        boards: {
+          ...state.boards,
+          [updated.board.projectId]: sortByPosition(
+            upsert(state.boards[updated.board.projectId] ?? [], updated.board),
+          ),
+        },
+      }));
+      return updated.board;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
     }
   },
 

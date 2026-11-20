@@ -1,20 +1,33 @@
-import type { Column } from "../lib/types";
+import type { Column, ColumnOption, StatusColor } from "../lib/types";
 import { SelectMenu } from "./SelectMenu";
 
-export type StatusTone = "done" | "active" | "blocked" | "todo" | "neutral";
+export const STATUS_COLORS: Array<{ id: StatusColor; label: string }> = [
+  { id: "slate", label: "Slate" },
+  { id: "green", label: "Green" },
+  { id: "blue", label: "Blue" },
+  { id: "amber", label: "Amber" },
+  { id: "red", label: "Red" },
+  { id: "purple", label: "Purple" },
+  { id: "teal", label: "Teal" },
+  { id: "pink", label: "Pink" },
+];
 
 const DONE = /(done|complete|closed|shipped|merged|resolved|approved)/i;
 const BLOCKED = /(block|stuck|failed|cancel|hold)/i;
 const ACTIVE = /(progress|doing|review|active|started|working|in dev)/i;
 const TODO = /(todo|to do|backlog|planned|open|queued|ready|new)/i;
 
-/** Colours by what a status means, not by its position on this board. */
-export function statusTone(label: string): StatusTone {
-  if (DONE.test(label)) return "done";
-  if (BLOCKED.test(label)) return "blocked";
-  if (ACTIVE.test(label)) return "active";
-  if (TODO.test(label)) return "todo";
-  return "neutral";
+/** A colour for a status without an explicit one, by what its label means. */
+export function statusColor(label: string): StatusColor {
+  if (DONE.test(label)) return "green";
+  if (BLOCKED.test(label)) return "red";
+  if (ACTIVE.test(label)) return "blue";
+  if (TODO.test(label)) return "amber";
+  return "slate";
+}
+
+export function optionColor(option: Pick<ColumnOption, "label" | "color"> | undefined): StatusColor {
+  return option?.color ?? statusColor(option?.label ?? "");
 }
 
 /** A compact status pill with the same custom menu as every other dropdown. */
@@ -32,13 +45,15 @@ export function TaskStatus({
   const options = (column.options ?? []).map((option) => ({
     id: option.id,
     label: option.label || "Untitled",
+    color: optionColor(option),
   }));
   const current = options.find((option) => option.id === value);
   const label = current?.label || "No status";
+  const color = current?.color ?? statusColor(label);
 
   if (readOnly) {
     return (
-      <span className="ws-status-pill" data-tone={statusTone(label)}>
+      <span className="ws-status-pill" data-color={color}>
         <span className="ws-status-dot" aria-hidden="true" />
         <span>{label}</span>
       </span>
@@ -48,7 +63,7 @@ export function TaskStatus({
   return (
     <SelectMenu
       variant="status"
-      tone={statusTone(label)}
+      color={color}
       value={value}
       options={options}
       label={column.name}

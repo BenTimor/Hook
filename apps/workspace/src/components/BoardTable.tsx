@@ -275,6 +275,7 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
               const options = (column.options ?? []).map((option) => ({
                 id: option.id,
                 label: option.label || "Untitled",
+                color: option.color,
               }));
               return (
                 <div className="ws-cell" key={column.id}>

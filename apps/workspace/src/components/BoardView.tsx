@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, LayoutList, Pencil, Plus, Rows3, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, LayoutList, Pencil, Plus, Rows3, Settings2, Trash2, X } from "lucide-react";
 
 import type { Board, Comment, Member, Task } from "../lib/types";
 import { pendingPeople, personLabel, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { AssigneesPicker, PersonAvatar } from "./AssigneesPicker";
+import { BoardFilter, type BoardFilters } from "./BoardFilter";
+import { BoardStatusDialog } from "./BoardStatusDialog";
 import { BoardTable } from "./BoardTable";
 import { DocumentEditor } from "./DocumentEditor";
-import { TaskStatus } from "./TaskStatus";
+import { optionColor, TaskStatus } from "./TaskStatus";
 
 /**
  * A board as its columns: one column per status option, cards in order.
@@ -18,9 +20,61 @@ import { TaskStatus } from "./TaskStatus";
  */
 export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
   const createTask = useWorkspaceStore((state) => state.createTask);
+  const project = useWorkspaceStore((state) =>
+    state.projects.find((candidate) => candidate.id === state.activeProjectId),
+  );
   const [mode, setMode] = useState<"table" | "board">("table");
   const [adding, setAdding] = useState(false);
+  const [statusesOpen, setStatusesOpen] = useState(false);
+  const [filters, setFilters] = useState<BoardFilters>({});
   const status = board.columns.find((column) => column.type === "status");
+  const readOnly = project?.role === "viewer";
+
+  useEffect(() => {
+    setFilters({});
+  }, [board.id]);
+
+  // A status or option can disappear while a filter still points at it.
+  useEffect(() => {
+    setFilters((current) => {
+      let changed = false;
+      const next: BoardFilters = {};
+      for (const [columnId, values] of Object.entries(current)) {
+        const column = board.columns.find((candidate) => candidate.id === columnId);
+        const kept = values.filter((value) => column?.options?.some((option) => option.id === value));
+        if (kept.length) {
+          next[columnId] = kept;
+          if (kept.length !== values.length) changed = true;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [board.columns]);
+
+  const visibleTasks = useMemo(
+    () =>
+      tasks.filter((task) =>
+        board.columns.every((column) => {
+          const values = filters[column.id];
+          if (!values?.length) return true;
+          const raw = column.type === "status" ? task.status : task.fields?.[column.id];
+          const value = raw === null || raw === undefined ? "" : String(raw);
+          return values.includes(value);
+        }),
+      ),
+    [tasks, filters, board.columns],
+  );
+
+  const filterGroups = board.columns.flatMap((column) => {
+    const values = filters[column.id] ?? [];
+    if (values.length === 0) return [];
+    return [{
+      column,
+      labels: values.map((value) => column.options?.find((option) => option.id === value)?.label ?? value),
+    }];
+  });
 
   return (
     <div className="ws-board-page">
@@ -50,6 +104,16 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
               Board
             </button>
           </div>
+          <BoardFilter board={board} filters={filters} onChange={setFilters} />
+          {!readOnly ? (
+            <button
+              className="btn btn-ghost"
+              title="Add, rename or reorder statuses"
+              onClick={() => setStatusesOpen(true)}
+            >
+              <Settings2 /> Statuses
+            </button>
+          ) : null}
           <button
             className="btn btn-primary"
             disabled={adding}
@@ -64,10 +128,37 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
         </div>
       </header>
 
+      {filterGroups.length > 0 ? (
+        <div className="ws-filter-bar" aria-label="Active filters">
+          {filterGroups.map(({ column, labels }) => (
+            <span className="ws-filter-chip" key={column.id}>
+              <span className="ws-filter-chip-key">{column.name}</span>
+              <span>{labels.join(", ")}</span>
+              <button
+                type="button"
+                aria-label={`Clear ${column.name} filter`}
+                onClick={() => {
+                  const next = { ...filters };
+                  delete next[column.id];
+                  setFilters(next);
+                }}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+          <button type="button" className="ws-filter-clear" onClick={() => setFilters({})}>
+            Clear filters
+          </button>
+        </div>
+      ) : null}
+
+      <BoardStatusDialog board={board} open={statusesOpen} onClose={() => setStatusesOpen(false)} />
+
       {mode === "table" ? (
-        <BoardTable board={board} tasks={tasks} />
+        <BoardTable board={board} tasks={visibleTasks} />
       ) : (
-        <BoardColumns board={board} tasks={tasks} />
+        <BoardColumns board={board} tasks={visibleTasks} />
       )}
     </div>
   );
@@ -154,6 +245,7 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
             }}
           >
             <header className="ws-column-head">
+              <span className="ws-column-dot" data-color={optionColor(column)} aria-hidden="true" />
               <span className="ws-column-name">{column.label}</span>
               <span className="ws-column-count">{items.length}</span>
               <button

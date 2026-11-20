@@ -5,6 +5,7 @@ import { Check, ChevronDown } from "lucide-react";
 export interface SelectOption {
   id: string;
   label: string;
+  color?: string;
 }
 
 /**
@@ -22,7 +23,7 @@ export function SelectMenu({
   variant = "field",
   className = "",
   disabled = false,
-  tone,
+  color,
 }: {
   value: string;
   options: SelectOption[];
@@ -31,7 +32,7 @@ export function SelectMenu({
   variant?: "field" | "cell" | "status";
   className?: string;
   disabled?: boolean;
-  tone?: string;
+  color?: string;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -119,7 +120,7 @@ export function SelectMenu({
           ref={trigger}
           type="button"
           className={`ws-status-pill${className ? ` ${className}` : ""}`}
-          data-tone={tone}
+          data-color={color}
           aria-label={label}
           aria-haspopup="listbox"
           aria-expanded={open}
@@ -157,6 +158,9 @@ export function SelectMenu({
           show();
         }}
       >
+        {variant === "cell" && current?.color ? (
+          <span className="ws-select-option-dot" data-color={current.color} aria-hidden="true" />
+        ) : null}
         <span className="ws-select-value">{currentLabel}</span>
         <ChevronDown className="ws-select-chevron" aria-hidden="true" />
       </button>
@@ -204,6 +208,7 @@ export function SelectMenu({
               data-active={active}
               onClick={() => choose(option.id)}
             >
+              {option.color ? <span className="ws-select-option-dot" data-color={option.color} aria-hidden="true" /> : null}
               <span className="ws-select-option-label">{option.label || "Untitled"}</span>
               <span className="ws-select-check" aria-hidden="true">
                 {active ? <Check /> : null}

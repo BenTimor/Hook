@@ -28,9 +28,20 @@ export interface Folder {
 
 export type ColumnType = "status" | "text" | "number" | "date" | "select" | "person";
 
+export type StatusColor =
+  | "slate"
+  | "green"
+  | "blue"
+  | "amber"
+  | "red"
+  | "purple"
+  | "teal"
+  | "pink";
+
 export interface ColumnOption {
   id: string;
   label: string;
+  color?: StatusColor;
 }
 
 export interface Column {

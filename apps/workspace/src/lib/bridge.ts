@@ -58,9 +58,9 @@ const DEMO_COLUMNS: Column[] = [
     name: "Status",
     type: "status",
     options: [
-      { id: "opt_todo", label: "To do" },
-      { id: "opt_doing", label: "In progress" },
-      { id: "opt_done", label: "Done" },
+      { id: "opt_todo", label: "To do", color: "amber" },
+      { id: "opt_doing", label: "In progress", color: "blue" },
+      { id: "opt_done", label: "Done", color: "green" },
     ],
   },
   { id: "col_assignee", name: "Assignee", type: "person" },
@@ -514,7 +514,7 @@ export const api = {
     call<{ board: Board }>("POST", `/projects/${projectId}/boards`, { name, folderId }),
   updateBoard: (
     id: string,
-    patch: Partial<Pick<Board, "name" | "description" | "folderId">>,
+    patch: Partial<Pick<Board, "name" | "description" | "folderId" | "columns">>,
   ) => call<{ board: Board }>("PATCH", `/boards/${id}`, patch),
   deleteBoard: (id: string) => call<{ ok: true }>("DELETE", `/boards/${id}`),
 

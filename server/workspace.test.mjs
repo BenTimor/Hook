@@ -477,6 +477,44 @@ test("tasks keep their board's typed columns, and comments record who really wro
   assert.equal(detail.body.comments.length, 2);
 });
 
+test("a board's statuses can be extended without replacing the board", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+  const created = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Sprint 1" },
+  });
+  const board = created.body.board;
+  const status = board.columns.find((column) => column.type === "status");
+  const columns = board.columns.map((column) =>
+    column.type === "status"
+      ? {
+          ...column,
+          options: [...column.options, { id: "opt_blocked", label: "Blocked by Dev", color: "red" }],
+        }
+      : column,
+  );
+
+  const updated = await request(`/boards/${board.id}`, {
+    method: "PATCH",
+    body: { columns },
+  });
+  assert.equal(updated.status, 200);
+  const updatedStatus = updated.body.board.columns.find((column) => column.type === "status");
+  assert.deepEqual(
+    updatedStatus.options.map((option) => [option.id, option.label]),
+    [...status.options.map((option) => [option.id, option.label]), ["opt_blocked", "Blocked by Dev"]],
+  );
+  assert.equal(updatedStatus.options.find((option) => option.id === "opt_blocked").color, "red");
+
+  const task = await request(`/boards/${board.id}/tasks`, {
+    method: "POST",
+    body: { title: "Waiting for the backend", status: "opt_blocked" },
+  });
+  assert.equal(task.status, 201);
+  assert.equal(task.body.task.status, "opt_blocked");
+});
+
 test("comments are edited and deleted by their author or a manager", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);

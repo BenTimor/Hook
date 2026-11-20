@@ -889,7 +889,11 @@ or formatted document content for a preview when the tile comes into view.
 Opening or creating a board task shows its details, description and comments in
 a full task view with a properties sidebar for status, multiple assignees and
 dates. The description uses the document formatting toolbar and automatically
-saves edits. Back to board returns to the selected board view.
+saves edits. Back to board returns to the selected board view. **Statuses** on a
+board are editable: add, rename, reorder, recolour or remove them from the board
+header, and tasks in a removed status move to the first remaining one. **Filter**
+narrows both the table and board views by status or any select column (such as
+Priority), and can combine several columns.
 
 The important structural decision: **the workspace service is the product; the
 window is a client.** `server/workspace.mjs` owns projects, memberships,

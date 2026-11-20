@@ -264,6 +264,7 @@ function projectName(value) {
 }
 
 const COLUMN_TYPES = ["status", "text", "number", "date", "select", "person"];
+const OPTION_COLORS = ["slate", "green", "blue", "amber", "red", "purple", "teal", "pink"];
 
 /** Columns are a board's schema; tasks store values keyed by column id. */
 function parseColumns(raw) {
@@ -287,13 +288,17 @@ function parseColumns(raw) {
       const options = Array.isArray(entry.options)
         ? entry.options
             .slice(0, 40)
-            .map((option) => ({
-              id:
-                typeof option?.id === "string" && /^opt_[A-Za-z0-9_-]{1,24}$/.test(option.id)
-                  ? option.id
-                  : newId("opt"),
-              label: text(option?.label, 40) ?? "Untitled",
-            }))
+            .map((option) => {
+              const shaped = {
+                id:
+                  typeof option?.id === "string" && /^opt_[A-Za-z0-9_-]{1,24}$/.test(option.id)
+                    ? option.id
+                    : newId("opt"),
+                label: text(option?.label, 40) ?? "Untitled",
+              };
+              if (OPTION_COLORS.includes(option?.color)) shaped.color = option.color;
+              return shaped;
+            })
         : [];
       if (options.length === 0) {
         options.push({ id: newId("opt"), label: "To do" }, { id: newId("opt"), label: "Done" });
