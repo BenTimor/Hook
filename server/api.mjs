@@ -542,8 +542,15 @@ export function createWaitlistApi(env, { verifyGoogle } = {}) {
       // token must name, and the verifier that checks one. Both are absent when
       // this deployment has no Google credentials at all.
       clientId: configured ? clientId : null,
-      verifyGoogleIdToken: verifyGoogle
-        ? (idToken) => verifyGoogle(idToken, clientId)
+      verifyGoogleIdToken: configured
+        ? verifyGoogle
+          // Tests replace it: verifying a token means fetching Google's
+          // certificates, which a test suite must not do.
+          ? (idToken) => verifyGoogle(idToken, clientId)
+          : (idToken) =>
+              google
+                .verifyIdToken({ idToken, audience: clientId })
+                .then((ticket) => ticket.getPayload())
         : null,
     },
   };
