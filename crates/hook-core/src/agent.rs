@@ -1794,10 +1794,9 @@ pub fn kill_tree(pid: u32) {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/T", "/PID", &pid.to_string()])
-            .creation_flags(CREATE_NO_WINDOW)
+            .creation_flags(crate::CREATE_NO_WINDOW)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
@@ -1824,6 +1823,8 @@ fn build_command(engine: &PiRuntime, args: &[String]) -> Command {
     } else {
         Command::new(&engine.program)
     };
+    #[cfg(windows)]
+    command.creation_flags(crate::CREATE_NO_WINDOW);
     command.args(engine.prefix_args());
     command.args(args);
     command

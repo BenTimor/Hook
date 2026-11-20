@@ -128,6 +128,8 @@ mistake: delete it, never commit it.
 - `crates/hook-core/src/{git,projects}.rs` — bundled MinGit, scoped git config,
   project folders and their account ids. "Project" here means a **code project**,
   a folder on disk; Workspace projects are a different thing (`ws_` ids).
+  Both Git launch paths use the same command builder to keep background
+  commands from opening a console in Windows desktop builds.
 - `crates/hook-core/src/{preview,runtime,guard}.rs` — loopback preview server,
   engine lookup, and the guard extension (`resources/hook-guard.mjs`, embedded
   with `include_str!`; edit the `.mjs`).

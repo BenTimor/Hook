@@ -1092,6 +1092,9 @@ over 64 characters, or one Windows reserves — stays on that machine and is
 skipped by itself, so one impossible name cannot stop the rest of the account
 from syncing.
 
+On Windows, Hook runs the Git commands for startup and background project sync
+without opening terminal windows.
+
 Quotas: 250 MB of conversation JSON, 250 MB of chat pictures, 5,000 chats,
 200 projects and 1,000 memories per account. Limits are server constants in `server/sync.mjs` and
 `server/git.mjs`. Deleting the local folder only resets the device; sign-out

@@ -189,6 +189,29 @@ pub fn env(git: &GitRuntime, config: &Path) -> Vec<(std::ffi::OsString, std::ffi
     values
 }
 
+fn command(
+    git: &GitRuntime,
+    config: &Path,
+    cwd: &Path,
+    args: &[&str],
+) -> std::process::Command {
+    let mut command = std::process::Command::new(&git.program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Git uses pipes and never prompts. Run it without attaching a
+        // console, including when Hook was launched from a terminal.
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        command.creation_flags(DETACHED_PROCESS);
+    }
+    command
+        .args(args)
+        .current_dir(cwd)
+        .envs(env(git, config))
+        .stdin(Stdio::null());
+    command
+}
+
 async fn run(
     git: &GitRuntime,
     config: &Path,
@@ -196,12 +219,8 @@ async fn run(
     args: &[&str],
     timeout: Duration,
 ) -> Result<String, String> {
-    let mut command = Command::new(&git.program);
+    let mut command = Command::from(command(git, config, cwd, args));
     command
-        .args(args)
-        .current_dir(cwd)
-        .envs(env(git, config))
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -227,11 +246,7 @@ fn ok_sync(
     cwd: &Path,
     args: &[&str],
 ) -> Result<String, String> {
-    let output = std::process::Command::new(&git.program)
-        .args(args)
-        .current_dir(cwd)
-        .envs(env(git, config))
-        .stdin(Stdio::null())
+    let output = command(git, config, cwd, args)
         .output()
         .map_err(|e| format!("Could not run git: {e}"))?;
     if output.status.success() {
@@ -360,6 +375,36 @@ pub async fn pull_into_empty(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn background_git_commands_have_no_console() {
+        let git = GitRuntime {
+            program: std::env::current_exe().unwrap(),
+            path_dirs: Vec::new(),
+        };
+        let cwd = std::env::temp_dir();
+        let config = cwd.join("unused-hook-console-test-config");
+        let args = ["--ignored", "--exact", "git::tests::console_probe"];
+        ok_sync(&git, &config, &cwd, &args).expect("synchronous Git command attached a console");
+        run(&git, &config, &cwd, &args, Duration::from_secs(10))
+            .await
+            .expect("asynchronous Git command attached a console");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "spawned as the child process by background_git_commands_have_no_console"]
+    fn console_probe() {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleProcessList(processes: *mut u32, length: u32) -> u32;
+        }
+        let mut process = 0;
+        // SAFETY: the pointer is writable and the length is one DWORD.
+        let count = unsafe { GetConsoleProcessList(&mut process, 1) };
+        assert_eq!(count, 0, "the child is attached to a Windows console");
+    }
 
     #[test]
     fn remote_url_is_stable() {

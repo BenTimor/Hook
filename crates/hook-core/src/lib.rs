@@ -43,6 +43,10 @@ use tokio::sync::mpsc;
 use crate::agent::{AgentManager, Signal};
 use crate::commands::AppState;
 
+// The release app has no console for background helpers to inherit.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 // Re-exported for the integration tests so they use the exact same guard text
 // and command line as the runtime.
 pub use crate::agent::agent_args;
