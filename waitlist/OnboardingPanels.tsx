@@ -5,15 +5,15 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Download,
   LogOut,
+  Store,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { HookMark } from "@hook/ui";
 import { FloatingVisualStage } from "./FloatingVisualStage";
 import { interests } from "./interests";
 import content from "./content.json";
-import type { Profile, ReleaseInfo } from "./onboarding";
+import type { Profile, StoreLink } from "./onboarding";
 
 export function InterestsScreen({
   selected,
@@ -281,29 +281,23 @@ export function ConfirmationScreen({ onHome }: { onHome: () => void }) {
   );
 }
 
-function formatSize(bytes: number | null | undefined) {
-  if (!bytes || bytes <= 0) return null;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 /**
- * The screen an approved member sees instead of the waiting-list flow. The
- * download URL is authenticated server-side; this page only decides whether
- * to offer it.
+ * The screen an approved member sees instead of the waiting-list flow. Hook is
+ * installed from the Microsoft Store here: the website never hands out an
+ * installer, and the Store listing opens only for whitelisted accounts.
  */
 export function ApprovedScreen({
   profile,
-  download,
+  store,
   signingOut,
   onSignOut,
 }: {
   profile: Profile;
-  download: ReleaseInfo | null;
+  store: StoreLink | null;
   signingOut: boolean;
   onSignOut: () => void;
 }) {
   const name = profile.name?.trim().split(/\s+/)[0] || "you";
-  const size = formatSize(download?.size);
   return (
     <div className="confirmation-panel approved-panel">
       <motion.div
@@ -320,37 +314,27 @@ export function ApprovedScreen({
       <p className="step-label">You’re approved</p>
       <h1 tabIndex={-1}>Welcome in, {name}.</h1>
       <p className="screen-description">
-        Download Hook for Windows, then sign in with{" "}
+        Get Hook from the Microsoft Store, then sign in with{" "}
         <strong>{profile.email}</strong>. The app will ask Google to confirm
         it’s you, and the same account unlocks both chat and coding agents.
       </p>
 
-      {download?.available ? (
+      {store ? (
         <>
-          <a
-            className="primary-button download-button"
-            href={download.url || "/api/download/windows"}
-            download
-          >
-            <Download size={17} strokeWidth={1.9} aria-hidden="true" />
-            Download Hook
+          <a className="primary-button store-button" href={store.url}>
+            <Store size={17} strokeWidth={1.9} aria-hidden="true" />
+            Get Hook from Microsoft Store
           </a>
-          <p className="download-meta">
-            Windows installer
-            {download.version ? ` · version ${download.version}` : ""}
-            {download.commit ? ` · build ${download.commit}` : ""}
-            {size ? ` · ${size}` : ""}
-          </p>
+          <p className="store-meta">Opens the Microsoft Store app on this PC.</p>
         </>
       ) : (
         <button className="primary-button" disabled>
-          Your build is being prepared
+          The Store listing is being prepared
         </button>
       )}
-      <p className="download-note">
-        This link always points at the newest build. Once Hook is installed it
-        updates itself from inside the app — no re-downloading, no re-installing.
-        If the button says a build is being prepared, check back in a few minutes.
+      <p className="store-note">
+        Hook installs and updates through the Store — no installer to download,
+        nothing to keep up to date by hand.
       </p>
 
       <div className="approved-account">

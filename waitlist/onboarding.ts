@@ -26,16 +26,14 @@ export interface Profile extends Preferences {
   onboardingCompletedAt: string | null;
 }
 
-/** The installer the release workflow published for approved users. */
-export interface ReleaseInfo {
-  available: boolean;
-  version?: string | null;
-  commit?: string | null;
-  builtAt?: string | null;
-  sha256?: string | null;
-  size?: number | null;
-  file?: string;
-  url?: string;
+/**
+ * Where an approved account installs Hook: the Microsoft Store listing, not an
+ * installer file. `url` is the `ms-windows-store://` deep link that opens the
+ * Store app on this PC.
+ */
+export interface StoreLink {
+  productId: string;
+  url: string;
 }
 export interface OnboardingState extends Preferences {
   screen: Screen;

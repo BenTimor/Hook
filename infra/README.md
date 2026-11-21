@@ -11,12 +11,14 @@ on every deploy — edit it *here*, not on the server.
 
 `release.config.json` (repo root) is copied into the image by the Dockerfile. It
 holds each product's floor: the chat app's `minimumVersion` (oldest build allowed
-to keep working), its Microsoft Store channel's `store.latest` /
-`store.minimumVersion`, and the same pair under `products.workspace` for Hook
-Workspace. Raising a floor forces older installs to update on their
-next check, without rebuilding the app, and `store.latest` is set only after a
-Store submission is certified. It is shipped by `deploy-waitlist.sh` like any
-other tracked file.
+to keep working), its Microsoft Store channel's `store.productId`,
+`store.latest` / `store.minimumVersion`, and the same block under
+`products.workspace` for Hook Workspace. `store.productId` is the listing the
+landing page's approved screen opens (`ms-windows-store://pdp/?productid=…`), so
+the site never links an installer. Raising a floor forces older installs to
+update on their next check, without rebuilding the app, and `store.latest` is set
+only after a Store submission is certified. It is shipped by `deploy-waitlist.sh`
+like any other tracked file.
 
 ## Release slots (one per product)
 

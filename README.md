@@ -200,11 +200,14 @@ metadata. The app checks the account on launch and whenever the proxy answers
 `401`/`403`, so a revoked session drops back to the login screen instead of
 failing silently.
 
-An approved account sees a **Download Hook** button instead of the waiting-list
-flow. The button points at `/api/download/windows`, which re-checks the session
-and streams `DOWNLOAD_DIR/Hook-setup.exe`. The file and `latest.json` are written
-by `pnpm release` (see **Releasing**). Nothing is served from GitHub, so a
-shared link cannot bypass the approval check.
+An approved account sees a **Get Hook from Microsoft Store** button instead of
+the waiting-list flow. It opens the whitelisted Store listing
+(`ms-windows-store://pdp/?productid=…`, built from `store.productId` in
+`release.config.json`) in the Store app, and the Store installs and later
+updates Hook. The website never links an installer. The direct channel still has
+one: `/api/download/windows` re-checks the session and streams
+`DOWNLOAD_DIR/Hook-setup.exe` for the updater of a build installed outside the
+Store (see **Releasing**), so a shared link cannot bypass the approval check.
 
 ### Desktop sign-in
 
@@ -608,8 +611,9 @@ release is still a manual download; everything after it is one click. `release.c
 ```
 
 `0.0.0` never forces an update. The public history lives at
-`https://hookcode.io/api/releases`; the website's signed-in download uses the
-same data, and `/api/download/windows?version=` pins an exact build.
+`https://hookcode.io/api/releases`; the desktop updater uses the same data, and
+`/api/download/windows?version=` pins an exact build. The website links the
+Microsoft Store listing instead of an installer.
 
 ## Reporting AI output
 
@@ -663,11 +667,16 @@ working, and the same source will later build macOS and Linux packages.
    example `BenTimor.HookCode`), the Publisher (`CN=...`) and the Store ID
    (`9N...`).
 4. Fill `msix/chat/identity.json` with those values and a publisher display name.
-5. Put the Store ID in `harness.config.ci.toml`:
+5. Put the Store ID in both places that carry it: `harness.config.ci.toml` for
+   the packaged app, and `release.config.json` for the website.
 
    ```toml
    [update]
    store_id = "9N..."
+   ```
+
+   ```json
+   { "store": { "productId": "9N...", "latest": null, "minimumVersion": "0.1.0" } }
    ```
 
 The reserved product name is **HookCode**; the MSIX display name matches it, while
@@ -675,6 +684,14 @@ the app's own window and chat UI stay branded **Hook**. Until step 4,
 `node scripts/build-msix.mjs` prints these instructions and exits without
 packaging, so a direct release is never blocked by an unconfigured Store
 identity.
+
+The listing is whitelisted, so it opens only for accounts Microsoft has approved.
+That is why the website shows its button on the approved screen and nowhere else:
+`/api/waitlist/status` returns `store: { productId, url }` from
+`storeListing()` in `server/releases.mjs`, which reads the id out of
+`release.config.json`. The packaged app keeps its own copy in
+`harness.config.ci.toml`, because a Store build cannot ask the server which
+listing it came from.
 
 ### Build the package
 

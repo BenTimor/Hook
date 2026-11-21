@@ -238,7 +238,8 @@ bash.
   events and the model proxy under `/api`.
 - `server/workspace.mjs` — Workspace projects/boards/tasks/documents/members.
 - `infra/` — reference server config, uploaded by `scripts/deploy-waitlist.sh`.
-- `release.config.json` — per-product minimum versions and the Store channel.
+- `release.config.json` — per-product minimum versions and the Store channel:
+  the listing id (`store.productId`), the certified Store version and its floor.
 - `msix/<product>/` — Partner Center identity + manifest template per product.
 - `scripts/products.mjs` — what a product is and what its source hash covers.
 - `scripts/build-msix.mjs`, `scripts/make-portable.mjs` — take `--product <id>`.
@@ -456,8 +457,11 @@ Changing one side of a boundary is the most common way to break this repo.
   `BackgroundColor`, or Windows plates the taskbar icon in the accent colour)
   → `scripts/build-msix.mjs` → `scripts/msix.test.mjs` → `update.rs` channel
   detection, `open_store_for_update` → the Store branches in `UpdatePrompt`,
-  the update store and `SettingsSheet` → `release.config.json` `store` fields →
-  README **Updating a Store install** and **The taskbar icon**.
+  the update store and `SettingsSheet` → `release.config.json` `store` fields
+  (`productId` → `server/releases.mjs` `storeListing` → `/api/waitlist/status`
+  → the approved screen in `waitlist/OnboardingPanels.tsx`, which links the
+  Store and never an installer) → README **Updating a Store install**, **The
+  taskbar icon** and **Microsoft Store (MSIX)**.
 - **New dependency (npm or crate):** run `pnpm test:licenses` before you commit.
   It fails on strong copyleft, source-available licenses and anything
   unrecognised, because Hook is `AGPL-3.0-only` and dual-licensed — a dependency

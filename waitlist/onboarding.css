@@ -1920,20 +1920,20 @@ main,
   color: var(--ink);
   font-weight: 600;
 }
-.download-button {
+.store-button {
   margin-top: 26px;
   padding-inline: 22px;
   text-decoration: none;
 }
-.download-button[aria-disabled="true"] {
-  pointer-events: none;
-}
-.download-meta {
+.store-meta {
+  max-width: 44ch;
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.5;
+  text-wrap: pretty;
 }
-.download-note {
+.store-note {
   max-width: 44ch;
   margin: 14px 0 0;
   color: var(--muted);

@@ -10,14 +10,13 @@ import {
 } from "lucide-react";
 
 import { HookMark } from "@hook/ui";
-import type { Profile, ReleaseInfo } from "./onboarding";
+import type { Profile } from "./onboarding";
 import "./styles.css";
 import "./onboarding.css";
 
 type StatusResponse = {
   joined: boolean;
   profile: Profile | null;
-  download?: ReleaseInfo;
 };
 
 type Phase =

@@ -11,6 +11,7 @@ import {
   releaseFile,
   releaseIndex,
   releaseInfo,
+  storeListing,
 } from "./releases.mjs";
 
 function fixture() {
@@ -151,6 +152,32 @@ test("the Store channel has its own latest and floor", (t) => {
 
   // The direct channel is unaffected by the Store pair.
   assert.equal(releaseIndex(f.env).latest, "0.1.1");
+});
+
+test("the Store listing is a deep link, and absent when unconfigured", (t) => {
+  const f = fixture();
+  t.after(() => rmSync(f.directory, { recursive: true, force: true }));
+
+  // A release config without a listing id must not invent one.
+  assert.equal(storeListing(f.env), null);
+
+  f.writeStore({ productId: " 9NX9J93HP25M ", latest: "0.4.0" });
+  assert.deepEqual(storeListing(f.env), {
+    productId: "9NX9J93HP25M",
+    url: "ms-windows-store://pdp/?productid=9NX9J93HP25M",
+  });
+
+  // Each product opens its own listing, and an unknown one opens nothing.
+  writeFileSync(
+    f.config,
+    JSON.stringify({
+      minimumVersion: "0.1.0",
+      store: { productId: "9NX9J93HP25M" },
+      products: { workspace: { store: { productId: "9NWS00000000" } } },
+    }),
+  );
+  assert.equal(storeListing(f.env, "workspace").productId, "9NWS00000000");
+  assert.equal(storeListing(f.env, "mobile"), null);
 });
 
 test("the legacy single-slot layout still works", (t) => {

@@ -54,7 +54,14 @@ test("approved users can sign in a device, use the proxy, see usage, download an
   writeFileSync(join(releases, "Hook-setup.exe"), Buffer.from("fake-installer"));
   writeFileSync(
     join(directory, "release.config.json"),
-    JSON.stringify({ minimumVersion: "1.0.0" }),
+    JSON.stringify({
+      minimumVersion: "1.0.0",
+      store: {
+        productId: "9NX9J93HP25M",
+        latest: "1.2.3",
+        minimumVersion: "1.0.0",
+      },
+    }),
   );
   writeFileSync(
     join(releases, "latest.json"),
@@ -550,7 +557,7 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       const index = await response.json();
       assert.equal(index.latest, "1.2.3");
       assert.equal(index.minimum, "1.0.0");
-      assert.deepEqual(index.store, { latest: null, minimum: null });
+      assert.deepEqual(index.store, { latest: "1.2.3", minimum: "1.0.0" });
       assert.equal(index.releases[0].version, "1.2.3");
       // The merge tool needs the file name to preserve history; it is not a
       // secret, only the download itself is gated.
@@ -560,7 +567,23 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       assert.equal(index.releases[0].url, "/api/download/windows");
     });
 
-    await t.test("an approved session can see and download the installer", async () => {
+    await t.test("an approved session installs from the Store and can still fetch the installer", async () => {
+      const status = await request("/waitlist/status", {
+        cookie: approvedCookie,
+      });
+      assert.equal(status.status, 200);
+      // The website installs through the Store, never through an installer.
+      assert.deepEqual((await status.json()).store, {
+        productId: "9NX9J93HP25M",
+        url: "ms-windows-store://pdp/?productid=9NX9J93HP25M",
+      });
+
+      const waiting = await request("/waitlist/status", {
+        cookie: waitingCookie,
+      });
+      assert.equal(waiting.status, 200);
+      assert.equal((await waiting.json()).store, undefined);
+
       const info = await request("/download/info", { cookie: approvedCookie });
       assert.equal(info.status, 200);
       const manifest = await info.json();

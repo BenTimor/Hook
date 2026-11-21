@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { json, Router } from "express";
 import { OAuth2Client } from "google-auth-library";
 import content from "../waitlist/content.json" with { type: "json" };
-import { releaseInfo } from "./releases.mjs";
+import { storeListing } from "./releases.mjs";
 
 const FLOW_SECONDS = 600;
 const RECEIPT_SECONDS = 7 * 24 * 60 * 60;
@@ -276,10 +276,11 @@ export function createWaitlistApi(env, { verifyGoogle } = {}) {
     res.json({
       joined: Boolean(row) || receipt?.joined === true,
       profile: row ? publicProfile(row) : null,
-      // Only approved accounts get a download; the URL itself re-checks the
-      // session, so the button is a convenience rather than the gate.
+      // Approved accounts install Hook from the Microsoft Store: the button
+      // opens the whitelisted listing, and the Store (not this server) decides
+      // who may install from it. The direct installer is not linked here.
       ...(row?.waitlist_status === "approved"
-        ? { download: releaseInfo(env) }
+        ? { store: storeListing(env) }
         : {}),
     });
   });

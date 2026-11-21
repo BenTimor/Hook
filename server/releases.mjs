@@ -138,6 +138,12 @@ function readConfig(env) {
   return readJson(resolve(env.RELEASE_CONFIG || RELEASE_CONFIG)) ?? {};
 }
 
+function productConfig(allConfig, product) {
+  return product === "chat"
+    ? allConfig
+    : (allConfig.products?.[product] ?? {});
+}
+
 function readMinimum(config, latest) {
   const configured =
     typeof config.minimumVersion === "string" ? config.minimumVersion : null;
@@ -174,6 +180,26 @@ function readStore(config) {
 }
 
 /**
+ * The Microsoft Store listing a product installs from, or null when it has
+ * none. The id is not a secret — the Store app needs it as a query parameter —
+ * and the listing is whitelisted, so opening it is not what grants access:
+ * Microsoft checks the account there. The website shows it to approved
+ * accounts and never links an installer.
+ */
+export function storeListing(env, product = "chat") {
+  const config = productConfig(readConfig(env), product);
+  const store =
+    config.store && typeof config.store === "object" ? config.store : {};
+  const productId =
+    typeof store.productId === "string" ? store.productId.trim() : "";
+  if (!productId) return null;
+  return {
+    productId,
+    url: `ms-windows-store://pdp/?productid=${encodeURIComponent(productId)}`,
+  };
+}
+
+/**
  * Everything the website and the desktop updater need, and nothing secret.
  *
  * `latest` and `releases` describe what can be downloaded; `minimum` is the
@@ -182,11 +208,7 @@ function readStore(config) {
  */
 export function releaseIndex(env, product = "chat") {
   const dir = releaseDir(env);
-  const allConfig = readConfig(env);
-  const config =
-    product === "chat"
-      ? allConfig
-      : (allConfig.products?.[product] ?? {});
+  const config = productConfig(readConfig(env), product);
   const index = readJson(join(dir, productIndexName(product) ?? RELEASE_INDEX));
 
   let releases = [];

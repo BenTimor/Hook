@@ -29,7 +29,7 @@ import {
   usageBenefit,
   usageDescription,
 } from "./onboarding";
-import type { Profile, ReleaseInfo, Screen } from "./onboarding";
+import type { Profile, StoreLink, Screen } from "./onboarding";
 import { resumeOnboarding, useProgressSaver } from "./progress";
 import { developmentPreview } from "./devMode";
 import { initMetaPixel, trackSignupLead } from "./metaPixel";
@@ -67,7 +67,7 @@ function Waitlist() {
   const [onboarding, setOnboarding] = useState(restoreOnboarding);
   const [direction, setDirection] = useState(1);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [download, setDownload] = useState<ReleaseInfo | null>(null);
+  const [store, setStore] = useState<StoreLink | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const progress = useProgressSaver(profile?.id);
   const [checking, setChecking] = useState(!developmentPreview);
@@ -118,7 +118,7 @@ function Waitlist() {
         const status = await response.json();
         if (!active) return;
         setProfile(status.profile ?? null);
-        setDownload(status.download ?? null);
+        setStore(status.store ?? null);
         if (status.profile && !callbackError)
           setOnboarding(resumeOnboarding(status.profile));
         else
@@ -233,7 +233,7 @@ function Waitlist() {
       // The local screen still signs out even if the network is down.
     }
     setProfile(null);
-    setDownload(null);
+    setStore(null);
     setError("");
     setOnboarding({ screen: "landing", interests: [], planPreference: null });
     setSigningOut(false);
@@ -301,7 +301,7 @@ function Waitlist() {
             <section className="screen approved-screen">
               <ApprovedScreen
                 profile={profile!}
-                download={download}
+                store={store}
                 signingOut={signingOut}
                 onSignOut={() => void signOut()}
               />
