@@ -477,7 +477,7 @@ function Waitlist() {
               Terms
             </a>
             <span aria-hidden="true">·</span>
-            <a href="mailto:nsgi3111@gmail.com">Contact</a>
+            <a href="mailto:support@hookcode.io">Contact</a>
           </nav>
         </footer>
       </div>

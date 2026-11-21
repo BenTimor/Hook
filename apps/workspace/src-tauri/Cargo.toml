@@ -2,7 +2,8 @@
 name = "hook-workspace"
 version = "0.1.8"
 description = "Hook Workspace — projects, boards, tasks and documents"
-authors = ["you"]
+authors = ["Ben Timor"]
+license = "AGPL-3.0-only"
 edition = "2021"
 rust-version = "1.77"
 

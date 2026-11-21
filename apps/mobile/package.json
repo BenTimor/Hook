@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "license": "AGPL-3.0-only",
   "description": "Hook on a phone — the conversation and the account's Workspace, in your pocket",
   "scripts": {
     "dev": "vite",

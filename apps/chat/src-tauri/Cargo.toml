@@ -2,7 +2,8 @@
 name = "hook"
 version = "0.4.0"
 description = "Hook — a local, single-provider AI chat harness"
-authors = ["you"]
+authors = ["Ben Timor"]
+license = "AGPL-3.0-only"
 edition = "2021"
 rust-version = "1.77"
 

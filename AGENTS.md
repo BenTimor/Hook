@@ -79,6 +79,12 @@ pnpm waitlist:build
 # Release pipeline (Node only)
 pnpm test:release
 
+# Dependency licenses (also runs in CI, after `pnpm install`)
+pnpm test:licenses
+
+# The CLA gate's parsing rules (`.github/workflows/cla.yml`)
+pnpm test:cla
+
 # Bundled git and coding engine (pinned; ~93 MB and ~104 MB per app)
 pnpm git
 pnpm engine
@@ -417,9 +423,27 @@ Changing one side of a boundary is the most common way to break this repo.
   detection, `open_store_for_update` → the Store branches in `UpdatePrompt`,
   the update store and `SettingsSheet` → `release.config.json` `store` fields →
   README **Updating a Store install** and **The taskbar icon**.
+- **New dependency (npm or crate):** run `pnpm test:licenses` before you commit.
+  It fails on strong copyleft, source-available licenses and anything
+  unrecognised, because Hook is `AGPL-3.0-only` and dual-licensed — a dependency
+  it cannot ship would decide Hook's license for it. Add an entry to
+  `THIRD_PARTY_NOTICES.md` when the license is anything other than plain
+  MIT/Apache/BSD. An exception lives in `EXCEPTIONS` in
+  `scripts/check-licenses.mjs` *and* in the notices file, with a reason. The
+  About panel (`apps/chat/src/components/AboutSection.tsx`) is where a user
+  reads the result, so a component that is actually redistributed as a binary
+  belongs in its `BUNDLED` list too.
 
 ## Hard constraints
 
+- **The license is `AGPL-3.0-only`, and it is load-bearing.** Hook is dual-licensed
+  (AGPL + commercial), which is why every non-trivial contribution needs a CLA.
+  Never change the license, never drop a copyright or license notice, and never
+  remove the attribution of a bundled component. A new dependency must be checked
+  against `THIRD_PARTY_NOTICES.md` before it is merged — nothing copyleft, nothing
+  unlicensed. The bundled MinGit is GPL-2.0-only and is safe **only** as a
+  separate, unlinked executable: never link against it or copy its source into
+  `hook-core`.
 - `harness.config.toml` is gitignored and `include_str!`d into `hook-core` — a
   missing file is a compile error. Never commit it or a real provider key. The
   key lives server-side; the renderer must never see a secret.
@@ -529,6 +553,9 @@ Changing one side of a boundary is the most common way to break this repo.
 - Coverage → **Tests**
 - Hook Browser (designed, not built) → `docs/browser-architecture.md`,
   `docs/browser-poc-plan.md`
+- License, what a fork may do, bundled third-party terms → **License** in
+  `README.md`, plus `LICENSE`, `TRADEMARK.md`, `THIRD_PARTY_NOTICES.md`,
+  `CONTRIBUTING.md` and `CLA.md`
 
 **Keep docs in sync.** When a change alters commands, config keys, file layout,
 data paths, runtime behavior or a user-visible flow, update this file and the

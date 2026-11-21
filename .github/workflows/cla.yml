@@ -1,0 +1,70 @@
+name: CLA
+
+# A pull request cannot merge until its author has signed CLA.md.
+#
+# Hook is AGPL-3.0-only *and* commercially licensed, so the project has to hold
+# relicensing rights over every contribution. A patch merged without a CLA can
+# never be covered by the commercial license, and there is no way to fix that
+# afterwards — the contributor keeps the copyright on their own code — so this
+# check is not a formality.
+#
+# `pull_request_target` runs in the context of the base repository, with a
+# writable token. That is what makes it useful here and also what makes it
+# dangerous, so it obeys two rules:
+#
+#   1. It checks out the BASE branch explicitly. It never runs code from the
+#      pull request, which is the attack `pull_request_target` is famous for.
+#   2. The only thing it executes is `scripts/cla.mjs` from that base branch, a
+#      script that talks to the GitHub API and nothing else.
+#
+# Signatures live in `.github/cla-signatures.json` on the default branch. A
+# commit that touches only that file matches no `paths:` filter in
+# `deploy-waitlist.yml` or `checks.yml`, so recording a signature deploys
+# nothing and starts no build.
+#
+# To make the check blocking, add "CLA" as a required status check in the
+# branch protection rule for `main`.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, closed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write # to record a signature on the default branch
+  issues: write # to comment on the pull request
+  pull-requests: write
+  statuses: write # to set the "CLA" status
+
+# One run per pull request; a signature comment and the synchronize that follows
+# it must not race each other.
+concurrency:
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  cla:
+    name: CLA
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A comment anywhere would wake this job; only act on pull requests.
+    if: >
+      github.event_name == 'pull_request_target' ||
+      github.event.issue.pull_request != null
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The base branch, never the pull request's head. See the header.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Check the CLA
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: node scripts/cla.mjs

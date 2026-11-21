@@ -4,6 +4,7 @@ version = "0.2.1"
 edition = "2021"
 rust-version = "1.77"
 publish = false
+license = "AGPL-3.0-only"
 description = "The backend every Hook desktop product links: account, chats, sync, coding agents, previews and the chat turn"
 
 [dependencies]

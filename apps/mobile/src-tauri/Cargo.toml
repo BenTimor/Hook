@@ -2,7 +2,8 @@
 name = "hook-mobile"
 version = "0.1.0"
 description = "Hook on a phone — the conversation and the account's Workspace"
-authors = ["you"]
+authors = ["Ben Timor"]
+license = "AGPL-3.0-only"
 edition = "2021"
 rust-version = "1.77"
 

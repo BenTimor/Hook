@@ -15,6 +15,12 @@ server.
 > Working on the code? Start with [AGENTS.md](AGENTS.md) — commands, repo map,
 > and the constraints that are not obvious from the tree.
 
+Hook is free software under the **AGPL-3.0-only** — use it, modify it and
+self-host it, personally or commercially. Running a modified version as a
+network service means publishing your changes. A fork must also rebrand. See
+[License](#license), [NOTICE](NOTICE), [TRADEMARK.md](TRADEMARK.md) and
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Web waitlist
 
 The public landing page runs separately from the Tauri desktop app. Use Node
@@ -366,7 +372,7 @@ Hook rather than for the other sites on this box:
 | Scopes | `openid`, `email`, `profile` |
 | Client | `Web application` → `Hook Waitlist` |
 | Redirect URIs | `https://hookcode.io/api/waitlist/google/callback`, `http://localhost:5173/api/waitlist/google/callback` |
-| Branding | app name `Hook`, support/contact `nsgi3111@gmail.com`, authorised domain `hookcode.io`, home `https://hookcode.io`, policy links to `/privacy` and `/terms` |
+| Branding | app name `Hook`, support/contact `support@hookcode.io`, authorised domain `hookcode.io`, home `https://hookcode.io`, policy links to `/privacy` and `/terms` |
 
 The app name is not brand-verified, so Google's account chooser says “continue to
 hookcode.io” instead of “continue to Hook”. Verifying `hookcode.io` in Search
@@ -1699,6 +1705,7 @@ cargo test -p hook-core -- --ignored             # live tests against `pnpm mock
 pnpm typecheck                                  # the only static gate: every package + the site
 pnpm waitlist:test                              # API, auth, proxy, download, sync, git, workspace
 pnpm test:release                               # "is this tree already published?"
+pnpm test:licenses                              # every dep still fits AGPL-3.0-only
 pnpm release                                    # build + publish the installers
 ```
 
@@ -1745,3 +1752,37 @@ Two things only break in an installed app, never in `tauri dev`:
 Both are covered by tests, and the portable zip is verified with
 `src-tauri/resources/pi-runtime` moved aside so the dev copy cannot mask a
 packaging bug. Agents write their stderr to `%APPDATA%\app.hook.chat\logs\`.
+
+## License
+
+Hook is licensed under the **GNU Affero General Public License, version 3.0**
+(`AGPL-3.0-only`) — see [LICENSE](LICENSE). Copyright (C) 2026 Ben Timor; the
+notice is in [NOTICE](NOTICE).
+
+In short: you may use, study, modify, self-host and redistribute Hook, for
+personal or commercial purposes, without paying anything. If you run a
+**modified** version and let other people use it over a network, section 13
+requires you to offer them the source of your modified version. That is the
+whole difference from the GPL: a hosted fork cannot be kept closed.
+
+The AGPL does not restrict the copyright holder. The Hook project's own builds,
+the hosted service at `hookcode.io` and any commercial license are granted
+separately, which is what makes the dual-licensing model possible.
+
+Three things sit outside the code license:
+
+- **The name and the mark.** The AGPL grants no rights to the names Hook, Hook
+  Workspace or HookCode, to the logo, or to `hookcode.io`. A fork must rebrand —
+  see [TRADEMARK.md](TRADEMARK.md). This is what actually makes resale
+  unattractive, and it is deliberately separate from the license.
+- **Bundled third-party software.** MinGit (GPL-2.0-only), Node (MIT) and the pi
+  coding agent (MIT) ship inside an installer as separate programs. Their
+  licenses are their own — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Contributions.** A signed CLA is needed before a non-trivial pull request
+  can be merged, because dual licensing requires the project to hold sufficient
+  rights over every contribution. You keep the copyright to your own work — see
+  [CLA.md](CLA.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+
+If you need Hook under terms the AGPL cannot give you — using it inside an
+organisation that bans network-copyleft, or embedding it in a closed product —
+a commercial license is available. Write to **support@hookcode.io**.

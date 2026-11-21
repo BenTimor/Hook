@@ -5,6 +5,7 @@ description = "Google sign-in through the phone's own account sheet"
 edition = "2021"
 rust-version = "1.77"
 publish = false
+license = "AGPL-3.0-only"
 # Tauri discovers a plugin's permissions and Android module by this marker; a
 # path crate without it is an ordinary library and `google-signin:default`
 # would be rejected as an unknown permission.

@@ -27,6 +27,10 @@ on:
       - "pnpm-workspace.yaml"
       - "tsconfig.base.json"
       - "scripts/app-source-hash.mjs"
+      - "scripts/check-licenses.mjs"
+      - "Cargo.lock"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
       - "scripts/products.mjs"
       - "scripts/release-gate.mjs"
       - "scripts/release.sh"
@@ -66,6 +70,21 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Hook is AGPL-3.0-only and dual-licensed commercially. A dependency under
+      # strong copyleft or a source-available license would decide Hook's license
+      # for it, so a new one has to fail on the pull request that adds it. Runs
+      # after install because it reads the resolved npm tree, and the Rust half
+      # asks cargo for the graph in Cargo.lock.
+      - name: Check dependency licenses
+        run: pnpm test:licenses
+
+      # The CLA gate is what stands between a patch and the tree. Its parsing
+      # rules are tested here because `cla.yml` runs on `pull_request_target`,
+      # where a mistake is expensive: a false "signed" lets through code the
+      # commercial license can never cover, and that cannot be undone.
+      - name: Test the CLA gate's logic
+        run: pnpm test:cla
 
       - name: Run API regression tests
         run: pnpm waitlist:test

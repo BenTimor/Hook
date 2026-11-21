@@ -192,7 +192,7 @@ Traps, in the order they bite:
   remove unmanaged directories. Use plain `gclient sync`.
 - **Recreate the junction after any re-sync**, and keep `hook/` in
   `src/.git/info/exclude` so Chromium's `git status` stays clean:
-  `cmd //c mklink //J "C:\Dev\cr\src\hook" "C:\Users\user\Documents\Dev\Hook\browser\overlay\src\hook"`
+  `cmd //c mklink //J "C:\Dev\cr\src\hook" "<repo>\browser\overlay\src\hook"`
 - **Build `chrome`, never `all`.**
 - Set the symbol levels **before** the first build; changing them forces a full
   recompile.
