@@ -962,6 +962,13 @@ function applyChange(
     case "document": {
       const projectId = change.projectId;
       if (!projectId) return;
+      const previous = (state.documents[projectId] ?? []).find((item) => item.id === change.id);
+      const direction =
+        directionOf((change as Partial<DocumentMeta>).direction) ??
+        previous?.direction ??
+        cachedDirection(change.id) ??
+        "ltr";
+      if (!change.deleted) rememberDirection(change.id, direction);
       set({
         documents: {
           ...state.documents,
@@ -969,6 +976,7 @@ function applyChange(
             ? (state.documents[projectId] ?? []).filter((item) => item.id !== change.id)
             : upsert(state.documents[projectId] ?? [], {
                 ...(change as unknown as DocumentMeta),
+                direction,
                 // The open editor owns its buffer; a background update must not
                 // overwrite what the user is typing.
                 markdown: undefined,

@@ -394,8 +394,8 @@ function DocumentPage({
   }, [meta?.title]);
 
   useEffect(() => {
-    if (!meta) return;
-    setDirection(meta.direction === "rtl" ? "rtl" : "ltr");
+    if (meta?.direction !== "ltr" && meta?.direction !== "rtl") return;
+    setDirection(meta.direction);
   }, [meta?.direction]);
 
   if (!loaded) {
