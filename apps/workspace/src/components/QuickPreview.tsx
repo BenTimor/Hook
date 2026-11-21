@@ -7,7 +7,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 
 import { api } from "../lib/bridge";
 import { documentImageSource } from "../lib/documentImages";
-import type { Task } from "../lib/types";
+import type { Task, TextDirection } from "../lib/types";
 
 /** Load real content only when a tile comes into view; never change the open item. */
 export function QuickPreview({
@@ -24,6 +24,7 @@ export function QuickPreview({
   const [content, setContent] = useState<{
     text?: string;
     tasks?: Task[];
+    direction?: TextDirection;
   } | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -56,7 +57,10 @@ export function QuickPreview({
         ? api.tasks(id).then((result) => ({ tasks: result.tasks }))
         : api
             .document(id)
-            .then((result) => ({ text: result.document.markdown ?? "" }));
+            .then((result) => ({
+              text: result.document.markdown ?? "",
+              direction: result.document.direction,
+            }));
     void request
       .then((result) => {
         if (active) setContent(result);
@@ -91,7 +95,10 @@ export function QuickPreview({
           )}
         </div>
       ) : (
-        <div className="ws-preview-document">
+        <div
+          className="ws-preview-document"
+          dir={content.direction === "rtl" ? "rtl" : "ltr"}
+        >
           {content.text?.trim() ? (
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}

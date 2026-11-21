@@ -816,6 +816,34 @@ test("a stale document write is refused and the current copy comes back", async 
   assert.ok(list.body.documents[0].bytes > 0);
 });
 
+test("a document stores its text direction", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+  const created = await request(`/projects/${project.id}/documents`, {
+    method: "POST",
+    body: { title: "מימין לשמאל", markdown: "# שלום\n", direction: "rtl" },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.document.direction, "rtl");
+
+  const documentId = created.body.document.id;
+  const list = await request(`/projects/${project.id}/documents`);
+  assert.equal(list.body.documents[0].direction, "rtl");
+
+  const changed = await request(`/documents/${documentId}`, {
+    method: "PATCH",
+    body: { direction: "ltr" },
+  });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.document.direction, "ltr");
+
+  const invalid = await request(`/documents/${documentId}`, {
+    method: "PATCH",
+    body: { direction: "sideways" },
+  });
+  assert.equal(invalid.status, 400);
+});
+
 test("the changes feed is one cursor, filtered by membership, tombstones included", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);

@@ -23,10 +23,11 @@ import {
 import { history, historyKeymap, indentWithTab, defaultKeymap, undo, redo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
-import { Bold, Italic, Underline, Highlighter, Heading1, Heading2, Heading3, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2, ALargeSmall, ImagePlus } from "lucide-react";
+import { ArrowLeftRight, Bold, Italic, Underline, Highlighter, Heading1, Heading2, Heading3, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2, ALargeSmall, ImagePlus } from "lucide-react";
 
 import { openExternal } from "../lib/bridge";
 import { documentImageSource, embedDocumentImage } from "../lib/documentImages";
+import type { TextDirection } from "../lib/types";
 
 /**
  * The document editor.
@@ -68,6 +69,8 @@ export function DocumentEditor({
   document,
   raw,
   readOnly,
+  direction = "ltr",
+  onDirectionChange,
   forceSave = 0,
   onChange,
   onSave,
@@ -76,6 +79,8 @@ export function DocumentEditor({
   document: { id: string; markdown?: string };
   raw: boolean;
   readOnly: boolean;
+  direction?: TextDirection;
+  onDirectionChange?: (direction: TextDirection) => void;
   /** Increment to save the current buffer now (used after a conflict choice). */
   forceSave?: number;
   onChange: (dirty: boolean) => void;
@@ -98,10 +103,27 @@ export function DocumentEditor({
   const view = useRef<EditorView | null>(null);
   const pendingImages = useRef<{ editor: EditorView; position: number } | null>(null);
   const rawCompartment = useRef(new Compartment());
+  const directionCompartment = useRef(new Compartment());
   const saveRef = useRef(onSave);
   const changeRef = useRef(onChange);
+  const directionRef = useRef(direction);
+  const directionChangeRef = useRef(onDirectionChange);
   saveRef.current = onSave;
   changeRef.current = onChange;
+  directionRef.current = direction;
+  directionChangeRef.current = onDirectionChange;
+
+  const setDirection = (next: TextDirection) => {
+    if (!directionChangeRef.current || directionRef.current === next) return;
+    directionRef.current = next;
+    directionChangeRef.current(next);
+  };
+
+  const toggleDirection = () => {
+    if (!directionChangeRef.current) return false;
+    setDirection(directionRef.current === "rtl" ? "ltr" : "rtl");
+    return true;
+  };
 
   // A document swap replaces the whole state; the same document re-rendering
   // must not reset the cursor.
@@ -163,6 +185,9 @@ export function DocumentEditor({
           indentWithTab,
         ]),
         EditorView.lineWrapping,
+        directionCompartment.current.of(
+          EditorView.contentAttributes.of({ dir: direction }),
+        ),
         EditorView.editable.of(!readOnly),
         EditorState.readOnly.of(readOnly),
         placeholder(readOnly ? "This document is empty." : compact ? "Add a description…" : "Start writing your document…"),
@@ -253,6 +278,16 @@ export function DocumentEditor({
       effects: rawCompartment.current.reconfigure(raw ? [] : formattedExtensions),
     });
   }, [raw]);
+
+  useEffect(() => {
+    const instance = view.current;
+    if (!instance) return;
+    instance.dispatch({
+      effects: directionCompartment.current.reconfigure(
+        EditorView.contentAttributes.of({ dir: direction }),
+      ),
+    });
+  }, [direction]);
 
   const openLink = (editor: EditorView) => {
     if (editor.state.readOnly) return;
@@ -354,6 +389,26 @@ export function DocumentEditor({
             <Icon aria-hidden="true" />
           </button>
         ))}
+        {!compact ? (
+          <button
+            type="button"
+            className="ws-editor-tool ws-editor-direction"
+            aria-label={direction === "rtl" ? "Switch to left-to-right text" : "Switch to right-to-left text"}
+            title={
+              direction === "rtl"
+                ? "Right-to-left · Click to switch to left-to-right"
+                : "Left-to-right · Click to switch to right-to-left"
+            }
+            disabled={readOnly || !onDirectionChange}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (toggleDirection()) view.current?.focus();
+            }}
+          >
+            <ArrowLeftRight aria-hidden="true" />
+            <span>{direction === "rtl" ? "RTL" : "LTR"}</span>
+          </button>
+        ) : null}
         <button ref={colorButton} type="button" className="ws-editor-tool ws-color-trigger" aria-label="Text color" title="Text color" aria-expanded={Boolean(colorMenu)} disabled={readOnly}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {

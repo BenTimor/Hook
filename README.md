@@ -1005,7 +1005,10 @@ rows written before this rule are adopted when the service starts.
   resized to fit, and animated GIFs may become still images when resized.
   In the formatted editor, Backspace and Delete remove an adjacent image as a unit.
   Hover over a web link for its address and open action, or Ctrl-click it to open.
-  Document options also offers Markdown source editing and deletion. A write carries the revision it was based
+  Document options also offers Markdown source editing, left-to-right or
+  right-to-left text direction (also a toolbar toggle), and deletion. The
+  direction is stored with the document and applied to the editor and previews.
+  A write carries the revision it was based
   on; a stale one is refused with the current copy rather than silently overwriting
   someone else's paragraph.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,

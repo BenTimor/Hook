@@ -13,6 +13,7 @@ import type {
   Member,
   Project,
   Task,
+  TextDirection,
 } from "./types";
 
 /**
@@ -165,6 +166,7 @@ const demo = {
       folderId: null,
       title: "Brand brief",
       markdown: "# Brand brief\n\nQuiet, warm, a little literary.\n",
+      direction: "ltr",
       bytes: 44,
       rev: 1,
       updatedBy: "local-preview",
@@ -311,6 +313,7 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         folderId: (payload.folderId as string | null) ?? null,
         title: String(payload.title ?? "Untitled"),
         markdown: String(payload.markdown ?? ""),
+        direction: payload.direction === "rtl" ? "rtl" : "ltr",
         bytes: String(payload.markdown ?? "").length,
         rev: 1,
         updatedBy: "local-preview",
@@ -699,7 +702,7 @@ export const api = {
     call<{ document: DocumentMeta }>("GET", `/documents/${id}`),
   createDocument: (
     projectId: string,
-    document: { title: string; markdown?: string; folderId?: string | null },
+    document: { title: string; markdown?: string; folderId?: string | null; direction?: TextDirection },
   ) => call<{ document: DocumentMeta }>("POST", `/projects/${projectId}/documents`, document),
   /** `baseRev` makes a stale write a conflict instead of an overwrite. */
   /**
@@ -708,7 +711,13 @@ export const api = {
    */
   async saveDocument(
     id: string,
-    patch: { title?: string; markdown?: string; baseRev?: number; folderId?: string | null },
+    patch: {
+      title?: string;
+      markdown?: string;
+      baseRev?: number;
+      folderId?: string | null;
+      direction?: TextDirection;
+    },
   ): Promise<{ document: DocumentMeta | null; conflict: DocumentMeta | null }> {
     try {
       const result = await call<{ document: DocumentMeta }>("PATCH", `/documents/${id}`, patch);

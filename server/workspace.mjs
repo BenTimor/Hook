@@ -173,6 +173,7 @@ function migrate(db) {
       folder_id TEXT,
       title TEXT NOT NULL,
       markdown TEXT NOT NULL DEFAULT '',
+      direction TEXT NOT NULL DEFAULT 'ltr',
       rev INTEGER NOT NULL DEFAULT 1,
       updated_by TEXT,
       created_at INTEGER NOT NULL,
@@ -197,6 +198,10 @@ function migrate(db) {
   const boardColumns = db.prepare("PRAGMA table_info(ws_boards)").all();
   if (!boardColumns.some((column) => column.name === "view")) {
     db.exec("ALTER TABLE ws_boards ADD COLUMN view TEXT NOT NULL DEFAULT 'table'");
+  }
+  const documentColumns = db.prepare("PRAGMA table_info(ws_documents)").all();
+  if (!documentColumns.some((column) => column.name === "direction")) {
+    db.exec("ALTER TABLE ws_documents ADD COLUMN direction TEXT NOT NULL DEFAULT 'ltr'");
   }
   db.prepare("INSERT OR IGNORE INTO ws_seq (id, next) VALUES (1, 0)").run();
 }
@@ -1159,12 +1164,17 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const title = text(req.body?.title, 200) ?? "Untitled";
     const markdown = text(req.body?.markdown ?? "", limit.documentBytes);
     if (markdown === null) return badRequest(res, "That document is too large.", "document_too_large");
+    const direction = req.body?.direction === undefined ? "ltr" : req.body.direction;
+    if (direction !== "ltr" && direction !== "rtl") {
+      return badRequest(res, "Document direction must be ltr or rtl.");
+    }
     const at = now();
     const row = insert(db, "documents", {
       project_id: id,
       folder_id: req.body?.folderId ?? null,
       title,
       markdown,
+      direction,
       rev: 1,
       updated_by: who.subject,
       created_at: at,
@@ -1185,6 +1195,12 @@ export function createWorkspaceRouter({ db, env = {} }) {
       fields.title = title;
     }
     if (req.body?.folderId !== undefined) fields.folder_id = req.body.folderId ?? null;
+    if (req.body?.direction !== undefined) {
+      if (req.body.direction !== "ltr" && req.body.direction !== "rtl") {
+        return badRequest(res, "Document direction must be ltr or rtl.");
+      }
+      fields.direction = req.body.direction;
+    }
     if (req.body?.markdown !== undefined) {
       const markdown = text(req.body.markdown, limit.documentBytes);
       if (markdown === null) return badRequest(res, "That document is too large.", "document_too_large");
@@ -1633,6 +1649,7 @@ function shapeDocument(row) {
     folderId: row.folder_id,
     title: row.title,
     markdown: row.markdown,
+    direction: row.direction === "rtl" ? "rtl" : "ltr",
     rev: row.rev,
     updatedBy: row.updated_by,
     createdAt: row.created_at,
@@ -1718,6 +1735,7 @@ function shapeChange(row) {
         folderId: row.folder_id,
         title: row.title,
         markdown: row.markdown,
+        direction: row.direction === "rtl" ? "rtl" : "ltr",
         rev: row.rev,
         updatedBy: row.updated_by,
       });
