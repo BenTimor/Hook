@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-mobile-shell"
+version = "0.1.0"
+description = "The Android window around the phone shell"
+edition = "2021"
+rust-version = "1.77"
+publish = false
+# Tauri discovers a plugin's permissions and Android module by this marker; a
+# path crate without it is an ordinary library and its Kotlin never compiles.
+links = "tauri-plugin-mobile-shell"
+
+[lib]
+name = "tauri_plugin_mobile_shell"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

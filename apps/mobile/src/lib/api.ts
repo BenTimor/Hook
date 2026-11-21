@@ -11,6 +11,7 @@ import type {
   PreviewEvent,
   SettingsView,
   StreamEvent,
+  SyncEvent,
   SyncView,
 } from "./types";
 
@@ -154,7 +155,7 @@ export const mobile = {
   onAuth: (listener: (event: AuthView) => void): (() => void) =>
     subscribe("hook://auth", listener),
 
-  onSync: (listener: (event: { at: number }) => void): (() => void) =>
+  onSync: (listener: (event: SyncEvent) => void): (() => void) =>
     subscribe("hook://sync", listener),
 };
 

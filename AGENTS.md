@@ -186,11 +186,16 @@ bash.
   `onSaveAs` are optional, so a phone draws neither button. The chat window
   reads from the chat's image folder, the phone from the same folder inside its
   own container.
-- `apps/mobile/` — HookCode on a phone. Two screens (list, thread), two sheets
-  (preview, settings) and `mobile.css`, which is the phone's re-skin of the
-  shared surface the way `dock.css` is the 380px one. `src-tauri` passes
-  `Product::Mobile` + `Capabilities::mobile()`; there are no agents, no folder
-  picker and no installer, and `scripts/release.sh` does not build it.
+- `apps/mobile/` — HookCode on a phone. Three screens (a new chat, the chat
+  list, a thread), two sheets (preview, settings) and `mobile.css`, which is
+  the phone's re-skin of the shared surface the way `dock.css` is the 380px one.
+  The home screen is a new conversation, like the desktop's; the archive opens
+  behind the history button on the home screen and in the conversation header.
+  `src/lib/back.ts` routes the Android back gesture
+  to that navigation and closes a sheet or dialog before leaving a screen.
+  `src-tauri` passes `Product::Mobile` + `Capabilities::mobile()`; there are no
+  agents, no folder picker and no installer, and `scripts/release.sh` does not
+  build it.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
   `hook://sync`, `hook://import`, `hook://update`).
@@ -348,6 +353,12 @@ Changing one side of a boundary is the most common way to break this repo.
   branch to a component that already lives in `packages/chat`. Store builds
   come from Xcode and Gradle, never from `pnpm release`; `scripts/products.mjs`
   marks the product `kind: "mobile"` for that reason.
+  The Android window has one native fix of its own: `plugins/mobile-shell`
+  pads the shell by the IME inset (targetSdk 35+ no longer resizes an
+  edge-to-edge app for the keyboard, and the system pans the whole screen
+  otherwise). The back gesture is `src/lib/back.ts` plus
+  `core:app:allow-exit`; registering a `back-button` listener turns off the
+  app plugin's own close, so every press must be answered.
 - **The Android project is generated, and two of its defaults are wrong.**
   `src-tauri/gen/android` is disposable: run `tauri android init`, then
   `pnpm tauri icon src-tauri/icons/source.png`, then build. Init copies the

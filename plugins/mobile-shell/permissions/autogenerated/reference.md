@@ -1,0 +1,15 @@
+## Default Permission
+
+The Android window around HookCode's phone shell. It handles the keyboard by
+trimming the window to the IME inset, so the title bar stays put and only the
+conversation gives way. A phone is the only product that registers it.
+
+## Permission Table
+
+<table>
+<tr>
+<th>Identifier</th>
+<th>Description</th>
+</tr>
+
+</table>

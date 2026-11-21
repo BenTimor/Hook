@@ -6,6 +6,7 @@ members = [
     "apps/workspace/src-tauri",
     "apps/mobile/src-tauri",
     "plugins/google-signin",
+    "plugins/mobile-shell",
 ]
 
 # Every product is a release build. The binary stays small, but the profile is

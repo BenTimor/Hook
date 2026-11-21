@@ -1,21 +1,36 @@
 import { useState } from "react";
-import { MoreHorizontal, Pin, PinOff, Plus, Settings, Trash2, Pencil } from "lucide-react";
+import {
+  ChevronLeft,
+  MoreHorizontal,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  Settings,
+  Trash2,
+} from "lucide-react";
 
-import { HookMark, TextFieldDialog } from "@hook/ui";
+import { TextFieldDialog } from "@hook/ui";
 
 import type { ChatMeta } from "../lib/types";
+import { BACK_LAYER, useBackHandler } from "../lib/back";
 import { useMobileChat } from "../store/useMobileChat";
 import { when } from "./when";
 
 /**
- * The list. A phone opens on the last conversation, not on a sidebar, so this
- * is the root screen: newest first, one line of preview, the ordering the
- * backend returns (pinned first, then by `updatedAt`).
- *
- * The actions that a desktop puts in a right-click menu live behind the button
- * on each row, because a long-press has nowhere to show a menu from.
+ * The archive. It is no longer the root screen: a conversation opens on the
+ * new-chat page, and this list is one tap away behind the history button. It
+ * is still where a chat is renamed, pinned or deleted; those actions live
+ * behind the button on each row, because a long-press has nowhere to show a
+ * menu from.
  */
-export function ChatList({ onSettings }: { onSettings: () => void }) {
+export function ChatList({
+  onBack,
+  onSettings,
+}: {
+  onBack: () => void;
+  onSettings: () => void;
+}) {
   const chats = useMobileChat((s) => s.chats);
   const open = useMobileChat((s) => s.open);
   const newChat = useMobileChat((s) => s.newChat);
@@ -33,13 +48,26 @@ export function ChatList({ onSettings }: { onSettings: () => void }) {
     setConfirmingDelete(false);
   };
 
+  // Back closes the row menu or the rename dialog first, then the list.
+  useBackHandler(BACK_LAYER.screen, true, () => {
+    if (renaming) {
+      setRenaming(null);
+      return;
+    }
+    if (actionsFor) {
+      closeActions();
+      return;
+    }
+    onBack();
+  });
+
   return (
     <section className="screen" aria-label="Conversations">
-      <header className="bar bar-root">
-        <div className="bar-brand">
-          <HookMark />
-          <span>Hook</span>
-        </div>
+      <header className="bar">
+        <button className="icon-btn" title="Back" onClick={onBack}>
+          <ChevronLeft strokeWidth={2} />
+        </button>
+        <div className="bar-title">Chats</div>
         <button className="icon-btn" title="Settings" onClick={onSettings}>
           <Settings strokeWidth={1.8} />
         </button>
@@ -54,7 +82,13 @@ export function ChatList({ onSettings }: { onSettings: () => void }) {
         ) : (
           chats.map((chat) => (
             <div className="row-wrap" key={chat.id}>
-              <button className="row" onClick={() => void open(chat.id)}>
+              <button
+                className="row"
+                onClick={() => {
+                  void open(chat.id);
+                  onBack();
+                }}
+              >
                 <div className="row-main">
                   <span className="row-title">
                     {chat.pinned ? (
@@ -82,7 +116,13 @@ export function ChatList({ onSettings }: { onSettings: () => void }) {
       </div>
 
       <div className="fab-row">
-        <button className="fab" onClick={newChat}>
+        <button
+          className="fab"
+          onClick={() => {
+            newChat();
+            onBack();
+          }}
+        >
           <Plus strokeWidth={2} />
           New chat
         </button>

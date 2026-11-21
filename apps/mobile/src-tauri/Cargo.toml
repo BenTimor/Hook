@@ -22,6 +22,9 @@ hook-core = { path = "../../../crates/hook-core" }
 # Sign in with the phone's own account sheet. The commands are Kotlin; this
 # crate only gives them a name the renderer can invoke and a permission set.
 tauri-plugin-google-signin = { path = "../../../plugins/google-signin" }
+# The Android window fix: trim the WebView by the keyboard inset instead of
+# letting the system pan the whole phone shell. It has no commands.
+tauri-plugin-mobile-shell = { path = "../../../plugins/mobile-shell" }
 # Declared here as well as in hook-core: tauri-build discovers the plugin
 # permission sets (`opener:default`, `dialog:default`) from this crate's
 # dependency graph, and capabilities/default.json asks for them.

@@ -19,6 +19,7 @@ pub fn run() {
         env!("CARGO_PKG_VERSION"),
     )
     .plugin(tauri_plugin_google_signin::init())
+    .plugin(tauri_plugin_mobile_shell::init())
     .build(tauri::generate_context!())
     .expect("error while building Hook")
     .run(|app, event| {

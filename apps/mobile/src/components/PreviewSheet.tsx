@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Flag, X } from "lucide-react";
 
 import {
@@ -9,6 +9,7 @@ import {
 } from "@hook/chat";
 
 import { mobile } from "../lib/api";
+import { BACK_LAYER, useBackHandler } from "../lib/back";
 import { useMobileChat } from "../store/useMobileChat";
 
 /**
@@ -26,15 +27,10 @@ export function PreviewSheet() {
   const setOpen = useMobileChat((s) => s.setPreviewOpen);
   const [reporting, setReporting] = useState(false);
 
-  // A phone's back gesture closes the sheet before it closes the chat.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, setOpen]);
+  // The gesture closes the sheet before it closes the chat, and the report
+  // dialog before the sheet.
+  useBackHandler(BACK_LAYER.sheet, open, () => setOpen(false));
+  useBackHandler(BACK_LAYER.dialog, open && reporting, () => setReporting(false));
 
   if (!preview?.active || !open) return null;
 

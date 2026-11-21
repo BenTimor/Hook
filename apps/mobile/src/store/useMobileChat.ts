@@ -9,6 +9,7 @@ import type {
   PreviewView,
   SettingsView,
   StreamEvent,
+  SyncEvent,
 } from "../lib/types";
 
 /**
@@ -31,10 +32,8 @@ interface MobileState {
   error: string | null;
   auth: AuthView | null;
   chats: ChatMeta[];
-  /** The open conversation, or null on the list or in a new chat. */
+  /** The open conversation, or null on the home screen. */
   activeId: string | null;
-  /** The conversation screen is open with nothing sent yet. */
-  composing: boolean;
   messages: Message[];
   streams: Record<string, Stream>;
   activity: Record<string, string[]>;
@@ -53,6 +52,7 @@ interface MobileState {
   previewOpen: boolean;
 
   init: () => Promise<void>;
+  refreshChats: () => Promise<void>;
   open: (chatId: string) => Promise<void>;
   newChat: () => void;
   back: () => void;
@@ -70,9 +70,14 @@ interface MobileState {
   signInWithGoogle: () => Promise<void>;
   cancelSignIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  handleAuth: (view: AuthView) => void;
+  handleSync: (event: SyncEvent) => void;
   handleEvent: (chatId: string, event: StreamEvent) => void;
   handlePreview: (event: PreviewView | { active: false }) => void;
 }
+
+/** Orders overlapping list reads; higher is newer. */
+let chatRead = 0;
 
 export const useMobileChat = create<MobileState>((set, get) => ({
   ready: false,
@@ -80,7 +85,6 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   auth: null,
   chats: [],
   activeId: null,
-  composing: false,
   messages: [],
   streams: {},
   activity: {},
@@ -93,26 +97,73 @@ export const useMobileChat = create<MobileState>((set, get) => ({
 
   async init() {
     try {
-      const [auth, chats, settings, preview] = await Promise.all([
+      const [auth, settings, preview] = await Promise.all([
         mobile.authStatus(),
-        mobile.listChats(),
         mobile.getSettings(),
         mobile.previewState(),
       ]);
       set({
-        ready: true,
         auth,
-        chats,
         settings,
         preview: preview && preview.active ? preview : null,
       });
+      // Read the list after the auth view exists, so a sync event arriving at
+      // the same time cannot be overwritten by a read that started before it.
+      if (auth.signedIn) {
+        mobile.syncNow();
+        await get().refreshChats();
+      }
+      set({ ready: true });
     } catch (error) {
       set({ ready: true, error: message(error) });
     }
   },
 
+  /**
+   * Re-read the list, and the open chat when it is idle. The background sync
+   * has already merged the changes; this is only what the screen does about it.
+   * A chat that is streaming here is never replaced by the account's copy.
+   *
+   * Reads are numbered: a list read that started before a sync applied must not
+   * put its older answer over the one the sync event has just fetched.
+   */
+  async refreshChats() {
+    const read = ++chatRead;
+    let chats: ChatMeta[];
+    try {
+      chats = await mobile.listChats();
+    } catch {
+      return;
+    }
+    // `null` is the startup window before `init` has read the auth view; the
+    // account's chats are still the right thing to read. A signed-out view,
+    // on the other hand, must not be repopulated by a read that was in flight.
+    const auth = get().auth;
+    if (read !== chatRead || (auth && !auth.signedIn)) return;
+    set({ chats });
+
+    const activeId = get().activeId;
+    if (!activeId || get().streams[activeId] || get().activity[activeId]) return;
+    try {
+      const chat = await mobile.getChat(activeId);
+      if (read !== chatRead) return;
+      if (
+        get().activeId === activeId &&
+        !get().streams[activeId] &&
+        !get().activity[activeId]
+      ) {
+        set({ messages: chat.messages });
+      }
+    } catch {
+      // It was deleted on another computer.
+      if (read === chatRead && get().activeId === activeId) {
+        set({ activeId: null, messages: [] });
+      }
+    }
+  },
+
   async open(chatId) {
-    set({ activeId: chatId, composing: false, error: null });
+    set({ activeId: chatId, error: null });
     try {
       const chat = await mobile.getChat(chatId);
       // A turn may have started while the list was open; the reload wins only
@@ -125,11 +176,11 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   },
 
   newChat() {
-    set({ activeId: null, composing: true, messages: [], draft: "", error: null });
+    set({ activeId: null, messages: [], draft: "", error: null });
   },
 
   back() {
-    set({ activeId: null, composing: false, messages: [], draft: "" });
+    set({ activeId: null, messages: [], draft: "" });
   },
 
   setDraft(value) {
@@ -176,7 +227,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
       const open = get().activeId === id;
       set({
         chats: await mobile.listChats(),
-        ...(open ? { activeId: null, composing: false, messages: [] } : {}),
+        ...(open ? { activeId: null, messages: [] } : {}),
       });
     } catch (error) {
       set({ error: message(error) });
@@ -210,7 +261,6 @@ export const useMobileChat = create<MobileState>((set, get) => ({
       if (get().activeId !== chatId) {
         set({
           activeId: chatId,
-          composing: false,
           messages: [
             ...messages,
             ...(text
@@ -257,7 +307,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
 
   async signIn() {
     try {
-      set({ auth: await mobile.authLogin() });
+      get().handleAuth(await mobile.authLogin());
     } catch (error) {
       set({ error: message(error) });
     }
@@ -265,7 +315,8 @@ export const useMobileChat = create<MobileState>((set, get) => ({
 
   async signInWithGoogle() {
     try {
-      set({ auth: await mobile.signInWithGoogle(), error: null });
+      get().handleAuth(await mobile.signInWithGoogle());
+      set({ error: null });
     } catch (error) {
       // Closing the account sheet is a decision, not a failure.
       const text = message(error);
@@ -279,14 +330,55 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   },
 
   async signOut() {
-    set({
-      auth: await mobile.authLogout(),
-      chats: [],
-      activeId: null,
-      composing: false,
-      messages: [],
-      draftImages: [],
-    });
+    try {
+      // The event is the source of truth; the returned view is the same one.
+      get().handleAuth(await mobile.authLogout());
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  /**
+   * A sign-in, a sign-out, or a revoked account.
+   *
+   * The first signed-in view is the moment the account's conversations become
+   * readable: `init` ran before there was a token, so the list it fetched was
+   * empty. Reload it here (and wake sync) rather than making the user close and
+   * reopen the app to see what the desktop already has.
+   */
+  handleAuth(view) {
+    const wasSignedIn = Boolean(get().auth?.signedIn);
+    set({ auth: view });
+    if (!view.signedIn) {
+      if (wasSignedIn) {
+        set({
+          chats: [],
+          activeId: null,
+          messages: [],
+          draftImages: [],
+        });
+      }
+      return;
+    }
+    if (wasSignedIn) return;
+    void mobile
+      .getSettings()
+      .then((settings) => {
+        if (!get().auth?.signedIn) return;
+        set({ settings });
+        mobile.syncNow();
+        return get().refreshChats();
+      })
+      .catch((error) => set({ error: message(error) }));
+  },
+
+  /** The background sync applied something from the account. */
+  handleSync(event) {
+    // No auth gate: a cycle only runs while a token exists, and at startup the
+    // event can arrive before `init` has finished setting the auth view. The
+    // list it refreshes is the account's; a signed-out screen ignores it.
+    if (!event.chats) return;
+    void get().refreshChats();
   },
 
   handleEvent(chatId, event) {
@@ -303,7 +395,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
           streams: { ...state.streams, [chatId]: { text: "", reasoning: "" } },
           activity: { ...state.activity, [chatId]: [] },
           ...(adopt
-            ? { activeId: chatId, composing: false, messages: event.messages }
+            ? { activeId: chatId, messages: event.messages }
             : {}),
         });
         return;
@@ -325,13 +417,17 @@ export const useMobileChat = create<MobileState>((set, get) => ({
         });
         return;
       case "activity": {
-        const labels = state.activity[chatId] ?? [];
-        set({
-          activity: {
-            ...state.activity,
-            [chatId]: event.label ? [...labels, event.label] : [],
-          },
-        });
+        const activity = { ...state.activity };
+        // `null` is the turn saying it has stopped, not an empty batch of
+        // labels: an empty array means "the turn started and has no tool yet",
+        // which is exactly the "Thinking…" line that must now go away.
+        if (event.label === null) {
+          delete activity[chatId];
+        } else {
+          const labels = state.activity[chatId] ?? [];
+          activity[chatId] = [...labels, event.label];
+        }
+        set({ activity });
         return;
       }
       case "done": {
@@ -355,7 +451,9 @@ export const useMobileChat = create<MobileState>((set, get) => ({
       case "error": {
         const streams = { ...state.streams };
         delete streams[chatId];
-        set({ streams, error: event.message });
+        const activity = { ...state.activity };
+        delete activity[chatId];
+        set({ streams, activity, error: event.message });
         return;
       }
     }

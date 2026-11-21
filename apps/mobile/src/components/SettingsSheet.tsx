@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { LogOut, X } from "lucide-react";
 
 import { mobile } from "../lib/api";
+import { BACK_LAYER, useBackHandler } from "../lib/back";
 import type { SyncView } from "../lib/types";
 import { useMobileChat } from "../store/useMobileChat";
 
@@ -20,6 +21,8 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
   const signOut = useMobileChat((s) => s.signOut);
   const [sync, setSync] = useState<SyncView | null>(null);
   const [version, setVersion] = useState("");
+
+  useBackHandler(BACK_LAYER.sheet, true, onClose);
 
   useEffect(() => {
     void mobile.appInfo().then((info) => setVersion(info.version)).catch(() => undefined);

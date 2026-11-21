@@ -1529,6 +1529,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-google-signin",
+ "tauri-plugin-mobile-shell",
  "tauri-plugin-opener",
 ]
 
@@ -3878,6 +3879,14 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-google-signin"
+version = "0.1.0"
+dependencies = [
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
+name = "tauri-plugin-mobile-shell"
 version = "0.1.0"
 dependencies = [
  "tauri",

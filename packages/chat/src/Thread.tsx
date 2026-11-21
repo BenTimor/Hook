@@ -101,6 +101,10 @@ export function Thread<M extends ChatMessage>({
       if (stick.current) el.scrollTop = el.scrollHeight;
     });
     observer.observe(inner);
+    // The container changes height when the window resizes or the phone's
+    // keyboard opens. A reader who was at the bottom should stay there; one
+    // who had scrolled up must not be dragged down.
+    observer.observe(el);
     return () => observer.disconnect();
   }, []);
 

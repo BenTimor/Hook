@@ -1023,6 +1023,28 @@ It is the same code, not a second implementation:
   the same thread and composer, the way `dock.css` is the 380px re-skin. The
   composer uses the WebView's own `<input type="file">`, which opens the camera
   or the photo library without a plugin.
+- **The home screen is a new conversation.** Like the desktop window, the phone
+  opens on a greeting and the composer; sending starts the chat and the same
+  screen becomes its thread. The archive is one tap away behind the history
+  button, on the home screen and in the conversation header, with the same
+  pin, rename and delete actions a long-press would show if a phone had
+  somewhere to put a menu.
+- **The Android back gesture is navigation, not close.** `src/lib/back.ts`
+  keeps a small layer stack: a report dialog closes first, then a sheet, then
+  the thread or the list. Only the home screen lets the gesture leave the app,
+  and `capabilities/default.json` grants `core:app:allow-exit` because
+  registering a `back-button` listener turns off the app plugin's own close.
+- **The keyboard takes the bottom of the screen, not the title.** Since
+  targetSdk 35 Android runs an edge-to-edge app without resizing it for the
+  keyboard, so the system pans the whole page instead. `plugins/mobile-shell`
+  pads the window by the IME inset; the header stays put and only the thread
+  gives way. `Thread` also watches its own height, so a reader at the bottom
+  stays pinned when the keyboard opens.
+- **Signing in fills the list in place.** `init` ran before there was a token,
+  so its list is empty; `hook://auth` reloads chats and wakes the sync engine
+  (which the mobile store used to ignore), and `hook://sync` reloads again when
+  the background pull applies the desktop's conversations. No restart needed,
+  and a chat streaming on this device is never replaced by the account's copy.
 - **The preview is a sheet.** `workspace_preview` already returns the board,
   task or document as JSON, and `packages/chat/src/preview` draws it. The
   desktop puts that in a 440px column; a phone has nowhere to put a column, so

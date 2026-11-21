@@ -7,6 +7,7 @@
     "core:default",
     "opener:default",
     "dialog:default",
-    "google-signin:default"
+    "google-signin:default",
+    "core:app:allow-exit"
   ]
 }

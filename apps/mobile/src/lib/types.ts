@@ -63,6 +63,14 @@ export interface SyncView {
   message: string | null;
 }
 
+/** What the background sync applied from the account. */
+export interface SyncEvent {
+  chats: boolean;
+  projects: boolean;
+  memory: boolean;
+  at: number;
+}
+
 export type StreamEvent =
   | { kind: "started"; messages: Message[]; meta: ChatMeta }
   | { kind: "delta"; text: string }
