@@ -88,7 +88,9 @@ export function SelectMenu({
       (length, option) => Math.max(length, (option.label || "Untitled").length),
       0,
     );
-    const contentWidth = Math.min(280, Math.max(116, longest * 7.2 + 52));
+    const contentWidth = variant === "status"
+      ? Math.min(300, Math.max(184, longest * 7.8 + 68))
+      : Math.min(280, Math.max(116, longest * 7.2 + 52));
     const width = Math.max(rect.width, contentWidth);
     const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
     const top = window.innerHeight - rect.bottom < 300 && rect.top > 320
