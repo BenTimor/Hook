@@ -29,7 +29,7 @@ export function BoardFilter({
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
 
   const groups = board.columns.filter(
-    (column) => (column.type === "status" || column.type === "select") && (column.options?.length ?? 0) > 0,
+    (column) => !column.hidden && (column.type === "status" || column.type === "select") && (column.options?.length ?? 0) > 0,
   );
   const activeCount = Object.values(filters).reduce((count, values) => count + values.length, 0);
 

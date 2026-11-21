@@ -515,6 +515,124 @@ test("a board's statuses can be extended without replacing the board", async (t)
   assert.equal(task.body.task.status, "opt_blocked");
 });
 
+test("flexible properties persist their types, options, hidden state and view", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+  const created = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: {
+      name: "Flexible board",
+      view: "board",
+      columns: [
+        {
+          name: "Stage",
+          type: "status",
+          options: [{ id: "opt_todo", label: "To do" }, { id: "opt_done", label: "Done" }],
+        },
+        {
+          name: "Tags",
+          type: "multiselect",
+          options: [{ id: "opt_design", label: "Design" }, { id: "opt_be", label: "Backend" }],
+        },
+        { name: "Done", type: "checkbox" },
+        { name: "Timeline", type: "daterange" },
+        { name: "Notes", type: "longtext", hidden: true },
+      ],
+    },
+  });
+  assert.equal(created.status, 201);
+  const board = created.body.board;
+  assert.equal(board.view, "board");
+  const tags = board.columns.find((column) => column.name === "Tags");
+  const checkbox = board.columns.find((column) => column.name === "Done");
+  const timeline = board.columns.find((column) => column.name === "Timeline");
+  assert.equal(tags.type, "multiselect");
+  assert.equal(board.columns.find((column) => column.name === "Notes").hidden, true);
+
+  const task = await request(`/boards/${board.id}/tasks`, {
+    method: "POST",
+    body: {
+      title: "Ship the flexible board",
+      status: "opt_todo",
+      fields: {
+        [tags.id]: ["opt_design", "opt_be"],
+        [checkbox.id]: true,
+        [timeline.id]: { start: "2026-06-01", end: "2026-06-15" },
+      },
+    },
+  });
+  assert.equal(task.status, 201);
+  assert.deepEqual(task.body.task.fields[tags.id], ["opt_design", "opt_be"]);
+  assert.equal(task.body.task.fields[checkbox.id], true);
+  assert.deepEqual(task.body.task.fields[timeline.id], {
+    start: "2026-06-01",
+    end: "2026-06-15",
+  });
+
+  const patched = await request(`/tasks/${task.body.task.id}`, {
+    method: "PATCH",
+    body: { fields: { ...task.body.task.fields, [checkbox.id]: false } },
+  });
+  assert.equal(patched.body.task.fields[checkbox.id], false);
+
+  // Removing a property leaves an old value behind; the next task edit should
+  // ignore it instead of failing validation.
+  await request(`/boards/${board.id}`, {
+    method: "PATCH",
+    body: { columns: board.columns.filter((column) => column.id !== checkbox.id) },
+  });
+  const afterRemoval = await request(`/tasks/${task.body.task.id}`, {
+    method: "PATCH",
+    body: { fields: { ...patched.body.task.fields, [timeline.id]: { start: "2026-06-02", end: "2026-06-20" } } },
+  });
+  assert.equal(afterRemoval.status, 200);
+  assert.equal(afterRemoval.body.task.fields[checkbox.id], undefined);
+  assert.deepEqual(afterRemoval.body.task.fields[timeline.id], {
+    start: "2026-06-02",
+    end: "2026-06-20",
+  });
+});
+
+test("a template-shaped Project tracker board creates all its properties", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+  const created = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: {
+      name: "Project tracker",
+      description: "Keep projects, owners, budgets and progress together.",
+      view: "table",
+      columns: [
+        {
+          name: "Status",
+          type: "status",
+          options: [
+            { label: "Not started" },
+            { label: "In progress" },
+            { label: "Blocked" },
+            { label: "Done" },
+          ],
+        },
+        { name: "Owner", type: "person" },
+        { name: "Due", type: "date" },
+        { name: "Budget", type: "number" },
+        { name: "Progress", type: "progress" },
+      ],
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(
+    created.body.board.columns.map((column) => [column.name, column.type]),
+    [
+      ["Status", "status"],
+      ["Owner", "person"],
+      ["Due", "date"],
+      ["Budget", "number"],
+      ["Progress", "progress"],
+    ],
+  );
+});
+
 test("comments are edited and deleted by their author or a manager", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);

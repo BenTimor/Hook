@@ -54,7 +54,12 @@ interface WorkspaceState {
   deleteProject: (id: string) => Promise<void>;
 
   openBoard: (id: string | null, projectId?: string) => Promise<void>;
-  createBoard: (projectId: string, name: string, folderId?: string | null) => Promise<Board | null>;
+  createBoard: (
+    projectId: string,
+    name: string,
+    folderId?: string | null,
+    options?: { description?: string; columns?: Column[]; view?: "table" | "board" },
+  ) => Promise<Board | null>;
   renameBoard: (id: string, name: string) => Promise<void>;
   updateBoardColumns: (id: string, columns: Column[]) => Promise<Board | null>;
   moveBoard: (id: string, folderId: string | null) => Promise<void>;
@@ -64,7 +69,12 @@ interface WorkspaceState {
   createTask: (
     boardId: string,
     status: string,
-    options?: { title?: string; activate?: boolean; position?: number },
+    options?: {
+      title?: string;
+      activate?: boolean;
+      position?: number;
+      fields?: Record<string, unknown>;
+    },
   ) => Promise<Task | null>;
   updateTask: (id: string, patch: Partial<Task>) => Promise<boolean>;
   /** Rows are ordered by hand: position becomes the index in this list. */
@@ -271,9 +281,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (owner && !get().members[owner]) await get().loadProjectContents(owner);
   },
 
-  async createBoard(projectId, name, folderId = null) {
+  async createBoard(projectId, name, folderId = null, options = {}) {
     try {
-      const created = await api.createBoard(projectId, name, folderId);
+      const created = await api.createBoard(projectId, name, folderId, options);
       set((state) => ({
         boards: {
           ...state.boards,
@@ -384,6 +394,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         title: options.title?.trim() || "New task",
         status,
         position,
+        ...(options.fields ? { fields: options.fields } : {}),
       });
       set((state) => ({
         tasks: {

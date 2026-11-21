@@ -128,6 +128,7 @@ function migrate(db) {
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       columns TEXT NOT NULL DEFAULT '[]',
+      view TEXT NOT NULL DEFAULT 'table',
       position INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL,
       deleted_at INTEGER,
@@ -192,6 +193,10 @@ function migrate(db) {
   const taskColumns = db.prepare("PRAGMA table_info(ws_tasks)").all();
   if (!taskColumns.some((column) => column.name === "assignees")) {
     db.exec("ALTER TABLE ws_tasks ADD COLUMN assignees TEXT NOT NULL DEFAULT '[]'");
+  }
+  const boardColumns = db.prepare("PRAGMA table_info(ws_boards)").all();
+  if (!boardColumns.some((column) => column.name === "view")) {
+    db.exec("ALTER TABLE ws_boards ADD COLUMN view TEXT NOT NULL DEFAULT 'table'");
   }
   db.prepare("INSERT OR IGNORE INTO ws_seq (id, next) VALUES (1, 0)").run();
 }
@@ -263,12 +268,28 @@ function projectName(value) {
   return name;
 }
 
-const COLUMN_TYPES = ["status", "text", "number", "date", "select", "person"];
+const COLUMN_TYPES = [
+  "status",
+  "text",
+  "longtext",
+  "number",
+  "checkbox",
+  "select",
+  "multiselect",
+  "person",
+  "date",
+  "datetime",
+  "daterange",
+  "progress",
+  "url",
+  "email",
+  "phone",
+];
 const OPTION_COLORS = ["slate", "green", "blue", "amber", "red", "purple", "teal", "pink"];
 
 /** Columns are a board's schema; tasks store values keyed by column id. */
 function parseColumns(raw) {
-  if (!Array.isArray(raw) || raw.length > 12) return null;
+  if (!Array.isArray(raw) || raw.length > 24) return null;
   const columns = [];
   let statuses = 0;
   for (const entry of raw) {
@@ -284,7 +305,8 @@ function parseColumns(raw) {
       name,
       type,
     };
-    if (type === "status" || type === "select") {
+    if (entry.hidden === true) column.hidden = true;
+    if (type === "status" || type === "select" || type === "multiselect") {
       const options = Array.isArray(entry.options)
         ? entry.options
             .slice(0, 40)
@@ -851,12 +873,14 @@ export function createWorkspaceRouter({ db, env = {} }) {
       ],
     );
     if (!columns) return badRequest(res, "Those columns are not valid.");
+    const view = req.body?.view === "board" ? "board" : "table";
     const row = insert(db, "boards", {
       project_id: id,
       folder_id: req.body?.folderId ?? null,
       name,
       description,
       columns: JSON.stringify(columns),
+      view,
       position: Number.isSafeInteger(req.body?.position) ? req.body.position : 0,
     });
     res.status(201).json({ board: shapeBoard(row) });
@@ -881,6 +905,12 @@ export function createWorkspaceRouter({ db, env = {} }) {
       const columns = parseColumns(req.body.columns);
       if (!columns) return badRequest(res, "Those columns are not valid.");
       fields.columns = JSON.stringify(columns);
+    }
+    if (req.body?.view !== undefined) {
+      if (req.body.view !== "table" && req.body.view !== "board") {
+        return badRequest(res, "That view is not supported.");
+      }
+      fields.view = req.body.view;
     }
     for (const [key, column] of [
       ["folderId", "folder_id"],
@@ -1006,8 +1036,16 @@ export function createWorkspaceRouter({ db, env = {} }) {
       fields.assignee = assignees[0] ?? null;
     }
     if (req.body?.fields !== undefined) {
+      // A removed property leaves its old value behind. Drop values that no
+      // longer have a column instead of making the next edit fail.
       const merged = { ...JSON.parse(task.fields), ...(req.body.fields ?? {}) };
-      const next = normaliseFields(columns, merged);
+      const known = new Set(
+        columns.filter((column) => column.type !== "status").map((column) => column.id),
+      );
+      const current = Object.fromEntries(
+        Object.entries(merged).filter(([key]) => known.has(key)),
+      );
+      const next = normaliseFields(columns, current);
       if (next === undefined) return badRequest(res, "One of those field values is not valid.");
       fields.fields = JSON.stringify(next);
     }
@@ -1536,6 +1574,7 @@ function shapeBoard(row) {
     name: row.name,
     description: row.description,
     columns: JSON.parse(row.columns),
+    view: row.view ?? "table",
     position: row.position,
     updatedAt: row.updated_at,
     seq: row.seq,
@@ -1646,6 +1685,7 @@ function shapeChange(row) {
         folderId: row.folder_id,
         name: row.name,
         columns: row.columns ? JSON.parse(row.columns) : [],
+        view: row.view ?? "table",
         position: row.position,
       });
       break;
@@ -1737,10 +1777,33 @@ export function validateFields(columns, raw) {
         if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
         values[key] = value;
         break;
+      case "progress":
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+          return undefined;
+        }
+        values[key] = value;
+        break;
+      case "checkbox":
+        if (typeof value !== "boolean") return undefined;
+        values[key] = value;
+        break;
       case "date":
         if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
         values[key] = value;
         break;
+      case "datetime":
+        if (typeof value !== "string" || value.length > 40) return undefined;
+        values[key] = value;
+        break;
+      case "daterange": {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+        const start = typeof value.start === "string" ? value.start : "";
+        const end = typeof value.end === "string" ? value.end : "";
+        if (start && !/^\d{4}-\d{2}-\d{2}$/.test(start)) return undefined;
+        if (end && !/^\d{4}-\d{2}-\d{2}$/.test(end)) return undefined;
+        values[key] = { start, end };
+        break;
+      }
       case "person":
         values[key] = String(value).slice(0, 64);
         break;
@@ -1750,6 +1813,21 @@ export function validateFields(columns, raw) {
         }
         values[key] = value;
         break;
+      case "multiselect": {
+        if (!Array.isArray(value)) return undefined;
+        const options = new Set(column.options.map((option) => option.id));
+        const picked = [...new Set(value.filter((entry) => typeof entry === "string"))];
+        if (!picked.every((entry) => options.has(entry))) return undefined;
+        values[key] = picked;
+        break;
+      }
+      case "longtext":
+        if (typeof value !== "string" || value.length > 20_000) return undefined;
+        values[key] = value;
+        break;
+      case "url":
+      case "email":
+      case "phone":
       case "text":
       default:
         if (typeof value !== "string" || value.length > 2000) return undefined;

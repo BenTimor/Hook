@@ -26,7 +26,22 @@ export interface Folder {
   seq: number;
 }
 
-export type ColumnType = "status" | "text" | "number" | "date" | "select" | "person";
+export type ColumnType =
+  | "status"
+  | "text"
+  | "longtext"
+  | "number"
+  | "checkbox"
+  | "select"
+  | "multiselect"
+  | "person"
+  | "date"
+  | "datetime"
+  | "daterange"
+  | "progress"
+  | "url"
+  | "email"
+  | "phone";
 
 export type StatusColor =
   | "slate"
@@ -49,6 +64,7 @@ export interface Column {
   name: string;
   type: ColumnType;
   options?: ColumnOption[];
+  hidden?: boolean;
 }
 
 export interface Board {
@@ -58,6 +74,7 @@ export interface Board {
   name: string;
   description: string;
   columns: Column[];
+  view?: "table" | "board";
   position: number;
   updatedAt: number;
   seq: number;

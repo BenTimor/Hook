@@ -5,20 +5,24 @@ import type { Board, Column, Task } from "../lib/types";
 import { pendingPeople, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { AssigneesPicker } from "./AssigneesPicker";
+import { MultiSelectMenu } from "./MultiSelectMenu";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { SelectMenu } from "./SelectMenu";
 
 const EMPTY: never[] = [];
 
-/** The value a column shows for a task, and how to write it back. */
-function valueOf(task: Task, column: Column): string {
+/** The raw value behind a property, regardless of its type. */
+function rawValue(task: Task, column: Column): unknown {
   if (column.type === "status") return task.status;
-  if (column.type === "person") return taskAssignees(task)[0] ?? "";
-  const raw = task.fields?.[column.id];
+  if (column.type === "person") return taskAssignees(task);
+  return task.fields?.[column.id];
+}
+
+function valueText(raw: unknown): string {
   if (raw === null || raw === undefined) return "";
   if (typeof raw === "string") return raw;
-  if (typeof raw === "number") return String(raw);
-  return JSON.stringify(raw);
+  if (typeof raw === "number" || typeof raw === "boolean") return String(raw);
+  return "";
 }
 
 /**
@@ -76,15 +80,10 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
     rowTops.current = next;
   });
 
-  // A board without a person column still has assignees on its tasks, and a
-  // table is where you expect to see them, so the table lends the column.
-  const columns = board.columns.some((column) => column.type === "person")
-    ? board.columns
-    : [
-        ...board.columns,
-        { id: "assignee", name: "Assignee", type: "person" as const },
-      ];
-  const status = columns.find((column) => column.type === "status");
+  // Properties are explicit in the flexible model: a simple board should not
+  // grow an assignee column it never asked for.
+  const columns = board.columns.filter((column) => !column.hidden);
+  const status = board.columns.find((column) => column.type === "status");
   const firstStatus = status?.options?.[0]?.id ?? "";
 
   const grid = {
@@ -133,14 +132,27 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
     if (created) setQuickTitle(null);
   };
 
-  const setColumnValue = (task: Task, column: Column, value: string) => {
+  const setField = (task: Task, column: Column, value: unknown) => {
     if (column.type === "status") {
-      void updateTask(task.id, { status: value });
+      void updateTask(task.id, { status: String(value ?? "") });
+      return;
+    }
+    if (column.type === "person") {
+      const next = Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+      void updateTask(task.id, { assignees: next, assignee: next[0] ?? null });
       return;
     }
     const fields = { ...task.fields };
-    if (value === "") delete fields[column.id];
-    else fields[column.id] = column.type === "number" ? Number(value) : value;
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      (Array.isArray(value) && value.length === 0)
+    ) {
+      delete fields[column.id];
+    } else {
+      fields[column.id] = value;
+    }
     void updateTask(task.id, { fields });
   };
 
@@ -291,69 +303,143 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
             </div>
 
             {columns.map((column) => {
-              const value = valueOf(task, column);
-              if (column.type === "text" || column.type === "number" || column.type === "date") {
-                return (
-                  <div className="ws-cell" key={column.id}>
-                    <input
-                      className="ws-cell-input"
-                      key={`${task.id}-${value}`}
-                      type={
-                        column.type === "number"
-                          ? "number"
-                          : column.type === "date"
-                            ? "date"
-                            : "text"
-                      }
-                      defaultValue={value}
-                      placeholder="—"
-                      onBlur={(event) => {
-                        if (event.target.value !== value) {
-                          setColumnValue(task, column, event.target.value);
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") event.currentTarget.blur();
-                        if (event.key === "Escape") {
-                          event.currentTarget.value = value;
-                          event.currentTarget.blur();
-                        }
-                      }}
-                    />
-                  </div>
-                );
-              }
-
-              if (column.type === "person") {
-                return (
-                  <div className="ws-cell ws-cell-people" key={column.id}>
-                    <AssigneesPicker
-                      compact
-                      values={taskAssignees(task)}
-                      members={members}
-                      invited={invited}
-                      label={column.name}
-                      onChange={(next) =>
-                        updateTask(task.id, { assignees: next, assignee: next[0] ?? null })
-                      }
-                    />
-                  </div>
-                );
-              }
-
+              const raw = rawValue(task, column);
+              const value = valueText(raw);
               const options = (column.options ?? []).map((option) => ({
                 id: option.id,
                 label: option.label || "Untitled",
                 color: option.color,
               }));
+
+              if (column.type === "person") {
+                const people = Array.isArray(raw)
+                  ? raw.filter((entry): entry is string => typeof entry === "string")
+                  : [];
+                return (
+                  <div className="ws-cell ws-cell-people" key={column.id}>
+                    <AssigneesPicker
+                      compact
+                      values={people}
+                      members={members}
+                      invited={invited}
+                      label={column.name}
+                      onChange={(next) => setField(task, column, next)}
+                    />
+                  </div>
+                );
+              }
+
+              if (column.type === "status" || column.type === "select") {
+                return (
+                  <div className="ws-cell" key={column.id}>
+                    <SelectMenu
+                      variant="cell"
+                      value={value}
+                      options={column.type === "select" ? [{ id: "", label: "—" }, ...options] : options}
+                      label={column.name}
+                      onChange={(next) => setField(task, column, next)}
+                    />
+                  </div>
+                );
+              }
+
+              if (column.type === "multiselect") {
+                const values = Array.isArray(raw)
+                  ? raw.filter((entry): entry is string => typeof entry === "string")
+                  : [];
+                return (
+                  <div className="ws-cell" key={column.id}>
+                    <MultiSelectMenu
+                      values={values}
+                      options={options}
+                      label={column.name}
+                      onChange={(next) => setField(task, column, next)}
+                    />
+                  </div>
+                );
+              }
+
+              if (column.type === "checkbox") {
+                return (
+                  <div className="ws-cell ws-cell-check" key={column.id}>
+                    <input
+                      type="checkbox"
+                      aria-label={column.name}
+                      checked={raw === true}
+                      onChange={(event) => setField(task, column, event.target.checked)}
+                    />
+                  </div>
+                );
+              }
+
+              if (column.type === "daterange") {
+                const range = raw && typeof raw === "object" && !Array.isArray(raw)
+                  ? (raw as { start?: unknown; end?: unknown })
+                  : {};
+                const start = typeof range.start === "string" ? range.start : "";
+                const end = typeof range.end === "string" ? range.end : "";
+                return (
+                  <div className="ws-cell ws-cell-range" key={column.id}>
+                    <input
+                      className="ws-cell-input"
+                      type="date"
+                      aria-label={`${column.name} start`}
+                      value={start}
+                      onChange={(event) => setField(task, column, { start: event.target.value, end })}
+                    />
+                    <span aria-hidden="true">–</span>
+                    <input
+                      className="ws-cell-input"
+                      type="date"
+                      aria-label={`${column.name} end`}
+                      value={end}
+                      onChange={(event) => setField(task, column, { start, end: event.target.value })}
+                    />
+                  </div>
+                );
+              }
+
+              const inputType =
+                column.type === "number" || column.type === "progress"
+                  ? "number"
+                  : column.type === "date"
+                    ? "date"
+                    : column.type === "datetime"
+                      ? "datetime-local"
+                      : column.type === "url"
+                        ? "url"
+                        : column.type === "email"
+                          ? "email"
+                          : column.type === "phone"
+                            ? "tel"
+                            : "text";
               return (
                 <div className="ws-cell" key={column.id}>
-                  <SelectMenu
-                    variant="cell"
-                    value={value}
-                    options={column.type === "select" ? [{ id: "", label: "—" }, ...options] : options}
-                    label={column.name}
-                    onChange={(next) => setColumnValue(task, column, next)}
+                  <input
+                    className="ws-cell-input"
+                    key={`${task.id}-${value}`}
+                    type={inputType}
+                    min={column.type === "progress" ? 0 : undefined}
+                    max={column.type === "progress" ? 100 : undefined}
+                    defaultValue={value}
+                    placeholder="—"
+                    onBlur={(event) => {
+                      if (event.target.value === value) return;
+                      const next =
+                        column.type === "number" || column.type === "progress"
+                          ? event.target.value === ""
+                            ? null
+                            : Number(event.target.value)
+                          : event.target.value;
+                      setField(task, column, next);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                      if (event.key === "Escape") {
+                        event.currentTarget.value = value;
+                        event.currentTarget.blur();
+                      }
+                    }}
                   />
                 </div>
               );

@@ -294,8 +294,9 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         projectId: id,
         folderId: (payload.folderId as string | null) ?? null,
         name: String(payload.name ?? "Board"),
-        description: "",
-        columns: DEMO_COLUMNS,
+        description: String(payload.description ?? ""),
+        columns: Array.isArray(payload.columns) ? (payload.columns as Column[]) : DEMO_COLUMNS,
+        view: payload.view === "board" ? "board" : "table",
         position: demoSeq,
         updatedAt: demoNow(),
         seq: demoSeq,
@@ -388,7 +389,10 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         status: String(payload.status ?? "opt_todo"),
         assignee: assignees[0] ?? null,
         assignees,
-        fields: {},
+        fields:
+          payload.fields && typeof payload.fields === "object"
+            ? (payload.fields as Record<string, unknown>)
+            : {},
         position: Number.isSafeInteger(payload.position)
           ? Number(payload.position)
           : demo.tasks.filter((task) => task.boardId === id).length,
@@ -644,11 +648,20 @@ export const api = {
   boards: (projectId: string) =>
     call<{ boards: Board[] }>("GET", `/projects/${projectId}/boards`),
   board: (id: string) => call<{ board: Board }>("GET", `/boards/${id}`),
-  createBoard: (projectId: string, name: string, folderId: string | null = null) =>
-    call<{ board: Board }>("POST", `/projects/${projectId}/boards`, { name, folderId }),
+  createBoard: (
+    projectId: string,
+    name: string,
+    folderId: string | null = null,
+    options: { description?: string; columns?: Column[]; view?: "table" | "board" } = {},
+  ) =>
+    call<{ board: Board }>("POST", `/projects/${projectId}/boards`, {
+      name,
+      folderId,
+      ...options,
+    }),
   updateBoard: (
     id: string,
-    patch: Partial<Pick<Board, "name" | "description" | "folderId" | "columns">>,
+    patch: Partial<Pick<Board, "name" | "description" | "folderId" | "columns" | "view">>,
   ) => call<{ board: Board }>("PATCH", `/boards/${id}`, patch),
   deleteBoard: (id: string) => call<{ ok: true }>("DELETE", `/boards/${id}`),
 
@@ -664,6 +677,7 @@ export const api = {
       status?: string;
       assignee?: string | null;
       assignees?: string[];
+      fields?: Record<string, unknown>;
       position?: number;
     },
   ) => call<{ task: Task }>("POST", `/boards/${boardId}/tasks`, task),

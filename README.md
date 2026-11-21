@@ -940,16 +940,31 @@ opened and edited work without duplicates. Favorites and recently opened items
 are saved on this device for the signed-in email and project; recently edited
 uses the items' server-provided edit times. Quick access tiles load board tasks
 or formatted document content for a preview when the tile comes into view.
+Creating a board opens a **template picker** grouped for personal use, study,
+product/engineering and business, plus a blank board. Templates are data, not
+features: each one is just a name suggestion, a set of properties, a default
+view and example rows. A to-do list, assignment tracker, roadmap, sprint, CRM
+and content calendar are all the same board underneath.
+`apps/workspace/src/lib/boardTemplates.ts` owns the presets.
+
+A board's columns are **properties**. From **Properties** in the board header an
+editor can add, rename, reorder, hide or remove them, and add/rename/reorder/
+recolour/remove choice and status options. Supported types are title, text, long
+text, number, checkbox, select, multi-select, status, person, date, date & time,
+timeline, progress, URL, email and phone. Values live in the task's `fields`
+object (status and assignees stay first-class columns), so adding a property
+never requires a new database table. Simple boards only show the properties
+their template chose; the table no longer invents an assignee column.
+
 Opening or creating a board task shows its details, description and comments in
 a full task view with a properties sidebar for status, multiple assignees and
 dates. The description uses the document formatting toolbar and automatically
-saves edits. Back to board returns to the selected board view. **Statuses** on a
-board are editable: add, rename, reorder, recolour or remove them from the board
-header, and tasks in a removed status move to the first remaining one. **Filter**
+saves edits. Back to board returns to the selected board view. **Filter**
 narrows both the table and board views by status or any select column (such as
-Priority), and can combine several columns. The last row of the table is an
-inline quick add: click **New task**, type a title and press Enter to append it
-without opening the task view.
+Priority), and can combine several columns. The board view can group by any
+status or select property. The last row of the table is an inline quick add:
+click **New task**, type a title and press Enter to append it without opening
+the task view.
 
 The important structural decision: **the workspace service is the product; the
 window is a client.** `server/workspace.mjs` owns projects, memberships,
@@ -1878,8 +1893,10 @@ chat). Tests skip themselves when the engine or `node` is missing.
 The workspace suite (`server/workspace.test.mjs`) drives the real router against a
 temporary SQLite file: the role table, an invitation accepted in the product,
 viewer/editor/manager limits, ownership transfer and its permanence, a removed
-member's tombstone in the changes feed, typed task columns, several assignees on
-one task, comment editing and deletion by author or manager, an agent comment
+member's tombstone in the changes feed, flexible property types (select,
+multi-select, checkbox, timeline and hidden properties) and a board's default
+view, several assignees on one task, comment editing and deletion by author or
+manager, an agent comment
 that carries the conversation it came from, a stale document write that is refused
 with the current copy, folder nesting and deletion that keeps its contents, and
 account deletion that removes owned projects but not other people's. `server/releases.test.mjs` covers the second product's

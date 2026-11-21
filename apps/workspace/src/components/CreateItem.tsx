@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { TextFieldDialog } from "@hook/ui";
 
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { BoardTemplateDialog } from "./BoardTemplateDialog";
 
 export type CreateRequest = {
   kind: "folder" | "board" | "document";
@@ -48,17 +49,19 @@ export function CreateItemDialog({
   onClose: () => void;
 }) {
   const [name, setName] = useState("");
-  const createBoard = useWorkspaceStore((state) => state.createBoard);
   const createDocument = useWorkspaceStore((state) => state.createDocument);
   const createFolder = useWorkspaceStore((state) => state.createFolder);
-  const openBoard = useWorkspaceStore((state) => state.openBoard);
   const openDocument = useWorkspaceStore((state) => state.openDocument);
 
   useEffect(() => {
     if (request) setName("");
   }, [request]);
 
-  const copy = COPY[request?.kind ?? "board"];
+  if (request?.kind === "board") {
+    return <BoardTemplateDialog request={request} onClose={onClose} />;
+  }
+
+  const copy = COPY[request?.kind ?? "document"];
 
   return (
     <TextFieldDialog
@@ -77,12 +80,6 @@ export function CreateItemDialog({
         onClose();
         if (request.kind === "folder") {
           void createFolder(request.projectId, value, request.folderId);
-          return;
-        }
-        if (request.kind === "board") {
-          void createBoard(request.projectId, value, request.folderId).then((board) => {
-            if (board) void openBoard(board.id, request.projectId);
-          });
           return;
         }
         void createDocument(request.projectId, value, request.folderId).then((document) => {

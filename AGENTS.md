@@ -424,6 +424,15 @@ Changing one side of a boundary is the most common way to break this repo.
   `assignee` column mirrors the first person for older readers. Anything that
   writes assignees must go through `assigneesFrom` / `resolveAssignees`, and
   anything that lists people needs the `pending` half.
+- **Board templates and property types:** a template is configuration in
+  `apps/workspace/src/lib/boardTemplates.ts`; it may only suggest a name, a set
+  of board columns (properties), a default view and example rows, and it creates
+  an ordinary board. Never add a template-specific entity, endpoint or table.
+  A new property type goes through `ColumnType` in `types.ts`, `parseColumns` +
+  `validateFields` in `server/workspace.mjs`, the cell editor in `BoardTable.tsx`
+  (and the type menu in `BoardPropertiesDialog.tsx`), then can be used by any
+  template. Task values stay in `fields`; status and assignees remain the two
+  first-class task columns.
 - **New landing-page route or field:** `server/*.mjs` router → `waitlist/` UI →
   `server/*.test.mjs`. Keep old rows readable — tests deliberately seed an
   older schema.

@@ -6,10 +6,11 @@ import { pendingPeople, personLabel, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { AssigneesPicker, PersonAvatar } from "./AssigneesPicker";
 import { BoardFilter, type BoardFilters } from "./BoardFilter";
-import { BoardStatusDialog } from "./BoardStatusDialog";
+import { BoardPropertiesDialog } from "./BoardPropertiesDialog";
 import { BoardTable } from "./BoardTable";
 import { DocumentEditor } from "./DocumentEditor";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
+import { SelectMenu } from "./SelectMenu";
 import { optionColor, TaskStatus } from "./TaskStatus";
 
 /**
@@ -24,15 +25,28 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
   const project = useWorkspaceStore((state) =>
     state.projects.find((candidate) => candidate.id === state.activeProjectId),
   );
-  const [mode, setMode] = useState<"table" | "board">("table");
+  const [mode, setMode] = useState<"table" | "board">(board.view === "board" ? "board" : "table");
   const [adding, setAdding] = useState(false);
-  const [statusesOpen, setStatusesOpen] = useState(false);
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [filters, setFilters] = useState<BoardFilters>({});
   const status = board.columns.find((column) => column.type === "status");
+  const groupable = board.columns.filter(
+    (column) =>
+      !column.hidden &&
+      (column.type === "status" || column.type === "select") &&
+      (column.options?.length ?? 0) > 0,
+  );
+  const [groupBy, setGroupBy] = useState(
+    board.columns.find((column) => column.type === "status")?.id ?? groupable[0]?.id ?? "",
+  );
   const readOnly = project?.role === "viewer";
 
   useEffect(() => {
     setFilters({});
+    setMode(board.view === "board" ? "board" : "table");
+    setGroupBy(board.columns.find((column) => column.type === "status")?.id ?? groupable[0]?.id ?? "");
+    // A different board starts from its own template's default view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board.id]);
 
   // A status or option can disappear while a filter still points at it.
@@ -58,6 +72,7 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
     () =>
       tasks.filter((task) =>
         board.columns.every((column) => {
+          if (column.hidden) return true;
           const values = filters[column.id];
           if (!values?.length) return true;
           const raw = column.type === "status" ? task.status : task.fields?.[column.id];
@@ -70,7 +85,7 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
 
   const filterGroups = board.columns.flatMap((column) => {
     const values = filters[column.id] ?? [];
-    if (values.length === 0) return [];
+    if (column.hidden || values.length === 0) return [];
     return [{
       column,
       labels: values.map((value) => column.options?.find((option) => option.id === value)?.label ?? value),
@@ -106,13 +121,25 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
             </button>
           </div>
           <BoardFilter board={board} filters={filters} onChange={setFilters} />
+          {mode === "board" && groupable.length > 1 ? (
+            <div className="ws-group-by">
+              <span>Group</span>
+              <SelectMenu
+                className="ws-group-select"
+                value={groupBy}
+                options={groupable.map((column) => ({ id: column.id, label: column.name }))}
+                label="Group board by"
+                onChange={setGroupBy}
+              />
+            </div>
+          ) : null}
           {!readOnly ? (
             <button
               className="btn btn-ghost"
-              title="Add, rename or reorder statuses"
-              onClick={() => setStatusesOpen(true)}
+              title="Add, rename or reorder properties"
+              onClick={() => setPropertiesOpen(true)}
             >
-              <Settings2 /> Statuses
+              <Settings2 /> Properties
             </button>
           ) : null}
           <button
@@ -120,7 +147,12 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
             disabled={adding}
             onClick={async () => {
               setAdding(true);
-              await createTask(board.id, status?.options?.[0]?.id ?? "");
+              const grouping = board.columns.find((column) => column.id === groupBy);
+              const fields =
+                grouping && grouping.type !== "status" && grouping.options?.[0]
+                  ? { [grouping.id]: grouping.options[0].id }
+                  : undefined;
+              await createTask(board.id, status?.options?.[0]?.id ?? "", { fields });
               setAdding(false);
             }}
           >
@@ -154,18 +186,26 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
         </div>
       ) : null}
 
-      <BoardStatusDialog board={board} open={statusesOpen} onClose={() => setStatusesOpen(false)} />
+      <BoardPropertiesDialog board={board} open={propertiesOpen} onClose={() => setPropertiesOpen(false)} />
 
       {mode === "table" ? (
         <BoardTable board={board} tasks={visibleTasks} />
       ) : (
-        <BoardColumns board={board} tasks={visibleTasks} />
+        <BoardColumns board={board} tasks={visibleTasks} groupBy={groupBy} />
       )}
     </div>
   );
 }
 
-export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) {
+export function BoardColumns({
+  board,
+  tasks,
+  groupBy,
+}: {
+  board: Board;
+  tasks: Task[];
+  groupBy?: string;
+}) {
   const openTask = useWorkspaceStore((state) => state.openTask);
   const createTask = useWorkspaceStore((state) => state.createTask);
   const updateTask = useWorkspaceStore((state) => state.updateTask);
@@ -181,23 +221,49 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
   const [arrived, setArrived] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
 
-  const status = board.columns.find((column) => column.type === "status");
-  const columns = status?.options ?? [];
-  const statusOf = (task: Task) => moving[task.id] ?? task.status;
+  const statusColumn = board.columns.find((column) => column.type === "status");
+  const groupColumn =
+    board.columns.find(
+      (column) =>
+        column.id === groupBy &&
+        !column.hidden &&
+        (column.type === "status" || column.type === "select") &&
+        (column.options?.length ?? 0) > 0,
+    ) ??
+    board.columns.find(
+      (column) =>
+        !column.hidden &&
+        (column.type === "status" || column.type === "select") &&
+        (column.options?.length ?? 0) > 0,
+    );
+  const columns = groupColumn?.options ?? [];
+  const groupOf = (task: Task) => {
+    if (moving[task.id]) return moving[task.id];
+    if (!groupColumn) return "";
+    if (groupColumn.type === "status") return task.status;
+    return typeof task.fields?.[groupColumn.id] === "string"
+      ? String(task.fields[groupColumn.id])
+      : "";
+  };
   const extra = tasks.filter(
-    (task) => !columns.some((option) => option.id === statusOf(task)),
+    (task) => !columns.some((option) => option.id === groupOf(task)),
   );
 
   const moveTask = async (taskId: string, columnId: string) => {
     const task = tasks.find((candidate) => candidate.id === taskId);
-    if (!task || statusOf(task) === columnId) return;
+    if (!task || !groupColumn || groupOf(task) === columnId) return;
     const position = tasks
-      .filter((candidate) => candidate.id !== taskId && statusOf(candidate) === columnId)
+      .filter((candidate) => candidate.id !== taskId && groupOf(candidate) === columnId)
       .reduce((next, candidate) => Math.max(next, candidate.position + 1), 0);
     setMoving((current) => ({ ...current, [taskId]: columnId }));
     setArrived(taskId);
     window.setTimeout(() => setArrived((current) => (current === taskId ? null : current)), 320);
-    await updateTask(taskId, { status: columnId, position });
+    await updateTask(
+      taskId,
+      groupColumn.type === "status"
+        ? { status: columnId, position }
+        : { fields: { ...task.fields, [groupColumn.id]: columnId }, position },
+    );
     setMoving((current) => {
       const next = { ...current };
       delete next[taskId];
@@ -240,7 +306,7 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
       }}
     >
       {columns.map((column) => {
-        const items = tasks.filter((task) => statusOf(task) === column.id);
+        const items = tasks.filter((task) => groupOf(task) === column.id);
         return (
           <section
             className="ws-column"
@@ -275,7 +341,12 @@ export function BoardColumns({ board, tasks }: { board: Board; tasks: Task[] }) 
                 disabled={pending === column.id}
                 onClick={async () => {
                   setPending(column.id);
-                  await createTask(board.id, column.id);
+                  await createTask(board.id, statusColumn?.options?.[0]?.id ?? "", {
+                    fields:
+                      groupColumn && groupColumn.type !== "status"
+                        ? { [groupColumn.id]: column.id }
+                        : undefined,
+                  });
                   setPending(null);
                 }}
               >
@@ -430,13 +501,9 @@ export function TaskPanel({ task, accountEmail }: { task: Task; accountEmail?: s
     setTitle(task.title);
   }, [task.title]);
 
-  const status = board?.columns.find((column) => column.type === "status");
-  // Every task has assignees; only some boards give them a column of their own.
-  const assigneeColumn = board?.columns.find((column) => column.type === "person") ?? {
-    id: "assignee",
-    name: "Assignees",
-    type: "person" as const,
-  };
+  const status = board?.columns.find((column) => column.type === "status" && !column.hidden);
+  // Assignees are a property of the board, not an assumption about every board.
+  const assigneeColumn = board?.columns.find((column) => column.type === "person" && !column.hidden);
   const assigned = taskAssignees(task);
   const invited = pendingPeople(members, pending);
   const creator = personLabel(members.find((member) => member.subject === task.createdBy));
@@ -677,17 +744,19 @@ export function TaskPanel({ task, accountEmail }: { task: Task; accountEmail?: s
                   />
                 </div>
               ) : null}
-              <div className="ws-property">
-                <span className="ws-property-label">{assigneeColumn.name}</span>
-                <AssigneesPicker
-                  values={assigned}
-                  members={members}
-                  invited={invited}
-                  readOnly={readOnly}
-                  label={assigneeColumn.name}
-                  onChange={(next) => updateTask(task.id, { assignees: next, assignee: next[0] ?? null })}
-                />
-              </div>
+              {assigneeColumn ? (
+                <div className="ws-property">
+                  <span className="ws-property-label">{assigneeColumn.name}</span>
+                  <AssigneesPicker
+                    values={assigned}
+                    members={members}
+                    invited={invited}
+                    readOnly={readOnly}
+                    label={assigneeColumn.name}
+                    onChange={(next) => updateTask(task.id, { assignees: next, assignee: next[0] ?? null })}
+                  />
+                </div>
+              ) : null}
               <div className="ws-property ws-property-row">
                 <span className="ws-property-label">Created by</span>
                 <span className="ws-property-value ws-property-person">
