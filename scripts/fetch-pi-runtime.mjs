@@ -37,6 +37,9 @@ const PACKAGE = "@earendil-works/pi-coding-agent";
 
 const nodeExe = join(out, process.platform === "win32" ? "node.exe" : "node");
 
+/** The Node binary a build ships: the one running this script. */
+const nodeExecutable = () => process.execPath;
+
 /**
  * The VERSION file records the pi package and the Node build. When both match
  * what is on disk, the 130 MB copy is skipped: `pnpm app:build` runs this on
@@ -56,8 +59,103 @@ function installed(version) {
   return (
     existsSync(nodeExe) &&
     existsSync(join(out, "pi", "dist", "bundle", "cli.js")) &&
-    existsSync(join(out, "pi", "node_modules", "jiti", "package.json"))
+    existsSync(join(out, "pi", "node_modules", "jiti", "package.json")) &&
+    // The licenses are part of the shipped bundle, not a nicety. An existing
+    // runtime built before they were written must be rebuilt, or an installer
+    // redistributes MIT and GPL software without its notices.
+    existsSync(join(out, "THIRD-PARTY-LICENSES.txt")) &&
+    existsSync(join(out, "node-LICENSE.txt")) &&
+    existsSync(join(out, "pi", "node_modules", "jiti", "LICENSE"))
   );
+}
+
+const MIT_TEXT = `MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`;
+
+/**
+ * Write the notices that have to travel with the bundled binaries.
+ *
+ * pi's npm package declares `"license": "MIT"` in package.json but ships no
+ * LICENSE file, so its notice is reconstructed from that metadata (name,
+ * version, `author`, `repository`). Verify against the upstream repository when
+ * the version moves — it is the only source of truth that was not packaged.
+ *
+ * Node's LICENSE sits next to the `node` executable in a normal installation,
+ * so it is copied rather than reconstructed. jiti's LICENSE is already inside
+ * the copied package; this file only points at it.
+ */
+async function writeLicenses(piMeta) {
+  const nodeLicense = join(dirname(nodeExecutable()), "LICENSE");
+  try {
+    await cp(nodeLicense, join(out, "node-LICENSE.txt"));
+  } catch {
+    throw new Error(
+      `could not find Node's LICENSE next to ${nodeExecutable()} — a redistributed ` +
+        "runtime must carry it. Install Node from nodejs.org, or place LICENSE " +
+        "beside the executable.",
+    );
+  }
+
+  const piAttribution = [
+    `${PACKAGE} ${piMeta.version}`,
+    piMeta.author ? `Copyright (c) ${piMeta.author}` : "",
+    `Licensed under the MIT License, as declared in the package's package.json.`,
+    piMeta.repository?.url
+      ? `Source: ${piMeta.repository.url.replace(/^git\+/, "")}`
+      : "",
+    "This npm package ships no LICENSE file; this notice is reconstructed from",
+    "its package metadata.",
+    "",
+    MIT_TEXT,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+
+  const text = [
+    "Third-party licenses for the Hook coding runtime",
+    "=================================================",
+    "",
+    "This directory is redistributed inside a Hook installer. Everything in it",
+    "is listed below, with the license it is offered under.",
+    "",
+    "Hook itself is AGPL-3.0-only; see LICENSE and NOTICE in the repository.",
+    "",
+    "--- 1/3 " + "-".repeat(60),
+    piAttribution,
+    "",
+    "--- 2/3 " + "-".repeat(60),
+    `Node.js ${process.version}`,
+    "Licensed under the MIT License.",
+    "Full text: node-LICENSE.txt, in this directory.",
+    "https://nodejs.org/",
+    "",
+    "--- 3/3 " + "-".repeat(60),
+    "jiti",
+    "Licensed under the MIT License.",
+    "Full text: pi/node_modules/jiti/LICENSE, in this directory.",
+    "https://github.com/unjs/jiti",
+    "",
+  ].join("\n");
+
+  await writeFile(join(out, "THIRD-PARTY-LICENSES.txt"), text);
 }
 
 /** Find the installed pi package: CLI flag, local resolution, then global npm. */
@@ -89,7 +187,8 @@ async function main() {
   const explicit = flagIndex > 0 ? process.argv[flagIndex + 1] : undefined;
 
   const piDir = await locatePi(explicit);
-  const version = JSON.parse(await readFile(join(piDir, "package.json"), "utf8")).version;
+  const piMeta = JSON.parse(await readFile(join(piDir, "package.json"), "utf8"));
+  const version = piMeta.version;
   const bundle = join(piDir, "dist", "bundle", "cli.js");
   await stat(bundle);
 
@@ -99,7 +198,7 @@ async function main() {
     return;
   }
 
-  const nodeSrc = process.execPath;
+  const nodeSrc = nodeExecutable();
   const nodeStat = await stat(nodeSrc);
   if (nodeStat.size < 1_000_000) {
     throw new Error(`${nodeSrc} does not look like a Node runtime`);
@@ -146,6 +245,8 @@ async function main() {
       dereference: true,
     });
   }
+
+  await writeLicenses(piMeta);
 
   await writeFile(
     join(out, "VERSION"),
