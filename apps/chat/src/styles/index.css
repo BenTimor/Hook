@@ -3062,7 +3062,12 @@ body[data-preview-dragging="true"] iframe {
 }
 
 .provider-field .text-input {
+  /* `.text-input` carries `flex: 1` so it can share a row with a button. In a
+     column form that turns into `flex-basis: 0%` and collapses the field to its
+     text height, which is why these were 17px tall. */
+  flex: 0 0 auto;
   width: 100%;
+  height: 34px;
 }
 
 .sheet-label .status[data-on="true"] {
