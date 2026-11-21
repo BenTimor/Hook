@@ -118,6 +118,35 @@ export const mobile = {
       ? invoke<SettingsView>("set_advanced_mode", { enabled })
       : demo.setAdvancedMode(enabled),
 
+  /** The account-wide switch; the same one the desktop flips. */
+  setCloudSync: (enabled: boolean): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("set_cloud_sync", { enabled })
+      : demo.setCloudSync(enabled),
+
+  /** This phone's own endpoint and key. The key stays in this app's container. */
+  setCustomProvider: (
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+  ): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("set_custom_provider", { baseUrl, apiKey, model })
+      : demo.setCustomProvider(baseUrl, apiKey, model),
+
+  clearCustomProvider: (): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("clear_custom_provider")
+      : demo.clearCustomProvider(),
+
+  customModels: (baseUrl: string, apiKey: string): Promise<string[]> =>
+    isTauri()
+      ? invoke<string[]>("custom_models", {
+          baseUrl: baseUrl || null,
+          apiKey: apiKey || null,
+        })
+      : demo.customModels(baseUrl, apiKey),
+
   syncStatus: (): Promise<SyncView> =>
     isTauri() ? invoke<SyncView>("sync_status") : demo.syncStatus(),
 

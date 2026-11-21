@@ -143,6 +143,34 @@ pub struct StoredSession {
     /// credential that may reach a coding agent's environment.
     #[serde(default)]
     pub git_token: Option<String>,
+    /// `free`, `plus` or `pro` as last reported by the account service. Only
+    /// `free` restricts anything, and an older account file without the field
+    /// is treated as "not known to be free" until the next check — Hook's
+    /// local restrictions follow the server, they never invent a downgrade.
+    #[serde(default)]
+    pub plan: Option<String>,
+    /// Whether this account lets its conversations leave its computers. `None`
+    /// means "not known yet" and behaves as on; the server refuses sync for a
+    /// free account whatever this says.
+    #[serde(default)]
+    pub cloud_sync: Option<bool>,
+}
+
+/// The free plan's 24-hour message window, as the account service reports it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Quota {
+    pub limit: i64,
+    pub used: i64,
+    pub remaining: i64,
+    /// When the oldest counted message falls out of the window.
+    pub reset_at: Option<String>,
+}
+
+impl Quota {
+    pub fn exhausted(&self) -> bool {
+        self.limit > 0 && self.used >= self.limit
+    }
 }
 
 /// What the window needs to draw the login screen or the account section.
@@ -157,6 +185,12 @@ pub struct AuthView {
     pub user_code: Option<String>,
     pub verification_url: Option<String>,
     pub message: Option<String>,
+    /// The account's entitlement, when known. `None` on a local preview build.
+    pub plan: Option<String>,
+    /// The account's cloud-sync switch. `None` before the first account check.
+    pub cloud_sync: Option<bool>,
+    /// The free plan's message window. `None` for a paid account.
+    pub quota: Option<Quota>,
 }
 
 impl AuthView {
@@ -169,6 +203,9 @@ impl AuthView {
             user_code: None,
             verification_url: None,
             message,
+            plan: None,
+            cloud_sync: None,
+            quota: None,
         }
     }
 }
@@ -211,6 +248,9 @@ pub struct AuthStore {
     /// talks to hookcode.io.
     required: bool,
     session: Mutex<Option<StoredSession>>,
+    /// The free plan's message window as of the last account check. Ephemeral:
+    /// the server is the authority and recomputes it on every `/me`.
+    quota: Mutex<Option<Quota>>,
     pending: Mutex<Option<Pending>>,
     generation: AtomicU64,
     client: reqwest::Client,
@@ -241,6 +281,8 @@ struct DevicePoll {
     status: String,
     token: Option<String>,
     user: Option<ApiUser>,
+    #[serde(default)]
+    quota: Option<Quota>,
 }
 
 #[derive(Deserialize)]
@@ -250,6 +292,10 @@ struct ApiUser {
     email: String,
     name: Option<String>,
     approved: bool,
+    #[serde(default)]
+    plan: Option<String>,
+    #[serde(default)]
+    cloud_sync: Option<bool>,
 }
 
 /// The answer to a native sign-in: the same session the device flow returns.
@@ -258,11 +304,23 @@ struct ApiUser {
 struct GoogleSession {
     token: String,
     user: ApiUser,
+    #[serde(default)]
+    quota: Option<Quota>,
 }
 
 #[derive(Deserialize)]
 struct MeResponse {
     user: ApiUser,
+    #[serde(default)]
+    quota: Option<Quota>,
+}
+
+/// The answer to changing an account preference: the account as it now stands.
+#[derive(Deserialize)]
+struct PreferencesResponse {
+    user: ApiUser,
+    #[serde(default)]
+    quota: Option<Quota>,
 }
 
 #[derive(Deserialize)]
@@ -323,6 +381,8 @@ impl AuthStore {
                 subject: "local-preview".into(),
                 signed_in_at: 0,
                 git_token: None,
+                plan: None,
+                cloud_sync: None,
             })
         };
         let device = if is_valid_device_id(&shared.device_id) {
@@ -346,6 +406,7 @@ impl AuthStore {
             base_url: base_url.trim_end_matches('/').to_string(),
             required,
             session: Mutex::new(session),
+            quota: Mutex::new(None),
             pending: Mutex::new(None),
             generation: AtomicU64::new(0),
             client: reqwest::Client::builder()
@@ -422,6 +483,82 @@ impl AuthStore {
         lock(&self.session).clone()
     }
 
+    /// The account's entitlement as last reported by the service. `None` means
+    /// "not known" (a local preview, or a build that has not reached the server
+    /// yet); only a server-confirmed `free` restricts anything locally.
+    pub fn plan(&self) -> Option<String> {
+        lock(&self.session)
+            .as_ref()
+            .and_then(|s| s.plan.clone())
+            .map(|plan| plan.trim().to_ascii_lowercase())
+            .filter(|plan| !plan.is_empty())
+    }
+
+    /// A free account: no cloud sync, 100 messages per rolling day through
+    /// Hook's model service, no coding agents without a personal provider.
+    pub fn is_free(&self) -> bool {
+        self.plan().as_deref() == Some("free")
+    }
+
+    /// The account's own cloud-sync switch. `None` is "not checked yet".
+    pub fn cloud_sync(&self) -> Option<bool> {
+        lock(&self.session).as_ref().and_then(|s| s.cloud_sync)
+    }
+
+    pub fn quota(&self) -> Option<Quota> {
+        lock(&self.quota).clone()
+    }
+
+    fn remember_account(&self, user: &ApiUser, quota: Option<Quota>) {
+        let Some(mut session) = self.session() else {
+            return;
+        };
+        session.email = user.email.clone();
+        session.name = user.name.clone();
+        session.subject = user.subject.clone();
+        if user.plan.is_some() {
+            session.plan = user.plan.clone();
+        }
+        if user.cloud_sync.is_some() {
+            session.cloud_sync = user.cloud_sync;
+        }
+        if let Err(error) = self.save_session(&session) {
+            eprintln!("hook: could not save the account state: {error}");
+            return;
+        }
+        *lock(&self.quota) = quota;
+    }
+
+    /// Turn the account's cloud-sync switch on or off. It is account state, not
+    /// product state: setting it here changes it for Workspace and the phone as
+    /// well, and the server refuses the call for a free account.
+    pub async fn set_cloud_sync(&self, enabled: bool) -> Result<AuthView, String> {
+        if !self.required {
+            return Ok(self.view());
+        }
+        let Some(token) = self.token() else {
+            return Err("Sign in to Hook to change this.".into());
+        };
+        let response = self
+            .client
+            .post(format!("{}/api/auth/preferences", self.base_url))
+            .bearer_auth(&token)
+            .header("x-hook-device", self.device_id())
+            .json(&serde_json::json!({ "cloudSync": enabled }))
+            .send()
+            .await
+            .map_err(|e| format!("Could not reach hookcode.io: {e}"))?;
+        if !response.status().is_success() {
+            return Err(error_message(response, "Could not change cloud sync.").await);
+        }
+        let body: PreferencesResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Unexpected account response: {e}"))?;
+        self.remember_account(&body.user, body.quota);
+        Ok(self.view())
+    }
+
     pub fn view(&self) -> AuthView {
         let mut pending = lock(&self.pending);
         if let Some(entry) = pending.as_ref() {
@@ -436,6 +573,9 @@ impl AuthStore {
                     user_code: Some(entry.user_code.clone()),
                     verification_url: Some(entry.verification_url.clone()),
                     message: None,
+                    plan: None,
+                    cloud_sync: None,
+                    quota: None,
                 };
             }
             *pending = None;
@@ -451,6 +591,9 @@ impl AuthStore {
                 user_code: None,
                 verification_url: None,
                 message: None,
+                plan: session.plan,
+                cloud_sync: session.cloud_sync,
+                quota: self.quota(),
             },
             None => AuthView::signed_out(None),
         }
@@ -588,7 +731,10 @@ impl AuthStore {
                         subject: user.subject,
                         signed_in_at: now_ms(),
                         git_token: None,
+                        plan: user.plan,
+                        cloud_sync: user.cloud_sync,
                     };
+                    *lock(&self.quota) = polled.quota;
                     if let Err(error) = self.save_session(&session) {
                         return LoginOutcome::Failed(error);
                     }
@@ -690,6 +836,7 @@ impl AuthStore {
             .await
             .map_err(|e| format!("Unexpected sign-in response: {e}"))?;
         self.cancel();
+        *lock(&self.quota) = session.quota;
         self.save_session(&StoredSession {
             token: session.token,
             email: session.user.email,
@@ -697,6 +844,8 @@ impl AuthStore {
             subject: session.user.subject,
             signed_in_at: now_ms(),
             git_token: None,
+            plan: session.user.plan,
+            cloud_sync: session.user.cloud_sync,
         })?;
         Ok(self.view())
     }
@@ -739,6 +888,7 @@ impl AuthStore {
             return;
         }
         *lock(&self.session) = None;
+        *lock(&self.quota) = None;
         let _ = fs::remove_file(&self.path);
         // Signing out is an account decision, not a product decision: drop the
         // session from the shared file so every Hook product asks again.
@@ -776,13 +926,7 @@ impl AuthStore {
         };
         if response.status().is_success() {
             if let Ok(me) = response.json::<MeResponse>().await {
-                let mut session = self.session();
-                if let Some(session) = session.as_mut() {
-                    session.email = me.user.email;
-                    session.name = me.user.name;
-                    session.subject = me.user.subject;
-                    let _ = self.save_session(session);
-                }
+                self.remember_account(&me.user, me.quota);
             }
             return RefreshOutcome::Valid;
         }
@@ -868,6 +1012,8 @@ mod tests {
             subject: "subject-1".into(),
             signed_in_at: 1,
             git_token: None,
+            plan: None,
+            cloud_sync: None,
         };
         auth.save_session(&session).unwrap();
         let reopened = AuthStore::new(&dir.join("app.hook.chat"), "https://hookcode.io", true, "");
@@ -922,6 +1068,8 @@ mod tests {
             subject: "subject-1".into(),
             signed_in_at: 7,
             git_token: None,
+            plan: None,
+            cloud_sync: None,
         })
         .unwrap();
 
@@ -951,6 +1099,8 @@ mod tests {
             subject: "subject-old".into(),
             signed_in_at: 1,
             git_token: None,
+            plan: None,
+            cloud_sync: None,
         };
         fs::write(dir.join("auth.json"), serde_json::to_string(&legacy).unwrap()).unwrap();
 

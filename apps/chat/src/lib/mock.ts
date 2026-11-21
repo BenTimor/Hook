@@ -9,6 +9,7 @@ import type {
   AuthView,
   Chat,
   ChatMeta,
+  CustomProvider,
   ImportPreview,
   ImportSummary,
   MemoryEntry,
@@ -359,6 +360,21 @@ function plain(input: string): string {
 /** Data URLs for pictures staged in the browser preview. */
 const previewImages = new Map<string, string>();
 
+/** Design-time plan and account switches: `?plan=free`, `?sync=off`, `?used=99`.
+ * The default is a paid account so nothing already previewed disappears. */
+const mockParams = new URLSearchParams(window.location.search);
+let MOCK_PLAN: string = mockParams.get("plan") === "free" ? "free" : "pro";
+let MOCK_CLOUD_SYNC = mockParams.get("sync") !== "off";
+const MOCK_USED = Math.min(
+  100,
+  Math.max(0, Number.parseInt(mockParams.get("used") ?? "12", 10) || 0),
+);
+/** A personal endpoint saved in this tab, for designing the Settings section. */
+let MOCK_PROVIDER: CustomProvider | null =
+  mockParams.get("byok") === "1"
+    ? { baseUrl: "https://api.example.test/v1", model: "gpt-4o-mini", hasKey: true }
+    : null;
+
 const mockAuth: AuthView = {
   signedIn: true,
   state: "signed_in",
@@ -367,6 +383,12 @@ const mockAuth: AuthView = {
   userCode: null,
   verificationUrl: null,
   message: null,
+  plan: MOCK_PLAN,
+  cloudSync: MOCK_CLOUD_SYNC,
+  quota:
+    MOCK_PLAN === "free"
+      ? { limit: 100, used: MOCK_USED, remaining: Math.max(0, 100 - MOCK_USED), resetAt: null }
+      : null,
 };
 
 const demoLogin = () =>
@@ -712,6 +734,9 @@ export const mock = {
     return {
       projectsDir: "C:/Users/you/Documents/Hook",
       advancedMode: MOCK_ADVANCED,
+      plan: MOCK_PLAN,
+      cloudSync: MOCK_CLOUD_SYNC,
+      customProvider: MOCK_PROVIDER,
       projects: [
         {
           id: "pj_mock_invoice",
@@ -744,6 +769,47 @@ export const mock = {
   async setAdvancedMode(enabled: boolean): Promise<SettingsView> {
     MOCK_ADVANCED = enabled;
     return mock.getSettings();
+  },
+
+  async setCloudSync(enabled: boolean): Promise<SettingsView> {
+    if (MOCK_PLAN === "free" && enabled) {
+      throw new Error("Cloud sync is part of a paid plan.");
+    }
+    MOCK_CLOUD_SYNC = enabled;
+    return mock.getSettings();
+  },
+
+  async setCustomProvider(
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+  ): Promise<SettingsView> {
+    if (!baseUrl.trim() || !model.trim()) {
+      throw new Error("Enter an endpoint and a model name.");
+    }
+    if (!apiKey.trim() && !MOCK_PROVIDER?.hasKey) {
+      throw new Error("Enter the API key for this endpoint.");
+    }
+    MOCK_PROVIDER = { baseUrl: baseUrl.trim(), model: model.trim(), hasKey: true };
+    return mock.getSettings();
+  },
+
+  async clearCustomProvider(): Promise<SettingsView> {
+    MOCK_PROVIDER = null;
+    return mock.getSettings();
+  },
+
+  async customModels(baseUrl: string, apiKey: string): Promise<string[]> {
+    if (!baseUrl.trim()) throw new Error("Enter the endpoint first.");
+    if (!apiKey.trim() && !MOCK_PROVIDER?.hasKey) throw new Error("Enter the API key first.");
+    await sleep(300);
+    return [
+      "gpt-4o",
+      "gpt-4o-mini",
+      "llama-3.3-70b-instruct",
+      "mistral-large-latest",
+      "o3-mini",
+    ];
   },
 
   async agentTranscript(agentId: string): Promise<AgentTranscript> {
@@ -973,12 +1039,16 @@ export const mock = {
   },
 
   async syncStatus(): Promise<SyncView> {
+    const available = MOCK_PLAN !== "free";
+    const enabled = available && MOCK_CLOUD_SYNC;
     return {
-      enabled: false,
-      state: "off",
-      cursor: 0,
+      enabled,
+      available,
+      reason: !available ? "free" : !MOCK_CLOUD_SYNC ? "off" : null,
+      state: enabled ? "idle" : "off",
+      cursor: enabled ? 128 : 0,
       pending: 0,
-      lastSyncAt: 0,
+      lastSyncAt: enabled ? Date.now() : 0,
       message: null,
     };
   },

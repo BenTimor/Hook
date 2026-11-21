@@ -53,6 +53,11 @@ pub struct RequestContext {
     pub chat_id: String,
     pub agent_id: Option<String>,
     pub surface: &'static str,
+    /// The user message this request belongs to. Every model call of one turn
+    /// repeats it, which is how the proxy counts messages rather than requests.
+    pub message_id: Option<String>,
+    /// Headed for the user's own endpoint: send none of Hook's headers.
+    pub byok: bool,
 }
 
 impl RequestContext {
@@ -61,7 +66,19 @@ impl RequestContext {
             chat_id: chat_id.into(),
             agent_id: None,
             surface: "chat",
+            message_id: None,
+            byok: false,
         }
+    }
+
+    pub fn for_message(mut self, message_id: Option<String>) -> Self {
+        self.message_id = message_id;
+        self
+    }
+
+    pub fn byok(mut self, byok: bool) -> Self {
+        self.byok = byok;
+        self
     }
 }
 
@@ -159,13 +176,21 @@ where
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .bearer_auth(token)
-        .header("X-Hook-Client", "hook-desktop")
-        .header("X-Hook-Surface", context.surface)
-        .header("X-Hook-Chat-Id", &context.chat_id)
-        .header("X-Hook-App-Version", crate::version::current())
         .json(&build_body(cfg, messages, tools));
-    if let Some(agent_id) = &context.agent_id {
-        request = request.header("X-Hook-Agent-Id", agent_id);
+    // Hook's own attribution headers belong to Hook's proxy. A personal
+    // endpoint learns the model and the messages, nothing about the account.
+    if !context.byok {
+        request = request
+            .header("X-Hook-Client", "hook-desktop")
+            .header("X-Hook-Surface", context.surface)
+            .header("X-Hook-Chat-Id", &context.chat_id)
+            .header("X-Hook-App-Version", crate::version::current());
+        if let Some(message_id) = &context.message_id {
+            request = request.header("X-Hook-Message-Id", message_id);
+        }
+        if let Some(agent_id) = &context.agent_id {
+            request = request.header("X-Hook-Agent-Id", agent_id);
+        }
     }
 
     for (name, value) in &cfg.provider.headers {
@@ -469,7 +494,7 @@ pub struct Capabilities {
 /// Ask the provider what our model can do. Never fails: a provider without a
 /// usable `/models` simply reports nothing, and pictures are then described in
 /// text instead of being sent as image parts.
-pub async fn fetch_capabilities(cfg: &HarnessConfig, token: &str) -> Capabilities {
+pub async fn fetch_capabilities(cfg: &HarnessConfig, token: &str, byok: bool) -> Capabilities {
     if token.trim().is_empty() {
         return Capabilities::default();
     }
@@ -483,11 +508,14 @@ pub async fn fetch_capabilities(cfg: &HarnessConfig, token: &str) -> Capabilitie
     let mut request = client
         .get(cfg.provider.models_endpoint())
         .header(reqwest::header::ACCEPT, "application/json")
-        .header("X-Hook-Client", "hook-desktop")
-        .header("X-Hook-Surface", "chat")
         .bearer_auth(token);
-    for (name, value) in &cfg.provider.headers {
-        request = request.header(name, value);
+    if !byok {
+        request = request
+            .header("X-Hook-Client", "hook-desktop")
+            .header("X-Hook-Surface", "chat");
+        for (name, value) in &cfg.provider.headers {
+            request = request.header(name, value);
+        }
     }
     let Ok(response) = request.send().await else {
         return Capabilities::default();
@@ -568,6 +596,145 @@ pub fn supports_vision(card: &serde_json::Value) -> bool {
         || is_true(&card["capabilities"]["image_input"])
         || is_true(&card["vision"])
         || is_true(&card["supports_vision"])
+}
+
+// ── where a request goes ────────────────────────────────────────
+
+/// One turn's destination: Hook's own service, or the endpoint the user
+/// entered in this product's Settings.
+///
+/// A personal endpoint is never metered or billed by Hook, carries none of
+/// Hook's headers, and uses the model the user picked. It also unlocks coding
+/// agents on the free plan — so the account checks in `commands.rs` have to
+/// agree with this resolution, not the other way round.
+pub struct ProviderTarget {
+    pub cfg: HarnessConfig,
+    pub token: String,
+    pub byok: bool,
+}
+
+impl ProviderTarget {
+    pub fn resolve(
+        cfg: &HarnessConfig,
+        custom: Option<&crate::settings::CustomProvider>,
+        account_token: Option<String>,
+    ) -> Result<Self, String> {
+        if let Some(custom) = custom.filter(|entry| entry.is_complete()) {
+            return Ok(Self {
+                cfg: custom_config(cfg, custom),
+                token: custom.api_key.trim().to_string(),
+                byok: true,
+            });
+        }
+        match account_token.filter(|token| !token.trim().is_empty()) {
+            Some(token) => Ok(Self {
+                cfg: cfg.clone(),
+                token,
+                byok: false,
+            }),
+            None => Err("Sign in to Hook to continue.".into()),
+        }
+    }
+}
+
+/// The root of a user-entered endpoint. People paste the whole
+/// `/chat/completions` URL, or the `/models` URL they just tested; both mean the
+/// same base.
+fn custom_root(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    for suffix in ["/chat/completions", "/completions", "/models"] {
+        if let Some(base) = trimmed.strip_suffix(suffix) {
+            return base.trim_end_matches('/').to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+/// Where to ask a personal endpoint which models it has.
+pub fn custom_models_endpoint(base_url: &str) -> String {
+    format!("{}/models", custom_root(base_url))
+}
+
+/// A copy of the build config pointing at the user's endpoint.
+///
+/// Reasoning is off: the build's thinking level belongs to the model it was
+/// written for, and a request carrying `reasoning_effort` to an endpoint that
+/// has never heard of it is usually a 400. Tools stay on — they are the OpenAI
+/// function-calling shape every compatible endpoint speaks.
+fn custom_config(base: &HarnessConfig, custom: &crate::settings::CustomProvider) -> HarnessConfig {
+    let mut cfg = base.clone();
+    cfg.provider.base_url = custom_root(&custom.base_url);
+    cfg.provider.path = Some("/chat/completions".into());
+    cfg.provider.api_key = String::new();
+    cfg.provider.headers.clear();
+    cfg.provider.extra.clear();
+    cfg.provider.stream_usage = false;
+    cfg.provider.reasoning_param = None;
+    cfg.provider.reasoning_echo = Some("off".into());
+    cfg.model = crate::config::ModelConfig {
+        name: custom.model.trim().to_string(),
+        thinking: None,
+        temperature: None,
+        max_tokens: base.model.max_tokens,
+    };
+    // A coding agent must use the user's model, not the one this build was
+    // compiled to drive.
+    cfg.coding.model = None;
+    cfg.coding.thinking = None;
+    cfg
+}
+
+/// Read the model list the user's endpoint advertises.
+///
+/// Never fatal: an endpoint without `/models` is exactly why the window also
+/// accepts a typed model name. The error says what happened without ever
+/// including the key.
+pub async fn fetch_models(base_url: &str, api_key: &str) -> Result<Vec<String>, String> {
+    if api_key.trim().is_empty() {
+        return Err("Enter the API key first.".into());
+    }
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("Could not prepare the request: {e}"))?;
+    let response = client
+        .get(custom_models_endpoint(base_url))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .bearer_auth(api_key.trim())
+        .send()
+        .await
+        .map_err(|e| format!("Could not reach that endpoint: {e}"))?;
+    let status = response.status();
+    let raw = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "The endpoint answered {status}. Type the model name instead."
+        ));
+    }
+    let body: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|_| "The model list is not JSON. Type the model name instead.".to_string())?;
+    let list = body
+        .get("data")
+        .or_else(|| body.get("models"))
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "The endpoint returned no model list. Type the model name instead.".to_string())?;
+    let mut names: Vec<String> = list
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("id")
+                .or_else(|| entry.get("name"))
+                .and_then(|value| value.as_str())
+        })
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.len() <= 200)
+        .map(str::to_string)
+        .collect();
+    names.sort();
+    names.dedup();
+    names.truncate(500);
+    Ok(names)
 }
 
 #[cfg(test)]
@@ -667,6 +834,59 @@ mod tests {
             cfg.provider.endpoint(),
             "http://127.0.0.1:8787/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn a_personal_provider_replaces_the_build_endpoint_and_model() {
+        let base = mock_config();
+        let custom = crate::settings::CustomProvider {
+            base_url: "https://api.example.test/v1/chat/completions".into(),
+            api_key: "sk-user-token".into(),
+            model: "gpt-4o-mini".into(),
+        };
+        let target = ProviderTarget::resolve(&base, Some(&custom), None).unwrap();
+        assert!(target.byok, "a complete endpoint needs no account token");
+        assert_eq!(target.token, "sk-user-token");
+        assert_eq!(
+            target.cfg.provider.endpoint(),
+            "https://api.example.test/v1/chat/completions"
+        );
+        assert_eq!(target.cfg.model.name, "gpt-4o-mini");
+        // The build's thinking level and headers belong to its own model.
+        assert_eq!(target.cfg.model.thinking_level(), None);
+        assert!(target.cfg.provider.headers.is_empty());
+        assert!(!target.cfg.provider.stream_usage);
+        assert_eq!(target.cfg.coding.model(), None, "the coding agent uses the user's model");
+        // The model card is fetched from the same root.
+        assert_eq!(
+            custom_models_endpoint(&custom.base_url),
+            "https://api.example.test/v1/models"
+        );
+        assert_eq!(
+            custom_models_endpoint("https://api.example.test/v1/models"),
+            "https://api.example.test/v1/models"
+        );
+    }
+
+    #[test]
+    fn without_a_personal_provider_the_account_token_is_used() {
+        let base = mock_config();
+        assert!(ProviderTarget::resolve(&base, None, None).is_err());
+        let target = ProviderTarget::resolve(&base, None, Some("hk_app_token".into())).unwrap();
+        assert!(!target.byok);
+        assert_eq!(target.token, "hk_app_token");
+        assert_eq!(target.cfg.provider.endpoint(), base.provider.endpoint());
+        assert_eq!(target.cfg.model.name, base.model.name);
+
+        // A half-filled Settings form is not a provider yet.
+        let incomplete = crate::settings::CustomProvider {
+            base_url: "https://api.example.test/v1".into(),
+            api_key: String::new(),
+            model: "m".into(),
+        };
+        let fallback =
+            ProviderTarget::resolve(&base, Some(&incomplete), Some("hk_app_token".into())).unwrap();
+        assert!(!fallback.byok);
     }
 
     #[test]

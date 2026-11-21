@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { json, Router } from "express";
+import { planOf, quotaView } from "./plans.mjs";
 import { apiUser, bearerToken, deviceId, hashToken } from "./tokens.mjs";
 
 const DEVICE_TTL_MS = 10 * 60 * 1000;
@@ -34,6 +35,12 @@ function publicUser(row) {
     email: row.email,
     name: row.name ?? null,
     approved: row.waitlist_status === "approved",
+    // The entitlement every product reads. `free` restricts sync, the daily
+    // message count and coding agents; any other value is a paid plan.
+    plan: planOf(row),
+    // One switch per account, not per product: turning it off in Hook turns it
+    // off in Workspace and on the phone too.
+    cloudSync: Number(row.cloud_sync) !== 0,
   };
 }
 
@@ -163,6 +170,7 @@ export function createAuthRouter({ db, auth }) {
     res.json({
       token: mintAppToken(row.google_subject, "Hook mobile", req),
       user: publicUser(row),
+      quota: quotaView(db, row),
     });
   });
 
@@ -236,7 +244,12 @@ export function createAuthRouter({ db, auth }) {
       db.exec("ROLLBACK");
       throw error;
     }
-    res.json({ status: "approved", token, user: publicUser(user) });
+    res.json({
+      status: "approved",
+      token,
+      user: publicUser(user),
+      quota: quotaView(db, user),
+    });
   });
 
   router.post("/device/approve", (req, res) => {
@@ -271,7 +284,11 @@ export function createAuthRouter({ db, auth }) {
     });
   });
 
-  /** The desktop app asks this on launch to notice a revoked account. */
+  /**
+   * The desktop app asks this on launch to notice a revoked account, a plan
+   * change or a sync switch flipped on another product. The quota is computed
+   * here so the window can say "42 of 100" without a second call.
+   */
   router.get("/me", (req, res) => {
     if (!db) return res.status(503).json({ error: "unavailable" });
     const result = apiUser(db, req);
@@ -283,7 +300,51 @@ export function createAuthRouter({ db, auth }) {
           code: result.code,
         },
       });
-    res.json({ authenticated: true, user: publicUser(result.row) });
+    res.json({
+      authenticated: true,
+      user: publicUser(result.row),
+      quota: quotaView(db, result.row),
+    });
+  });
+
+  /**
+   * Account-level preferences every product shares.
+   *
+   * Today that is `cloudSync`: whether conversations, projects, pictures and
+   * memories may leave this account's computers. A paid account may turn it
+   * off; a free account never syncs, and the setting is refused rather than
+   * silently ignored.
+   */
+  router.post("/preferences", (req, res) => {
+    if (!db) return res.status(503).json({ error: "unavailable" });
+    const result = apiUser(db, req);
+    if (!result.row)
+      return res.status(result.status).json({
+        error: {
+          message: result.message,
+          type: "invalid_request_error",
+          code: result.code,
+        },
+      });
+    if (planOf(result.row) === "free")
+      return res.status(403).json({
+        error: {
+          message: "Cloud sync is part of a paid plan.",
+          type: "invalid_request_error",
+          code: "sync_not_included",
+        },
+      });
+    const body = req.body ?? {};
+    if (
+      Object.keys(body).length !== 1 ||
+      typeof body.cloudSync !== "boolean"
+    )
+      return res.status(400).json({ error: "invalid_preferences" });
+    db.prepare(
+      "UPDATE waitlist_signups SET cloud_sync = ? WHERE google_subject = ?",
+    ).run(body.cloudSync ? 1 : 0, result.row.google_subject);
+    const row = findSignup.get(result.row.google_subject);
+    res.json({ user: publicUser(row), quota: quotaView(db, row) });
   });
 
   /**

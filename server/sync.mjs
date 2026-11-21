@@ -36,6 +36,7 @@ import { dirname, join, resolve } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { Router, json, raw } from "express";
 import { apiUser, deviceId } from "./tokens.mjs";
+import { syncRefusal } from "./plans.mjs";
 import { ensureRepo, forgetUser, gitRoot, userKey } from "./git.mjs";
 
 const PAGE = 100;
@@ -415,6 +416,32 @@ export function createSyncRouter({ env, db }) {
   const router = Router();
   const root = syncRoot(env);
   const caps = limits(env);
+
+  /**
+   * Sync is account data leaving this computer, so the account decides whether
+   * it may. A free account never syncs; a paid account may switch it off in any
+   * product and every other one obeys on its next request.
+   *
+   * Applied per path rather than to the whole router so `DELETE /account` —
+   * deleting what is already stored — keeps working for an account that has
+   * since gone free or switched sync off.
+   */
+  const gate = (req, res, next) => {
+    const result = apiUser(db, req);
+    if (!result.row) return authError(res, result);
+    const refusal = syncRefusal(result.row);
+    if (refusal)
+      return res.status(403).json({
+        error: {
+          message: refusal.message,
+          type: "invalid_request_error",
+          code: refusal.code,
+        },
+      });
+    next();
+  };
+  for (const path of ["/status", "/changes", "/chats", "/projects", "/memory", "/media"])
+    router.use(path, gate);
 
   router.get("/status", (req, res) => {
     const result = apiUser(db, req);

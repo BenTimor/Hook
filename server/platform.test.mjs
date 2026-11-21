@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import express from "express";
 import { createPlatform } from "./platform.mjs";
+import { hashToken } from "./tokens.mjs";
 
 const secret = "hook-platform-test-secret-with-at-least-32-characters";
 const clientId = "hook-platform.apps.googleusercontent.com";
@@ -159,9 +160,20 @@ test("approved users can sign in a device, use the proxy, see usage, download an
   const db = new DatabaseSync(dbPath);
   db.prepare(
     `INSERT INTO waitlist_signups
-       (google_subject, email, name, waitlist_status, approved_at)
-     VALUES (?, ?, ?, 'approved', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-  ).run("approved-1", "approved@example.test", "Approved Person");
+       (google_subject, email, name, waitlist_status, plan, approved_at)
+     VALUES (?, ?, ?, 'approved', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+  ).run("approved-1", "approved@example.test", "Approved Person", "pro");
+  // A free account: the same sign-in, a different entitlement.
+  db.prepare(
+    `INSERT INTO waitlist_signups
+       (google_subject, email, name, waitlist_status, plan, approved_at)
+     VALUES (?, ?, ?, 'approved', 'free', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+  ).run("free-1", "free@example.test", "Free Person");
+  const freeToken = "hk_free_test_token_0123456789abcdefghij";
+  db.prepare(
+    `INSERT INTO api_tokens (token_hash, google_subject, label, scope, device_id)
+     VALUES (?, 'free-1', 'test', 'app', 'device-free')`,
+  ).run(hashToken(freeToken));
   db.prepare(
     `INSERT INTO waitlist_signups
        (google_subject, email, name, waitlist_status)
@@ -257,6 +269,19 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       const mePayload = await me.json();
       assert.equal(mePayload.authenticated, true);
       assert.equal(mePayload.user.subject, "approved-1");
+      assert.equal(mePayload.user.plan, "pro");
+      assert.equal(mePayload.user.cloudSync, true);
+      // A paid account has no message quota to draw.
+      assert.equal(mePayload.quota, null);
+    });
+
+    await t.test("the waitlist itself grants no plan", () => {
+      // A row that is only on the waitlist stores no entitlement, even though
+      // `planOf()` would answer `free` defensively for an approved row.
+      const waiting = db
+        .prepare("SELECT plan FROM waitlist_signups WHERE google_subject = 'waiting-1'")
+        .get();
+      assert.equal(waiting.plan, null);
     });
 
     await t.test("a phone asks which Google client to use, without a session", async () => {
@@ -394,6 +419,129 @@ test("approved users can sign in a device, use the proxy, see usage, download an
       assert.equal(usage.cache_miss_tokens, 20);
       assert.equal(usage.reasoning_tokens, 2);
       assert.equal(usage.status, 200);
+    });
+
+    await t.test("a free account is metered, has no coding agents and cannot sync", async () => {
+      const seed = db.prepare(
+        `INSERT INTO usage_events (google_subject, surface, status, message_id, plan)
+         VALUES ('free-1', 'chat', 200, ?, 'free')`,
+      );
+      for (let i = 0; i < 100; i += 1) seed.run(`free-message-${i}`);
+
+      const metered = await request("/v1/chat/completions", {
+        method: "POST",
+        token: freeToken,
+        body: { messages: [{ role: "user", content: "hi" }] },
+      });
+      assert.equal(metered.status, 429);
+      assert.equal((await metered.json()).error.code, "message_limit");
+
+      // Checked before the quota, because a free account has no coding agents
+      // at all, not even 100 messages' worth.
+      const coding = await request("/v1/chat/completions", {
+        method: "POST",
+        token: freeToken,
+        body: { messages: [{ role: "user", content: "hi" }] },
+        headers: { "x-hook-surface": "coding" },
+      });
+      assert.equal(coding.status, 403);
+      assert.equal((await coding.json()).error.code, "coding_not_included");
+
+      const sync = await request("/sync/status", { token: freeToken });
+      assert.equal(sync.status, 403);
+      assert.equal((await sync.json()).error.code, "sync_not_included");
+
+      // Search is not a conversation and is not metered.
+      const search = await request("/v1/search", {
+        method: "POST",
+        token: freeToken,
+        body: { query: "hook" },
+      });
+      assert.equal(search.status, 200);
+
+      const view = await (await request("/auth/me", { token: freeToken })).json();
+      assert.equal(view.user.plan, "free");
+      assert.equal(view.quota.limit, 100);
+      assert.equal(view.quota.used, 100);
+      assert.equal(view.quota.remaining, 0);
+      assert.ok(view.quota.resetAt);
+
+      // A free account may not turn sync on.
+      const refused = await request("/auth/preferences", {
+        method: "POST",
+        token: freeToken,
+        body: { cloudSync: true },
+      });
+      assert.equal(refused.status, 403);
+      assert.equal((await refused.json()).error.code, "sync_not_included");
+
+      // The window rolls: the very same rows, aged past a day, stop counting.
+      db.prepare(
+        `UPDATE usage_events
+            SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-25 hours')
+          WHERE google_subject = 'free-1'`,
+      ).run();
+      const freed = await request("/v1/chat/completions", {
+        method: "POST",
+        token: freeToken,
+        body: { messages: [{ role: "user", content: "again" }] },
+      });
+      assert.equal(freed.status, 200);
+      await freed.text();
+      const afterWindow = await (
+        await request("/auth/me", { token: freeToken })
+      ).json();
+      assert.equal(afterWindow.quota.used, 0);
+      assert.equal(afterWindow.quota.remaining, 100);
+    });
+
+    await t.test("a paid account can switch cloud sync off for every product", async () => {
+      const off = await request("/auth/preferences", {
+        method: "POST",
+        token,
+        body: { cloudSync: false },
+      });
+      assert.equal(off.status, 200);
+      assert.equal((await off.json()).user.cloudSync, false);
+
+      const status = await request("/sync/status", { token });
+      assert.equal(status.status, 403);
+      assert.equal((await status.json()).error.code, "sync_disabled");
+
+      // Account state, not product state: a second product's token reads it too.
+      const me = await (await request("/auth/me", { token })).json();
+      assert.equal(me.user.cloudSync, false);
+
+      const on = await request("/auth/preferences", {
+        method: "POST",
+        token,
+        body: { cloudSync: true },
+      });
+      assert.equal((await on.json()).user.cloudSync, true);
+    });
+
+    await t.test("the app can report what the proxy cannot see, and only that", async () => {
+      const ok = await request("/events", {
+        method: "POST",
+        token: freeToken,
+        body: { kind: "byok_saved", product: "chat" },
+        headers: { "x-hook-app-version": "1.2.3" },
+      });
+      assert.equal(ok.status, 204);
+      const row = db
+        .prepare("SELECT * FROM client_events ORDER BY id DESC LIMIT 1")
+        .get();
+      assert.equal(row.kind, "byok_saved");
+      assert.equal(row.plan, "free");
+      assert.equal(row.product, "chat");
+      assert.equal(row.app_version, "1.2.3");
+
+      const bad = await request("/events", {
+        method: "POST",
+        token: freeToken,
+        body: { kind: "the user's message was ..." },
+      });
+      assert.equal(bad.status, 400);
     });
 
     await t.test("the release index is public and names the supported floor", async () => {

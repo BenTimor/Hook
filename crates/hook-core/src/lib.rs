@@ -11,6 +11,7 @@
 //! the data model.
 
 mod agent;
+mod analytics;
 mod auth;
 mod bridge;
 mod coding;
@@ -168,6 +169,10 @@ pub fn builder(
             commands::get_settings,
             commands::set_projects_dir,
             commands::set_advanced_mode,
+            commands::set_custom_provider,
+            commands::clear_custom_provider,
+            commands::custom_models,
+            commands::set_cloud_sync,
             commands::read_image,
             commands::open_image,
             commands::save_image_as,
@@ -267,6 +272,12 @@ fn setup(
     if capabilities.coding_agents {
         let auth = auth.clone();
         tauri::async_runtime::spawn(async move {
+            // Repositories are account data: a free account never syncs, and a
+            // paid account with the switch off does not either. No sync, no git
+            // credential to mint.
+            if auth.is_free() || auth.cloud_sync() == Some(false) {
+                return;
+            }
             let _ = auth.ensure_git_token().await;
         });
     }

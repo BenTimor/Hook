@@ -15,6 +15,7 @@ const run = promisify(execFile);
 
 const APP_TOKEN = "hk_app_git_test_0123456789abcdefghijkl";
 const GIT_TOKEN = "hk_git_git_test_0123456789abcdefghijkl";
+const FREE_GIT_TOKEN = "hk_git_git_free_0123456789abcdefghij";
 
 async function setup(t, overrides = {}) {
   const directory = mkdtempSync(join(tmpdir(), "hook-git-test-"));
@@ -40,8 +41,8 @@ async function setup(t, overrides = {}) {
   const db = new DatabaseSync(dbPath);
   db.prepare(
     `INSERT INTO waitlist_signups
-       (google_subject, email, waitlist_status, approved_at)
-     VALUES ('git-a', 'a@example.test', 'approved',
+       (google_subject, email, waitlist_status, plan, approved_at)
+     VALUES ('git-a', 'a@example.test', 'approved', 'pro',
              strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
   ).run();
   for (const [token, scope] of [
@@ -53,6 +54,18 @@ async function setup(t, overrides = {}) {
        VALUES (?, 'git-a', 'test', ?, 'device-one')`,
     ).run(hashToken(token), scope);
   }
+  // A free account: it may run a coding agent locally, but its folder is not
+  // account data and must never reach the git service.
+  db.prepare(
+    `INSERT INTO waitlist_signups
+       (google_subject, email, waitlist_status, plan, approved_at)
+     VALUES ('git-free', 'free@example.test', 'approved', 'free',
+             strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+  ).run();
+  db.prepare(
+    `INSERT INTO api_tokens (token_hash, google_subject, label, scope, device_id)
+     VALUES (?, 'git-free', 'test', 'git', 'device-free')`,
+  ).run(hashToken(FREE_GIT_TOKEN));
   db.close();
 
   const env = {
@@ -91,7 +104,7 @@ async function setup(t, overrides = {}) {
       // Windows keeps a killed git process' directory locked for a moment.
     }
   });
-  return { directory, origin, git };
+  return { directory, origin, git, freeGitToken: FREE_GIT_TOKEN };
 }
 
 async function commit(git, cwd, file, content, message) {
@@ -182,4 +195,15 @@ test("deleting a branch on the account's repository is refused", async (t) => {
   await git(work, ["push", "-u", "origin", "main"]);
 
   await assert.rejects(git(work, ["push", "origin", "--delete", "main"]));
+});
+
+test("a free account cannot push a project to the account", async (t) => {
+  const { origin, freeGitToken } = await setup(t);
+  const response = await fetch(
+    `${origin}/api/git/pj_free.git/info/refs?service=git-receive-pack`,
+    { headers: { authorization: `Bearer ${freeGitToken}` } },
+  );
+  assert.equal(response.status, 403);
+  const body = await response.json();
+  assert.equal(body.error.code, "sync_not_included");
 });

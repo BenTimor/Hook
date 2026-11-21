@@ -3,6 +3,7 @@ import type {
   AuthView,
   Chat,
   ChatMeta,
+  CustomProvider,
   Message,
   PreviewEvent,
   SettingsView,
@@ -137,6 +138,24 @@ let chats: Chat[] = [
 let seq = 10;
 let advancedMode = false;
 
+/** Design-time account state. `?plan=free`, `?sync=off` preview the other side. */
+const demoParams = new URLSearchParams(window.location.search);
+const demoPlan: string = demoParams.get("plan") === "free" ? "free" : "pro";
+let demoCloudSync = demoParams.get("sync") !== "off";
+let demoProvider: CustomProvider | null =
+  demoParams.get("byok") === "1"
+    ? { baseUrl: "https://api.example.test/v1", model: "gpt-4o-mini", hasKey: true }
+    : null;
+
+const demoAccount = (): Pick<AuthView, "plan" | "cloudSync" | "quota"> => ({
+  plan: demoPlan,
+  cloudSync: demoCloudSync,
+  quota:
+    demoPlan === "free"
+      ? { limit: 100, used: 12, remaining: 88, resetAt: null }
+      : null,
+});
+
 function listMeta(): ChatMeta[] {
   return [...chats]
     .sort((a, b) => b.meta.updatedAt - a.meta.updatedAt)
@@ -157,6 +176,7 @@ export const demo = {
       userCode: null,
       verificationUrl: null,
       message: null,
+      ...demoAccount(),
     };
   },
 
@@ -170,6 +190,7 @@ export const demo = {
       userCode: "K7QM-2XPD",
       verificationUrl: "https://hookcode.io/authorize?code=K7QM-2XPD",
       message: null,
+      ...demoAccount(),
     };
   },
 
@@ -186,6 +207,7 @@ export const demo = {
       userCode: null,
       verificationUrl: null,
       message: null,
+      ...demoAccount(),
     };
   },
 
@@ -280,21 +302,68 @@ export const demo = {
   },
 
   async getSettings(): Promise<SettingsView> {
-    return { projectsDir: "", advancedMode };
+    return {
+      projectsDir: "",
+      advancedMode,
+      plan: demoPlan,
+      cloudSync: demoCloudSync,
+      customProvider: demoProvider,
+    };
   },
 
   async setAdvancedMode(enabled: boolean): Promise<SettingsView> {
     advancedMode = enabled;
-    return { projectsDir: "", advancedMode };
+    return this.getSettings();
+  },
+
+  async setCloudSync(enabled: boolean): Promise<SettingsView> {
+    if (demoPlan === "free" && enabled) {
+      throw new Error("Cloud sync is part of a paid plan.");
+    }
+    demoCloudSync = enabled;
+    return this.getSettings();
+  },
+
+  async setCustomProvider(
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+  ): Promise<SettingsView> {
+    if (!baseUrl.trim() || !model.trim()) {
+      throw new Error("Enter an endpoint and a model name.");
+    }
+    if (!apiKey.trim() && !demoProvider?.hasKey) {
+      throw new Error("Enter the API key for this endpoint.");
+    }
+    demoProvider = { baseUrl: baseUrl.trim(), model: model.trim(), hasKey: true };
+    return this.getSettings();
+  },
+
+  async clearCustomProvider(): Promise<SettingsView> {
+    demoProvider = null;
+    return this.getSettings();
+  },
+
+  async customModels(baseUrl: string, apiKey: string): Promise<string[]> {
+    if (!baseUrl.trim()) throw new Error("Enter the endpoint first.");
+    if (!apiKey.trim() && !demoProvider?.hasKey) {
+      throw new Error("Enter the API key first.");
+    }
+    await sleep(300);
+    return ["gpt-4o-mini", "gpt-4o", "llama-3.3-70b-instruct", "o3-mini"];
   },
 
   async syncStatus(): Promise<SyncView> {
+    const available = demoPlan !== "free";
+    const enabled = available && demoCloudSync;
     return {
-      enabled: true,
-      state: "idle",
-      cursor: 42,
+      enabled,
+      available,
+      reason: !available ? "free" : !demoCloudSync ? "off" : null,
+      state: enabled ? "idle" : "off",
+      cursor: enabled ? 42 : 0,
       pending: 0,
-      lastSyncAt: Date.now() - 40_000,
+      lastSyncAt: enabled ? Date.now() - 40_000 : 0,
       message: null,
     };
   },

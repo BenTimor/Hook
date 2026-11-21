@@ -814,3 +814,144 @@ body {
   box-shadow: var(--shadow-lg);
   animation: sheet-fade 160ms var(--ease);
 }
+
+/* ── Plan, sync and a personal model endpoint ───────────────────────────── */
+
+.row-sync {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 40px;
+  flex: 0 0 34px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+}
+
+.row-sync svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-block {
+  padding: 14px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.settings-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.settings-label svg {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-tag {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 249, 0.7);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+.settings-help {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.settings-help.bad {
+  color: var(--danger);
+}
+
+.phone-quota-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.phone-quota-head strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.phone-quota {
+  height: 5px;
+  margin: 8px 0 9px;
+  border-radius: 999px;
+  background: rgba(var(--ink-rgb), 0.08);
+  overflow: hidden;
+}
+
+.phone-quota span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ink-3);
+}
+
+.phone-quota span[data-full="true"] {
+  background: var(--danger);
+}
+
+.phone-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.phone-field > span {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+
+.phone-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 249, 0.9);
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--ink);
+  outline: none;
+}
+
+.phone-input:focus {
+  border-color: rgba(var(--accent-rgb), 0.4);
+}
+
+.phone-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.phone-actions .btn {
+  height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+}

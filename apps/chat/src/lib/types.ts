@@ -144,7 +144,12 @@ export interface ContentReport {
 
 /** Conversation and project sync, as shown in Settings. */
 export interface SyncView {
+  /** The engine is actually syncing. */
   enabled: boolean;
+  /** The account's plan allows cloud sync at all. */
+  available: boolean;
+  /** Why sync is off: the free plan, or the account's switch. */
+  reason: "free" | "off" | null;
   state: "off" | "idle" | "syncing" | "error";
   cursor: number;
   pending: number;
@@ -176,6 +181,21 @@ export interface AuthView {
   userCode: string | null;
   verificationUrl: string | null;
   message: string | null;
+  /** `free`, `plus` or `pro`. Null on a local preview build. */
+  plan: string | null;
+  /** The account-wide cloud-sync switch. Null until the first account check. */
+  cloudSync: boolean | null;
+  /** The free plan's rolling message window. Null on a paid plan. */
+  quota: Quota | null;
+}
+
+/** The free plan's 24-hour message allowance. */
+export interface Quota {
+  limit: number;
+  used: number;
+  remaining: number;
+  /** ISO time when the oldest counted message leaves the window. */
+  resetAt: string | null;
 }
 
 export interface Project {
@@ -189,11 +209,26 @@ export interface Project {
   isGit: boolean;
 }
 
+/** A model endpoint the user brought themselves, for this product only. */
+export interface CustomProvider {
+  /** Base URL or full endpoint, as entered. */
+  baseUrl: string;
+  model: string;
+  /** A key is stored on this computer. The key itself never reaches the window. */
+  hasKey: boolean;
+}
+
 export interface SettingsView {
   projectsDir: string;
   projects: Project[];
   /** Thinking, tool calls and the coding-agent inspector are shown. */
   advancedMode: boolean;
+  /** `free`, `plus` or `pro`. Null on a local preview build. */
+  plan: string | null;
+  /** The account-wide cloud-sync switch. */
+  cloudSync: boolean;
+  /** The provider this product uses instead of Hook's own, if any. */
+  customProvider: CustomProvider | null;
 }
 
 export type MemoryKind = "user" | "feedback" | "project" | "reference";

@@ -269,7 +269,7 @@ export function ImportSection() {
               `. ${summary.unchanged.toLocaleString()} ${
                 summary.unchanged === 1 ? "was" : "were"
               } already here`}
-            . They sync to your account like everything else.
+            . They sync to your account when cloud sync is on.
           </span>
           {summary.chatIds.length > 0 && (
             <button className="inline-link" onClick={openFirst}>

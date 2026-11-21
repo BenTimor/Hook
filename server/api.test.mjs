@@ -454,3 +454,49 @@ test("waitlist onboarding preserves existing signups and authenticates preferenc
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("the waitlist grants no plan; approval is what assigns one", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "hook-plan-test-"));
+  const dbPath = join(directory, "signups.sqlite");
+  // A database written before plans existed, with one account already approved.
+  const seed = new DatabaseSync(dbPath);
+  seed.exec(`CREATE TABLE waitlist_signups (
+    google_subject TEXT PRIMARY KEY NOT NULL,
+    email TEXT NOT NULL,
+    joined_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    waitlist_status TEXT NOT NULL DEFAULT 'waitlisted',
+    approved_at TEXT
+  ) STRICT;
+  INSERT INTO waitlist_signups (google_subject, email, waitlist_status, approved_at)
+    VALUES ('old-approved', 'old@example.test', 'approved', '2026-01-01T00:00:00Z');
+  INSERT INTO waitlist_signups (google_subject, email, waitlist_status)
+    VALUES ('still-waiting', 'new@example.test', 'waitlisted');`);
+  seed.close();
+
+  const api = createWaitlistApi({
+    WAITLIST_ORIGIN: "http://127.0.0.1:5173",
+    WAITLIST_DB_PATH: dbPath,
+    GOOGLE_CLIENT_ID: clientId,
+    GOOGLE_CLIENT_SECRET: "fixture",
+    WAITLIST_SESSION_SECRET: secret,
+  });
+  let db;
+  try {
+    db = new DatabaseSync(dbPath);
+    // The migration puts every already-approved account on `free`; approving a
+    // new account does the same (scripts/waitlist-admin.sh --approve).
+    const approved = db
+      .prepare("SELECT plan FROM waitlist_signups WHERE google_subject = 'old-approved'")
+      .get();
+    assert.equal(approved.plan, "free");
+    // Waiting is not an entitlement: no plan, no sign-in.
+    const waiting = db
+      .prepare("SELECT plan FROM waitlist_signups WHERE google_subject = 'still-waiting'")
+      .get();
+    assert.equal(waiting.plan, null);
+  } finally {
+    db?.close();
+    api.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

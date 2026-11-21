@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { List, Search, SquarePen, X } from "lucide-react";
+import { CloudOff, List, Search, SquarePen, X } from "lucide-react";
 import { HookMark } from "@hook/ui";
 
 import { Composer } from "./Composer";
@@ -13,6 +13,11 @@ export interface DockChat {
   id: string;
   title: string;
   updatedAt: number;
+  /**
+   * The account's cloud sync is off, so this conversation is only on this
+   * computer. A product that can answer sets it; the dock only draws it.
+   */
+  unsynced?: boolean;
 }
 
 export interface DockMessage extends ChatMessage {
@@ -358,6 +363,16 @@ export function ChatDock({
                       data-active={chat.id === activeId}
                       onClick={() => void openChat(chat.id)}
                     >
+                      {chat.unsynced ? (
+                        <span
+                          className="dock-history-cloud"
+                          role="img"
+                          aria-label="Not synced to the cloud"
+                          title="Not in the cloud — cloud sync is off for this account."
+                        >
+                          <CloudOff strokeWidth={2} aria-hidden="true" />
+                        </span>
+                      ) : null}
                       <span>{chat.title || "New chat"}</span>
                       <time>{recent(chat.updatedAt)}</time>
                     </button>

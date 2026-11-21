@@ -283,18 +283,25 @@ pub(crate) fn revoke_local(state: &AppState) {
 /// Ask the model card what it can see. Called at launch, after sign-in and on
 /// window reload. A provider without `/models` simply reports nothing.
 pub async fn refresh_capabilities(state: &Arc<AppState>) {
-    let Some(token) = state.auth.token() else {
+    // The card belongs to whichever endpoint this product talks to: Hook's own
+    // model, or the one the user entered. A provider without `/models` simply
+    // reports nothing.
+    let Ok(target) = crate::provider::ProviderTarget::resolve(
+        &state.cfg,
+        state.settings.custom_provider().as_ref(),
+        state.auth.token(),
+    ) else {
         state.vision.store(false, std::sync::atomic::Ordering::Relaxed);
         return;
     };
-    let caps = crate::provider::fetch_capabilities(&state.cfg, &token).await;
+    let caps = crate::provider::fetch_capabilities(&target.cfg, &target.token, target.byok).await;
     if !caps.known {
         eprintln!("hook: no model card at the provider; capabilities unknown");
         return;
     }
     eprintln!(
         "hook: model {} capabilities from /models: vision={}",
-        state.cfg.model.name, caps.vision
+        target.cfg.model.name, caps.vision
     );
     state
         .vision
@@ -553,12 +560,20 @@ pub fn send_message(
         if text.is_empty() {
             return Err("The coding agent needs a message.".into());
         }
+        // A free account has no coding agents unless it brought its own model
+        // endpoint. The engine refuses too; this is the sentence the user reads.
+        if state.auth.is_free() && state.settings.custom_provider().is_none() {
+            crate::analytics::track(state.inner(), "coding_blocked_free");
+            return Err(coding_needs_plan().into());
+        }
         // Pictures are a chat-model feature; the coding agent talks in text.
         let state = state.inner().clone();
         crate::coding::send(&state, &mut chat, &text)?;
         state.sync.wake();
         return Ok(chat.meta.id);
     }
+
+    free_chat_allowed(state.inner())?;
 
     if state.turns.is_busy(&chat.meta.id) {
         return Err("A reply is already streaming in this chat.".into());
@@ -589,8 +604,36 @@ pub fn send_message(
     crate::turn::trace("sync woken");
 
     turn::kick(state.inner().clone(), chat.meta.id.clone());
+    // Analytics only: the request has already left, and a personal endpoint is
+    // the one thing Hook's own metering never sees.
+    if state.settings.custom_provider().is_some() && state.auth.required() {
+        crate::analytics::track(state.inner(), "byok_turn");
+    }
     crate::turn::trace("turn kicked");
     Ok(chat.meta.id)
+}
+
+fn coding_needs_plan() -> &'static str {
+    "Coding agents are part of a paid plan. Add your own model provider in Settings to use one."
+}
+
+/// The free plan's 24-hour message limit, checked before the turn starts so the
+/// user reads a sentence instead of a 429. The server enforces the same rule
+/// from its own usage log; this never widens it.
+fn free_chat_allowed(state: &AppState) -> Result<(), String> {
+    if !state.auth.is_free() || state.settings.custom_provider().is_some() {
+        return Ok(());
+    }
+    if let Some(quota) = state.auth.quota() {
+        if quota.exhausted() {
+            crate::analytics::track(state, "quota_blocked");
+            return Err(format!(
+                "You have used all {} free messages in the last 24 hours. Add your own model provider in Settings, or upgrade to keep going.",
+                quota.limit
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -602,6 +645,7 @@ pub fn regenerate(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<()
     if state.turns.is_busy(&chat_id) {
         return Err("A reply is already streaming in this chat.".into());
     }
+    free_chat_allowed(state.inner())?;
 
     let Some(last) = chat.messages.iter().rposition(|m| m.role == "assistant") else {
         return Err("Nothing to regenerate yet.".into());
@@ -645,6 +689,7 @@ pub fn edit_message(
     if state.turns.is_busy(&chat_id) {
         return Err("A reply is already streaming in this chat.".into());
     }
+    free_chat_allowed(state.inner())?;
 
     let Some(index) = chat.messages.iter().position(|m| m.id == message_id) else {
         return Err("Message not found".into());
@@ -716,12 +761,30 @@ pub fn answer_coding_agent(
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CustomProviderView {
+    /// Base URL or full endpoint, as the user typed it.
+    pub base_url: String,
+    pub model: String,
+    /// A key is stored for this product. The key itself never crosses the IPC
+    /// boundary, so a window cannot leak it into a log or a screenshot.
+    pub has_key: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SettingsView {
     pub projects_dir: String,
     pub projects: Vec<Project>,
     /// The conversation shows thinking and tool calls, and the sidebar shows
     /// every coding-agent transcript. See `SettingsStore::advanced_mode`.
     pub advanced_mode: bool,
+    /// `free`, `plus` or `pro`; `None` on a local preview build.
+    pub plan: Option<String>,
+    /// The account-level cloud-sync switch. Free accounts never sync whatever
+    /// this says, and the server refuses the call for them.
+    pub cloud_sync: bool,
+    /// The model endpoint this product uses instead of Hook's own, if any.
+    pub custom_provider: Option<CustomProviderView>,
 }
 
 fn settings_view(state: &AppState) -> SettingsView {
@@ -731,6 +794,13 @@ fn settings_view(state: &AppState) -> SettingsView {
         projects_dir: projects_dir.to_string_lossy().to_string(),
         projects,
         advanced_mode: state.settings.advanced_mode(),
+        plan: state.auth.plan(),
+        cloud_sync: state.auth.cloud_sync().unwrap_or(true),
+        custom_provider: state.settings.custom_provider().map(|provider| CustomProviderView {
+            base_url: provider.base_url,
+            model: provider.model,
+            has_key: !provider.api_key.is_empty(),
+        }),
     }
 }
 
@@ -756,6 +826,93 @@ pub fn set_advanced_mode(
     enabled: bool,
 ) -> Result<SettingsView, String> {
     state.settings.set_advanced_mode(enabled)?;
+    Ok(settings_view(&state))
+}
+
+/// Save the user's own model endpoint for this product.
+///
+/// The key stays on this computer and is never uploaded: it belongs to this
+/// product's `settings.json`, not the shared account file. A free account that
+/// sets one may use coding agents and is not metered by Hook.
+#[tauri::command]
+pub fn set_custom_provider(
+    state: State<'_, Arc<AppState>>,
+    base_url: String,
+    api_key: Option<String>,
+    model: String,
+) -> Result<SettingsView, String> {
+    state
+        .settings
+        .set_custom_provider(&base_url, api_key.as_deref().unwrap_or(""), &model)?;
+    let shared = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        refresh_capabilities(&shared).await;
+    });
+    crate::analytics::track(state.inner(), "byok_saved");
+    Ok(settings_view(&state))
+}
+
+#[tauri::command]
+pub fn clear_custom_provider(state: State<'_, Arc<AppState>>) -> Result<SettingsView, String> {
+    state.settings.clear_custom_provider()?;
+    let shared = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        refresh_capabilities(&shared).await;
+    });
+    crate::analytics::track(state.inner(), "byok_removed");
+    Ok(settings_view(&state))
+}
+
+/// Ask a personal endpoint which models it offers. Errors are shown beside the
+/// field; the window always accepts a typed model name as well.
+#[tauri::command]
+pub async fn custom_models(
+    state: State<'_, Arc<AppState>>,
+    base_url: Option<String>,
+    api_key: Option<String>,
+) -> Result<Vec<String>, String> {
+    let saved = state.settings.custom_provider();
+    let endpoint = match base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => crate::settings::validate_base_url(value)?,
+        None => saved
+            .as_ref()
+            .map(|provider| provider.base_url.clone())
+            .ok_or("Enter the endpoint first.")?,
+    };
+    let key = api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| saved.map(|provider| provider.api_key))
+        .ok_or("Enter the API key first.")?;
+    let models = crate::provider::fetch_models(&endpoint, &key).await?;
+    crate::analytics::track(state.inner(), "byok_models_loaded");
+    Ok(models)
+}
+
+/// Turn this account's cloud sync on or off, for every Hook product.
+///
+/// The switch lives on the account, not in this product's settings, so turning
+/// it off here also stops Workspace and the phone. A free account is refused by
+/// the server; the window does not offer the switch to one.
+#[tauri::command]
+pub async fn set_cloud_sync(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    enabled: bool,
+) -> Result<SettingsView, String> {
+    let view = state.auth.set_cloud_sync(enabled).await?;
+    emit_auth(&app, &view);
+    state.sync.wake();
+    crate::analytics::track(
+        &state,
+        if enabled { "sync_enabled" } else { "sync_disabled" },
+    );
     Ok(settings_view(&state))
 }
 

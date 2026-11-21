@@ -2,6 +2,7 @@ import { useChatStore } from "../store/useChatStore";
 import { Composer as SharedComposer } from "@hook/chat";
 import { useSteering } from "../lib/agents";
 import { isCodingChat } from "../lib/utils";
+import { FreeLimitNotice } from "./FreeLimitNotice";
 
 /**
  * The chat app's input: store wiring only. Everything you can see or do to the
@@ -29,36 +30,39 @@ export function Composer() {
   );
 
   return (
-    <SharedComposer
-      value={draft}
-      onChange={setDraft}
-      onSend={() => void send(draft.trim())}
-      onStop={() => void stop()}
-      busy={streaming}
-      // A coding-agent chat is a conversation even while it works: what you
-      // type steers the run, and Stop stays beside Send.
-      steer={coding}
-      ready={ready}
-      images={draftImages}
-      // The coding engine reads text. Offering a picture here would promise
-      // something that cannot be delivered.
-      onAddImages={coding ? undefined : addDraftImages}
-      onRemoveImage={coding ? undefined : removeDraftImage}
-      placeholder={
-        coding
-          ? streaming
-            ? "Steer the agent…"
-            : "Tell the agent what to do…"
-          : steering
-            ? "Steer the agent…"
-            : "Ask anything…"
-      }
-      hint={
-        steering ? (
-          <>Enter to send · your message steers the working agent</>
-        ) : undefined
-      }
-      focusKey={`${activeId ?? "new"}:${focusToken}`}
-    />
+    <>
+      <FreeLimitNotice />
+      <SharedComposer
+        value={draft}
+        onChange={setDraft}
+        onSend={() => void send(draft.trim())}
+        onStop={() => void stop()}
+        busy={streaming}
+        // A coding-agent chat is a conversation even while it works: what you
+        // type steers the run, and Stop stays beside Send.
+        steer={coding}
+        ready={ready}
+        images={draftImages}
+        // The coding engine reads text. Offering a picture here would promise
+        // something that cannot be delivered.
+        onAddImages={coding ? undefined : addDraftImages}
+        onRemoveImage={coding ? undefined : removeDraftImage}
+        placeholder={
+          coding
+            ? streaming
+              ? "Steer the agent…"
+              : "Tell the agent what to do…"
+            : steering
+              ? "Steer the agent…"
+              : "Ask anything…"
+        }
+        hint={
+          steering ? (
+            <>Enter to send · your message steers the working agent</>
+          ) : undefined
+        }
+        focusKey={`${activeId ?? "new"}:${focusToken}`}
+      />
+    </>
   );
 }

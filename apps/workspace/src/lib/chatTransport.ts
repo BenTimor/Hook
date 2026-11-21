@@ -22,6 +22,17 @@ interface Chat {
   messages: DockMessage[];
 }
 
+/** Whether this account's conversations stay on this computer. */
+async function cloudOff(): Promise<boolean> {
+  try {
+    const status = await invoke<{ enabled: boolean }>("sync_status");
+    return !status.enabled;
+  } catch {
+    // A mark we cannot compute must not claim a chat is unsynced.
+    return false;
+  }
+}
+
 /**
  * The chat behind the dock.
  *
@@ -32,7 +43,10 @@ interface Chat {
 export const chatTransport: ChatTransport = {
   async listChats(): Promise<DockChat[]> {
     if (!isTauri()) return demoList;
-    const chats = await invoke<ChatMeta[]>("list_chats");
+    const [chats, unsynced] = await Promise.all([
+      invoke<ChatMeta[]>("list_chats"),
+      cloudOff(),
+    ]);
     // The dock is the chat agent's quick panel. A conversation with a coding
     // agent belongs to the folder and the engine on this computer, and it is
     // part of the chat window's advanced view, not this one.
@@ -42,6 +56,7 @@ export const chatTransport: ChatTransport = {
         id: chat.id,
         title: chat.title,
         updatedAt: chat.updatedAt,
+        unsynced,
       }));
   },
 
@@ -56,16 +71,20 @@ export const chatTransport: ChatTransport = {
       const needle = query.trim().toLowerCase();
       return demoList.filter((chat) => chat.title.toLowerCase().includes(needle));
     }
-    const hits = await invoke<Array<{ chat: { id: string; title: string; updatedAt: number; kind?: string } }>>(
-      "search_chats",
-      { query },
-    );
+    const [hits, unsynced] = await Promise.all([
+      invoke<Array<{ chat: { id: string; title: string; updatedAt: number; kind?: string } }>>(
+        "search_chats",
+        { query },
+      ),
+      cloudOff(),
+    ]);
     return hits
       .filter((hit) => hit.chat.kind !== "coding")
       .map((hit) => ({
         id: hit.chat.id,
         title: hit.chat.title,
         updatedAt: hit.chat.updatedAt,
+        unsynced,
       }));
   },
 

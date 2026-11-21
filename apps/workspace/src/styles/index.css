@@ -2716,3 +2716,150 @@
   .ws-task-head { flex-wrap: wrap; }
   .ws-task-head-actions { width: 100%; margin-left: 0; justify-content: flex-end; padding-top: 0; }
 }
+
+/* ── Account settings (plan, sync, a personal model endpoint) ─────────────
+   Workspace's first settings surface. It is deliberately about the chat half
+   of the account: projects, boards and tasks are the product and need no
+   switch. */
+.ws-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.ws-settings-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ws-settings-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.ws-settings-label svg {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+}
+
+.ws-settings-tag {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 249, 0.7);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+.ws-plan-pill {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 249, 0.7);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+.ws-plan-pill[data-plan="free"] {
+  border-color: rgba(var(--accent-rgb), 0.28);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.ws-settings-help {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.ws-settings-help.bad {
+  color: var(--danger);
+}
+
+.ws-quota-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.ws-quota-head strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.ws-quota {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(var(--ink-rgb), 0.07);
+  overflow: hidden;
+}
+
+.ws-quota span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ink-3);
+}
+
+.ws-quota span[data-full="true"] {
+  background: var(--danger);
+}
+
+.ws-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ws-settings-field > span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+
+.ws-settings-field .text-input {
+  width: 100%;
+}
+
+.ws-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.ws-settings-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.ws-settings-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}

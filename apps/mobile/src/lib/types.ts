@@ -47,15 +47,41 @@ export interface AuthView {
   userCode: string | null;
   verificationUrl: string | null;
   message: string | null;
+  /** `free`, `plus` or `pro`. Null on the browser demo. */
+  plan: string | null;
+  /** The account-wide cloud-sync switch. */
+  cloudSync: boolean | null;
+  /** The free plan's rolling message window. Null on a paid plan. */
+  quota: Quota | null;
+}
+
+/** The free plan's 24-hour message allowance. */
+export interface Quota {
+  limit: number;
+  used: number;
+  remaining: number;
+  resetAt: string | null;
+}
+
+/** A model endpoint the user brought themselves, for this product only. */
+export interface CustomProvider {
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
 }
 
 export interface SettingsView {
   projectsDir: string;
   advancedMode: boolean;
+  plan: string | null;
+  cloudSync: boolean;
+  customProvider: CustomProvider | null;
 }
 
 export interface SyncView {
   enabled: boolean;
+  available: boolean;
+  reason: "free" | "off" | null;
   state: "off" | "idle" | "syncing" | "error";
   cursor: number;
   pending: number;

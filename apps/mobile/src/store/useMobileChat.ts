@@ -10,6 +10,7 @@ import type {
   SettingsView,
   StreamEvent,
   SyncEvent,
+  SyncView,
 } from "../lib/types";
 
 /**
@@ -48,6 +49,8 @@ interface MobileState {
    */
   sending: boolean;
   settings: SettingsView | null;
+  /** Whether conversations may leave this phone, and why not when they may not. */
+  sync: SyncView | null;
   preview: PreviewView | null;
   previewOpen: boolean;
 
@@ -66,6 +69,14 @@ interface MobileState {
   stop: () => Promise<void>;
   setPreviewOpen: (open: boolean) => void;
   setAdvanced: (enabled: boolean) => Promise<void>;
+  /** The account-wide switch; the desktop flips the same one. */
+  setCloudSync: (enabled: boolean) => Promise<void>;
+  /** This phone's own endpoint and key. Throws with a readable reason. */
+  saveCustomProvider: (baseUrl: string, apiKey: string, model: string) => Promise<void>;
+  clearCustomProvider: () => Promise<void>;
+  refreshSync: () => Promise<void>;
+  /** Re-read the account view (plan, cloud switch, free window). */
+  refreshAuth: () => Promise<void>;
   signIn: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   cancelSignIn: () => Promise<void>;
@@ -92,19 +103,22 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   draftImages: [],
   sending: false,
   settings: null,
+  sync: null,
   preview: null,
   previewOpen: false,
 
   async init() {
     try {
-      const [auth, settings, preview] = await Promise.all([
+      const [auth, settings, preview, sync] = await Promise.all([
         mobile.authStatus(),
         mobile.getSettings(),
         mobile.previewState(),
+        mobile.syncStatus(),
       ]);
       set({
         auth,
         settings,
+        sync,
         preview: preview && preview.active ? preview : null,
       });
       // Read the list after the auth view exists, so a sync event arriving at
@@ -305,6 +319,40 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     }
   },
 
+  async setCloudSync(enabled) {
+    try {
+      set({ settings: await mobile.setCloudSync(enabled) });
+      await get().refreshSync();
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  async saveCustomProvider(baseUrl, apiKey, model) {
+    // The sheet shows the reason next to the field, so this one throws.
+    set({ settings: await mobile.setCustomProvider(baseUrl, apiKey, model) });
+  },
+
+  async clearCustomProvider() {
+    set({ settings: await mobile.clearCustomProvider() });
+  },
+
+  async refreshSync() {
+    try {
+      set({ sync: await mobile.syncStatus() });
+    } catch {
+      // A stale line is not an error worth a banner.
+    }
+  },
+
+  async refreshAuth() {
+    try {
+      set({ auth: await mobile.authRefresh() });
+    } catch {
+      // The cached view is still the last one the server confirmed.
+    }
+  },
+
   async signIn() {
     try {
       get().handleAuth(await mobile.authLogin());
@@ -356,16 +404,26 @@ export const useMobileChat = create<MobileState>((set, get) => ({
           activeId: null,
           messages: [],
           draftImages: [],
+          sync: null,
         });
       }
       return;
     }
-    if (wasSignedIn) return;
+    if (wasSignedIn) {
+      // A plan change or a switch flipped on another product arrives here.
+      void get().refreshSync();
+      void mobile
+        .getSettings()
+        .then((settings) => set({ settings }))
+        .catch(() => undefined);
+      return;
+    }
     void mobile
       .getSettings()
       .then((settings) => {
         if (!get().auth?.signedIn) return;
         set({ settings });
+        void get().refreshSync();
         mobile.syncNow();
         return get().refreshChats();
       })
@@ -377,6 +435,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     // No auth gate: a cycle only runs while a token exists, and at startup the
     // event can arrive before `init` has finished setting the auth view. The
     // list it refreshes is the account's; a signed-out screen ignores it.
+    void get().refreshSync();
     if (!event.chats) return;
     void get().refreshChats();
   },

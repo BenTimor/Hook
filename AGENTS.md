@@ -127,8 +127,9 @@ bash.
   the shared `%APPDATA%\app.hook\memory\` folder.
 - `crates/hook-core/src/tools.rs` — chat-agent tool schemas and implementations.
 - `crates/hook-core/src/agent.rs` — supervisor for `pi` subprocesses over RPC:
-  spawn, states, plans, progress batching, wakes, stop. It also points agents at
-  the bundled git and the managed `agent-home/gitconfig`. `transcript()` reads a
+  spawn, states, plans, progress batching, wakes, stop. It points agents at the
+  bundled git and the managed `agent-home/gitconfig` only when the account may
+  sync; otherwise `HOOK_SYNC=0` and the guard leaves the git tools out. `transcript()` reads a
   run's pi session file (plus an in-memory tail from `message_update`) for the
   advanced inspector; it is read-only.
 - `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
@@ -139,9 +140,24 @@ bash.
   data), `coding_agents`, `workspace_tools`, `projects` (a folder on this
   machine). `Capabilities::mobile()` is the phone: Workspace yes, folder no.
 - `crates/hook-core/src/auth.rs` — device flow, the shared
-  `%APPDATA%\app.hook\account.json`, per-product mirrors, git-token rotation.
+  `%APPDATA%\app.hook\account.json`, per-product mirrors, git-token rotation,
+  and the account side of entitlements: the plan, the account-wide cloud-sync
+  switch and the free message window (`/api/auth/me`, `/api/auth/preferences`).
+- `crates/hook-core/src/settings.rs` — this *product's* `settings.json`: the
+  projects folder, the memory and advanced switches, and a personal model
+  endpoint and key. The key is deliberately not in the account file, not synced
+  and not shared between products.
+- `server/plans.mjs` — the entitlement in one place: what `free` limits, the
+  rolling 24-hour message window, and the sync refusal used by the proxy, the
+  sync router, the git router and the admin script. A waitlisted row has a null
+  `plan`; `--approve` assigns `free` unless `--plan` says otherwise. `server/events.mjs` accepts the client-side
+  analytics kinds the proxy cannot see (personal endpoint, quota refusal, sync
+  switch).
 - `crates/hook-core/src/{store,sync}.rs` — chats on disk and the background
-  sync engine (cursor, pending queue, account quarantine, media).
+  sync engine (cursor, pending queue, account quarantine, media). `sync.rs` also
+  owns the policy: a free account and an account whose switch is off never reach
+  the network, and the loop re-checks `/api/auth/me` so a change made in another
+  product arrives without a restart.
   `ChatMeta.kind = "coding"` marks a chat the user has with a coding agent
   directly: it carries `projectPath` and `sessionId`, and it is never uploaded.
 - `crates/hook-core/src/coding.rs` — that chat's turn driver: start / steer /
@@ -162,8 +178,10 @@ bash.
 - `crates/hook-core/src/{preview,runtime,guard}.rs` — loopback preview server,
   engine lookup, and the guard extension (`resources/hook-guard.mjs`, embedded
   with `include_str!`; edit the `.mjs`).
-- `crates/hook-core/src/{provider,import,update,reports}.rs` — SSE client, the
-  ChatGPT/Claude export readers, the release index and update policy, AI reports.
+- `crates/hook-core/src/{provider,import,update,reports}.rs` — SSE client
+  (`ProviderTarget` resolves each turn to Hook's proxy or the user's own
+  endpoint), the ChatGPT/Claude export readers, the release index and update
+  policy, AI reports.
 - `crates/hook-core/src/commands.rs` — the whole IPC surface.
 - `packages/chat/src/{Thread,MessageItem,TurnActivity,Composer}.tsx` — the
   conversation and the input, prop-driven and store-free. `TurnActivity` is the
@@ -179,7 +197,8 @@ bash.
   `dock.css` the 380px overrides, so both apps look the same.
 - `packages/chat/src/ChatDock.tsx` — the collapsible chat panel every product
   embeds, built from those same pieces. It takes a `ChatTransport`, so it knows
-  nothing about which app it is running in;
+  nothing about which app it is running in; a `DockChat.unsynced` flag draws the
+  "not in the cloud" mark in its history, and the product supplies it;
   `apps/workspace/src/lib/chatTransport.ts` is that adapter.
 - `packages/chat/src/preview/` — `WorkspacePreview` and its three renderers,
   `reportableFrom` and `ReportContentDialog`. The JSON is what
@@ -215,8 +234,8 @@ bash.
 - `packages/ui/src/tokens.css` — the design foundation (tokens, base elements,
   window chrome, prose, buttons/inputs). Both products import it first.
 - `waitlist/content.json` — all landing-page copy and interest definitions.
-- `server/platform.mjs` — mounts waitlist, device login, download, sync, git and
-  the model proxy under `/api`.
+- `server/platform.mjs` — mounts waitlist, device login, download, sync, git,
+  events and the model proxy under `/api`.
 - `server/workspace.mjs` — Workspace projects/boards/tasks/documents/members.
 - `infra/` — reference server config, uploaded by `scripts/deploy-waitlist.sh`.
 - `release.config.json` — per-product minimum versions and the Store channel.
@@ -288,6 +307,22 @@ Changing one side of a boundary is the most common way to break this repo.
   in `agent.rs` included) — a `tokio::spawn` there panics with "there is no
   reactor running" and aborts the window, because a panic in a command thread
   cannot unwind.
+- **Free-plan / entitlement change:** `server/plans.mjs` (the rule and the 24-hour
+  window) → `server/deepseek.mjs` (refusals, `plan`/`message_id` on
+  `usage_events`) → `server/sync.mjs` (the gate) → `auth.rs` (`plan`,
+  `cloud_sync`, `quota` on the session and `AuthView`) → `sync.rs`
+  (`policy_for`, the minute `/me` poll, `SyncView.available`/`reason`) →
+  `provider.rs` (`ProviderTarget`) → `settings.rs` (the personal provider) →
+  `commands.rs` + `generate_handler!` → `bridge.ts` / `types.ts` / `mock.ts` →
+  `SettingsSheet` (all three products) and `ChatRow`'s cloud mark. The server
+  enforces; the window only explains, and a local check must never be looser
+  than the server's. `syncRefusal()` and `policy_for()` are the two halves of
+  one rule and must be changed together.
+- **New analytics event:** a kind in `KINDS` (`crates/hook-core/src/analytics.rs`)
+  *and* in `server/events.mjs` (the server rejects anything else), then
+  `analytics::track(state, kind)` at the call site. Only the kind, plan, product
+  and app version travel: no message, path, endpoint or key. `--events` in
+  `scripts/waitlist-admin.sh` reads them.
 - **New chat-agent tool:** schema + impl in `tools.rs`, dispatch in `turn.rs`,
   and the prompt in `turn.rs` (`system_prompt`) if the agent must know about it.
   Give it a line in `activity_label` (`turn.rs`): that is what the chat says it
@@ -454,7 +489,9 @@ Changing one side of a boundary is the most common way to break this repo.
 - **The account file is shared.** `%APPDATA%\app.hook\account.json` is read by
   every product; writes go through `auth.rs` (atomic, unique temp name) and a
   sign-out must clear the session for all of them. Never write a product-specific
-  token there. `%APPDATA%\app.hook\memory\` is the same kind of shared,
+  token there. A personal model key is exactly that kind of thing: it lives in
+  the product's `settings.json`, never in the account file, and never leaves this
+  computer except to the endpoint it names. `%APPDATA%\app.hook\memory\` is the same kind of shared,
   account-scoped data: one file per account, atomic writes with a unique temp
   name, and never uploaded to a different account (the file name is a hash of
   the account).
@@ -467,10 +504,16 @@ Changing one side of a boundary is the most common way to break this repo.
   rebuilt per request. Memory is never re-retrieved per turn for the same reason.
   `cache_hit_tokens` in `usage_events` (written by `server/deepseek.mjs`) is how
   to check that a change did not break this.
-- **Sync is account-scoped and automatic.** Chats/pictures/projects push and pull
-  in the background while signed in; the server merges, never the client. A chat
-  that is streaming is never uploaded or overwritten. A different account on the
-  same machine quarantines the previous chats under `accounts/<id>/`; never
+- **Sync is account-scoped, and off means off.** Chats/pictures/projects push
+  and pull in the background while a paid account has the account-wide switch on;
+  a free account never syncs, and the server refuses both cases
+  (`sync_not_included` / `sync_disabled`) on the sync routes and on `/api/git`
+  alike: a repository is account data too, so no plan means no remote, no git
+  token and no `sync_pull`/`sync_push` in an agent. The switch is account state,
+  not a product setting: do not move it into `settings.json`. The server merges,
+  never the client. A chat that is streaming is never uploaded or overwritten. A
+  different account on the same machine quarantines the previous chats under
+  `accounts/<id>/`; never
   upload one account's history to another. A `coding` chat is local-only on
   purpose: its folder, its engine process and its session file live on one
   computer, so `push_chats` skips it (and clears it from the queue). Never
@@ -478,8 +521,10 @@ Changing one side of a boundary is the most common way to break this repo.
 - **A direct coding agent is the signed-in user.** It gets the chat agent's own
   tools through `bridge.rs`, whose token is minted per chat and only grants the
   names in that agent's `tools.json`; the endpoint is loopback-only. Creating
-  one needs advanced mode, refuses without it in the backend (not just the UI),
-  and no direct agent may start or steer another one.
+  one needs advanced mode *and* either a paid plan or a personal model endpoint;
+  the backend refuses without them (not just the UI), and no direct agent may
+  start or steer another one. A free account's endpoint is what makes the
+  exception real: it is also what keeps that agent off Hook's metered proxy.
 - **Workspace permissions are server-side.** Viewer/editor/manager/owner is
   checked on every request; the UI's gating is cosmetic. The chat agent acts as
   the signed-in user and gets the same checks.
@@ -542,6 +587,8 @@ Changing one side of a boundary is the most common way to break this repo.
 - Invariants and architecture → **How it is put together**
 - One account and several products → **One account, several products**
 - Coding-agent runtime, RPC args, guard policy, preview → **Coding agents**
+- Plans, the free limits, the account sync switch and personal endpoints →
+  **Plans, limits and your own model**
 - Config keys and what is compiled in → **Configure**
 - Version bumping, releasing an installer, updates → **Updates** and
   **Releasing**

@@ -322,6 +322,43 @@ export const api = {
       ? invoke<SettingsView>("set_advanced_mode", { enabled })
       : mock.setAdvancedMode(enabled),
 
+  /**
+   * The account-wide cloud-sync switch. It is stored on the account, so this
+   * also turns sync off in Hook Workspace and on the phone.
+   */
+  setCloudSync: (enabled: boolean): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("set_cloud_sync", { enabled })
+      : mock.setCloudSync(enabled),
+
+  /**
+   * Save the user's own model endpoint for this product. The key is written to
+   * this product's settings file only; leave `apiKey` empty to keep the key
+   * already stored.
+   */
+  setCustomProvider: (
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+  ): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("set_custom_provider", { baseUrl, apiKey, model })
+      : mock.setCustomProvider(baseUrl, apiKey, model),
+
+  clearCustomProvider: (): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("clear_custom_provider")
+      : mock.clearCustomProvider(),
+
+  /** Ask a personal endpoint which models it offers. Errors are shown inline. */
+  customModels: (baseUrl: string, apiKey: string): Promise<string[]> =>
+    isTauri()
+      ? invoke<string[]>("custom_models", {
+          baseUrl: baseUrl || null,
+          apiKey: apiKey || null,
+        })
+      : mock.customModels(baseUrl, apiKey),
+
   openPath: (path: string): Promise<void> =>
     isTauri() ? invoke<void>("open_path", { path }) : Promise.resolve(),
 

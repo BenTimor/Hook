@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
+  CloudOff,
   Ellipsis,
   FolderOpen,
   FolderInput,
@@ -28,8 +29,14 @@ export function ChatRow({ chat, active, streaming }: Props) {
   const togglePin = useChatStore((s) => s.togglePin);
   const remove = useChatStore((s) => s.remove);
   const changeCodingFolder = useChatStore((s) => s.changeCodingFolder);
+  const openSettings = useChatStore((s) => s.openSettings);
+  const sync = useChatStore((s) => s.sync);
 
   const coding = isCodingChat(chat);
+  // A coding chat is local by design (its folder and engine live on this
+  // computer), so the cloud mark is about ordinary conversations only. When
+  // sync is off, every one of them stays here until the account allows it.
+  const unsynced = !coding && Boolean(sync && !sync.enabled);
 
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(chat.title);
@@ -98,6 +105,26 @@ export function ChatRow({ chat, active, streaming }: Props) {
         />
       ) : (
         <span className="row-title">{chat.title}</span>
+      )}
+
+      {unsynced && (
+        <button
+          className="row-sync"
+          title={
+            sync?.reason === "free"
+              ? "Not in the cloud — cloud sync is part of a paid plan. Click to see plans."
+              : sync?.reason === "off"
+                ? "Not in the cloud — cloud sync is off. Click to turn it on in Settings → Advanced."
+                : "Not in the cloud — this build has no account sync."
+          }
+          aria-label="This chat is not synced to the cloud"
+          onClick={(event) => {
+            event.stopPropagation();
+            void openSettings();
+          }}
+        >
+          <CloudOff strokeWidth={2} />
+        </button>
       )}
 
       {streaming && <span className="row-live live-dot" />}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ChevronLeft,
+  CloudOff,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -32,11 +33,16 @@ export function ChatList({
   onSettings: () => void;
 }) {
   const chats = useMobileChat((s) => s.chats);
+  const sync = useMobileChat((s) => s.sync);
   const open = useMobileChat((s) => s.open);
   const newChat = useMobileChat((s) => s.newChat);
   const renameChat = useMobileChat((s) => s.renameChat);
   const togglePinned = useMobileChat((s) => s.togglePinned);
   const removeChat = useMobileChat((s) => s.removeChat);
+
+  // A chat that is not in the cloud is every chat while sync is off; the mark
+  // opens Settings, where the reason (free plan, or the account's switch) is.
+  const unsynced = Boolean(sync && !sync.enabled);
 
   const [actionsFor, setActionsFor] = useState<ChatMeta | null>(null);
   const [renaming, setRenaming] = useState<ChatMeta | null>(null);
@@ -102,6 +108,20 @@ export function ChatList({
                 </div>
                 <span className="row-when">{when(chat.updatedAt)}</span>
               </button>
+              {unsynced && (
+                <button
+                  className="row-sync"
+                  title={
+                    sync?.reason === "free"
+                      ? "Not in the cloud — the free plan keeps chats on this phone."
+                      : "Not in the cloud — cloud sync is off."
+                  }
+                  aria-label="This chat is not synced to the cloud"
+                  onClick={onSettings}
+                >
+                  <CloudOff strokeWidth={2} />
+                </button>
+              )}
               <button
                 className="row-more"
                 title="Chat actions"

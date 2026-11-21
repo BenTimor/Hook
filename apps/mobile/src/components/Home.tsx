@@ -58,7 +58,7 @@ export function Home({
       <div className="hero">
         <div className="hero-inner">
           <h1>{greeting()}</h1>
-          <p>Ask anything. Your conversations follow you.</p>
+          <p>Ask anything. Nothing leaves this phone unless your plan syncs it.</p>
           <ChatComposer className="mobile-composer" />
           <div className="chips">
             {SUGGESTIONS.map(({ icon: Icon, label }) => (

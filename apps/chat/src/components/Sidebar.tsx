@@ -24,6 +24,11 @@ export function Sidebar() {
   const open = useChatStore((s) => s.sidebarOpen);
   const searchToken = useChatStore((s) => s.searchToken);
   const advanced = useChatStore((s) => Boolean(s.settings?.advancedMode));
+  // Coding agents need a paid plan, or this account's own model endpoint. The
+  // backend refuses either way; hiding the door is the honest UI.
+  const settings = useChatStore((s) => s.settings);
+  const codingAllowed =
+    settings?.plan !== "free" || Boolean(settings?.customProvider);
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
   const openSettings = useChatStore((s) => s.openSettings);
 
@@ -112,7 +117,7 @@ export function Sidebar() {
             New chat
             <span className="kbd">{modKey}N</span>
           </button>
-          {advanced && (
+          {advanced && codingAllowed && (
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button

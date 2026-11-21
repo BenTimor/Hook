@@ -866,10 +866,31 @@ impl AgentManager {
         }
 
         let engine = self.engine.clone().map_err(|e| e)?;
-        let token = self
+        // A free account has no coding agents unless it brought its own model
+        // endpoint. Checked before anything is spawned, so a stale window cannot
+        // start one either.
+        if self.auth.is_free() && self.settings.custom_provider().is_none() {
+            return Err(
+                "Coding agents are part of a paid plan. Add your own model provider in Settings to use one."
+                    .into(),
+            );
+        }
+        // A folder still works without this, but its account repository is cloud
+        // data like a conversation: free accounts and an off switch mean no git
+        // remote, no sync tools and no credential.
+        let git_allowed = !self.auth.is_free() && self.auth.cloud_sync() != Some(false);
+        let project_id = if git_allowed { project_id } else { String::new() };
+        let account_token = self
             .auth
             .token()
             .ok_or("Sign in to Hook to start a coding agent.")?;
+        // Which endpoint this run talks to. With a personal provider the engine
+        // gets that URL, model and key instead of Hook's proxy.
+        let target = crate::provider::ProviderTarget::resolve(
+            &self.cfg,
+            self.settings.custom_provider().as_ref(),
+            Some(account_token.clone()),
+        )?;
         let guard = crate::guard::ensure(&self.data_dir)?;
 
         let session_id = resume_session
@@ -885,8 +906,9 @@ impl AgentManager {
         // with the provider compiled into it.
         crate::runtime::write_agent_home(
             &engine,
-            &self.cfg,
+            &target.cfg,
             self.vision.load(std::sync::atomic::Ordering::Relaxed),
+            target.byok,
         )?;
         let title = title
             .map(str::trim)
@@ -902,14 +924,14 @@ impl AgentManager {
             &session_id,
             &title,
             &guard,
-            &crate::runtime::model_ref(&self.cfg),
+            &crate::runtime::model_ref(&target.cfg),
             // The coding agent gets its own thinking level, not the chat model's.
             // A chat turn is one answer; a run is dozens of small turns, and a
             // high level on every one of them makes a five-minute job take
             // twenty, with the user's checklist frozen while the model thinks.
             // Unset means pi's own default (medium): `[coding] thinking` is the
-            // one knob that decides this.
-            self.coding.thinking(),
+            // one knob that decides this. A personal endpoint clears it.
+            target.cfg.coding.thinking(),
         );
 
         // Where the agent's guard writes progress notes for Hook to collect.
@@ -959,10 +981,15 @@ impl AgentManager {
             .join("agent-home")
             .join("gitconfig");
         if let Some(git) = &self.git {
+            let git_token = if git_allowed {
+                self.auth.git_token()
+            } else {
+                None
+            };
             if let Err(error) = crate::git::write_agent_config(
                 &self.data_dir.join("agent-home"),
                 &self.cfg.auth.base_url,
-                self.auth.git_token().as_deref(),
+                git_token.as_deref(),
             ) {
                 eprintln!("hook: git config unavailable: {error}");
             }
@@ -988,8 +1015,12 @@ impl AgentManager {
             // The engine's own config directory: Hook's provider, nobody else's.
             .env("PI_CODING_AGENT_DIR", &engine.agent_home)
             // models.json references these instead of containing the token, so
-            // concurrent agents can each report their own chat and run ids.
-            .env("HOOK_API_TOKEN", &token)
+            // concurrent agents can each report their own chat and run ids. The
+            // provider token is whichever credential the resolved target uses
+            // (the account's, or the user's own key); the account token stays in
+            // `HOOK_API_TOKEN` because the guard's web search needs it.
+            .env("HOOK_PROVIDER_TOKEN", &target.token)
+            .env("HOOK_API_TOKEN", &account_token)
             .env("HOOK_CHAT_ID", chat_id)
             .env("HOOK_AGENT_ID", &id)
             // The app's own WebView2 flags are none of the agent's business:

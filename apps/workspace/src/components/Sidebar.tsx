@@ -11,6 +11,7 @@ import {
   Mail,
   MoreHorizontal,
   Plus,
+  Settings2,
   Users,
 } from "lucide-react";
 
@@ -61,6 +62,7 @@ export function Sidebar({
   onHome,
   onNewProject,
   onOpenInvites,
+  onSettings,
   onLogout,
 }: {
   email: string | null;
@@ -70,6 +72,7 @@ export function Sidebar({
   onHome: () => void;
   onNewProject: () => void;
   onOpenInvites: () => void;
+  onSettings: () => void;
   onLogout: () => void;
 }) {
   const projects = useWorkspaceStore((state) => state.projects);
@@ -702,6 +705,15 @@ export function Sidebar({
         </div>
 
         <div className="ws-rail-foot">
+          <button
+            className="ws-nav-row"
+            onClick={onSettings}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <Settings2 />
+            <span className="ws-nav-label">Settings</span>
+          </button>
           <button
             className="ws-nav-row ws-account-row"
             onClick={onLogout}

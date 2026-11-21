@@ -140,7 +140,8 @@ fn which_pi() -> Option<PathBuf> {
 /// the same credentials as the chat agent.
 ///
 /// Pi reads this once per launch; rewriting it on every start means a rebuilt
-/// app always drives the engine with the config compiled into it.
+/// app always drives the engine with the config compiled into it — or, with
+/// `byok`, with the endpoint and model the user entered in Settings.
 /// The per-turn output ceiling advertised to pi. pi clamps it to whatever room
 /// is left in the context window (`contextWindow - prompt - 4096`), so a very
 /// large number simply means "think as long as you need"; a small one makes a
@@ -152,11 +153,29 @@ fn output_budget(cfg: &HarnessConfig) -> u64 {
     }
 }
 
-pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Result<(), String> {
+pub fn write_agent_home(
+    rt: &PiRuntime,
+    cfg: &HarnessConfig,
+    vision: bool,
+    byok: bool,
+) -> Result<(), String> {
     fs::create_dir_all(&rt.agent_home)
         .map_err(|e| format!("Could not create {}: {e}", rt.agent_home.display()))?;
     let base = base_url_for_pi(&cfg.provider.endpoint());
     let model = cfg.coding.model().unwrap_or(&cfg.model.name);
+    // The build's numbers were chosen for the model the build ships with. A
+    // personal endpoint has no such promise, and advertising a 1M window or a
+    // 393k output cap to a model that takes 128k/8k makes every run fail on the
+    // provider's own limit. Conservative on purpose; the user can pick a bigger
+    // model, but Hook cannot guess its ceiling.
+    let (context_window, max_tokens) = if byok {
+        (
+            cfg.coding.context_window.min(131_072),
+            output_budget(cfg).min(8_192),
+        )
+    } else {
+        (cfg.coding.context_window, output_budget(cfg))
+    };
 
     let mut entry = serde_json::json!({
         "id": model,
@@ -166,33 +185,40 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Re
         // separate levels now, so one of them asking is enough.
         "reasoning": cfg.model.thinking_level().is_some() || cfg.coding.thinking().is_some(),
         "input": if vision { serde_json::json!(["text", "image"]) } else { serde_json::json!(["text"]) },
-        "contextWindow": cfg.coding.context_window,
-        "maxTokens": output_budget(cfg),
+        "contextWindow": context_window,
+        "maxTokens": max_tokens,
         "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-        // Hook's proxy lives on hookcode.io, which pi cannot recognise as a
-        // DeepSeek endpoint from the URL alone. Pin the wire format so coding
-        // agents send the same reasoning_effort field as the chat agent.
-        "compat": {
-            "thinkingFormat": "openai",
-            "supportsReasoningEffort": true,
-            "supportsUsageInStreaming": true,
-        },
     });
 
     // The token itself stays in the process environment. models.json only
-    // carries `$HOOK_API_TOKEN`, and the per-run env is set when the agent is
-    // spawned, so the key is not duplicated into every agent directory.
+    // carries `$HOOK_PROVIDER_TOKEN`, and the per-run env is set when the agent
+    // is spawned, so the key is not duplicated into every agent directory.
     if let Some(obj) = entry.as_object_mut() {
-        let mut headers = cfg.provider.headers.clone();
-        headers.insert("X-Hook-Client".into(), "hook-desktop".into());
-        headers.insert("X-Hook-Surface".into(), "coding".into());
-        headers.insert("X-Hook-Chat-Id".into(), "$HOOK_CHAT_ID".into());
-        headers.insert("X-Hook-Agent-Id".into(), "$HOOK_AGENT_ID".into());
-        headers.insert("X-Hook-App-Version".into(), crate::version::current());
-        obj.insert(
-            "headers".into(),
-            serde_json::to_value(headers).unwrap_or_default(),
-        );
+        if !byok {
+            // Hook's attribution headers belong to Hook's proxy. A personal
+            // endpoint gets the model and the conversation, nothing else.
+            let mut headers = cfg.provider.headers.clone();
+            headers.insert("X-Hook-Client".into(), "hook-desktop".into());
+            headers.insert("X-Hook-Surface".into(), "coding".into());
+            headers.insert("X-Hook-Chat-Id".into(), "$HOOK_CHAT_ID".into());
+            headers.insert("X-Hook-Agent-Id".into(), "$HOOK_AGENT_ID".into());
+            headers.insert("X-Hook-App-Version".into(), crate::version::current());
+            obj.insert(
+                "headers".into(),
+                serde_json::to_value(headers).unwrap_or_default(),
+            );
+            // Hook's proxy lives on hookcode.io, which pi cannot recognise as a
+            // DeepSeek endpoint from the URL alone. Pin the wire format so coding
+            // agents send the same reasoning_effort field as the chat agent.
+            obj.insert(
+                "compat".into(),
+                serde_json::json!({
+                    "thinkingFormat": "openai",
+                    "supportsReasoningEffort": true,
+                    "supportsUsageInStreaming": true,
+                }),
+            );
+        }
     }
 
     let models = serde_json::json!({
@@ -200,7 +226,7 @@ pub fn write_agent_home(rt: &PiRuntime, cfg: &HarnessConfig, vision: bool) -> Re
             "hook": {
                 "baseUrl": base,
                 "api": "openai-completions",
-                "apiKey": "$HOOK_API_TOKEN",
+                "apiKey": "$HOOK_PROVIDER_TOKEN",
                 "authHeader": true,
                 "models": [entry],
             }
@@ -314,18 +340,47 @@ mod tests {
             cli: Some(PathBuf::from("cli.js")),
             agent_home: dir.clone(),
         };
-        write_agent_home(&rt, &config(), false).unwrap();
+        write_agent_home(&rt, &config(), false, false).unwrap();
         let raw = std::fs::read_to_string(dir.join("models.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         let provider = &parsed["providers"]["hook"];
         assert_eq!(provider["baseUrl"], "https://hookcode.io/api/v1");
-        assert_eq!(provider["apiKey"], "$HOOK_API_TOKEN");
+        assert_eq!(provider["apiKey"], "$HOOK_PROVIDER_TOKEN");
         assert_eq!(provider["authHeader"], true);
         let headers = &provider["models"][0]["headers"];
         assert_eq!(headers["X-Hook-Surface"], "coding");
         assert_eq!(headers["X-Hook-Chat-Id"], "$HOOK_CHAT_ID");
         assert_eq!(headers["X-Hook-Agent-Id"], "$HOOK_AGENT_ID");
         assert_eq!(provider["models"][0]["compat"]["thinkingFormat"], "openai");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_personal_endpoint_gets_no_hook_headers() {
+        let dir = std::env::temp_dir().join(format!("hook-runtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rt = PiRuntime {
+            program: PathBuf::from("node"),
+            cli: Some(PathBuf::from("cli.js")),
+            agent_home: dir.clone(),
+        };
+        // The real path: the base config pointed at a personal endpoint.
+        let custom = crate::settings::CustomProvider {
+            base_url: "https://api.example.test/v1".into(),
+            api_key: "sk-user".into(),
+            model: "gpt-4o-mini".into(),
+        };
+        let target = crate::provider::ProviderTarget::resolve(&config(), Some(&custom), None).unwrap();
+        write_agent_home(&rt, &target.cfg, false, target.byok).unwrap();
+        let raw = std::fs::read_to_string(dir.join("models.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let model = &parsed["providers"]["hook"]["models"][0];
+        assert_eq!(parsed["providers"]["hook"]["baseUrl"], "https://api.example.test/v1");
+        assert_eq!(model["id"], "gpt-4o-mini");
+        assert_eq!(parsed["providers"]["hook"]["apiKey"], "$HOOK_PROVIDER_TOKEN");
+        assert!(model.get("headers").is_none(), "no Hook headers to a stranger");
+        assert!(model.get("compat").is_none(), "no Hook wire-format pins either");
+        assert_eq!(model["reasoning"], false);
         std::fs::remove_dir_all(dir).ok();
     }
 

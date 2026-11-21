@@ -65,6 +65,10 @@ function publicProfile(row) {
     joinedAt: row.joined_at,
     status: row.waitlist_status,
     approved: row.waitlist_status === "approved",
+    // The plan the admin assigned on approval, or null while this person is
+    // still on the waitlist. Approving without choosing one makes it `free`.
+    plan: row.plan ?? null,
+    cloudSync: Number(row.cloud_sync) !== 0,
     approvedAt: row.approved_at ?? null,
     onboardingStep: row.onboarding_step,
     onboardingStartedAt: row.onboarding_started_at,
@@ -593,6 +597,13 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       plan_period: "TEXT",
       approved_at: "TEXT",
       revoked_at: "TEXT",
+      // The entitlement, not the waitlist preference: `free`, `plus` or `pro`,
+      // and null until the account is approved. Approval assigns `free` unless
+      // the admin picked a paid plan; the waitlist itself grants nothing.
+      plan: "TEXT",
+      // The account-level switch every product reads. Free accounts never sync,
+      // whatever this says.
+      cloud_sync: "INTEGER NOT NULL DEFAULT 1",
     };
     for (const [name, definition] of Object.entries(additions)) {
       if (!columns.has(name))
@@ -603,6 +614,15 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
     if (!columns.has("onboarding_step")) {
       db.exec(
         "UPDATE waitlist_signups SET onboarding_step = 'completed' WHERE plan_preference IS NOT NULL",
+      );
+    }
+    // The first run that has plans at all. Approval is what assigns one: every
+    // account approved before this change starts free, and a waitlisted row
+    // keeps a null plan so the admin views cannot count people who have not been
+    // let in yet.
+    if (!columns.has("plan")) {
+      db.exec(
+        "UPDATE waitlist_signups SET plan = 'free' WHERE waitlist_status = 'approved' AND plan IS NULL",
       );
     }
     db.exec(`CREATE TABLE IF NOT EXISTS onboarding_events (
@@ -661,6 +681,13 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       reasoning_tokens INTEGER NOT NULL DEFAULT 0,
       duration_ms INTEGER,
       ttft_ms INTEGER,
+      -- The plan in force when the request was served, so usage can be read by
+      -- plan later without joining a column that may since have changed.
+      plan TEXT NOT NULL DEFAULT 'free',
+      -- The user message this request belongs to. Several model calls of one
+      -- turn share it, which is how the free daily limit counts messages
+      -- instead of requests.
+      message_id TEXT,
       created_at TEXT NOT NULL DEFAULT (${NOW})
     ) STRICT;
     CREATE INDEX IF NOT EXISTS usage_event_owner
@@ -694,7 +721,25 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
     CREATE INDEX IF NOT EXISTS ai_report_status
       ON ai_reports (status, created_at);
     CREATE INDEX IF NOT EXISTS ai_report_owner
-      ON ai_reports (google_subject, created_at);`);
+      ON ai_reports (google_subject, created_at);
+
+    -- What the app did that never reaches the model proxy: saving a personal
+    -- provider, a turn answered by it, a turn refused by the free limit, the
+    -- cloud-sync switch. Only a kind from a fixed list is stored; no text, no
+    -- endpoint, no key. Read by scripts/waitlist-admin.sh --events.
+    CREATE TABLE IF NOT EXISTS client_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      plan TEXT NOT NULL DEFAULT 'free',
+      product TEXT NOT NULL DEFAULT 'unknown',
+      app_version TEXT,
+      created_at TEXT NOT NULL DEFAULT (${NOW})
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS client_event_owner
+      ON client_events (google_subject, created_at);
+    CREATE INDEX IF NOT EXISTS client_event_kind
+      ON client_events (kind, created_at);`);
 
     // Scoped tokens: the desktop's app token can mint a git-only token, so a
     // repository (or an agent reading one) never holds a credential that can
@@ -727,6 +772,24 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       );
     if (!reportColumns.has("target"))
       db.exec("ALTER TABLE ai_reports ADD COLUMN target TEXT");
+
+    // A database written before plans and per-message accounting existed.
+    const usageColumns = new Set(
+      db
+        .prepare("PRAGMA table_info(usage_events)")
+        .all()
+        .map((column) => column.name),
+    );
+    if (!usageColumns.has("plan"))
+      db.exec("ALTER TABLE usage_events ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'");
+    if (!usageColumns.has("message_id"))
+      db.exec("ALTER TABLE usage_events ADD COLUMN message_id TEXT");
+    // The index names a migrated column, so it cannot live in the CREATE block
+    // above: on an existing database that block is a no-op and the column is
+    // only added here.
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS usage_event_message ON usage_events (google_subject, message_id)",
+    );
 
     db.exec(`
     -- A per-account monotonic cursor. Every accepted change bumps it, so one

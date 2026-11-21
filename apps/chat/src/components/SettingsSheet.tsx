@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   ArrowUpCircle,
+  Check,
   Cloud,
+  CloudOff,
+  Cpu,
   FolderOpen,
   GitBranch,
+  KeyRound,
   LogOut,
   RefreshCw,
   UserRound,
@@ -11,72 +15,400 @@ import {
 } from "lucide-react";
 
 import { api, openExternal } from "../lib/bridge";
-import type { SyncView } from "../lib/types";
 import { useChatStore } from "../store/useChatStore";
 import { useUpdateStore } from "../store/useUpdateStore";
 import { ImportSection } from "./ImportSection";
 import { MemorySection } from "./MemorySection";
 import { AboutSection } from "./AboutSection";
 
+function textOf(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return "Something went wrong.";
+}
+
+function planName(plan: string | null | undefined): string {
+  if (plan === "free") return "Free";
+  if (plan === "plus") return "Hook Plus";
+  if (plan === "pro") return "Hook Pro";
+  return "Preview";
+}
+
+/** "in 3h" / "in 12m" for the free message window. */
+function untilReset(iso: string | null | undefined): string {
+  if (!iso) return "soon";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return "now";
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.ceil(minutes / 60);
+  return `in ${hours}h`;
+}
+
 /**
- * One quiet line about where the work lives. Syncing itself is automatic; this
- * is only here so a curious user (or support) can see that it is working.
+ * The account's plan and what it allows.
+ *
+ * A free account is not a degraded paid one: it keeps everything on this
+ * computer and is limited through Hook's model service. Bringing a model
+ * endpoint of your own is the way past that without paying, which is why the
+ * upgrade row and the provider form sit next to each other.
  */
-function SyncRow() {
-  const [status, setStatus] = useState<SyncView | null>(null);
+function PlanSection() {
+  const settings = useChatStore((s) => s.settings);
+  const auth = useChatStore((s) => s.auth);
+  const free = settings?.plan === "free";
+  const quota = auth?.quota;
+  const used = quota?.used ?? 0;
+  const limit = quota?.limit ?? 100;
+  const percent = Math.min(100, Math.round((used / Math.max(1, limit)) * 100));
+  const blocked = used >= limit;
 
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      void api
-        .syncStatus()
-        .then((value) => {
-          if (alive) setStatus(value);
-        })
-        .catch(() => {});
-    };
-    load();
-    const timer = window.setInterval(load, 5000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, []);
-
-  if (!status?.enabled) return null;
-  const title =
-    status.state === "syncing"
-      ? "Saving your latest changes…"
-      : status.state === "error"
-        ? "Sync is paused"
-        : "Saved to your account";
   return (
     <section className="sheet-section">
       <div className="sheet-label">
-        <span>Sync</span>
-      </div>
-      <div className="account-row">
-        <span className="account-badge" aria-hidden="true">
-          <Cloud strokeWidth={1.8} />
+        <span>Plan</span>
+        <span className="plan-pill" data-plan={settings?.plan ?? "preview"}>
+          {planName(settings?.plan)}
         </span>
-        <div className="account-identity">
-          <strong>{title}</strong>
-          <span>
-            {status.message ??
-              "Your chats and projects are available on every computer signed in to this account."}
-          </span>
-        </div>
-        <button
-          className="btn btn-ghost"
-          onClick={() => void api.syncNow()}
-          disabled={status.state === "syncing"}
-          title="Sync now"
-        >
-          <RefreshCw strokeWidth={1.9} />
-          Sync now
-        </button>
       </div>
+
+      {free && settings?.customProvider ? (
+        <p className="sheet-help">
+          Your own model provider is in use, so Hook's 100-message limit and the
+          coding-agent restriction do not apply on this product. Cloud sync is
+          still part of a paid plan.
+        </p>
+      ) : free ? (
+        <>
+          <div className="quota-head">
+            <strong>
+              {used} of {limit}
+            </strong>
+            <span className="muted">free messages in the last 24 hours</span>
+          </div>
+          <div className="quota-bar" aria-hidden="true">
+            <span data-full={blocked} style={{ width: `${percent}%` }} />
+          </div>
+          <p className="sheet-help">
+            {blocked
+              ? `You have used this window's messages. It frees up ${untilReset(quota?.resetAt)}.`
+              : used === 0
+                ? "No messages counted in this window yet. Tool calls do not use extra."
+                : `Counts messages you send; tool calls do not use extra. Frees up ${untilReset(quota?.resetAt)}.`}{" "}
+            A free plan keeps your chats, projects and memories on this computer
+            and does not include coding agents.
+          </p>
+          <div className="plan-actions">
+            <button
+              className="btn btn-primary"
+              onClick={() => void openExternal("https://hookcode.io/")}
+            >
+              See paid plans
+            </button>
+            <span className="sheet-help">
+              or add your own model provider below — it lifts the message limit and
+              lets you run coding agents.
+            </span>
+          </div>
+        </>
+      ) : (
+        <p className="sheet-help">
+          Cloud sync and coding agents are included. Hook's model service has no
+          daily message limit on this plan; usage is subject to the published
+          plan policy.
+        </p>
+      )}
     </section>
+  );
+}
+
+/**
+ * The user's own OpenAI-compatible endpoint, for this product only.
+ *
+ * The key is written to this product's settings file on this computer and is
+ * never part of the account, sync or a support request. Hook does not see the
+ * requests either: the app talks to the endpoint directly, which is why a free
+ * account with a provider is not metered.
+ */
+function ModelSection() {
+  const settings = useChatStore((s) => s.settings);
+  const saveProvider = useChatStore((s) => s.saveCustomProvider);
+  const clearProvider = useChatStore((s) => s.clearCustomProvider);
+  const saved = settings?.customProvider ?? null;
+
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [busy, setBusy] = useState<"load" | "save" | "remove" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setBaseUrl(saved?.baseUrl ?? "");
+    setModel(saved?.model ?? "");
+    // Never read the stored key back into the window: an empty field means
+    // "keep the key already saved".
+    setApiKey("");
+    setModels([]);
+  }, [saved?.baseUrl, saved?.model]);
+
+  const loadModels = async () => {
+    setBusy("load");
+    setError(null);
+    setNotice(null);
+    try {
+      const list = await api.customModels(baseUrl, apiKey);
+      setModels(list);
+      setNotice(
+        list.length
+          ? `${list.length} model${list.length === 1 ? "" : "s"} found. Pick one or type another.`
+          : "The endpoint returned no models. Type the model name instead.",
+      );
+    } catch (caught) {
+      setError(textOf(caught));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const save = async () => {
+    setBusy("save");
+    setError(null);
+    setNotice(null);
+    try {
+      await saveProvider(baseUrl, apiKey, model);
+      setApiKey("");
+      setNotice("Saved. New messages and coding agents use this endpoint.");
+    } catch (caught) {
+      setError(textOf(caught));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async () => {
+    setBusy("remove");
+    setError(null);
+    setNotice(null);
+    try {
+      await clearProvider();
+      setNotice("Removed. Hook's own model service is used again.");
+    } catch (caught) {
+      setError(textOf(caught));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="sheet-section">
+      <div className="sheet-label">
+        <span>Model access</span>
+        <span className="status" data-on={Boolean(saved)}>
+          {saved ? (
+            <>
+              <Check strokeWidth={2.2} /> Your provider
+            </>
+          ) : (
+            "Hook's models"
+          )}
+        </span>
+      </div>
+
+      <p className="sheet-help">
+        Use your own OpenAI-compatible endpoint instead of Hook's models; it must
+        speak the chat-completions API including tool calling. The key is saved
+        in <code>settings.json</code> in this product's folder on this computer,
+        sent only to the endpoint you enter, and never uploaded, synced or shared
+        with us. Each Hook product keeps its own — set it again
+        in Hook Workspace or HookCode if you want it there. Removing it goes back
+        to Hook's models.
+      </p>
+      {settings?.plan === "free" && (
+        <p className="sheet-help">
+          On the free plan, using your own endpoint also lifts the 100-message
+          limit and lets you start coding agents. Hook does not meter requests
+          that go to your provider.
+        </p>
+      )}
+
+      <div className="provider-form">
+        <label className="provider-field">
+          <span>Endpoint</span>
+          <input
+            className="text-input"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="https://api.openai.com/v1"
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.target.value)}
+          />
+        </label>
+        <label className="provider-field">
+          <span>API key</span>
+          <input
+            className="text-input"
+            type="password"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={saved?.hasKey ? "Saved — leave blank to keep it" : "sk-…"}
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+          />
+        </label>
+        <label className="provider-field">
+          <span>Model</span>
+          <input
+            className="text-input"
+            spellCheck={false}
+            autoComplete="off"
+            list="hook-custom-models"
+            placeholder="gpt-4o-mini"
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+          />
+          <datalist id="hook-custom-models">
+            {models.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        </label>
+        <div className="path-row">
+          <button
+            className="btn"
+            onClick={() => void loadModels()}
+            disabled={busy !== null || !baseUrl.trim()}
+            title="Ask the endpoint for its model list"
+          >
+            <Cpu strokeWidth={1.9} />
+            {busy === "load" ? "Loading…" : "Load models"}
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => void save()}
+            disabled={busy !== null || !baseUrl.trim() || !model.trim()}
+          >
+            <KeyRound strokeWidth={1.9} />
+            {busy === "save" ? "Saving…" : saved ? "Save changes" : "Use this endpoint"}
+          </button>
+          {saved && (
+            <button
+              className="btn btn-ghost"
+              onClick={() => void remove()}
+              disabled={busy !== null}
+              title="Go back to Hook's models"
+            >
+              {busy === "remove" ? "Removing…" : "Remove"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {error && <p className="sheet-help bad">{error}</p>}
+      {notice && <p className="sheet-help">{notice}</p>}
+      {saved && (
+        <p className="sheet-help">
+          Talking to <code>{saved.model}</code> at <code>{saved.baseUrl}</code>.
+          Coding agents use the same endpoint.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Cloud sync: the account's switch and its live state.
+ *
+ * The switch is stored on the account, not in this product, so turning it off
+ * here turns it off in Hook Workspace and on the phone too. A free account has
+ * no switch at all — there is nothing to turn on.
+ */
+function SyncControl() {
+  const settings = useChatStore((s) => s.settings);
+  const sync = useChatStore((s) => s.sync);
+  const setCloudSync = useChatStore((s) => s.setCloudSync);
+  const refreshSync = useChatStore((s) => s.refreshSync);
+  const free = settings?.plan === "free";
+
+  useEffect(() => {
+    if (free) return;
+    void refreshSync();
+    const timer = window.setInterval(() => void refreshSync(), 5000);
+    return () => window.clearInterval(timer);
+  }, [free, refreshSync]);
+
+  if (free) {
+    return (
+      <p className="sheet-help">
+        Cloud sync is part of a paid plan. Your conversations, projects,
+        memories and pictures stay on this computer, and the sidebar marks every
+        chat that is not in the cloud.
+      </p>
+    );
+  }
+
+  if (sync && !sync.available) {
+    return (
+      <p className="sheet-help">
+        This build has no account service, so nothing is synced anywhere.
+      </p>
+    );
+  }
+
+  const enabled = settings?.cloudSync ?? true;
+  const title =
+    !enabled
+      ? "Sync is off"
+      : sync?.state === "syncing"
+        ? "Saving your latest changes…"
+        : sync?.state === "error"
+          ? "Sync is paused"
+          : "Saved to your account";
+
+  return (
+    <>
+      <label className="memory-note advanced-toggle">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => void setCloudSync(event.target.checked)}
+        />
+        Sync my chats to the cloud
+      </label>
+      <p className="sheet-help">
+        On: your chats, projects, memories and pictures are available on every
+        computer signed in to this account. Off: new changes stay on this
+        computer, and every chat that is not in the cloud is marked in the
+        sidebar. This switch belongs to the account, so it applies to every Hook
+        product.
+      </p>
+      {enabled && (
+        <div className="account-row">
+          <span className="account-badge" aria-hidden="true">
+            <Cloud strokeWidth={1.8} />
+          </span>
+          <div className="account-identity">
+            <strong>{title}</strong>
+            <span>
+              {sync?.message ??
+                (sync?.pending
+                  ? `${sync.pending} change${sync.pending === 1 ? "" : "s"} waiting`
+                  : "Nothing is waiting to be uploaded.")}
+            </span>
+          </div>
+          <button
+            className="btn btn-ghost"
+            onClick={() => void api.syncNow()}
+            disabled={sync?.state === "syncing"}
+            title="Sync now"
+          >
+            <RefreshCw strokeWidth={1.9} />
+            Sync now
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -162,6 +494,10 @@ export function SettingsSheet() {
             </p>
           </section>
 
+          <PlanSection />
+
+          <ModelSection />
+
           <ImportSection />
 
           <section className="sheet-section">
@@ -182,11 +518,17 @@ export function SettingsSheet() {
               agents with a read-only view of what each one did. Off by default,
               because it is a lot of detail.
             </p>
+
+            <div className="sheet-subhead">
+              <span>
+                <CloudOff strokeWidth={1.8} />
+                Cloud sync
+              </span>
+            </div>
+            <SyncControl />
           </section>
 
           <MemorySection />
-
-          <SyncRow />
 
           <section className="sheet-section">
             <div className="sheet-label">
@@ -294,8 +636,8 @@ export function SettingsSheet() {
           <AboutSection version={update?.current ?? version} />
 
           <p className="sheet-foot">
-            Hook talks to its own account service; provider settings live on
-            the server, not in this window.
+            Hook talks to its own account service. A model provider you enter is
+            used from this computer only.
           </p>
         </div>
       </div>

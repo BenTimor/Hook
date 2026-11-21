@@ -4,7 +4,9 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 /// Everything here is baked into the binary at compile time via `include_str!`.
-/// There is no runtime override by design — changing any of it requires a rebuild.
+/// Changing any of it requires a rebuild. The one runtime override is a user's
+/// own model endpoint, chosen in this product's Settings and resolved by
+/// `provider::ProviderTarget`; it is stored on the machine and never in this file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HarnessConfig {
     pub provider: ProviderConfig,

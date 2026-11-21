@@ -70,6 +70,14 @@ pub fn create(state: &Arc<AppState>, folder: &str) -> Result<ChatMeta, String> {
     if !state.settings.advanced_mode() {
         return Err("Coding agents are part of advanced mode.".into());
     }
+    // A free account has no coding agents unless it brought its own endpoint.
+    if state.auth.is_free() && state.settings.custom_provider().is_none() {
+        crate::analytics::track(state, "coding_blocked_free");
+        return Err(
+            "Coding agents are part of a paid plan. Add your own model provider in Settings to use one."
+                .into(),
+        );
+    }
     let folder = folder.trim();
     if folder.is_empty() {
         return Err("Choose a folder for the coding agent.".into());

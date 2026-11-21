@@ -251,7 +251,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
     lock(&state.streams).insert(chat_id.clone(), cancel.clone());
     trace("stream token registered");
 
-    let cfg = match config::get() {
+    let base_cfg = match config::get() {
         Ok(cfg) => cfg.clone(),
         Err(err) => {
             if let Ok(mut chat) = state.store.load(&chat_id) {
@@ -266,6 +266,43 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             return;
         }
     };
+    // Where this turn goes: the account's model service, or the endpoint the
+    // user entered for this product. Resolved once, so every model call of one
+    // turn uses the same provider even if Settings changes mid-answer.
+    let target = match provider::ProviderTarget::resolve(
+        &base_cfg,
+        state.settings.custom_provider().as_ref(),
+        state.auth.token(),
+    ) {
+        Ok(target) => target,
+        Err(err) => {
+            if let Ok(chat) = state.store.load(&chat_id) {
+                emit(&state, &chat_id, StreamEvent::Error {
+                    message: err,
+                    messages: chat.messages.clone(),
+                    meta: chat.meta.clone(),
+                });
+            }
+            finish(&state, &chat_id);
+            return;
+        }
+    };
+    let cfg = target.cfg.clone();
+    let provider_token = target.token.clone();
+    let byok = target.byok;
+    // The user message this turn answers. Every model call in the turn carries
+    // it, so the free plan's daily limit counts messages, not requests.
+    let turn_message_id = state
+        .store
+        .load(&chat_id)
+        .ok()
+        .and_then(|chat| {
+            chat.messages
+                .iter()
+                .rev()
+                .find(|message| message.role == "user")
+                .map(|message| message.id.clone())
+        });
 
     trace("config loaded");
     let toolset = if cfg.provider.tools {
@@ -308,9 +345,14 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 list.extend(crate::memory::definitions());
             }
         }
-        // Only advertise tools this product can actually honour.
+        // Only advertise tools this product can actually honour. A free account
+        // without its own model endpoint cannot start a coding agent, so the
+        // agent tools are absent rather than failing once called; the engine
+        // refuses independently.
+        let coding_available = state.capabilities.coding_agents
+            && (!state.auth.is_free() || state.settings.custom_provider().is_some());
         if let Some(list) = set.as_array_mut() {
-            if !state.capabilities.coding_agents {
+            if !coding_available {
                 list.retain(|tool| {
                     !tools::AGENT_TOOLS.contains(&tool["function"]["name"].as_str().unwrap_or(""))
                 });
@@ -451,7 +493,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         let mut reasoning = String::new();
         let mut reasoning_field: Option<String> = None;
 
-        let Some(token) = state.auth.token() else {
+        if state.auth.token().is_none() && !byok {
             let Some(index) = chat.messages.iter().position(|m| m.id == assistant_id) else {
                 break;
             };
@@ -471,12 +513,14 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             );
             break;
         };
-        let context = provider::RequestContext::chat(chat_id.clone());
+        let context = provider::RequestContext::chat(chat_id.clone())
+            .for_message(turn_message_id.clone())
+            .byok(byok);
 
         trace("calling the model");
         let outcome = provider::stream_chat(
             &cfg,
-            &token,
+            &provider_token,
             &context,
             &history,
             toolset.as_ref(),
@@ -634,10 +678,11 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             }
             Err(err) => {
                 // The model endpoint can reject a request even when the Hook
-                // account is valid. Only the account service can confirm revocation.
-                if (err.starts_with("401 · ") || err.starts_with("403 · "))
-                    && state.auth.token().as_deref() == Some(token.as_str())
-                {
+                // account is valid. Only the account service can confirm
+                // revocation, and only its own endpoint's refusal means the
+                // session might be gone: a personal provider answering 401 is
+                // about the user's key, not about Hook.
+                if !byok && (err.starts_with("401 · ") || err.starts_with("403 · ")) {
                     if let RefreshOutcome::Revoked(message) = state.auth.refresh().await {
                         crate::commands::revoke_local(&state);
                         let mut view = state.auth.view();

@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Router } from "express";
 import { gitUser } from "./tokens.mjs";
+import { syncRefusal } from "./plans.mjs";
 
 const run = promisify(execFile);
 
@@ -325,6 +326,16 @@ export function createGitRouter({ env, db }) {
 
     const result = gitUser(db, req);
     if (!result.row) return authError(res, result);
+    // A repository is account data leaving this computer. The same policy the
+    // conversation sync uses applies here: free accounts never push, and a
+    // paid account that turned sync off does not either.
+    const refusal = syncRefusal(result.row);
+    if (refusal) {
+      res.status(403).json({
+        error: { message: refusal.message, code: refusal.code },
+      });
+      return;
+    }
     const subject = result.row.google_subject;
     if (!allow(subject)) {
       res.status(429).json({

@@ -190,7 +190,9 @@ the container, from anywhere, and prints what changed:
 ```
 
 `--approve` lets the account sign in to the desktop app and use the model proxy.
-`--revoke` sets the account back to `revoked`, invalidates its API tokens, and
+It also puts the account on a plan: `free` unless one was chosen, either
+beforehand with `--plan` or later. A waitlisted row has no plan. `--revoke` sets
+the account back to `revoked`, invalidates its API tokens, and
 the proxy refuses its next request. Approval does not resurrect a token that was
 already revoked by signing out; the user signs in again. `--delete` removes the
 waitlist row, tokens, device-login attempts, onboarding events and usage
@@ -257,7 +259,14 @@ Every request is tagged with headers from the client:
 | `X-Hook-Surface` | `chat` or `coding` |
 | `X-Hook-Chat-Id` | Conversation id, so usage can be grouped per chat |
 | `X-Hook-Agent-Id` | Coding-agent run id, set per spawned process |
+| `X-Hook-Message-Id` | The user message this request belongs to; repeated by every call of one turn |
 | `X-Hook-Client` / `X-Hook-App-Version` | Client build |
+
+A `free` account is refused before the upstream request: `coding_not_included`
+for a coding surface, and `message_limit` once 100 distinct message ids have been
+seen in the last 24 hours. `usage_events` also records the plan in force, so a
+later plan change does not rewrite history. A request to a personal endpoint
+carries none of these headers and never reaches this service.
 
 `usage_events` stores input/output tokens, `prompt_cache_hit_tokens`,
 `prompt_cache_miss_tokens`, reasoning tokens, duration, time-to-first-token and
@@ -266,6 +275,7 @@ pair, not from a guess. Analyse it with:
 
 ```bash
 ./scripts/waitlist-admin.sh --usage          # per account
+./scripts/waitlist-admin.sh --usage-plans    # per plan (the plan stored on each request)
 ./scripts/waitlist-admin.sh --usage-chats    # per conversation
 ./scripts/waitlist-admin.sh --usage-agents   # per coding-agent run
 ```
@@ -406,7 +416,11 @@ after changing them.
 ## Configure
 
 Everything lives in **`harness.config.toml`** at the repo root. It is compiled
-into the binary with `include_str!`, so there is no way to change it at runtime:
+into the binary with `include_str!`, so the build's endpoint and model cannot be
+changed at runtime. The one deliberate override is a user's own model endpoint
+in Settings (see **Plans, limits and your own model**): it replaces the provider
+and model for that product only, and it is stored on the machine, never in this
+config:
 
 The production config (`harness.config.ci.toml`) points at Hook's own proxy:
 
@@ -1101,6 +1115,101 @@ family's centre of gravity:
 Products share `packages/ui` (tokens, chrome, primitives) and `packages/chat`
 (the chat surface), so "the same family" is enforced by the build.
 
+## Plans, limits and your own model
+
+One column decides what an account may do: `waitlist_signups.plan`, one of
+`free`, `plus` or `pro`. The waitlist itself is unchanged: a row that has not
+been approved has **no plan** and cannot sign in. Approval is what assigns one,
+and with no choice made that plan is `free`; every account that was already
+approved before plans existed starts free on the migration. Assigning a plan
+is a single row:
+
+```bash
+./scripts/waitlist-admin.sh --plan someone@example.com pro
+./scripts/waitlist-admin.sh --plan someone@example.com free
+./scripts/waitlist-admin.sh --plans
+```
+
+The app learns the plan from `/api/auth/me` and re-checks it every minute while
+it is open (and when the window gains focus), so a change takes effect without a
+restart. The server is the authority on every request; the client-side checks
+exist so the user reads a sentence instead of an HTTP error.
+
+### The free plan
+
+- **No cloud sync.** Conversations, projects, memories, pictures and code
+  repositories stay on the computer. The sync and git endpoints refuse the
+  account (`sync_not_included`), and the sidebar marks each chat as not in the
+  cloud. `DELETE /api/sync/account` still
+  works, so someone who moved to free can delete what was already stored.
+- **100 messages per rolling 24 hours.** Counts user messages, not model
+  requests: every call of one turn (tool round-trips included) carries the same
+  `X-Hook-Message-Id`, and the proxy counts distinct ids. Regenerating or editing
+  a message does not spend a second slot. The window rolls, so nothing resets at
+  a wall-clock hour; `/api/auth/me` reports `quota.resetAt`.
+- **No coding agents.** The backend refuses to create one, the chat agent's
+  toolset omits the agent tools, and the proxy refuses `X-Hook-Surface: coding`.
+- **Normal chats, Hook Workspace and integrations are unaffected.** Workspace
+  data lives on the account by design; the free plan does not restrict it.
+
+A free account that sets its own model endpoint (below) is not metered by Hook
+and may use coding agents.
+
+### Cloud sync is an account switch
+
+A paid account may turn sync off in **Settings → Advanced** (Hook), the Settings
+sheet (HookCode) or the Settings dialog (Hook Workspace). The switch is stored on
+the account, not in a product's settings file, so turning it off in one product
+turns it off in all of them. While it is off the sync endpoints refuse that
+account (`sync_disabled`), nothing new is uploaded, and every conversation is
+marked **not in the cloud** — the mark explains why when clicked. Already-synced
+data stays on the account until it is deleted. `DELETE /api/sync/account`
+remains available.
+
+### Your own model endpoint (all plans)
+
+Settings has a **Model access** section: an OpenAI-compatible base URL (for
+example `https://api.openai.com/v1`), an API key and a model name. **Load models**
+asks `GET <base>/models`, and the model field is a searchable list that still
+accepts a typed name, because a gateway may not implement `/models` or may return
+the wrong set.
+
+- **Per product, on purpose.** The key is written to that product's
+  `settings.json` (`%APPDATA%\app.hook.chat\settings.json`, the Workspace folder,
+  or the phone's app container). It is not part of the account file and is never
+  synced, uploaded, logged or attached to a support report. Set it separately in
+  each product.
+- **The app talks to it directly.** Chat turns and coding agents send the model
+  request to that endpoint with that key. Hook's proxy never sees them, which is
+  why the free message limit does not apply and why coding agents become
+  available to a free account.
+- **Hooked in everywhere it matters.** `ProviderTarget` in `provider.rs` resolves
+  one destination per turn: Hook's service or the personal endpoint. The chat
+  turn, the coding engine's `models.json` (`$HOOK_PROVIDER_TOKEN`, no Hook
+  headers), the capability probe and the model list all use the same resolution.
+  Removing the provider goes back to Hook's models.
+- **Disclosed where it is entered.** The Settings copy states where the key is
+  stored, that it only goes to that endpoint, and that each product keeps its own.
+- **On Unix the settings file is `0600`**, because a key is a secret. On Windows
+  `%APPDATA%` is already per-user.
+
+### Analytics
+
+`usage_events` records the plan in force with each proxied request, so usage can
+be read by plan. A personal endpoint never reaches the proxy, so the app reports
+the facts the proxy cannot see to `POST /api/events` as one of a fixed set of
+kinds — `byok_saved`, `byok_removed`, `byok_turn`, `byok_models_loaded`,
+`quota_blocked`, `coding_blocked_free`, `sync_enabled`, `sync_disabled` — plus
+the product and the app version. No message, path, endpoint or key is stored. To
+see it:
+
+```bash
+./scripts/waitlist-admin.sh --events       # counts by kind and plan, then the last 20
+./scripts/waitlist-admin.sh --plans        # accounts per plan, and how many turned sync off
+./scripts/waitlist-admin.sh --usage        # token usage, now with PLAN
+./scripts/waitlist-admin.sh --usage-plans  # usage grouped by the plan stored per request
+```
+
 ## Where the data lives
 
 ```
@@ -1119,7 +1228,9 @@ Products share `packages/ui` (tokens, chrome, primitives) and `packages/chat`
                            stays on this machine
   trash\                   undoable deletions
   images\<chat id>\        pictures attached to messages (bytes on disk)
-  settings.json            projects folder, memory switch, advanced mode
+  settings.json            projects folder, memory switch, advanced mode, and a
+                           personal model endpoint and key if one was entered
+                           (this product only; 0600 on Unix)
   projects.json            the notes the chat agent keeps about projects
   agents.json              coding-agent runs and their states
   auth.json                a mirror of the shared account, so a downgrade works
@@ -1152,8 +1263,9 @@ installs share chats and sign-in. In-app updates download installers to
 
 ## Sync between computers
 
-A signed-in account keeps the whole workspace in step without a button. Two
-independent mechanisms are at work:
+A paid account keeps the whole workspace in step without a button, unless the
+account has switched cloud sync off (see **Plans, limits and your own model**).
+A free account never syncs. Two independent mechanisms are at work:
 
 - **Conversations.** Each device pushes changed chats to `/api/sync/chats` and
   pulls everything newer than its cursor from `/api/sync/changes`. The server is
@@ -1166,13 +1278,14 @@ independent mechanisms are at work:
   older copy could land on top of a reply mid-stream, the reply would be lost,
   and the window waited forever for a message that no longer existed. Pictures travel by SHA-256 through `/api/sync/media`, so the same
   screenshot is stored once. The desktop polls every 15 seconds and immediately
-  after sign-in, window focus, a finished turn or a coding-agent note; there is
-  no sync button, though Settings has a small status line and a manual nudge for
-  support.
+  after sign-in, window focus, a finished turn or a coding-agent note. Settings
+  has the account switch, a small status line and a manual nudge for support.
 - **Code.** Every project is a real git repository whose remote is Hook's
   service (`/api/git/<project id>.git`). Coding agents pull before they start
   and push when they finish, so a project started on one computer arrives on
-  the next one. The account stores one bare repository per project; a pre-receive
+  the next one. The same policy gates it: a free account, or a paid one with
+  sync off, keeps its projects local — no remote, no git token, and no
+  `sync_pull` / `sync_push` tools in the agent. The account stores one bare repository per project; a pre-receive
   hook rejects pushes that would take a project over 200 MB or an account over
   1 GB, and a single push is capped at 100 MB.
 
@@ -1200,7 +1313,13 @@ Quotas: 250 MB of conversation JSON, 250 MB of chat pictures, 5,000 chats,
 200 projects and 1,000 memories per account. Limits are server constants in `server/sync.mjs` and
 `server/git.mjs`. Deleting the local folder only resets the device; sign-out
 leaves the account's data in place. `DELETE /api/sync/account` (app token)
-removes the account's chats, pictures, memories and repositories.
+removes the account's chats, pictures, memories and repositories, and it keeps
+working for an account that has gone free or turned sync off.
+
+The policy itself is `syncRefusal()` in `server/plans.mjs`, applied by a gate on
+every sync route except the account deletion, and mirrored client-side by
+`policy_for()` in `sync.rs` — which also polls `/api/auth/me` every minute so a
+plan change or a switch flipped in another product arrives without a restart.
 
 Signing a different account in on the same machine moves the previous account's
 conversations to `accounts\<id>\` instead of uploading them anywhere. Project
@@ -1405,6 +1524,12 @@ off by default and stored in `settings.json`.
 The chat agent can create projects, brief a coding agent, and report back in the
 conversation while you keep chatting.
 
+A coding agent needs a paid plan, or a model endpoint of your own (see **Plans,
+limits and your own model**). A free account without one gets a refusal from the
+backend, no agent tools in the chat agent's toolset, and `coding_not_included`
+from the proxy if a stale client tries anyway. With a personal endpoint the
+engine is pointed at that endpoint and model instead of Hook's proxy.
+
 - **Projects** live in one folder (default `~/Documents/Hook`), configured in the
   Settings sheet. Every chat can use every project. Each project carries a short
   description the chat agent maintains — that description is how it finds the
@@ -1413,8 +1538,8 @@ conversation while you keep chatting.
   into the project's `AGENTS.md` (in a marked block, see **Memory**), and `pi`
   reads that file every run. "Use pnpm, not npm" said once is then true for every
   coding agent in that repository, on every computer.
-- **Projects are shared across computers.** Each project has an account id;
-  the local folder name and path are per-machine. A project created here is a
+- **Projects are shared across computers** (on a paid account with sync on).
+  Each project has an account id; the local folder name and path are per-machine. A project created here is a
   git repository with Hook's service as its `hook` remote, and an existing
   project gets one initial snapshot the first time it joins the account. On a
   second computer the folder is created and pulled automatically. Coding agents
@@ -1448,10 +1573,12 @@ conversation while you keep chatting.
 
   `PI_CODING_AGENT_DIR` points at `%APPDATA%\app.hook.chat\agent-home`, whose
   `models.json` is written atomically from `harness.config.toml` before launch.
-  The token is referenced as `$HOOK_API_TOKEN` and supplied through the agent's
-  environment; the run id and chat id travel as `$HOOK_AGENT_ID` /
-  `$HOOK_CHAT_ID` headers, so concurrent agents report usage against the right
-  conversation. An agent uses exactly the chat agent's endpoint and model and
+  The model credential is referenced as `$HOOK_PROVIDER_TOKEN` and supplied
+  through the agent's environment — the account token for Hook's proxy, the
+  user's own key for a personal endpoint. `$HOOK_API_TOKEN` stays the account
+  token because the guard's web search needs it. The run id and chat id travel as
+  `$HOOK_AGENT_ID` / `$HOOK_CHAT_ID` headers, so concurrent agents report usage
+  against the right conversation; a personal endpoint gets none of them. An agent uses exactly the chat agent's endpoint and model and
   never touches your own `~/.pi` — different extensions, skills, MCP servers and
   logins on your machine cannot change what it does. Its thinking level is its
   own: with `[coding] thinking` empty the engine uses its default (medium)
@@ -1571,8 +1698,9 @@ marks the run `interrupted`, so nothing keeps running behind your back.
 ### Talking to a coding agent directly
 
 The chat agent is not the only way to start a coding agent. With **Advanced**
-on, the sidebar's **New chat** button has a menu with **Coding agent…**: it asks
-for a folder and opens a conversation with `pi` in it. There is no chat agent in
+on — and on a paid plan, or with your own model endpoint — the sidebar's **New
+chat** button has a menu with **Coding agent…**: it asks for a folder and opens a
+conversation with `pi` in it. There is no chat agent in
 that conversation — what the engine says is what you read.
 
 - **It is a chat, not a task-board entry.** The conversation sits in the normal

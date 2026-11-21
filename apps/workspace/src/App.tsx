@@ -14,6 +14,7 @@ import { InvitesPanel } from "./components/MembersPanel";
 import { ProjectHome } from "./components/ProjectHome";
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceHome } from "./components/WorkspaceHome";
+import { WorkspaceSettings } from "./components/WorkspaceSettings";
 
 export default function App() {
   const maximized = useWindowState();
@@ -68,6 +69,7 @@ function Workspace({
   const createProject = useWorkspaceStore((state) => state.createProject);
 
   const [invitesOpen, setInvitesOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
   const [newProject, setNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -188,6 +190,7 @@ function Workspace({
           setNewProject(true);
         }}
         onOpenInvites={showInvites}
+        onSettings={() => setSettingsOpen(true)}
         onLogout={() => void api.authLogout().then(setAuth)}
       />
 
@@ -284,6 +287,8 @@ function Workspace({
         suggestions={suggestions}
         onClose={() => setDockOpen(false)}
       />
+
+      <WorkspaceSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <TextFieldDialog
         open={newProject}

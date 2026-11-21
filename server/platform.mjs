@@ -3,6 +3,7 @@ import { createWaitlistApi } from "./api.mjs";
 import { createAuthRouter } from "./auth.mjs";
 import { createProxyRouter } from "./deepseek.mjs";
 import { createDownloadRouter, publicReleaseInfo } from "./download.mjs";
+import { createEventsRouter } from "./events.mjs";
 import { createGitRouter } from "./git.mjs";
 import { createReportsRouter } from "./reports.mjs";
 import { createSyncRouter } from "./sync.mjs";
@@ -90,6 +91,9 @@ export function createPlatform(env, { verifyGoogle } = {}) {
       "/reports",
       createReportsRouter({ db: waitlist.db, auth: waitlist.auth }),
     );
+    // The facts the proxy cannot see: personal-endpoint turns, the free limit
+    // refusing one, and the account's cloud-sync switch.
+    router.use("/events", createEventsRouter({ db: waitlist.db }));
   }
 
   router.use((_req, res) => res.status(404).json({ error: "not_found" }));

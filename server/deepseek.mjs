@@ -1,4 +1,10 @@
 import { json, Router } from "express";
+import {
+  FREE_MESSAGE_LIMIT,
+  isFreePlan,
+  planOf,
+  quotaUsed,
+} from "./plans.mjs";
 import { apiError, requireApiUser } from "./tokens.mjs";
 
 /**
@@ -116,8 +122,9 @@ export function createProxyRouter({ env, db }) {
         `INSERT INTO usage_events
            (google_subject, chat_id, agent_id, surface, model, status,
             prompt_tokens, completion_tokens, cache_hit_tokens,
-            cache_miss_tokens, reasoning_tokens, duration_ms, ttft_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            cache_miss_tokens, reasoning_tokens, duration_ms, ttft_ms,
+            plan, message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         row.google_subject,
         headerId(req, "x-hook-chat-id"),
@@ -132,6 +139,10 @@ export function createProxyRouter({ env, db }) {
         usage?.reasoning ?? 0,
         elapsed,
         ttft,
+        // Kept per event, not read from the account later: a plan change must
+        // not rewrite what an old request was served under.
+        planOf(row),
+        headerId(req, "x-hook-message-id", 64),
       );
     } catch (error) {
       // Usage must never take a reply down with it.
@@ -277,6 +288,29 @@ export function createProxyRouter({ env, db }) {
       return apiError(res, 400, "Expected a JSON object.", "invalid_body");
     if (!Array.isArray(body.messages) || body.messages.length === 0)
       return apiError(res, 400, "`messages` must be a non-empty array.", "invalid_messages");
+
+    // A free account has no coding agents: its own endpoint is the only way to
+    // run one, and hook-core refuses to start one before this is reached. This
+    // is the server half, for a token used by something other than Hook.
+    const surface = headerId(req, "x-hook-surface", 32) || "api";
+    if (isFreePlan(row) && surface === "coding")
+      return apiError(
+        res,
+        403,
+        "Coding agents are part of a paid plan. Add your own model provider in Settings to use one.",
+        "coding_not_included",
+      );
+
+    // The free limit counts user messages, not model requests: one turn with
+    // tools makes several calls and must cost one of the hundred.
+    if (isFreePlan(row) && quotaUsed(db, row.google_subject) >= FREE_MESSAGE_LIMIT)
+      return apiError(
+        res,
+        429,
+        `You have used all ${FREE_MESSAGE_LIMIT} free messages in the last 24 hours. Add your own model provider in Settings, or upgrade to keep going.`,
+        "message_limit",
+      );
+
     if (!apiKey)
       return apiError(
         res,

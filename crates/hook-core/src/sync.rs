@@ -1,8 +1,10 @@
 //! Two-way sync of conversations and project metadata.
 //!
-//! Everything here runs in the background for a signed-in account. There is no
-//! button: a cycle pulls changes, pushes local ones, and lets the server merge
-//! them. Code is not in this module — that is real git, driven by the agents
+//! Everything here runs in the background for an account that may sync: a paid
+//! plan whose account-wide switch is on. A free account, or one that switched
+//! sync off, still has its ownership settled — so the next account cannot
+//! inherit its chats — but sends nothing. There is no button: a cycle pulls
+//! changes, pushes local ones, and lets the server merge them. Code is not in this module — that is real git, driven by the agents
 //! and prepared here (repository, remote, first snapshot, first pull).
 //!
 //! Order matters. Pushing before pulling means the server always sees a
@@ -34,6 +36,10 @@ use crate::store::{now_ms, Chat, Store};
 
 const CYCLE: Duration = Duration::from_secs(15);
 const MAX_BACKOFF: Duration = Duration::from_secs(120);
+/// How often the account itself is checked while the app is running. A plan
+/// change or a sync switch flipped in another product must reach this window
+/// without a restart; a minute is soon enough for both.
+const ACCOUNT_CHECK: Duration = Duration::from_secs(60);
 const MAX_BATCH: usize = 10;
 const MAX_BATCH_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PREPARED_PER_CYCLE: usize = 3;
@@ -74,7 +80,14 @@ struct SyncState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncView {
+    /// The engine is actually syncing: a paid account whose cloud-sync switch
+    /// is on.
     pub enabled: bool,
+    /// The plan allows cloud sync at all. A free account has nothing to switch.
+    pub available: bool,
+    /// Why sync is off, when it is: `free` or `off` (the account's switch).
+    /// `None` when sync is running or the build has no account service.
+    pub reason: Option<String>,
     /// off | idle | syncing | error
     pub state: String,
     pub cursor: i64,
@@ -83,17 +96,24 @@ pub struct SyncView {
     pub message: Option<String>,
 }
 
-impl SyncView {
-    fn off() -> Self {
-        Self {
-            enabled: false,
-            state: "off".into(),
-            cursor: 0,
-            pending: 0,
-            last_sync_at: 0,
-            message: None,
-        }
+/// `(available, enabled, reason)` for the signed-in account.
+///
+/// The switch is account state, not product state: it is read from the account
+/// and changed through `/api/auth/preferences`, so flipping it in Hook also
+/// stops Workspace and the phone. A free account never syncs.
+fn policy_for(auth: &AuthStore) -> (bool, bool, Option<&'static str>) {
+    // No session, no sync: signing out would otherwise leave the last plan's
+    // answer on screen until the next sign-in.
+    if !auth.required() || auth.token().is_none() {
+        return (false, false, None);
     }
+    if auth.is_free() {
+        return (false, false, Some("free"));
+    }
+    if auth.cloud_sync() == Some(false) {
+        return (true, false, Some("off"));
+    }
+    (true, true, None)
 }
 
 /// How the engine tells the window that something arrived. A closure keeps the
@@ -111,6 +131,9 @@ pub struct SyncEngine {
     git: Option<GitRuntime>,
     state: Mutex<SyncState>,
     view: Mutex<SyncView>,
+    /// When `/api/auth/me` was last asked. The plan and the sync switch are
+    /// account state another product may change, so every window converges.
+    account_checked_at: Mutex<i64>,
     notify: Notify,
     client: reqwest::Client,
     configured_token: Mutex<Option<String>>,
@@ -134,17 +157,16 @@ impl SyncEngine {
             .and_then(|raw| serde_json::from_str::<SyncState>(&raw).ok())
             .unwrap_or_default();
         let media_seen = state.media.iter().cloned().collect();
-        let view = if auth.required() {
-            SyncView {
-                enabled: true,
-                state: "idle".into(),
-                cursor: state.cursor,
-                pending: state.pending_chats.len(),
-                last_sync_at: 0,
-                message: None,
-            }
-        } else {
-            SyncView::off()
+        let (available, enabled, reason) = policy_for(&auth);
+        let view = SyncView {
+            enabled,
+            available,
+            reason: reason.map(str::to_string),
+            state: if enabled { "idle".into() } else { "off".into() },
+            cursor: state.cursor,
+            pending: state.pending_chats.len(),
+            last_sync_at: 0,
+            message: None,
         };
         let engine = Self {
             emit,
@@ -157,6 +179,7 @@ impl SyncEngine {
             git,
             state: Mutex::new(state),
             view: Mutex::new(view),
+            account_checked_at: Mutex::new(0),
             notify: Notify::new(),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
@@ -174,7 +197,17 @@ impl SyncEngine {
     }
 
     pub fn status(&self) -> SyncView {
+        let (available, enabled, reason) = policy_for(&self.auth);
         let mut view = lock(&self.view).clone();
+        view.available = available;
+        view.enabled = enabled;
+        view.reason = reason.map(str::to_string);
+        if !enabled {
+            // The stored view can still say `idle` from before the switch was
+            // flipped. A window that asks now must not draw a lie.
+            view.state = "off".into();
+            view.message = None;
+        }
         view.pending = self
             .state
             .lock()
@@ -252,15 +285,22 @@ impl SyncEngine {
         let Some(owner) = self.auth.subject() else {
             return Ok(());
         };
+        // Ownership is settled even when nothing may leave this computer. A free
+        // account (or an account with the switch off) that signs out must not
+        // leave its conversations where the next account would inherit them on
+        // its first paid sync. Memory is account data too, and both products read
+        // it, so it is bound here rather than after the policy check.
         self.ensure_owner(&owner)?;
-        // Memory is account data too, and it is shared by both products: bind
-        // before anything reads or writes it.
         self.memory.bind(Some(&owner));
-        {
-            let mut view = lock(&self.view);
-            view.state = "syncing".into();
-            view.enabled = true;
+        // The account is checked even when sync is off: the plan and the switch
+        // live on the server, and another product may have changed them.
+        self.refresh_account().await;
+        let (_, enabled, _) = policy_for(&self.auth);
+        if !enabled {
+            lock(&self.view).state = "off".into();
+            return Ok(());
         }
+        lock(&self.view).state = "syncing".into();
         self.configure_git().await;
         self.push_chats(&token).await?;
         self.push_projects(&token).await?;
@@ -268,6 +308,45 @@ impl SyncEngine {
         self.pull(&token).await?;
         self.prepare_projects().await;
         Ok(())
+    }
+
+    /// Ask the account service who this is now: plan, approval and the
+    /// cloud-sync switch. A change is announced on `hook://auth`, which is the
+    /// same event sign-in uses, so every window redraws from one place.
+    async fn refresh_account(&self) {
+        let now = now_ms();
+        let due = {
+            let mut last = lock(&self.account_checked_at);
+            if now.saturating_sub(*last) < ACCOUNT_CHECK.as_millis() as i64 {
+                false
+            } else {
+                *last = now;
+                true
+            }
+        };
+        if !due {
+            return;
+        }
+        let before = (self.auth.plan(), self.auth.cloud_sync());
+        match self.auth.refresh().await {
+            crate::auth::RefreshOutcome::Revoked(message) => {
+                self.auth.clear_session();
+                let view = crate::auth::AuthView::signed_out(Some(message));
+                if let Ok(value) = serde_json::to_value(view) {
+                    let _ = (self.emit)("hook://auth", value);
+                }
+                return;
+            }
+            crate::auth::RefreshOutcome::Unreachable(error) => {
+                eprintln!("hook: could not check the account: {error}");
+            }
+            crate::auth::RefreshOutcome::Valid => {}
+        }
+        if before != (self.auth.plan(), self.auth.cloud_sync()) {
+            if let Ok(value) = serde_json::to_value(self.auth.view()) {
+                let _ = (self.emit)("hook://auth", value);
+            }
+        }
     }
 
     fn ensure_owner(&self, owner: &str) -> Result<(), String> {
@@ -1117,6 +1196,8 @@ mod tests {
             subject: "subject-sync".into(),
             signed_in_at: 0,
             git_token: None,
+            plan: None,
+            cloud_sync: None,
         })
         .unwrap();
         let store = Arc::new(Store::new(base.clone()).unwrap());
@@ -1145,6 +1226,28 @@ mod tests {
             Arc::new(MemoryStore::new(&fixture.base, Default::default())),
             None,
         )
+    }
+
+    #[test]
+    fn the_plan_and_the_switch_decide_whether_sync_runs() {
+        let fixture = fixture("http://127.0.0.1:1");
+        // An account file from before plans existed is not a downgrade: only a
+        // server-confirmed free plan switches sync off by itself.
+        assert_eq!(policy_for(&fixture.auth), (true, true, None));
+
+        let mut session = fixture.auth.session().expect("a session");
+        session.plan = Some("free".into());
+        fixture.auth.save_session(&session).unwrap();
+        assert_eq!(policy_for(&fixture.auth), (false, false, Some("free")));
+
+        session.plan = Some("pro".into());
+        session.cloud_sync = Some(false);
+        fixture.auth.save_session(&session).unwrap();
+        assert_eq!(policy_for(&fixture.auth), (true, false, Some("off")));
+
+        session.cloud_sync = Some(true);
+        fixture.auth.save_session(&session).unwrap();
+        assert_eq!(policy_for(&fixture.auth), (true, true, None));
     }
 
     #[tokio::test]

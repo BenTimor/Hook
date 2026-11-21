@@ -27,7 +27,48 @@ export interface AuthView {
   userCode?: string | null;
   verificationUrl?: string | null;
   message?: string | null;
+  /** `free`, `plus` or `pro`. Null on the browser preview. */
+  plan?: string | null;
+  /** The account-wide cloud-sync switch. */
+  cloudSync?: boolean | null;
+  /** The free plan's rolling message window. Null on a paid plan. */
+  quota?: {
+    limit: number;
+    used: number;
+    remaining: number;
+    resetAt: string | null;
+  } | null;
 }
+
+/** A model endpoint the user brought themselves, for this product only. */
+export interface CustomProvider {
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+}
+
+export interface SettingsView {
+  projectsDir: string;
+  advancedMode: boolean;
+  plan: string | null;
+  cloudSync: boolean;
+  customProvider: CustomProvider | null;
+}
+
+export interface SyncView {
+  enabled: boolean;
+  available: boolean;
+  reason: "free" | "off" | null;
+  state: "off" | "idle" | "syncing" | "error";
+  cursor: number;
+  pending: number;
+  lastSyncAt: number;
+  message: string | null;
+}
+
+/** The browser preview's account, for the Settings dialog. */
+let demoCloudSync = true;
+let demoProvider: CustomProvider | null = null;
 
 export interface AppInfo {
   version: string;
@@ -490,6 +531,97 @@ export const api = {
     isTauri()
       ? invoke<AuthView>("auth_logout")
       : Promise.resolve({ signedIn: false, state: "signed_out" }),
+
+  /** The account as it now stands; the dialog asks on open for the quota. */
+  authRefresh: (): Promise<AuthView> =>
+    isTauri()
+      ? invoke<AuthView>("auth_refresh")
+      : Promise.resolve({
+          signedIn: true,
+          state: "signed_in",
+          email: "you@example.com",
+          name: "You",
+          plan: "pro",
+          cloudSync: demoCloudSync,
+          quota: null,
+        }),
+
+  getSettings: (): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("get_settings")
+      : Promise.resolve({
+          projectsDir: "",
+          advancedMode: false,
+          plan: "pro",
+          cloudSync: demoCloudSync,
+          customProvider: demoProvider,
+        }),
+
+  /** The account-wide switch: turning it off here turns it off in Hook too. */
+  async setCloudSync(enabled: boolean): Promise<SettingsView> {
+    if (!isTauri()) demoCloudSync = enabled;
+    return isTauri()
+      ? invoke<SettingsView>("set_cloud_sync", { enabled })
+      : {
+          projectsDir: "",
+          advancedMode: false,
+          plan: "pro",
+          cloudSync: demoCloudSync,
+          customProvider: demoProvider,
+        };
+  },
+
+  async setCustomProvider(
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+  ): Promise<SettingsView> {
+    if (!isTauri()) demoProvider = { baseUrl, model, hasKey: true };
+    return isTauri()
+      ? invoke<SettingsView>("set_custom_provider", { baseUrl, apiKey, model })
+      : {
+          projectsDir: "",
+          advancedMode: false,
+          plan: "pro",
+          cloudSync: demoCloudSync,
+          customProvider: demoProvider,
+        };
+  },
+
+  async clearCustomProvider(): Promise<SettingsView> {
+    if (!isTauri()) demoProvider = null;
+    return isTauri()
+      ? invoke<SettingsView>("clear_custom_provider")
+      : {
+          projectsDir: "",
+          advancedMode: false,
+          plan: "pro",
+          cloudSync: demoCloudSync,
+          customProvider: demoProvider,
+        };
+  },
+
+  customModels: (baseUrl: string, apiKey: string): Promise<string[]> =>
+    isTauri()
+      ? invoke<string[]>("custom_models", {
+          baseUrl: baseUrl || null,
+          apiKey: apiKey || null,
+        })
+      : Promise.resolve(["gpt-4o-mini", "gpt-4o", "o3-mini"]),
+
+  syncStatus: (): Promise<SyncView> =>
+    isTauri()
+      ? invoke<SyncView>("sync_status")
+      : Promise.resolve({
+          enabled: demoCloudSync,
+          available: true,
+          reason: demoCloudSync ? null : "off",
+          state: demoCloudSync ? "idle" : "off",
+          cursor: 0,
+          pending: 0,
+          lastSyncAt: 0,
+          message: null,
+        }),
 
   // ── Workspace ────────────────────────────────────────────────────────────
   projects: () => call<{ projects: Project[] }>("GET", "/projects"),

@@ -15,6 +15,7 @@ const APP_TOKEN = "hk_app_test_token_0123456789abcdefghij";
 const SECOND_TOKEN = "hk_app_test_token_9876543210zyxwvutsrq";
 const OTHER_TOKEN = "hk_app_test_token_other_0123456789abcdef";
 const GIT_SCOPE_TOKEN = "hk_git_test_token_0123456789abcdefghij";
+const FREE_TOKEN = "hk_free_test_token_0123456789abcdefghij";
 
 function chat(id, { title = "New chat", updatedAt = 1000, messages = [] } = {}) {
   return {
@@ -56,21 +57,23 @@ async function setup(t, overrides = {}) {
   app.use("/api", api.router);
 
   const db = new DatabaseSync(dbPath);
-  for (const [subject, email] of [
-    ["sync-a", "a@example.test"],
-    ["sync-b", "b@example.test"],
+  for (const [subject, email, plan] of [
+    ["sync-a", "a@example.test", "pro"],
+    ["sync-b", "b@example.test", "pro"],
+    ["sync-free", "free@example.test", "free"],
   ]) {
     db.prepare(
       `INSERT INTO waitlist_signups
-         (google_subject, email, waitlist_status, approved_at)
-       VALUES (?, ?, 'approved', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-    ).run(subject, email);
+         (google_subject, email, waitlist_status, plan, approved_at)
+       VALUES (?, ?, 'approved', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+    ).run(subject, email, plan);
   }
   for (const [token, subject, device] of [
     [APP_TOKEN, "sync-a", "device-one"],
     [SECOND_TOKEN, "sync-a", "device-two"],
     [OTHER_TOKEN, "sync-b", "device-three"],
     [GIT_SCOPE_TOKEN, "sync-a", "device-one"],
+    [FREE_TOKEN, "sync-free", "device-four"],
   ]) {
     db.prepare(
       `INSERT INTO api_tokens (token_hash, google_subject, label, scope, device_id)
@@ -409,6 +412,26 @@ test("memory rejects an entry that is not shaped like one", async (t) => {
   assert.equal(response.status, 400);
   const pulled = await request("/sync/changes?since=0");
   assert.equal(pulled.body.changes.length, 0);
+});
+
+test("a free account never syncs, but can still delete what is stored", async (t) => {
+  const { request } = await setup(t);
+  const status = await request("/sync/status", { token: FREE_TOKEN });
+  assert.equal(status.status, 403);
+  assert.equal(status.body.error.code, "sync_not_included");
+
+  const push = await request("/sync/chats", {
+    method: "POST",
+    token: FREE_TOKEN,
+    body: { chats: [chat("free-chat")] },
+  });
+  assert.equal(push.status, 403);
+  assert.equal(push.body.error.code, "sync_not_included");
+
+  // Deleting data is always allowed: an account that went free must be able to
+  // take its old cloud copy with it.
+  const removed = await request("/sync/account", { method: "DELETE", token: FREE_TOKEN });
+  assert.equal(removed.status, 200);
 });
 
 test("deleting the account clears chats, projects, memory and media", async (t) => {

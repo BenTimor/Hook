@@ -19,6 +19,7 @@ import type {
   PreviewView,
   SettingsView,
   StreamEvent,
+  SyncView,
 } from "../lib/types";
 import { sortMetas, upsertMeta, isCodingChat } from "../lib/utils";
 
@@ -58,6 +59,8 @@ interface ChatStore {
   /** The user's choice for the right-side panel; auto-opens the first time a run shows one. */
   previewOpen: boolean;
   settings: SettingsView | null;
+  /** Whether conversations may leave this computer, and why not when they may not. */
+  sync: SyncView | null;
   settingsOpen: boolean;
   /** The coding agent whose transcript the inspector is showing, if any. */
   inspectAgentId: string | null;
@@ -96,6 +99,13 @@ interface ChatStore {
   closeSettings: () => void;
   refreshSettings: () => Promise<void>;
   setAdvancedMode: (enabled: boolean) => Promise<void>;
+  /** Turn the account-wide cloud sync on or off (paid plans only). */
+  setCloudSync: (enabled: boolean) => Promise<void>;
+  /** Re-read whether data is moving; Settings polls it while open. */
+  refreshSync: () => Promise<void>;
+  /** Save this product's own model endpoint and key. Throws with a readable reason. */
+  saveCustomProvider: (baseUrl: string, apiKey: string, model: string) => Promise<void>;
+  clearCustomProvider: () => Promise<void>;
   /** Open or close the read-only coding-agent inspector. */
   inspectAgent: (id: string | null) => void;
   /** Reload the sidebar after something wrote chats outside a turn. */
@@ -134,12 +144,13 @@ let unsubscribeSync: (() => void) | null = null;
 export const useChatStore = create<ChatStore>((set, get) => {
   /** Load everything that belongs to the signed-in window. */
   const loadWorkspace = async () => {
-    const [info, chats, agents, preview, settings] = await Promise.all([
+    const [info, chats, agents, preview, settings, sync] = await Promise.all([
       api.appInfo(),
       api.listChats(),
       api.agentsOverview(),
       api.previewState(),
       api.getSettings(),
+      api.syncStatus(),
     ]);
     set({
       info,
@@ -151,6 +162,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // Loaded at boot so advanced mode (and the projects folder) survives a
       // restart instead of waiting for Settings to be opened.
       settings,
+      // The sidebar draws the "not synced" mark from this, so it is read once
+      // per window rather than polling from Settings.
+      sync,
     });
   };
 
@@ -168,6 +182,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       preview: null,
       previewOpen: false,
       settings: null,
+      sync: null,
       settingsOpen: false,
       inspectAgentId: null,
     });
@@ -187,7 +202,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }
     if (!wasSignedIn) {
       void loadWorkspace().catch((error) => toast.error(textOf(error)));
+      return;
     }
+    // A plan change or the sync switch moving in another product arrives as an
+    // auth view. The settings and the sidebar both depend on it.
+    void get().refreshSettings();
+    void get().refreshSync();
   };
 
   const flushDeltas = () => {
@@ -350,6 +370,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     preview: null,
     previewOpen: false,
     settings: null,
+    sync: null,
     settingsOpen: false,
     inspectAgentId: null,
 
@@ -364,6 +385,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubscribeSync?.();
       unsubscribeSync = onSyncEvent((event) => {
         if (event.projects) void get().refreshSettings();
+        // A cycle that finished says something about whether data is moving.
+        void get().refreshSync();
         if (!event.chats) return;
         const activeId = get().activeId;
         void api
@@ -396,7 +419,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
       // Returning to the window is a good moment to catch up: the other
       // computer may have written while this one was in the background.
-      window.addEventListener("focus", () => void api.syncNow());
+      window.addEventListener("focus", () => {
+        // A quota reset, a plan change or a switch flipped elsewhere is cheapest
+        // to notice here: the account view carries all three.
+        void get().refreshAuth();
+        void api.syncNow();
+      });
       onAgentsEvent((overview) => set({ agents: overview }));
       onPreviewEvent((preview) => {
         if (!preview.active) {
@@ -446,6 +474,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
               userCode: null,
               verificationUrl: null,
               message,
+              plan: null,
+              cloudSync: null,
+              quota: null,
             },
             authError: message,
           });
@@ -608,6 +639,21 @@ export const useChatStore = create<ChatStore>((set, get) => {
           images.map(({ dataUrl, width, height }) => ({ dataUrl, width, height })),
         );
         if (!activeId) set({ activeId: id, inspectAgentId: null });
+        // The account service counts this message now; keep the number in
+        // Settings honest until the next account check.
+        const auth = get().auth;
+        if (auth?.quota && auth.quota.used < auth.quota.limit) {
+          set({
+            auth: {
+              ...auth,
+              quota: {
+                ...auth.quota,
+                used: auth.quota.used + 1,
+                remaining: Math.max(0, auth.quota.remaining - 1),
+              },
+            },
+          });
+        }
       } catch (error) {
         set({ draft: trimmed, draftImages: images, pendingNewChat: false });
         toast.error(textOf(error));
@@ -733,6 +779,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     openSettings: async () => {
       set({ settingsOpen: true });
+      // The plan and the free window are account state; ask before drawing them.
+      void get().refreshAuth();
       await get().refreshSettings();
     },
 
@@ -770,6 +818,34 @@ export const useChatStore = create<ChatStore>((set, get) => {
         set({ settings: previous });
         toast.error(textOf(error));
       }
+    },
+
+    setCloudSync: async (enabled) => {
+      try {
+        const settings = await api.setCloudSync(enabled);
+        set({ settings });
+        await get().refreshSync();
+      } catch (error) {
+        toast.error(textOf(error));
+      }
+    },
+
+    refreshSync: async () => {
+      try {
+        set({ sync: await api.syncStatus() });
+      } catch {
+        // Settings can wait for the next tick; a stale line is not an error.
+      }
+    },
+
+    saveCustomProvider: async (baseUrl, apiKey, model) => {
+      const settings = await api.setCustomProvider(baseUrl, apiKey, model);
+      set({ settings });
+    },
+
+    clearCustomProvider: async () => {
+      const settings = await api.clearCustomProvider();
+      set({ settings });
     },
 
     inspectAgent: (id) => set({ inspectAgentId: id }),
