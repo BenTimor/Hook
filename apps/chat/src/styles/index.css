@@ -1601,6 +1601,37 @@ body[data-preview-dragging="true"] iframe {
   background: rgba(var(--ink-rgb), 0.05);
 }
 
+/* About. The license has to be reachable from inside a running build, and the
+   dock is only 380px wide, so the links wrap instead of shrinking. `.btn` is a
+   fixed 34px pill with `nowrap`; these are quieter and allowed to fold. */
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.about-links .btn {
+  height: auto;
+  padding: 6px 11px;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.about-inline-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.about-inline-link:hover {
+  color: var(--ink-2);
+}
+
 .path-row {
   display: flex;
   align-items: center;

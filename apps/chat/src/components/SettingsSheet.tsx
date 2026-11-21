@@ -16,6 +16,7 @@ import { useChatStore } from "../store/useChatStore";
 import { useUpdateStore } from "../store/useUpdateStore";
 import { ImportSection } from "./ImportSection";
 import { MemorySection } from "./MemorySection";
+import { AboutSection } from "./AboutSection";
 
 /**
  * One quiet line about where the work lives. Syncing itself is automatic; this
@@ -289,6 +290,8 @@ export function SettingsSheet() {
               ) : null}
             </p>
           </section>
+
+          <AboutSection version={update?.current ?? version} />
 
           <p className="sheet-foot">
             Hook talks to its own account service; provider settings live on
