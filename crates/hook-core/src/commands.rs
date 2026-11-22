@@ -617,6 +617,29 @@ fn coding_needs_plan() -> &'static str {
     "Coding agents are part of a paid plan. Add your own model provider in Settings to use one."
 }
 
+/// Remove the last reply from a chat, together with the tool traffic that
+/// belonged to it. Returns false when there is nothing to remove.
+///
+/// The test for tool traffic is `tool_calls`, not `hidden`: a model can put
+/// text in front of its calls ("Let me check that."), and such a message would
+/// otherwise stay behind without the results it asked for — a history the
+/// endpoint rejects on the next turn.
+fn drop_last_reply(chat: &mut crate::store::Chat) -> bool {
+    let Some(last) = chat.messages.iter().rposition(|m| m.role == "assistant") else {
+        return false;
+    };
+    chat.messages.truncate(last);
+    while chat
+        .messages
+        .last()
+        .map(|m| m.role == "tool" || m.tool_calls.is_some())
+        .unwrap_or(false)
+    {
+        chat.messages.pop();
+    }
+    true
+}
+
 /// The free plan's 24-hour message limit, checked before the turn starts so the
 /// user reads a sentence instead of a 429. The server enforces the same rule
 /// from its own usage log; this never widens it.
@@ -647,18 +670,8 @@ pub fn regenerate(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<()
     }
     free_chat_allowed(state.inner())?;
 
-    let Some(last) = chat.messages.iter().rposition(|m| m.role == "assistant") else {
+    if !drop_last_reply(&mut chat) {
         return Err("Nothing to regenerate yet.".into());
-    };
-    chat.messages.truncate(last);
-    // Drop any tool traffic that belonged to the removed reply.
-    while chat
-        .messages
-        .last()
-        .map(|m| m.role == "tool" || (m.hidden && m.role == "assistant"))
-        .unwrap_or(false)
-    {
-        chat.messages.pop();
     }
     if !chat.messages.iter().any(|m| m.role == "user") {
         return Err("Nothing to regenerate yet.".into());
@@ -1009,7 +1022,8 @@ fn copy_image(source: &std::path::Path, target: &std::path::Path) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use super::copy_image;
+    use super::{copy_image, drop_last_reply};
+    use crate::store::{Chat, Message, ToolCallRecord};
 
     #[test]
     fn saving_copies_the_picture_byte_for_byte() {
@@ -1024,6 +1038,43 @@ mod tests {
         assert!(copy_image(&dir.join("missing.png"), &target).is_err());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn regenerating_removes_a_tool_turn_even_when_it_spoke_first() {
+        let mut assistant = Message::new("assistant", "Let me check.", "complete");
+        assistant.tool_calls = Some(vec![ToolCallRecord {
+            id: "call_1".into(),
+            name: "workspace_tasks".into(),
+            arguments: "{}".into(),
+        }]);
+        let mut tool = Message::new("tool", "{\"tasks\":[]}", "complete");
+        tool.tool_call_id = Some("call_1".into());
+
+        let mut chat = Chat::new();
+        chat.messages = vec![
+            Message::new("user", "what tasks do i have?", "complete"),
+            assistant,
+            tool,
+            Message::new("assistant", "Five, all to do.", "complete"),
+        ];
+
+        assert!(drop_last_reply(&mut chat));
+        assert_eq!(chat.messages.len(), 1);
+        assert_eq!(chat.messages[0].role, "user");
+    }
+
+    #[test]
+    fn regenerating_stops_at_the_user_message() {
+        let mut chat = Chat::new();
+        assert!(!drop_last_reply(&mut chat));
+        chat.messages = vec![
+            Message::new("user", "hi", "complete"),
+            Message::new("assistant", "hello", "complete"),
+        ];
+        assert!(drop_last_reply(&mut chat));
+        assert_eq!(chat.messages.len(), 1);
+        assert_eq!(chat.messages[0].role, "user");
     }
 }
 

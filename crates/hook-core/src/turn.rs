@@ -1408,44 +1408,100 @@ fn build_history(
     require_reasoning: bool,
     images: Option<&dyn Fn(&Attachment) -> Option<String>>,
 ) -> Vec<serde_json::Value> {
-    // Tool results are only valid directly after the assistant message that
-    // requested them; drop any orphan (e.g. its parent errored out).
-    let live_calls: std::collections::HashSet<&str> = chat
-        .messages
-        .iter()
-        .filter(|m| m.id != exclude_id && m.status != "error")
-        .filter_map(|m| m.tool_calls.as_ref())
-        .flatten()
-        .map(|call| call.id.as_str())
-        .collect();
+    // A tool result is not a message in its own right: the endpoint requires it
+    // directly after the assistant message that asked for it, one for every
+    // `tool_call_id`. So the two are replayed as a pair, taken from wherever
+    // they sit in the chat. That also repairs a conversation an older sync
+    // merge reordered, or one whose turn died between saving the calls and
+    // saving the results: half a tool batch makes the whole request invalid
+    // ("an assistant message with 'tool_calls' must be followed by tool
+    // messages responding to each 'tool_call_id'").
+    let mut history = Vec::new();
+    let mut replayed: HashSet<String> = HashSet::new();
 
-    chat.messages
-        .iter()
-        .filter(|m| m.id != exclude_id)
-        .filter(|m| m.status != "error")
-        .filter(|m| {
-            m.role != "tool"
-                || m.tool_call_id
-                    .as_deref()
-                    .map(|id| live_calls.contains(id))
-                    .unwrap_or(false)
-        })
-        .filter_map(|m| match m.role.as_str() {
-            "user" => user_history_entry(m, images),
-            "assistant" => assistant_history_entry(m, echo, require_reasoning),
-            "tool" => m.tool_call_id.as_ref().map(|id| {
-                json!({ "role": "tool", "tool_call_id": id, "content": m.content })
-            }),
+    for message in chat.messages.iter() {
+        if message.id == exclude_id || message.status == "error" {
+            continue;
+        }
+        match message.role.as_str() {
+            // Emitted with the assistant message that called them, below.
+            "tool" => {}
+            "user" => {
+                if let Some(entry) = user_history_entry(message, images) {
+                    history.push(entry);
+                }
+            }
             // Context frames and coding-agent notes. They are kept in place, in
             // the order they arrived, so the request prefix never shifts: a note
             // that is replayed identically is cached, and one that vanished
             // would take everything after it out of the cache with it.
-            "system" if !m.content.trim().is_empty() => {
-                Some(json!({ "role": "system", "content": m.content }))
+            "system" if !message.content.trim().is_empty() => {
+                history.push(json!({ "role": "system", "content": message.content }));
             }
-            _ => None,
-        })
-        .collect()
+            "assistant" => {
+                let calls = message.tool_calls.as_deref().unwrap_or_default();
+                if calls.is_empty() {
+                    if let Some(entry) = assistant_history_entry(message, echo, require_reasoning) {
+                        history.push(entry);
+                    }
+                    continue;
+                }
+                // A call needs its own result. When one is missing the calls are
+                // replayed as plain text instead of as a batch nothing answers:
+                // the endpoint refuses the request otherwise, which used to make
+                // a conversation like that fail on every later message.
+                let mut results: Vec<&Message> = Vec::with_capacity(calls.len());
+                let mut complete = true;
+                for call in calls {
+                    let Some(result) = chat.messages.iter().find(|result| {
+                        result.role == "tool"
+                            && result.id != exclude_id
+                            && result.status != "error"
+                            && !replayed.contains(&result.id)
+                            && result.tool_call_id.as_deref() == Some(call.id.as_str())
+                    }) else {
+                        complete = false;
+                        break;
+                    };
+                    results.push(result);
+                }
+                let mut entry = assistant_history_entry(message, echo, require_reasoning);
+                if !complete {
+                    results.clear();
+                    // A tool-call-only turn has nothing left to say once its
+                    // calls are gone.
+                    if message.content.trim().is_empty() {
+                        continue;
+                    }
+                    if let Some(object) = entry
+                        .as_mut()
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        object.remove("tool_calls");
+                    }
+                }
+                if let Some(entry) = entry {
+                    history.push(entry);
+                }
+                for result in results {
+                    replayed.insert(result.id.clone());
+                    history.push(tool_history_entry(result));
+                }
+            }
+            _ => {}
+        }
+    }
+    history
+}
+
+/// A tool result as the provider expects it: the call it answers and its text.
+/// It is never replayed on its own.
+fn tool_history_entry(message: &Message) -> serde_json::Value {
+    json!({
+        "role": "tool",
+        "tool_call_id": message.tool_call_id,
+        "content": message.content,
+    })
 }
 
 /// A user turn: plain text, or text plus the pictures they attached.
@@ -1570,7 +1626,8 @@ fn assistant_history_entry(
     require_reasoning: bool,
 ) -> Option<serde_json::Value> {
     let empty_text = m.content.trim().is_empty();
-    if empty_text && m.tool_calls.is_none() {
+    let calls = m.tool_calls.as_deref().filter(|calls| !calls.is_empty());
+    if empty_text && calls.is_none() {
         return None;
     }
 
@@ -1584,7 +1641,7 @@ fn assistant_history_entry(
             json!(m.content)
         },
     );
-    if let Some(calls) = &m.tool_calls {
+    if let Some(calls) = calls {
         object.insert("tool_calls".into(), tool_calls_json(calls));
     }
     if let Some(field) = echo.field_for(m.reasoning_field.as_deref()) {
@@ -2096,6 +2153,95 @@ mod tests {
         let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["role"], "user");
+    }
+
+    fn call(id: &str) -> ToolCallRecord {
+        ToolCallRecord {
+            id: id.into(),
+            name: "workspace_tasks".into(),
+            arguments: "{}".into(),
+        }
+    }
+
+    fn result(id: &str, content: &str) -> Message {
+        let mut message = Message::new("tool", content, "complete");
+        message.tool_call_id = Some(id.into());
+        message.hidden = true;
+        message
+    }
+
+    #[test]
+    fn a_call_without_all_its_results_is_replayed_as_text() {
+        // A turn that died between saving the calls and saving the results used
+        // to make every later message fail with a 400. One result of two is not
+        // a tool batch: the calls go, the sentence stays.
+        let mut assistant = Message::new("assistant", "Let me check that.", "complete");
+        assistant.tool_calls = Some(vec![call("call_1"), call("call_2")]);
+        let chat = chat_with(vec![
+            Message::new("user", "what tasks do i have?", "complete"),
+            assistant,
+            result("call_1", "{\"tasks\":[]}"),
+        ]);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1]["role"], "assistant");
+        assert_eq!(history[1]["content"], "Let me check that.");
+        assert!(history[1].get("tool_calls").is_none());
+    }
+
+    #[test]
+    fn a_call_with_nothing_to_say_and_no_result_is_dropped() {
+        let mut assistant = Message::new("assistant", "", "complete");
+        assistant.tool_calls = Some(vec![call("call_1")]);
+        assistant.hidden = true;
+        let chat = chat_with(vec![
+            Message::new("user", "hi", "complete"),
+            assistant,
+        ]);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["role"], "user");
+    }
+
+    #[test]
+    fn a_frame_between_a_call_and_its_result_does_not_split_the_pair() {
+        // The sync merge used to sort messages by createdAt, which moved the
+        // memory frame (written at the top of the chat, created a moment later)
+        // between a tool call and its result. Replay has to keep them together.
+        let mut assistant = Message::new("assistant", "", "complete");
+        assistant.tool_calls = Some(vec![call("call_1")]);
+        assistant.hidden = true;
+        let frame = Message::frame(crate::memory::FRAME_KIND, "[memory rev 1]\nPinned.");
+        let chat = chat_with(vec![
+            Message::new("user", "hi", "complete"),
+            assistant,
+            frame,
+            result("call_1", "{\"tasks\":[]}"),
+        ]);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        let roles: Vec<&str> = history
+            .iter()
+            .map(|entry| entry["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, vec!["user", "assistant", "tool", "system"]);
+        assert_eq!(history[1]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(history[2]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn an_errored_tool_result_leaves_no_dangling_call() {
+        let mut assistant = Message::new("assistant", "Looking.", "complete");
+        assistant.tool_calls = Some(vec![call("call_1")]);
+        let mut failed = result("call_1", "{\"error\":\"offline\"}");
+        failed.status = "error".into();
+        let chat = chat_with(vec![
+            Message::new("user", "hi", "complete"),
+            assistant,
+            failed,
+        ]);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        assert_eq!(history.len(), 2);
+        assert!(history[1].get("tool_calls").is_none());
     }
 
     #[test]

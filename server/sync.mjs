@@ -15,8 +15,9 @@
  *   DELETE /api/sync/account                delete everything stored for the account
  *
  * Merge rules:
- * - messages are unioned by id, ordered by creation time; a finished copy
- *   beats a stale in-flight one, and the newer chat wins an edit conflict
+ * - messages are unioned by id in transcript order (a tool result stays next
+ *   to the call that asked for it); a finished copy beats a stale in-flight
+ *   one, and the newer chat wins an edit conflict
  * - title/pin follow the newer chat; preview/count are recomputed here
  * - a deletion is a tombstone that beats a stale push; an explicit restore
  *   revives it
@@ -191,8 +192,100 @@ function normalizeChat(raw) {
       messageCount: 0,
       preview: "",
     },
-    messages: raw.messages.map((message) => ({ ...message })),
+    messages: keepToolPairsTogether(raw.messages.map((message) => ({ ...message }))),
   };
+}
+
+/**
+ * The order a merged conversation is replayed in.
+ *
+ * Message order is semantic, not chronological. A tool result has to sit
+ * directly after the assistant message that asked for it, and the memory
+ * frame is deliberately put at the top of a chat even though it was created
+ * after the question. Sorting by `createdAt`, which this used to do, therefore
+ * wedged the frame between a tool call and its result; the model endpoint then
+ * refused every later message in that chat with "an assistant message with
+ * 'tool_calls' must be followed by tool messages responding to each
+ * 'tool_call_id'".
+ *
+ * The newer copy's order wins. A message only the older copy has is spliced
+ * back next to the last message the two share before it, so a device that
+ * added a message offline still contributes it in the same neighbourhood.
+ */
+function mergeOrder(winner, loser) {
+  const winnerIds = new Set(winner.map((message) => message.id));
+  // Loser-only messages, grouped under the shared message they followed.
+  const groups = new Map();
+  let anchor = "";
+  for (const message of loser) {
+    if (winnerIds.has(message.id)) {
+      anchor = message.id;
+      continue;
+    }
+    const group = groups.get(anchor) ?? [];
+    group.push(message);
+    groups.set(anchor, group);
+  }
+
+  const ordered = [];
+  const seen = new Set();
+  const push = (message) => {
+    if (seen.has(message.id)) return;
+    seen.add(message.id);
+    ordered.push(message);
+  };
+  for (const message of groups.get("") ?? []) push(message);
+  for (const message of winner) {
+    push(message);
+    for (const extra of groups.get(message.id) ?? []) push(extra);
+  }
+  return ordered;
+}
+
+/**
+ * An assistant message with `tool_calls` must be followed immediately by one
+ * `tool` message per call, each naming that call's id. Rows stored by the
+ * version that sorted by `createdAt` can have anything in between. Moving a
+ * result back beside its call is always right: the two were meant to be read
+ * as one exchange. A call with no result at all is left alone here — the
+ * desktop drops such a call from the request rather than inventing a result.
+ */
+function keepToolPairsTogether(messages) {
+  const calls = new Map();
+  for (const message of messages) {
+    if (!Array.isArray(message.toolCalls)) continue;
+    for (const call of message.toolCalls) {
+      if (call?.id) calls.set(call.id, message);
+    }
+  }
+  // One result per call: a duplicated row would be rejected just the same.
+  const results = new Map();
+  for (const message of messages) {
+    if (message.role !== "tool" || !message.toolCallId) continue;
+    if (!results.has(message.toolCallId)) results.set(message.toolCallId, message);
+  }
+
+  const ordered = [];
+  const placed = new Set();
+  for (const message of messages) {
+    if (placed.has(message.id)) continue;
+    if (message.role === "tool" && message.toolCallId && calls.has(message.toolCallId)) {
+      // It belongs next to its call. If the call has not been reached yet this
+      // copy is the misplaced one, and the call brings the canonical row along.
+      if (!placed.has(calls.get(message.toolCallId).id)) continue;
+      if (results.get(message.toolCallId) !== message) continue;
+    }
+    ordered.push(message);
+    placed.add(message.id);
+    if (!Array.isArray(message.toolCalls)) continue;
+    for (const call of message.toolCalls) {
+      const result = call?.id ? results.get(call.id) : null;
+      if (!result || placed.has(result.id)) continue;
+      ordered.push(result);
+      placed.add(result.id);
+    }
+  }
+  return ordered;
 }
 
 /**
@@ -220,11 +313,9 @@ function mergeChat(stored, incoming) {
     }
   }
 
-  const ordered = [...messages.values()].sort((a, b) => {
-    const delta = (a.createdAt ?? 0) - (b.createdAt ?? 0);
-    if (delta) return delta;
-    return String(a.id).localeCompare(String(b.id));
-  });
+  const ordered = keepToolPairsTogether(
+    mergeOrder(winner.messages, loser.messages).map((message) => messages.get(message.id)),
+  );
 
   const merged = {
     ...winner,

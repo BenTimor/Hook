@@ -177,6 +177,155 @@ test("concurrent devices merge messages by id instead of losing one", async (t) 
   assert.equal(result.meta.messageCount, 2);
 });
 
+test("a merged chat keeps the order its messages were written in", async (t) => {
+  const { request } = await setup(t);
+  // Creation time is not transcript order: the memory frame is written at the
+  // top of a chat although it is created after the question. Sorting by
+  // `createdAt` used to move it between a tool call and its result, and the
+  // model endpoint then refused every later message in the conversation.
+  const frame = {
+    id: "memory-chat-order",
+    role: "system",
+    content: "[memory rev 1]\nPinned.",
+    createdAt: 2500,
+    status: "complete",
+    hidden: true,
+    kind: "memory",
+  };
+  const call = {
+    id: "m2",
+    role: "assistant",
+    content: "",
+    createdAt: 2000,
+    status: "complete",
+    hidden: true,
+    toolCalls: [{ id: "call_1", name: "workspace_tasks", arguments: "{}" }],
+  };
+  const tool = {
+    id: "m3",
+    role: "tool",
+    content: "{\"tasks\":[]}",
+    createdAt: 3000,
+    status: "complete",
+    hidden: true,
+    toolCallId: "call_1",
+  };
+  await request("/sync/chats", {
+    method: "POST",
+    body: { chats: [chat("chat-order", { updatedAt: 2000, messages: [message("m1", "what tasks?", 1000)] })] },
+  });
+
+  const pushed = await request("/sync/chats", {
+    method: "POST",
+    token: SECOND_TOKEN,
+    body: {
+      chats: [
+        chat("chat-order", {
+          updatedAt: 3000,
+          messages: [frame, message("m1", "what tasks?", 1000), call, tool],
+        }),
+      ],
+    },
+  });
+  assert.equal(pushed.status, 200);
+  assert.deepEqual(
+    pushed.body.results[0].chat.messages.map((entry) => entry.id),
+    ["memory-chat-order", "m1", "m2", "m3"],
+  );
+
+  const pulled = await request("/sync/changes?since=0");
+  const stored = pulled.body.changes.find((entry) => entry.id === "chat-order");
+  assert.deepEqual(
+    stored.chat.messages.map((entry) => entry.id),
+    ["memory-chat-order", "m1", "m2", "m3"],
+  );
+});
+
+test("a tool result stored after its call is put back beside it", async (t) => {
+  const { request } = await setup(t);
+  const frame = {
+    id: "memory-chat-split",
+    role: "system",
+    content: "[memory rev 1]\nPinned.",
+    createdAt: 2500,
+    status: "complete",
+    hidden: true,
+    kind: "memory",
+  };
+  const call = {
+    id: "m2",
+    role: "assistant",
+    content: "",
+    createdAt: 2000,
+    status: "complete",
+    hidden: true,
+    toolCalls: [{ id: "call_1", name: "workspace_tasks", arguments: "{}" }],
+  };
+  const tool = {
+    id: "m3",
+    role: "tool",
+    content: "{\"tasks\":[]}",
+    createdAt: 3000,
+    status: "complete",
+    hidden: true,
+    toolCallId: "call_1",
+  };
+  // Exactly what the sorting merge left behind: the frame wedged in between.
+  const pushed = await request("/sync/chats", {
+    method: "POST",
+    body: {
+      chats: [
+        chat("chat-split", {
+          messages: [message("m1", "what tasks?", 1000), call, frame, tool],
+        }),
+      ],
+    },
+  });
+  assert.equal(pushed.status, 200);
+  assert.deepEqual(
+    pushed.body.results[0].chat.messages.map((entry) => entry.id),
+    ["m1", "m2", "m3", "memory-chat-split"],
+  );
+});
+
+test("a message only the older copy has keeps its place in the merge", async (t) => {
+  const { request } = await setup(t);
+  await request("/sync/chats", {
+    method: "POST",
+    body: {
+      chats: [
+        chat("chat-splice", {
+          updatedAt: 3000,
+          messages: [
+            message("m1", "one", 1000),
+            message("m2", "two", 2000),
+            message("m3", "three", 3000),
+          ],
+        }),
+      ],
+    },
+  });
+
+  // A device that was offline still has a message between m1 and m2.
+  const stale = await request("/sync/chats", {
+    method: "POST",
+    token: SECOND_TOKEN,
+    body: {
+      chats: [
+        chat("chat-splice", {
+          updatedAt: 1500,
+          messages: [message("m1", "one", 1000), message("m1b", "between", 1500)],
+        }),
+      ],
+    },
+  });
+  assert.equal(stale.status, 200);
+  assert.deepEqual(
+    stale.body.results[0].chat.messages.map((entry) => entry.id),
+    ["m1", "m1b", "m2", "m3"],
+  );
+});
+
 test("a finished message beats a stale streaming snapshot", async (t) => {
   const { request } = await setup(t);
   await request("/sync/chats", {

@@ -1305,7 +1305,10 @@ A free account never syncs. Two independent mechanisms are at work:
 - **Conversations.** Each device pushes changed chats to `/api/sync/chats` and
   pulls everything newer than its cursor from `/api/sync/changes`. The server is
   the only merger, so every machine converges on the same answer: messages are
-  unioned by id (a finished copy beats a stale in-flight one), titles and pins
+  unioned by id in transcript order (a tool result stays next to the call that
+  asked for it — creation time is not message order, because the memory frame
+  is written at the top of a chat although it is created after the question),
+  a finished copy beats a stale in-flight one, titles and pins
   follow the newer chat, a deletion is a tombstone, and an explicit restore
   revives it. A chat that is streaming is never uploaded, and never overwritten:
   the check is on the copy **on this machine**, because the incoming copy cannot

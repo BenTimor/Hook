@@ -401,7 +401,15 @@ Changing one side of a boundary is the most common way to break this repo.
   managed config) → `hook-guard.mjs` (`sync_pull`/`sync_push`) → `turn.rs`
   (what the chat agent tells the coding agent) → Settings status → README
   **Sync between computers** and `infra/README.md`. Add to `server/sync.test.mjs`
-  / `server/git.test.mjs` and the sync unit tests in `sync.rs`.
+  / `server/git.test.mjs` and the sync unit tests in `sync.rs`. Message order is
+  transcript order, never `createdAt` order: a tool result has to sit directly
+  after the assistant message that called it, while the memory frame is written
+  at the top of a chat although it is created later. Sorting by time once put
+  the frame between a call and its result, and the endpoint then refused every
+  later message in that conversation with "an assistant message with
+  'tool_calls' must be followed by tool messages". `turn.rs::build_history`
+  replays each call together with its results and drops a call whose result is
+  missing, so one bad row cannot poison a conversation.
 - **Phone product change:** `apps/mobile/src` (the phone's chrome and
   `mobile.css`) → `packages/chat` if the shared surface needs a prop → the
   Capabilities it passes in `apps/mobile/src-tauri/src/lib.rs`. A phone has no
