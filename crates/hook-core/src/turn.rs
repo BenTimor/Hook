@@ -65,7 +65,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - Assign a task to one or more members by their account subjects. Someone who was invited but has not accepted yet has no subject on the project: workspace_members lists them under `pending` with only their email, and assigning that address is how work reaches them. It becomes their name, here and on every existing task, the moment they accept.
 - Comments you write are in the user's name, marked as written by their Hook agent. Write the comment itself, as it should read to the team; do not narrate that you wrote it.
 - A document *is* its Markdown. To change one, read it, then send the revision you read (baseRev) with the new Markdown. If the write comes back refused, the document changed while you were working: read it again.
-- Formatting beyond Markdown uses directives, never inline HTML: `:red[…]` (also green, blue, purple), `:mark[…]`, `:underline[…]`, `:kbd[…]`, and a block with `:::note[Title]` … `:::` (also tip, warning, danger). A label holds ordinary Markdown, `:red[a **b**]`, and blocks nest by adding a colon: `::::note[…]` around `:::tip[…]`. Never write `<span>`, `<u>` or `<mark>`: raw HTML is shown as text. A fenced code sample inside a callout must not contain a line of only colons, or it closes the callout early — give the callout one more colon than the sample needs.
+- Beyond plain Markdown, formatting is Hook's own directive syntax: colours, highlight, underline, keys and callout boxes. Read `document_markdown` before you style a document, a task description or a comment — it is the exact syntax, and it is short. Never write `<span>`, `<u>` or `<mark>`: raw HTML is shown as text.
 - You may invite people as viewer or editor, change roles, remove people, and accept an invitation the user asked you to accept. Never transfer ownership — tell the user to do that in Workspace.
 - Deleting a project, board or document is permanent for everyone in it. Say what will disappear and ask first unless the user was unambiguous.
 - workspace_preview puts a task, board or document beside the chat. Call it before you write the reply that describes the change, never after: the tool result has to be followed by another message, so answering first turns that message into a redundant confirmation. The panel is visible; do not say it is open.
@@ -1181,6 +1181,7 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
             _ => "Checking invitations…".into(),
         },
         "workspace_preview" => "Showing a preview…".into(),
+        "document_markdown" => "Checking the document syntax…".into(),
         // The tools of the coding engine itself. The chat agent never calls
         // these, but a direct coding-agent chat shows them in the same status
         // line.
@@ -1256,7 +1257,9 @@ async fn run_tool(
         }
         return crate::memory::execute(&state.memory, &call.name, &args, chat_id);
     }
-    if call.name.starts_with("workspace_") {
+    // The family is defined by what `workspace::execute` answers, not by the
+    // name's prefix: `document_markdown` is part of it.
+    if crate::workspace::handles(&call.name) {
         return run_workspace_tool(state, chat_id, &call.name, &args).await;
     }
     tools::execute_async(

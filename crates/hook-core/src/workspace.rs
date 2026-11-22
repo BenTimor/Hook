@@ -20,6 +20,13 @@ use crate::config::HarnessConfig;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The document dialect, written for the model and for a person alike. It is
+/// embedded so a `document_markdown` call never needs the network, and it lives
+/// in `docs/` so the repository and the tool describe one syntax.
+/// `packages/markdown/src/reference.test.ts` fails if a registered rule is
+/// missing from it.
+const MARKDOWN_REFERENCE: &str = include_str!("../../../docs/document-markdown.md");
+
 pub struct WorkspaceClient {
     http: reqwest::Client,
     base: String,
@@ -203,7 +210,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_documents",
-            "Markdown documents in a project. The Markdown is the document: pass it exactly as it should be stored. An update carries the revision you read; a stale one is refused with the current copy so you can re-apply the change. Styling beyond Markdown uses directives, never inline HTML: `:red[x]` (also green, blue, purple), `:mark[x]`, `:underline[x]`, `:kbd[x]`, and `:::note[Title]` … `:::` blocks (also tip, warning, danger), which nest by adding a colon.",
+            "Markdown documents in a project. The Markdown is the document: pass it exactly as it should be stored. An update carries the revision you read; a stale one is refused with the current copy so you can re-apply the change. Hook's own formatting — colour, highlight, underline, keys and the callout boxes — is a directive syntax on top of Markdown and never inline HTML: read `document_markdown` before you style anything.",
             json!({
                 "type": "object",
                 "properties": {
@@ -212,11 +219,17 @@ pub fn definitions() -> Vec<Value> {
                     "document": { "type": "string", "description": "Document id (dc_…)." },
                     "title": { "type": "string" },
                     "markdown": { "type": "string" },
+                    "direction": { "type": "string", "enum": ["ltr", "rtl"], "description": "Text direction for the whole document. Right to left for Hebrew, Arabic and similar; left to right otherwise." },
                     "folder": { "type": "string" },
                     "baseRev": { "type": "integer", "description": "The revision you read, for update." }
                 },
                 "required": ["action"]
             }),
+        ),
+        tool(
+            "document_markdown",
+            "The exact syntax of Hook's document Markdown, on demand: the colour, highlight, underline and key directives, the callout blocks and how they nest, where each is allowed, what stays literal, the traps, and the document options that are not Markdown (title, direction). Call it before you style a document, a task description or a comment, or when you are not sure whether something is allowed. Plain Markdown and plain prose need no lookup.",
+            json!({ "type": "object", "properties": {} }),
         ),
         tool(
             "workspace_members",
@@ -279,10 +292,12 @@ fn required(args: &Value, key: &str) -> Result<String, String> {
     string(args, key).ok_or_else(|| format!("Missing \"{key}\"."))
 }
 
-/// True for the tool names [`execute`] answers. The tool bridge uses it to
-/// route a call to the store that owns it.
+/// True for the tool names [`execute`] answers. The turn and the tool bridge use
+/// it to route a call to the store that owns it, so a tool advertised here and
+/// not routed here is dead: `document_markdown` is the one whose name does not
+/// carry the family's prefix.
 pub fn handles(name: &str) -> bool {
-    name.starts_with("workspace_")
+    name.starts_with("workspace_") || name == "document_markdown"
 }
 
 /// Run one `workspace_*` tool call. The return value is the JSON the model sees.
@@ -292,6 +307,11 @@ pub async fn execute(
     name: &str,
     args: &Value,
 ) -> String {
+    // The reference is text in this binary: no account, no network, and the
+    // answer is the document itself rather than a JSON-escaped copy of it.
+    if name == "document_markdown" {
+        return MARKDOWN_REFERENCE.to_string();
+    }
     let result = match name {
         "workspace_projects" => projects(client, args).await,
         "workspace_folders" => folders(client, args).await,
@@ -483,27 +503,15 @@ async fn documents(client: &WorkspaceClient, args: &Value) -> ToolResult {
         "get" => client.get(&format!("/documents/{}", required(args, "document")?)).await,
         "create" => {
             let project = required(args, "project")?;
-            let mut body = json!({ "title": string(args, "title").unwrap_or_else(|| "Untitled".into()) });
-            if let Some(markdown) = args.get("markdown").and_then(Value::as_str) {
-                body["markdown"] = json!(markdown);
-            }
-            if let Some(folder) = string(args, "folder") {
-                body["folderId"] = json!(folder);
+            let mut body = document_fields(args);
+            if body.get("title").is_none() {
+                body["title"] = json!("Untitled");
             }
             client.post(&format!("/projects/{project}/documents"), body).await
         }
         "update" => {
             let document = required(args, "document")?;
-            let mut body = json!({});
-            if let Some(title) = string(args, "title") {
-                body["title"] = json!(title);
-            }
-            if let Some(markdown) = args.get("markdown").and_then(Value::as_str) {
-                body["markdown"] = json!(markdown);
-            }
-            if let Some(folder) = string(args, "folder") {
-                body["folderId"] = json!(folder);
-            }
+            let mut body = document_fields(args);
             if let Some(base) = args.get("baseRev").and_then(Value::as_i64) {
                 body["baseRev"] = json!(base);
             }
@@ -512,6 +520,26 @@ async fn documents(client: &WorkspaceClient, args: &Value) -> ToolResult {
         "delete" => client.delete(&format!("/documents/{}", required(args, "document")?)).await,
         other => Err(format!("Unknown action: {other}")),
     }
+}
+
+/// The fields one document write carries. Only what the call named: to the
+/// server an absent field means "leave it alone", so an update that changes the
+/// text cannot reset the title or the direction by omission.
+fn document_fields(args: &Value) -> Value {
+    let mut body = json!({});
+    if let Some(title) = string(args, "title") {
+        body["title"] = json!(title);
+    }
+    if let Some(markdown) = args.get("markdown").and_then(Value::as_str) {
+        body["markdown"] = json!(markdown);
+    }
+    if let Some(direction) = string(args, "direction") {
+        body["direction"] = json!(direction);
+    }
+    if let Some(folder) = string(args, "folder") {
+        body["folderId"] = json!(folder);
+    }
+    body
 }
 
 async fn members(client: &WorkspaceClient, args: &Value) -> ToolResult {
@@ -633,6 +661,7 @@ mod tests {
             "workspace_members",
             "workspace_invites",
             "workspace_preview",
+            "document_markdown",
         ] {
             assert!(names.contains(&expected), "missing {expected}");
         }
@@ -644,6 +673,38 @@ mod tests {
                 tool["function"]["name"]
             );
         }
+    }
+
+    #[test]
+    fn every_advertised_tool_is_routed_back_to_this_module() {
+        for tool in definitions() {
+            let name = tool["function"]["name"].as_str().unwrap_or("");
+            assert!(handles(name), "{name} is advertised but never routed here");
+        }
+        assert!(!handles("web_search"));
+        assert!(!handles("workspace"));
+    }
+
+    #[test]
+    fn a_document_write_carries_its_direction_and_nothing_it_was_not_given() {
+        let body = document_fields(&json!({ "direction": "rtl", "markdown": "# x" }));
+        assert_eq!(body["direction"], "rtl");
+        assert_eq!(body["markdown"], "# x");
+        // An update that only replaces the text must not touch the direction.
+        assert!(document_fields(&json!({ "markdown": "y" })).get("direction").is_none());
+        // An empty markdown is a write, not an omission.
+        assert_eq!(document_fields(&json!({ "markdown": "" }))["markdown"], "");
+    }
+
+    #[test]
+    fn the_document_reference_answers_without_the_network() {
+        // The tool is text in the binary: no account, no request. The syntax a
+        // person can read in `docs/document-markdown.md` is the syntax the model
+        // is handed.
+        assert!(MARKDOWN_REFERENCE.contains(":::note["));
+        assert!(MARKDOWN_REFERENCE.contains(":red["));
+        assert!(MARKDOWN_REFERENCE.contains(":mark["));
+        assert!(MARKDOWN_REFERENCE.contains("rtl"), "the direction option is documented");
     }
 
     #[test]

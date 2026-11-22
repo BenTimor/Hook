@@ -1024,6 +1024,12 @@
 .ws-preview-task-title { color: var(--ink); font-size: 9px; font-weight: 500; }
 .ws-preview-empty { padding: 10px; }
 .ws-preview-document { height: 100%; overflow: hidden; padding: 10px 12px; border-radius: 5px 5px 0 0; background: var(--ivory); color: var(--ink-3); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+/* The tile is a thumbnail: the same document, at a glance. Every size below is
+   the read view's (`.hook-doc` in tokens.css) scaled down, never a second
+   style. */
+.ws-quick-preview-md { font-size: 10px; line-height: 1.5; }
+.ws-quick-preview-md h1, .ws-quick-preview-md h2, .ws-quick-preview-md h3, .ws-quick-preview-md h4 { margin: 0 0 4px; font-size: 11px; line-height: 1.3; letter-spacing: 0; }
+.ws-quick-preview-md p { margin: 0 0 5px; }
 .ws-preview-document > :first-child { margin-top: 0; }
 .ws-preview-document p, .ws-preview-document ul, .ws-preview-document ol, .ws-preview-document blockquote, .ws-preview-document pre { margin: 0 0 5px; }
 .ws-preview-document h1, .ws-preview-document h2, .ws-preview-document h3, .ws-preview-document h4, .ws-preview-document h5, .ws-preview-document h6 { margin: 0 0 4px; color: var(--ink); font-size: 11px; line-height: 1.3; }

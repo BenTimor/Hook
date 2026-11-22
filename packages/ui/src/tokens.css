@@ -366,6 +366,216 @@ textarea {
   white-space: nowrap;
 }
 
+/* ── A document, as a page ────────────────────────────────────────────────
+   The read view of a Hook Workspace document: the chat side panel, the phone
+   sheet and the dashboard tile all draw `DocumentMarkdown`, which puts this
+   class on its root.
+
+   These numbers are the formatted editor's (`.cm-h1` … in
+   `apps/workspace/src/styles/index.css`), so a document looks the same where
+   it is written and where it is read. Change one, change the other. The
+   spacing is the one thing a read view adds: CodeMirror styles lines, so its
+   headings have no margins at all.
+
+   Logical properties throughout (`padding-inline-start`, `border-inline-start`,
+   `text-align: start`), because a document can be right-to-left — `dir` on this
+   element is all an RTL document needs. */
+
+.hook-doc {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--ink);
+  overflow-wrap: break-word;
+  user-select: text;
+}
+
+.hook-doc > :first-child {
+  margin-top: 0;
+}
+
+.hook-doc > :last-child {
+  margin-bottom: 0;
+}
+
+.hook-doc p {
+  margin: 0 0 14px;
+}
+
+/* The editor styles a heading on its own line, so h4 and below keep the body's
+   line height there; the read view does the same rather than inventing one. */
+.hook-doc h1,
+.hook-doc h2,
+.hook-doc h3,
+.hook-doc h4,
+.hook-doc h5,
+.hook-doc h6 {
+  margin: 24px 0 10px;
+  color: var(--ink);
+}
+
+.hook-doc h1 {
+  font-size: 26px;
+  font-weight: 620;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+}
+
+.hook-doc h2 {
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+.hook-doc h3 {
+  font-size: 17px;
+  font-weight: 590;
+  line-height: 1.4;
+  letter-spacing: -0.015em;
+}
+
+.hook-doc h4 {
+  font-size: 15px;
+  font-weight: 580;
+}
+
+.hook-doc h5,
+.hook-doc h6 {
+  font-size: 14px;
+  font-weight: 570;
+}
+
+.hook-doc strong {
+  font-weight: 660;
+}
+
+.hook-doc em {
+  font-style: italic;
+}
+
+.hook-doc del {
+  color: var(--ink-3);
+  text-decoration: line-through;
+}
+
+.hook-doc a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.hook-doc ul {
+  list-style: disc;
+}
+
+.hook-doc ol {
+  list-style: decimal;
+}
+
+.hook-doc ul ul {
+  list-style: circle;
+}
+
+.hook-doc ul,
+.hook-doc ol {
+  margin: 0 0 14px;
+  padding-inline-start: 22px;
+}
+
+.hook-doc li {
+  margin: 3px 0;
+}
+
+.hook-doc li::marker {
+  color: var(--ink-4);
+}
+
+.hook-doc li > p {
+  margin: 0 0 6px;
+}
+
+.hook-doc blockquote {
+  margin: 0 0 14px;
+  padding-block: 2px;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid var(--sage);
+  color: var(--ink-3);
+}
+
+.hook-doc hr {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--line-strong);
+}
+
+.hook-doc table {
+  width: 100%;
+  margin: 0 0 16px;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.hook-doc th,
+.hook-doc td {
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  text-align: start;
+  vertical-align: top;
+}
+
+.hook-doc th {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.hook-doc td {
+  background: var(--ivory);
+}
+
+.hook-doc :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(var(--ink-rgb), 0.07);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  white-space: nowrap;
+}
+
+.hook-doc pre {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(var(--accent-rgb), 0.055);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  /* The editor wraps a code block instead of scrolling it sideways, and a
+     document is read in a panel narrower than the window. */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.hook-doc pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  white-space: inherit;
+}
+
+.hook-doc img {
+  max-width: 100%;
+}
+
+/* What the callout title is: a paragraph the dialect rewrote, at body size. */
+.hook-doc .hook-callout-title {
+  font-size: inherit;
+  font-weight: 620;
+  line-height: inherit;
+  letter-spacing: normal;
+}
+
 /* ── The document dialect ────────────────────────────────────────────────
    One rule in `packages/markdown/src/rules.ts` names one class here, so the
    formatted editor and every read-only surface — the Workspace window, the
@@ -392,17 +602,18 @@ textarea {
 
 .hook-doc-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 
-.hook-doc-image { max-width: 100%; border-radius: 6px; }
+.hook-doc-image { max-width: 100%; max-height: 480px; border-radius: 8px; }
 
-.hook-doc-checkbox { margin-right: 4px; }
+.hook-doc-checkbox { margin-inline-end: 4px; }
 
+/* The same box the editor draws line by line: a sage edge and a wash of the
+   accent behind the text. */
 .hook-callout {
-  margin: 12px 0;
+  margin: 14px 0;
   padding: 10px 14px 12px;
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--sage);
+  border-inline-start: 3px solid var(--sage);
   border-radius: 8px;
-  background: rgba(var(--accent-rgb), 0.035);
+  background: rgba(var(--accent-rgb), 0.03);
 }
 
 .hook-callout > :first-child { margin-top: 0; }
@@ -411,9 +622,9 @@ textarea {
 
 .hook-callout-title { margin: 0 0 6px; color: var(--ink); font-weight: 620; }
 
-.hook-callout-tip { border-left-color: #4f7f5f; }
-.hook-callout-warning { border-left-color: #b58a3a; }
-.hook-callout-danger { border-left-color: var(--danger); }
+.hook-callout-tip { border-inline-start-color: #4f7f5f; }
+.hook-callout-warning { border-inline-start-color: #b58a3a; }
+.hook-callout-danger { border-inline-start-color: var(--danger); }
 
 /* ── Code blocks ───────────────────────────────────────────────────────── */
 

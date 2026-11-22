@@ -1276,8 +1276,9 @@ export const mock = {
   async previewState(): Promise<PreviewView | null> {
     // Design-time preview: `?preview=1` opens the panel with a sample page,
     // `?preview=waiting` shows the state before the coding agent writes it,
-    // `?preview=done` shows the panel after the run settled, and
-    // `?preview=board|task|document` shows a Hook Workspace entity.
+    // `?preview=done` shows the panel after the run settled,
+    // `?preview=board|task|document` a Hook Workspace entity, and
+    // `?preview=document-rtl` the same document right-to-left.
     const demo = new URLSearchParams(window.location.search).get("preview");
     if (!demo) return null;
     if (demo === "board") {
@@ -1324,7 +1325,7 @@ export const mock = {
         live: false,
       };
     }
-    if (demo === "document") {
+    if (demo === "document" || demo === "document-rtl") {
       return {
         active: true,
         chatId: "c8",
@@ -1333,8 +1334,30 @@ export const mock = {
           id: "doc_1",
           projectId: "prj_demo",
           title: "Release checklist",
-          markdown:
-            "# Release checklist\n\n- [x] Pricing page\n- [ ] Release notes\n- [ ] Invoice totals\n\n> Ask Mallory about the 14th.",
+          // The whole dialect, so the panel can be looked at without a backend.
+          markdown: [
+            "# Release checklist",
+            "",
+            "Everything that has to ship before **Friday**.",
+            "",
+            "- [x] Pricing page",
+            "- [ ] Release notes",
+            "- [ ] Invoice totals",
+            "",
+            "> Ask Mallory about the 14th.",
+            "",
+            ":::warning[Before the release]",
+            "The invoice totals are :red[still wrong].",
+            ":::",
+            "",
+            "| Step | Owner |",
+            "| --- | --- |",
+            "| Copy | :green[Mallory] |",
+            "| Pricing | :mark[Ben] |",
+            "",
+            "Run `pnpm release` once the page is :underline[approved] and the notes are :kbd[Ctrl+S] saved.",
+          ].join("\n"),
+          direction: demo === "document-rtl" ? "rtl" : "ltr",
           rev: 3,
           updatedAt: Date.now(),
         },

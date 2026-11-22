@@ -589,8 +589,15 @@ body {
   padding: 14px 16px 24px;
 }
 
-.sheet-body .preview-entity .md,
-.sheet-body .preview-doc .md {
+/* The page frame is the desktop's card; on a phone the sheet already is the
+   frame, so the document only loses the border and the shadow. */
+.sheet-body .preview-doc-page {
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.sheet-body .hook-doc {
   font-size: 15px;
 }
 

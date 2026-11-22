@@ -24,6 +24,8 @@ export interface WorkspaceDocument {
   projectId: string;
   title: string;
   markdown: string;
+  /** The document's own text direction, set in Workspace or by an agent. */
+  direction?: "ltr" | "rtl";
   rev: number;
   updatedAt: number;
 }

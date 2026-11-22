@@ -245,10 +245,19 @@ bash.
   `remark.ts` is the same grammar for `react-markdown`; `DocumentMarkdown.tsx`
   is the renderer `QuickPreview`, `WorkspacePreview` and the phone all use;
   `live.ts` is the CodeMirror half — decorations, the deletion repair, the
-  toolbar's `applyRule`, and the callout scan. `rules.ts` and
-  `packages/ui/src/tokens.css` are the only two files a new rule touches.
+  toolbar's `applyRule`, and the callout scan. `rules.ts`,
+  `packages/ui/src/tokens.css` and `docs/document-markdown.md` are the only
+  three files a new rule touches: the last is the syntax a model reads through
+  the `document_markdown` tool, embedded into `hook-core` by `include_str!`, and
+  `reference.test.ts` fails when a registered rule is missing from it.
 - `packages/chat/src/preview/` — `WorkspacePreview` and its three renderers,
-  `reportableFrom` and `ReportContentDialog`. The JSON is what
+  `reportableFrom` and `ReportContentDialog`. A document is drawn as a page:
+  `.hook-doc` (`packages/ui/src/tokens.css`) is the read view's typography, and
+  its numbers are the formatted editor's, so the panel and the phone sheet match
+  the Workspace window instead of approximating it. A document's `direction`
+  reaches this component from `workspace_preview` and flips it through `dir`;
+  keep new rules logical (`padding-inline-start`, `text-align: start`) or RTL
+  silently breaks. The JSON is what
   `workspace_preview` returned; the components own no frame, so `PreviewPanel`
   (desktop, side panel) and `apps/mobile/src/components/PreviewSheet.tsx`
   (phone, bottom sheet) draw the same thing. A task's comments are other
@@ -340,12 +349,14 @@ Changing one side of a boundary is the most common way to break this repo.
   server hands the client id to the app so nothing is baked into a build.
 - **New document directive (a new parser for Workspace Markdown):**
   `packages/markdown/src/rules.ts` (one entry: `names`, `scope`, `element`,
-  `className`, `family`) → its class in `packages/ui/src/tokens.css` → nothing
-  else. The live editor's decorations, the deletion repair, the toolbar,
-  `remark.ts` and every preview read the registry, so they cannot drift; add a
-  case to `parse.test.ts` and `remark.test.ts`, and a toolbar button in
-  `apps/workspace/src/components/DocumentEditor.tsx` only if a person needs to
-  reach it. A rule must never map to `style`, to a handler or to raw HTML: raw
+  `className`, `family`) → its class in `packages/ui/src/tokens.css` → a line in
+  `docs/document-markdown.md` (the reference `document_markdown` hands the model)
+  → nothing else. The live editor's decorations, the deletion repair, the
+  toolbar, `remark.ts` and every preview read the registry, so they cannot
+  drift; add a case to `parse.test.ts` and `remark.test.ts`, and a toolbar button
+  in `apps/workspace/src/components/DocumentEditor.tsx` only if a person needs to
+  reach it. The reference is part of the job: an undocumented rule is one no
+  agent will ever use. A rule must never map to `style`, to a handler or to raw HTML: raw
   HTML is not parsed at all, which is what lets documents be shared without a
   sanitizer. Never let the editor and the preview parse separately — both go
   through `micromark`'s directive grammar, and a hand-rolled matcher for one
@@ -689,10 +700,14 @@ Changing one side of a boundary is the most common way to break this repo.
   alike: a repository is account data too, so no plan means no remote, no git
   token and no `sync_pull`/`sync_push` in an agent. The switch is account state,
   not a product setting: do not move it into `settings.json`. The server merges,
-  never the client. A chat that is streaming is never uploaded or overwritten. A
-  different account on the same machine quarantines the previous chats under
-  `accounts/<id>/`; never
-  upload one account's history to another. A `coding` chat's **content** is
+  never the client. A chat that is streaming is never uploaded or overwritten,
+  and a copy the account sends back is never applied when the file is newer than
+  it (`sync.rs::local_wins`, both on the push response and on the pull): a push
+  can stay in flight for seconds while a picture uploads, and the merge it
+  returns predates the reply the turn wrote meanwhile. The chat stays dirty, so
+  the next cycle merges both sides. A different account on the same machine
+  quarantines the previous chats under `accounts/<id>/`; never upload one
+  account's history to another. A `coding` chat's **content** is
   local-only on purpose: its folder, its engine process and its session file
   live on one computer, so `push_chats` skips it (and clears it from the queue).
   Its **stub** is the one exception: `push_remote_stubs` sends the id, title,

@@ -898,9 +898,18 @@ rows written before this rule are adopted when the service starts.
   rendered at all — it is shown as the text it is — which is why every surface
   (the Workspace window, the chat side panel and the phone) draws the same
   document the same way, without a sanitizer.
+  **`docs/document-markdown.md` is the syntax**, written for a person and for
+  the chat agent at once: the rules, where each works, what stays literal, the
+  traps and the document options. The agent reads it on demand through the
+  `document_markdown` tool instead of carrying it in every prompt, and
+  `pnpm test:markdown` fails if a registered rule is missing from it.
   `packages/markdown/src/rules.ts` is the whole registry: one entry names a
   word, an element and a class, and the live editor, the toolbar and every
-  preview pick it up together. Editing behaves the way a word processor does:
+  preview pick it up together. Reading draws the page with `.hook-doc`
+  (`packages/ui/src/tokens.css`), whose numbers are the formatted editor's, so
+  the chat side panel, the phone sheet and the dashboard tile show a document
+  the way the Workspace window does — direction included.
+  Editing behaves the way a word processor does:
   inline markup is invisible, so an edit only ever changes the text it wraps and
   the markers are put back around whatever survived. The caret stops at the
   content edge of a run — never on a marker — so an arrow key always crosses a
@@ -922,7 +931,8 @@ rows written before this rule are adopted when the service starts.
   Hover over a web link for its address and open action, or Ctrl-click it to open.
   Document options also offers Markdown source editing, left-to-right or
   right-to-left text direction (also a toolbar toggle), and deletion. The
-  direction is stored with the document and applied to the editor and previews.
+  direction is stored with the document, applied to the editor and every
+  preview, and the chat agent can set it through `workspace_documents`.
   A write carries the revision it was based
   on; a stale one is refused with the current copy rather than silently overwriting
   someone else's paragraph.
@@ -936,7 +946,9 @@ rows written before this rule are adopted when the service starts.
   `workspace_tasks`, `workspace_comments`, `workspace_documents`,
   `workspace_members`, `workspace_invites` and `workspace_preview` are ordinary
   chat tools (`crates/hook-core/src/workspace.rs`) that call the account API with
-  the user's token, so the server checks the user's real role.
+  the user's token, so the server checks the user's real role. `document_markdown`
+  is the one that answers from the binary: the dialect's reference, so a style it
+  writes is a style documents can render.
 - **Previews.** `workspace_preview` puts a task, board or document in the preview
   panel. It is a second kind of preview next to the HTML page a coding agent can
   show, and the panel renders it directly instead of in an iframe.
@@ -1907,7 +1919,7 @@ cargo test -p hook-core -- --ignored             # live tests against `pnpm mock
 pnpm typecheck                                  # the only static gate: every package + the site
 pnpm waitlist:test                              # API, auth, proxy, download, sync, git, devices, relay, preview, workspace
 pnpm test:release                               # "is this tree already published?"
-pnpm test:markdown                              # the document dialect: parser, live editor, renderer
+pnpm test:markdown                              # the document dialect: parser, live editor, renderer, reference
 pnpm test:licenses                              # every dep still fits AGPL-3.0-only
 pnpm release                                    # build + publish the installers
 ```

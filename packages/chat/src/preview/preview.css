@@ -10,9 +10,19 @@
   padding: 16px 18px 28px;
 }
 
-.preview-doc .md,
-.preview-entity .md {
-  font-size: 14px;
+/* A document is a page, not a fragment: the same `hook-doc` numbers the
+   Workspace window draws (tokens.css), inside the frame it gets there. The
+   panel is narrower than a window, so only the breathing room is smaller. */
+.preview-doc-page {
+  padding: 20px 20px 26px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--ivory);
+  box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 420px) {
+  .preview-doc-page { padding: 16px 14px 20px; }
 }
 
 .preview-entity-title {

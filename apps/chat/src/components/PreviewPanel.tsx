@@ -198,7 +198,16 @@ export function PreviewPanel() {
 
         <div className="preview-head" data-tauri-drag-region>
           <div className="preview-heading" data-tauri-drag-region>
-            <div className="preview-title" title={shown.title}>
+            <div
+              className="preview-title"
+              title={shown.title}
+              // A right-to-left document reads right to left from its title on.
+              dir={
+                kind === "document" && shown.document?.direction === "rtl"
+                  ? "rtl"
+                  : undefined
+              }
+            >
               {shown.title ?? "Preview"}
             </div>
             <div
