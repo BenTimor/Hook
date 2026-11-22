@@ -787,131 +787,19 @@ always included, so the dialog warns against reporting secrets.
 
 ### Store listing draft
 
-**Short description** (256 characters max, currently 235):
+The Partner Center copy is kept as plain text under `msix/chat/store/`, one file
+per field, ready to select and paste without Markdown or rich text:
 
-> HookCode is the Microsoft Store edition of Hook, an AI chat app with coding
-> agents for Windows. Hand real work to agents that edit and run projects, bring
-> your ChatGPT or Claude history with you, and continue on any signed-in computer.
+- `short-description.txt` (228 characters; limit 256)
+- `full-description.txt` (about 5,700 characters; limit 10,000)
+- `feature-bullets.txt` (one sentence per line; each under 200 characters)
+- `release-notes.txt` (0.5.0 "What's new in this version"; 1,439 characters,
+  limit 1,500)
 
-**Full description:**
-
-> HookCode is the Microsoft Store edition of Hook, an AI chat app with coding
-> agents for Windows.
->
-> Chat with one model, then hand real work to coding agents that can read, edit
-> and run projects in a folder you choose. Your conversations, pictures and
-> project code are saved to your Hook account, so you can start on one computer
-> and continue on another. The coding engine itself runs on your PC. An approved
-> Hook account unlocks the model through Hook's relay.
->
-> WHAT YOU CAN DO
->
-> • Ask anything in a clean, focused chat.
-> • Create projects and brief a coding agent in plain language.
-> • Watch the agent's plan while it works, steer it mid-run, and stop it at any
->   time.
-> • See a live preview of the page or report the agent is building.
-> • Attach screenshots and images and ask questions about them when the model
->   supports vision.
-> • Keep every conversation in readable files on your machine, with search,
->   pinning and undoable deletion — and an account copy that keeps your
->   computers in step.
-> • Bring your ChatGPT or Claude history with you: import the export those
->   services already give you, and it becomes ordinary Hook conversations you
->   can search and continue. Re-importing picks up whatever is new without
->   duplicating anything.
-> • Start a conversation or a project on one PC and pick it up on another,
->   without exporting or transferring anything.
-> • Update HookCode from inside the app — the Store handles the download and
->   restart.
->
-> YOUR WORK, ON EVERY COMPUTER
->
-> Your chats, pictures and project code are saved to your Hook account so the
-> same work is available on every computer you sign in to. The saved workspace
-> is stored on hookcode.io. Deleting a conversation removes it from your account
-> on the next sync; ask us to delete the whole workspace or your account and we
-> will remove the chats, pictures and project repositories. Project repositories
-> contain the files the coding agent saved, which can include configuration and
-> `.env` files — do not put files in a project that you would not want stored
-> with your account. Model requests are relayed through hookcode.io to our model
-> provider; apart from the saved workspace, we do not store the text, pictures,
-> tool definitions or replies — except when you deliberately send a report (see
-> below). We store the metadata needed to run and measure the service (account
-> identifier, token counts, cache statistics and request status). See the
-> privacy policy for the full picture.
->
-> LIVE GENERATIVE AI
->
-> HookCode uses live generative AI. Every reply and every coding-agent step is
-> produced by an AI model in response to what you type. AI output can be wrong,
-> incomplete or inappropriate — check important results before relying on them.
-> Use the Report action on any reply to send it to us for review; you can
-> optionally include the whole conversation.
->
-> BUILT FOR CODING
->
-> Coding agents work inside a project folder with a bundled Node runtime, the pi
-> coding agent and git. They can read and edit files, run commands with timeouts,
-> search the web and show you a live preview. Each project is backed by a private
-> git repository in your account: agents pull the latest saved work before they
-> start — even when the project was begun on another computer — and save when
-> they finish. They run as child processes of HookCode and stop when you close
-> the app.
->
-> REQUIREMENTS
->
-> • Windows 10 version 2004 (build 19041) or later, or Windows 11.
-> • Microsoft Edge WebView2 Runtime (preinstalled on Windows 11 and on Windows 10
->   with Edge).
-> • An approved Hook account. HookCode is in early access: sign in with the
->   Google account that was approved for Hook. If you do not have access yet,
->   join the waitlist at https://hookcode.io.
-> • An internet connection for model requests and for syncing your saved work.
->
-> HookCode is free to download. Model access is included with an approved
-> early-access account; there are no per-message charges.
->
-> Support: https://hookcode.io
-> Privacy: https://hookcode.io/privacy
-> Terms: https://hookcode.io/terms
-
-**Feature bullets** (optional; each under 200 characters):
-
-> • Your work follows you: chats, pictures and projects are saved to your account and available on every computer.
-> • Bring your ChatGPT or Claude history with you in one import, and re-import whenever you want.
-> • Projects are backed by private git, so agents continue from the latest saved work.
-> • Coding agents that read, edit and run real projects.
-> • A live plan and progress while an agent works; steer or stop it at any time.
-> • A live preview of the page or report being built.
-> • One-click updates through the Microsoft Store.
-> • Search, pin and undoably delete conversations.
-> • Image attachments, with vision when the model supports it.
-> • Report inappropriate AI output from inside the app.
-
-**What's new in 0.2.1** (Partner Center "What's new in this version", 876 characters):
-
-> HookCode 0.2.1 makes it easy to bring your history over, and fixes project
-> saving.
->
-> • Import your ChatGPT or Claude history: Settings › Import history, choose the
->   archive those services already give you, and the conversations appear as
->   normal chats — searchable, syncable and ready to continue.
-> • Re-import whenever you have new conversations. What is already here is
->   updated in place instead of duplicated, and anything you have written in
->   Hook since keeps your version.
-> • The import runs entirely on your PC. Nothing signs in to ChatGPT or Claude:
->   the file you downloaded is what gets read.
-> • Settings now opens with Import history, followed by Sync.
-> • Fixed: an account with more than ten projects could fail to save project
->   metadata. Projects now sync in batches, as chats already did.
-> • Transcripts arrive as text. Pictures and files inside an export stay where
->   they are.
-
-**Search terms:** AI chat, coding agent, AI assistant, code assistant, developer
-tools, cross-device sync, project sync. ("ChatGPT import" is tempting but it is
-someone else's trademark in a keyword field — leave it out unless you want to
-argue about it.)
+These are the 0.5.0 listing and release notes. Search terms: AI chat, coding
+agent, AI assistant, code assistant, developer tools, cross-device sync,
+project sync. ("ChatGPT import" is tempting but it is someone else's trademark
+in a keyword field - leave it out unless you want to argue about it.)
 
 ## Hook Workspace
 

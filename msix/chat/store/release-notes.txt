@@ -1,0 +1,15 @@
+HookCode 0.5.0
+
+Your other computers are now part of the app. Settings > Your machines lists every computer signed in to your account, with its name, platform, version and online state. Rename a machine, turn remote work on or off, or forget it; every run records the computer it used.
+
+The New chat menu has Coding agent on another machine. Choose a computer and a project, or create a new project there without typing a path. The conversation is created on that computer, next to its folder and engine.
+
+Direct coding chats can now live on another computer. The transcript, folder and engine stay there; this computer keeps an offline cache, and only a small stub is saved to your account. You can open, steer, stop and rename it from any device. Changing the folder or deleting the chat happens on the computer that owns it.
+
+A run on another computer streams the same answer, plan, tool calls and preview as a local run. Close the window and Hook keeps running in the tray, so the run continues; Quit from the tray stops it. Hook Workspace and HookCode on your phone can control runs too.
+
+Remote previews open through a short-lived link, so nothing needs a forwarded port.
+
+Advanced mode shows machines in the agent tree and pane header; a local or remote run looks the same in the conversation.
+
+This release also includes the secure connection, machine list and sync plumbing behind it. Nothing changes for a single-computer setup.

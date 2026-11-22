@@ -1,0 +1,13 @@
+Run coding agents on any computer signed in to your account, not only the one in front of you.
+Start, steer and stop a run from another PC or from HookCode on your phone.
+Create a project on a remote computer from the New chat menu, without typing a path.
+Direct coding chats can live on another computer; only a small stub is saved to your account.
+Watch a run live: its answer, plan, tool calls and preview, wherever it is running.
+Remote previews open through a short-lived link, so nothing needs a forwarded port.
+Close the window and the tray keeps Hook and its agents running; Quit from the tray stops them.
+Advanced mode shows the model's thinking, every tool call and a running agent's transcript.
+Memory carries preferences and decisions between conversations; pin, edit or forget anything.
+Bring your ChatGPT or Claude history with you in one import, and re-import whenever you want.
+Projects are backed by private git, so agents continue from the latest saved work.
+One-click updates through the Microsoft Store, with search, pinning and undoable deletion.
+Report inappropriate AI output from inside the app.

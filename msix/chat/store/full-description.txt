@@ -1,0 +1,69 @@
+HookCode is the Microsoft Store edition of Hook, an AI chat app with coding agents for Windows.
+
+Chat with one model, then hand real work to coding agents that can read, edit and run projects in a folder you choose. The coding engine runs on your own computer, not in the cloud. Your conversations, pictures and project code are saved to your Hook account, so you can start on one computer and continue on another.
+
+WHAT YOU CAN DO
+
+Ask anything in a clean, focused chat.
+
+Create projects and brief a coding agent in plain language.
+
+Run a coding agent on any computer signed in to your account, not only the one in front of you.
+
+Watch a run live: its answer, its plan and the page it is building. Steer it mid-run or stop it at any time.
+
+Start a direct coding chat on another computer. The transcript, folder and engine stay there; this computer keeps a readable cache, and only a small stub travels through your account.
+
+Create a project on a remote computer from the same picker, without typing a path.
+
+Close the window and Hook keeps running in the tray, so its agents keep working. Quit from the tray to stop them.
+
+Turn on Advanced to see how each answer was made, including the model's thinking and every tool call with its arguments and result. Inspect a running agent's transcript too.
+
+Let Hook remember how you like to work: pinned notes travel in every conversation, the rest is looked up when it matters, and you can edit or forget any of it in Settings.
+
+Attach screenshots and images and ask questions about them when the model supports vision.
+
+Keep every conversation in readable files on your machine, with search, pinning and undoable deletion, plus an account copy that keeps your computers in step.
+
+Bring your ChatGPT or Claude history with you: import the export those services already give you, and it becomes ordinary Hook conversations you can search and continue. Re-importing picks up whatever is new without duplicating anything.
+
+Update HookCode from inside the app; the Microsoft Store handles the download and restart.
+
+YOUR MACHINES
+
+Settings > Your machines lists every computer signed in to your account, with its name, platform, version and whether it is online or accepting remote work. The chat agent can start, steer and stop a run on any of them, and every run records the machine it used. HookCode on your phone and Hook Workspace can act as controllers too; the computer that runs the engine is always a Hook host.
+
+Previews from another computer open through a short-lived link, so nothing needs a forwarded port. Remote control is part of a paid plan and requires cloud sync; a free account can still run agents locally with its own model endpoint.
+
+YOUR WORK, ON EVERY COMPUTER
+
+Your chats, pictures and project code are saved to your Hook account so the same work is available on every computer you sign in to. The saved workspace is stored on hookcode.io. A direct coding chat is the exception: its transcript, folder and engine stay on the machine that owns it, and the account holds only a small stub so other devices can list and open it. Deleting a conversation removes it from your account on the next sync; ask us to delete the whole workspace or your account and we will remove the chats, pictures and project repositories. Project repositories contain the files the coding agent saved, which can include configuration and .env files - do not put files in a project that you would not want stored with your account. Model requests are relayed through hookcode.io to our model provider; apart from the saved workspace, we do not store the text, pictures, tool definitions or replies - except when you deliberately send a report. We store the metadata needed to run and measure the service (account identifier, token counts, cache statistics and request status). See the privacy policy for the full picture.
+
+LIVE GENERATIVE AI
+
+HookCode uses live generative AI. Every reply and every coding-agent step is produced by an AI model in response to what you type. AI output can be wrong, incomplete or inappropriate - check important results before relying on them. Use the Report action on any reply to send it to us for review; you can optionally include the whole conversation.
+
+BUILT FOR CODING
+
+Coding agents work inside a project folder with a bundled Node runtime, the pi coding agent and git. They can read and edit files, run commands with timeouts, search the web and show you a live preview. Each project is backed by a private git repository in your account: agents pull the latest saved work before they start, even when the project was begun on another computer, and save when they finish. They run as child processes of HookCode on the chosen computer and stop when you quit it.
+
+ADVANCED MODE
+
+Advanced is off by default. Turn it on in Settings to see the model's thinking and the tools it ran above each reply, to list running coding agents with their transcripts, and to open a conversation with a coding engine directly. It is a view of the work, not a different assistant: turning it off hides these details and deletes nothing.
+
+REQUIREMENTS
+
+Windows 10 version 2004 (build 19041) or later, or Windows 11.
+
+Microsoft Edge WebView2 Runtime (preinstalled on Windows 11 and on Windows 10 with Edge).
+
+An approved Hook account. HookCode is in early access: sign in with the Google account that was approved for Hook. If you do not have access yet, join the waitlist at https://hookcode.io.
+
+An internet connection for model requests and for syncing your saved work.
+
+HookCode is free to download. Model access is included with an approved early-access account; there are no per-message charges.
+
+Support: https://hookcode.io
+Privacy: https://hookcode.io/privacy
+Terms: https://hookcode.io/terms

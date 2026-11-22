@@ -1,0 +1,1 @@
+HookCode is the Microsoft Store edition of Hook, an AI chat app with coding agents for Windows. Run agents on any signed-in computer, watch and steer them live, create projects on another machine, and pick up the work anywhere.
