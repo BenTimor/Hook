@@ -1,10 +1,16 @@
 # Remote control — what exists, what is missing, what is next
 
-**Status:** foundation, remote chat-agent runs and remote direct coding chats are
-implemented and tested in the working tree. Nothing is committed or deployed.
-The VPS preview certificate and Caddy block are live. The account-service code
-that makes the relay and the direct-chat stubs work is not deployed yet, so the
-feature is not usable on production until `./scripts/deploy-waitlist.sh` runs.
+**Status:** foundation, remote chat-agent runs, remote direct coding chats and
+remote project creation are implemented, committed (`a169817`), pushed to `main`
+and deployed by the `Deploy waitlist` workflow. A live relay E2E passed against
+`hookcode.io` on 2026-11-22: presence, `projects.create`, `coding.create` /
+`fetch` / `send` / `rename` / `stop`, a live event, stub sync, the full-chat
+refusal, the wildcard preview tunnel and the offline answer. The test used a
+throwaway account and a scripted host, then removed both.
+
+The desktop and phone installers have not been rebuilt or published from this
+commit; the deployed part is the account service. The VPS preview certificate
+and Caddy block were already live.
 
 **Scope of this document:** the "Your machines" feature — devices, the relay,
 running coding agents on another computer, live chat/agent events and remote
@@ -226,9 +232,13 @@ The contract is `docs/relay-protocol.md`.
 - Caddy `validate` / `reload` on the VPS — valid configuration; certificate
   served.
 
-Not verified end to end: a real device-to-device run against the deployed
-service. The server protocol is covered by tests, but the Rust client has not
-been exercised against the live relay in production.
+Live E2E: a throwaway account and two tokens were created directly in the
+production database, a scripted host and controller connected to
+`wss://hookcode.io/api/relay`, and the deployed service was exercised end to end.
+The host emulated the Rust RPC answers; this proves the wire format, auth,
+routing, sync and preview tunnel, not the Tauri host handlers themselves. Those
+are covered by `cargo test` and the local build. Both tokens, the account, the
+device rows and the test stub were removed afterwards.
 
 ---
 
@@ -278,9 +288,10 @@ Known limits (do not mistake them for bugs):
 - **The host does not need advanced mode for a remote create.** The controller's
   paid, sync-enabled account and the host's accept-remote-work switch are the
   gate; a host with advanced mode off can still be asked to run a chat.
-- **No end-to-end test against a live relay.** The protocol has server tests and
-  the store has cache/stub tests; the Rust client has not been exercised against
-  the deployed service yet.
+- **The live E2E used a scripted host, not two real apps.** The server, relay,
+  gates, sync and preview tunnel were exercised against production; the Rust
+  host handlers were compiled and unit-tested but a real desktop-to-phone run is
+  still the best final check.
 - **Stub failures are non-fatal.** An older account service without the route
   logs once per cycle and ordinary chat sync continues.
 
@@ -336,7 +347,11 @@ Known limits (do not mistake them for bugs):
 
 ---
 
-## 5. Deployment runbook (not executed)
+## 5. Deployment runbook (account service executed)
+
+The account service was deployed by pushing `a169817`; the `Deploy waitlist`
+workflow ran `pnpm waitlist:test`, built the site and deployed the container.
+The steps below remain the complete runbook for a manual deploy and for the apps.
 
 1. Review and commit the working tree (AGENTS.md: commit/push only when asked).
 2. Deploy the account service:
@@ -345,8 +360,9 @@ Known limits (do not mistake them for bugs):
    ```
    This rebuilds the container, installs `preview.caddy` and the renewal cron,
    and reloads Caddy. It is a production deploy; do not run it casually.
-3. Build the apps (`pnpm app:build`, `pnpm workspace:app:build`, the mobile
-   store builds). The tray feature is enabled only in `apps/chat`.
+3. Build and publish the apps (`pnpm app:build`, `pnpm workspace:app:build`, the
+   mobile store builds). The tray feature is enabled only in `apps/chat`. These
+   installers were not rebuilt from this commit.
 4. Smoke test:
    - Sign in on two machines, open Settings → Your machines: both appear, named,
      with the correct online state.
