@@ -1,3 +1,15 @@
+HookCode 0.6.0
+
+Documents in Hook Workspace can be formatted now: colour, highlight, underline, keyboard keys, and callout boxes for notes, tips, warnings and dangers. The formatting is written in the text itself, so it travels with the document to every device, and a document can never contain raw HTML.
+
+Writing a document works like a word processor. The markup stays out of sight, Backspace removes a letter rather than the colour around it, and a callout or a picture is removed as a whole when you delete at its edge.
+
+A document looks the same everywhere. The preview panel beside a chat, HookCode on your phone and the Workspace window share one set of rules, and a document set to read right to left keeps its direction in every view, with its lists, tables and quotes flipping with it.
+
+The assistant can format a document for you, and can set one to read right to left. Ask it to add a warning box or to make a checklist readable and it writes what the editor shows.
+
+Fixed: a reply could disappear and leave only "Stopped" when you attached a picture to a new chat. If a reply is ever cut short now, Hook says what happened instead of showing a bare status line.
+
 HookCode 0.5.1
 
 Advanced mode now belongs to your account, not to one computer: turn it on here and HookCode on your phone shows the same view, and the other way around. It is still off by default.
