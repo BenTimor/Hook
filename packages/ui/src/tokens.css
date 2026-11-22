@@ -366,6 +366,55 @@ textarea {
   white-space: nowrap;
 }
 
+/* ── The document dialect ────────────────────────────────────────────────
+   One rule in `packages/markdown/src/rules.ts` names one class here, so the
+   formatted editor and every read-only surface — the Workspace window, the
+   chat side panel and the phone sheet — draw a document the same way. */
+
+.hook-color-green { color: #386349; }
+.hook-color-blue { color: #365f88; }
+.hook-color-red { color: #a4423a; }
+.hook-color-purple { color: #775187; }
+
+.hook-underline { text-decoration: underline; text-underline-offset: 2px; }
+
+.hook-mark { background: #f3dda0; color: inherit; border-radius: 2px; }
+
+.hook-kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--ivory);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+.hook-doc-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+
+.hook-doc-image { max-width: 100%; border-radius: 6px; }
+
+.hook-doc-checkbox { margin-right: 4px; }
+
+.hook-callout {
+  margin: 12px 0;
+  padding: 10px 14px 12px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--sage);
+  border-radius: 8px;
+  background: rgba(var(--accent-rgb), 0.035);
+}
+
+.hook-callout > :first-child { margin-top: 0; }
+.hook-callout > :last-child { margin-bottom: 0; }
+.hook-callout .hook-callout { margin: 8px 0; }
+
+.hook-callout-title { margin: 0 0 6px; color: var(--ink); font-weight: 620; }
+
+.hook-callout-tip { border-left-color: #4f7f5f; }
+.hook-callout-warning { border-left-color: #b58a3a; }
+.hook-callout-danger { border-left-color: var(--danger); }
+
 /* ── Code blocks ───────────────────────────────────────────────────────── */
 
 .code-block {

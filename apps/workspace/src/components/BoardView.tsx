@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, LayoutList, Pencil, Plus, Rows3, Settings2, Trash2, X } from "lucide-react";
+import { firstLine } from "@hook/markdown";
 
 import type { Board, Comment, Member, Task } from "../lib/types";
 import { pendingPeople, personLabel, taskAssignees } from "../lib/people";
@@ -450,14 +451,6 @@ export function BoardColumns({
 }
 
 const EMPTY: never[] = [];
-
-function firstLine(markdown: string): string {
-  const line = markdown
-    .split("\n")
-    .map((value) => value.replace(/^[#>*\-\s]+/, "").trim())
-    .find(Boolean);
-  return line ?? "";
-}
 
 /**
  * The task view. Description and title are edited in place and saved on blur,

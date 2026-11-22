@@ -10,6 +10,8 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { firstLine } from "@hook/markdown";
+
 import type { Board, Column, Task } from "../lib/types";
 import { pendingPeople, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
@@ -828,12 +830,4 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
       ) : null}
     </div>
   );
-}
-
-function firstLine(markdown: string): string {
-  const line = markdown
-    .split("\n")
-    .map((value) => value.replace(/^[#>*\-\s]+/, "").trim())
-    .find(Boolean);
-  return line ?? "";
 }

@@ -41,6 +41,7 @@
     "test:release": "node --test scripts/release-gate.test.mjs scripts/merge-release-index.test.mjs scripts/site-source-hash.test.mjs scripts/msix.test.mjs",
     "test:licenses": "node scripts/check-licenses.mjs && node --test scripts/check-licenses.test.mjs",
     "test:cla": "node --test scripts/cla.test.mjs",
+    "test:markdown": "node --test packages/markdown/src/parse.test.ts packages/markdown/src/live.test.ts packages/markdown/src/remark.test.ts",
     "waitlist:start": "node --env-file-if-exists=.env.waitlist.local server/waitlist.mjs",
     "mock": "node dev/mock-provider.mjs"
   },

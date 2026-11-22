@@ -9,6 +9,7 @@ import express from "express";
 
 import { createPlatform } from "./platform.mjs";
 import { hashToken } from "./tokens.mjs";
+import { rewriteLegacyMarkup } from "./document-markup.mjs";
 import { can, createWorkspaceRouter } from "./workspace.mjs";
 
 const OWNER = "hk_ws_test_owner_0123456789abcdefgh";
@@ -1039,4 +1040,80 @@ test("folders organize boards and documents, and deleting one keeps its contents
     (change) => change.kind === "folder" && change.deleted && change.id === design.body.folder.id,
   );
   assert.ok(tombstone, "the changes feed must carry the folder deletion");
+});
+
+test("the old toolbar's inline HTML is rewritten, and nothing else is", () => {
+  assert.equal(
+    rewriteLegacyMarkup('<span class="hook-color-red">red</span> plain'),
+    ":red[red] plain",
+  );
+  assert.equal(rewriteLegacyMarkup("<mark>mark</mark> and <u>under</u>"), ":mark[mark] and :underline[under]");
+  assert.equal(
+    rewriteLegacyMarkup('<span class="hook-color-blue">a <mark>b</mark></span>'),
+    ":blue[a :mark[b]]",
+  );
+  // a bracket inside a label would end it, so it becomes an entity
+  assert.equal(rewriteLegacyMarkup("<u>see [1]</u>"), ":underline[see [1&#93;]");
+});
+
+test("a sample of HTML inside code is not a formatting run", () => {
+  const fenced = "```html\n<mark>hi</mark>\n```";
+  assert.equal(rewriteLegacyMarkup(fenced), fenced);
+  const tilde = "~~~\n<u>hi</u>\n~~~";
+  assert.equal(rewriteLegacyMarkup(tilde), tilde);
+  assert.equal(rewriteLegacyMarkup("use `<mark>` for that"), "use `<mark>` for that");
+});
+
+test("the rewrite is idempotent and leaves other HTML alone", () => {
+  const once = rewriteLegacyMarkup("<mark>x</mark>");
+  assert.equal(rewriteLegacyMarkup(once), once);
+  assert.equal(rewriteLegacyMarkup("<div>x</div> <br>"), "<div>x</div> <br>");
+});
+
+test("stored documents are rewritten when the service starts", async (t) => {
+  const { request, directory } = await setup(t);
+  const project = await sharedProject(request);
+  const created = await request(`/projects/${project.id}/documents`, {
+    method: "POST",
+    body: { title: "Old branding", markdown: "placeholder" },
+  });
+  const document = created.body.document;
+
+  const db = new DatabaseSync(join(directory, "signups.sqlite"));
+  db.prepare("UPDATE ws_documents SET markdown = ?, rev = 3 WHERE id = ?").run(
+    '<span class="hook-color-green">quiet</span> and <mark>warm</mark>',
+    document.id,
+  );
+  const before = db.prepare("SELECT seq FROM ws_documents WHERE id = ?").get(document.id);
+  // A deploy restarts the service on the same database.
+  createWorkspaceRouter({ db });
+  const after = db.prepare("SELECT markdown, rev, seq FROM ws_documents WHERE id = ?").get(document.id);
+  // A second boot finds nothing to do.
+  createWorkspaceRouter({ db });
+  const again = db.prepare("SELECT seq FROM ws_documents WHERE id = ?").get(document.id);
+  db.close();
+
+  assert.equal(after.markdown, ":green[quiet] and :mark[warm]");
+  assert.equal(after.rev, 4);
+  assert.ok(after.seq > before.seq, "devices must see the change");
+  assert.equal(again.seq, after.seq, "the migration is idempotent");
+});
+
+test("a task description written with HTML is rewritten too", async (t) => {
+  const { request, directory } = await setup(t);
+  const project = await sharedProject(request);
+  const board = await request(`/projects/${project.id}/boards`, { method: "POST", body: { name: "Sprint" } });
+  const task = await request(`/boards/${board.body.board.id}/tasks`, {
+    method: "POST",
+    body: { title: "Old" },
+  });
+  const db = new DatabaseSync(join(directory, "signups.sqlite"));
+  db.prepare("UPDATE ws_tasks SET description = ? WHERE id = ?").run(
+    "<u>careful</u>",
+    task.body.task.id,
+  );
+  createWorkspaceRouter({ db });
+  const row = db.prepare("SELECT description FROM ws_tasks WHERE id = ?").get(task.body.task.id);
+  db.close();
+  assert.equal(row.description, ":underline[careful]");
 });

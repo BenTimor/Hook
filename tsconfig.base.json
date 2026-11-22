@@ -22,7 +22,9 @@
       "@hook/ui": ["./packages/ui/src/index.ts"],
       "@hook/ui/*": ["./packages/ui/src/*"],
       "@hook/chat": ["./packages/chat/src/index.ts"],
-      "@hook/chat/*": ["./packages/chat/src/*"]
+      "@hook/chat/*": ["./packages/chat/src/*"],
+      "@hook/markdown": ["./packages/markdown/src/index.ts"],
+      "@hook/markdown/*": ["./packages/markdown/src/*"]
     }
   }
 }

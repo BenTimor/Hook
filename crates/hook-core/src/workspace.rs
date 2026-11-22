@@ -203,7 +203,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_documents",
-            "Markdown documents in a project. The Markdown is the document: pass it exactly as it should be stored. An update carries the revision you read; a stale one is refused with the current copy so you can re-apply the change.",
+            "Markdown documents in a project. The Markdown is the document: pass it exactly as it should be stored. An update carries the revision you read; a stale one is refused with the current copy so you can re-apply the change. Styling beyond Markdown uses directives, never inline HTML: `:red[x]` (also green, blue, purple), `:mark[x]`, `:underline[x]`, `:kbd[x]`, and `:::note[Title]` … `:::` blocks (also tip, warning, danger), which nest by adding a colon.",
             json!({
                 "type": "object",
                 "properties": {

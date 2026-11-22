@@ -43,6 +43,9 @@ packages/chat/src/preview/
                      the Hook Workspace preview: a board, a task and a document,
                      drawn from the JSON `workspace_preview` returns. The
                      desktop puts it in its side panel, the phone in a sheet.
+packages/markdown/  the document dialect: one registry of rules, the parser the
+                     live editor and the preview share, the read-only renderer,
+                     and the deletion repair.
 ```
 
 `server/` and `waitlist/` deliberately stay at the repo root: they are one deploy
@@ -78,6 +81,10 @@ pnpm waitlist:build
 
 # Release pipeline (Node only)
 pnpm test:release
+
+# The document dialect: the parser, the live editor's deletion repair and the
+# read-only renderer (pure functions over Markdown, no window needed)
+pnpm test:markdown
 
 # Dependency licenses (also runs in CI, after `pnpm install`)
 pnpm test:licenses
@@ -232,6 +239,14 @@ bash.
   it never types a path; the desktop's New chat menu and the phone's home screen
   open the same dialog. The chat itself stays on the host; `ChatMeta.remote`
   marks the local cache.
+- `packages/markdown/` — the document dialect every Workspace surface draws.
+  `rules.ts` is the registry (a word, an element, a class, a scope); `parse.ts`
+  turns one inline block into constructs through micromark's directive grammar;
+  `remark.ts` is the same grammar for `react-markdown`; `DocumentMarkdown.tsx`
+  is the renderer `QuickPreview`, `WorkspacePreview` and the phone all use;
+  `live.ts` is the CodeMirror half — decorations, the deletion repair, the
+  toolbar's `applyRule`, and the callout scan. `rules.ts` and
+  `packages/ui/src/tokens.css` are the only two files a new rule touches.
 - `packages/chat/src/preview/` — `WorkspacePreview` and its three renderers,
   `reportableFrom` and `ReportContentDialog`. The JSON is what
   `workspace_preview` returned; the components own no frame, so `PreviewPanel`
@@ -323,6 +338,29 @@ Changing one side of a boundary is the most common way to break this repo.
   (package `app.hook.mobile` + the SHA-1 of the signing key) must exist in the
   same GCP project as the web client, or Google refuses to show the sheet; the
   server hands the client id to the app so nothing is baked into a build.
+- **New document directive (a new parser for Workspace Markdown):**
+  `packages/markdown/src/rules.ts` (one entry: `names`, `scope`, `element`,
+  `className`, `family`) → its class in `packages/ui/src/tokens.css` → nothing
+  else. The live editor's decorations, the deletion repair, the toolbar,
+  `remark.ts` and every preview read the registry, so they cannot drift; add a
+  case to `parse.test.ts` and `remark.test.ts`, and a toolbar button in
+  `apps/workspace/src/components/DocumentEditor.tsx` only if a person needs to
+  reach it. A rule must never map to `style`, to a handler or to raw HTML: raw
+  HTML is not parsed at all, which is what lets documents be shared without a
+  sanitizer. Never let the editor and the preview parse separately — both go
+  through `micromark`'s directive grammar, and a hand-rolled matcher for one
+  side is how a formatted run ends up looking different from the page.
+- **Formatted-editor editing rule (deletion, the caret):** inline markup is
+  invisible, so an edit must never change it — `repairTransaction` in
+  `packages/markdown/src/live.ts` puts the markers back around whatever survived
+  and removes a construct only when its content is gone. A Backspace that lands
+  on an invisible marker therefore deletes the neighbouring *character*. A marker
+  also draws at the same place as the content edge beside it, so the caret stops
+  only on the content edge (`settle` / `settleSelection`): one arrow press always
+  crosses a visible character, typing at the end of a run stays in the run, and
+  the ghost position beside the marker is never a stop. Blocks and pictures are
+  units: a delete at their edge removes them. Do not "fix" this by revealing
+  markers when the caret arrives — the point is that a reader never sees them.
 - **Chat surface change:** `packages/chat/src` (component + `chat.css`) → check
   it at both sizes (the chat window and the 380px dock) → the adapters in
   `apps/chat/src/components` if the store gains a prop. Never fork a component

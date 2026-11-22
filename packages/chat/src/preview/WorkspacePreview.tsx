@@ -1,4 +1,6 @@
-import { Markdown } from "../Markdown";
+import { DocumentMarkdown } from "@hook/markdown";
+
+import { openExternal } from "../open";
 import type {
   PreviewTarget,
   WorkspaceBoard,
@@ -32,7 +34,7 @@ export function WorkspacePreview({ body }: { body: WorkspacePreviewBody }) {
 export function DocumentPreview({ document }: { document: WorkspaceDocument }) {
   return (
     <div className="preview-doc" data-preview-entity="document" data-id={document.id}>
-      <Markdown content={document.markdown} />
+      <DocumentMarkdown markdown={document.markdown} onOpen={(url) => void openExternal(url)} />
     </div>
   );
 }
@@ -51,7 +53,7 @@ export function TaskPreview({
       data-id={task.id}
     >
       <h2 className="preview-entity-title">{task.title}</h2>
-      {task.description ? <Markdown content={task.description} /> : null}
+      {task.description ? <DocumentMarkdown markdown={task.description} onOpen={(url) => void openExternal(url)} /> : null}
       {comments.length > 0 && (
         <div className="preview-comments">
           <div className="preview-comments-title">Comments</div>
@@ -67,7 +69,7 @@ export function TaskPreview({
                   <span className="preview-agent-tag">via Hook agent</span>
                 )}
               </div>
-              <Markdown content={comment.body} />
+              <DocumentMarkdown markdown={comment.body} onOpen={(url) => void openExternal(url)} />
             </div>
           ))}
         </div>

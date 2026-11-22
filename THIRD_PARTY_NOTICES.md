@@ -86,7 +86,7 @@ cargo license --avoid-build-deps --avoid-dev-deps
 
 ### npm packages
 
-The full tree is pinned in `pnpm-lock.yaml` (421 packages). All of it is
+The full tree is pinned in `pnpm-lock.yaml` (425 packages). All of it is
 permissively licensed: MIT, Apache-2.0, BSD-2/3-Clause, ISC, 0BSD, Unlicense,
 BlueOak-1.0.0, OFL-1.1 (two bundled fonts, `@fontsource-variable/inter` and
 `@fontsource-variable/jetbrains-mono`, which are distributed under the SIL Open

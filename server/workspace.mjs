@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { Router, json } from "express";
 
+import { rewriteLegacyMarkup } from "./document-markup.mjs";
 import { requireApiUser } from "./tokens.mjs";
 
 /**
@@ -343,6 +344,9 @@ export function createWorkspaceRouter({ db, env = {} }) {
   // Tasks written before an invitation was accepted may still point at the
   // address it was sent to; adopt them once, on the way up.
   adoptAssignees(db);
+  // Documents and descriptions written before the dialect existed carry inline
+  // HTML from the old toolbar; rewrite exactly that, every boot, idempotently.
+  adoptMarkdownDirectives(db);
   const router = Router();
   // Documents are up to 512 KB of Markdown; everything else is much smaller.
   router.use(json({ limit: "1mb" }));
@@ -1531,6 +1535,44 @@ function assigneesFrom(db, projectId, body, limits) {
  * the changes feed) and every later start does nothing. It also fills the
  * `assignees` column for rows written before it existed.
  */
+/**
+ * The old toolbar wrote `<span class="hook-color-red">`, `<mark>` and `<u>`.
+ * The document dialect replaced them, so the stored text is rewritten once —
+ * and again on any boot that finds a stale client wrote one back. `seq` and
+ * `updated_at` move so every device converges; a document's `rev` moves too, so
+ * an open editor is told the copy changed instead of overwriting it.
+ */
+function adoptMarkdownDirectives(db) {
+  const targets = [
+    { table: "ws_documents", column: "markdown", limit: LIMITS.documentBytes, revision: true },
+    { table: "ws_tasks", column: "description", limit: LIMITS.documentBytes, revision: false },
+    { table: "ws_comments", column: "body", limit: LIMITS.commentBytes, revision: false },
+  ];
+  const at = now();
+  transaction(db, () => {
+    for (const { table, column, limit, revision } of targets) {
+      const rows = db
+        .prepare(`SELECT id, ${column} AS value FROM ${table} WHERE deleted_at IS NULL`)
+        .all();
+      for (const row of rows) {
+        const before = row.value;
+        if (typeof before !== "string") continue;
+        const after = rewriteLegacyMarkup(before);
+        // A rewrite that would break the column's limit is left for the author.
+        if (after === before || after.length > limit) continue;
+        const sets = [`${column} = ?`, "updated_at = ?", "seq = ?"];
+        if (revision) sets.push("rev = rev + 1");
+        db.prepare(`UPDATE ${table} SET ${sets.join(", ")} WHERE id = ?`).run(
+          after,
+          at,
+          nextSeq(db),
+          row.id,
+        );
+      }
+    }
+  });
+}
+
 function adoptAssignees(db) {
   const rows = db
     .prepare(

@@ -25,15 +25,12 @@
     "@fontsource-variable/inter": "catalog:",
     "@fontsource-variable/jetbrains-mono": "catalog:",
     "@hook/chat": "workspace:*",
+    "@hook/markdown": "workspace:*",
     "@hook/ui": "workspace:*",
     "@tauri-apps/api": "catalog:",
     "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "react-markdown": "catalog:",
-    "rehype-raw": "^7.0.0",
-    "rehype-sanitize": "^6.0.0",
-    "remark-gfm": "catalog:",
     "zustand": "catalog:"
   },
   "devDependencies": {

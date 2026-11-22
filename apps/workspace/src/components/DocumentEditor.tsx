@@ -1,18 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Dialog, TextFieldDialog } from "@hook/ui";
+import { applyRule, linkAt, livePreview, ruleFor, wrapCallout, type Rule } from "@hook/markdown";
 import {
   Annotation,
   Compartment,
   EditorState,
   RangeSetBuilder,
   StateField,
-  type Transaction,
 } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
-  ViewPlugin,
   WidgetType,
   hoverTooltip,
   keymap,
@@ -23,7 +22,7 @@ import {
 import { history, historyKeymap, indentWithTab, defaultKeymap, undo, redo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
-import { ArrowLeftRight, Bold, Italic, Underline, Highlighter, Heading1, Heading2, Heading3, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2, ALargeSmall, ImagePlus } from "lucide-react";
+import { ArrowLeftRight, Bold, Italic, Underline, Highlighter, Heading1, Heading2, Heading3, Info, Link, List, ListOrdered, ListTodo, Quote, Code, CodeXml, Strikethrough, Minus, Table2, Undo2, Redo2, ALargeSmall, ImagePlus } from "lucide-react";
 
 import { openExternal } from "../lib/bridge";
 import { documentImageSource, embedDocumentImage } from "../lib/documentImages";
@@ -174,12 +173,10 @@ export function DocumentEditor({
       extensions: [
         history(),
         keymap.of([
-          { key: "Backspace", run: (target) => deleteAdjacentImage(target, false) },
-          { key: "Delete", run: (target) => deleteAdjacentImage(target, true) },
           { key: "Mod-b", run: (target) => toggleWrap(target, "**") },
           { key: "Mod-i", run: (target) => toggleWrap(target, "*") },
           { key: "Mod-k", run: (target) => { openLink(target); return true; } },
-          { key: "Mod-u", run: (target) => toggleWrap(target, "<u>", "</u>") },
+          { key: "Mod-u", run: (target) => markSelection(target, "underline") },
           ...defaultKeymap,
           ...historyKeymap,
           indentWithTab,
@@ -318,8 +315,8 @@ export function DocumentEditor({
     { label: "Heading 3", Icon: Heading3, run: (editor: EditorView) => toggleLinePrefix(editor, "heading3") },
     { label: "Bold", Icon: Bold, run: (editor: EditorView) => toggleWrap(editor, "**") },
     { label: "Italic", Icon: Italic, run: (editor: EditorView) => toggleWrap(editor, "*") },
-    { label: "Underline", Icon: Underline, run: (editor: EditorView) => toggleWrap(editor, "<u>", "</u>") },
-    { label: "Highlight", Icon: Highlighter, run: (editor: EditorView) => toggleWrap(editor, "<mark>", "</mark>") },
+    { label: "Underline", Icon: Underline, run: (editor: EditorView) => markSelection(editor, "underline") },
+    { label: "Highlight", Icon: Highlighter, run: (editor: EditorView) => markSelection(editor, "mark") },
     { label: "Strikethrough", Icon: Strikethrough, run: (editor: EditorView) => toggleWrap(editor, "~~") },
     { label: "Link", Icon: Link, run: (editor: EditorView) => { openLink(editor); return true; } },
     { label: "Bulleted list", Icon: List, run: (editor: EditorView) => toggleLinePrefix(editor, "bullet") },
@@ -330,6 +327,7 @@ export function DocumentEditor({
     { label: "Code block", Icon: CodeXml, run: insertCodeBlock },
     { label: "Divider", Icon: Minus, run: (editor: EditorView) => insertBlock(editor, "---") },
     { label: "Table", Icon: Table2, run: (editor: EditorView) => insertBlock(editor, "| Column 1 | Column 2 |\n| --- | --- |\n|  |  |") },
+    { label: "Callout", Icon: Info, run: insertCallout },
   ];
   const addImages = async (editor: EditorView, position: number, files: File[], url = "", alt = "", fromDialog = false) => {
     if (editor.state.readOnly || pendingImages.current?.editor === editor) return;
@@ -443,8 +441,7 @@ export function DocumentEditor({
                 onClick={() => {
                   const editor = view.current;
                   if (editor) {
-                    if (!raw) editor.dispatch({ effects: rawCompartment.current.reconfigure(formattedExtensions) });
-                    setTextColor(editor, color);
+                    markColor(editor, color);
                     editor.focus();
                   }
                   setColorMenu(null);
@@ -563,92 +560,7 @@ export function DocumentEditor({
 }
 
 
-// ── Live preview decorations ─────────────────────────────────────────────────
-
-const mark = (className: string) => Decoration.mark({ class: className });
-const hide = Decoration.replace({});
-const codeLine = Decoration.line({ class: "cm-code-block-line" });
-const ruleLine = Decoration.line({ class: "cm-rule" });
-
-const HEADINGS = [
-  /* level 1 */ Decoration.line({ class: "cm-h1" }),
-  Decoration.line({ class: "cm-h2" }),
-  Decoration.line({ class: "cm-h3" }),
-  Decoration.line({ class: "cm-h4" }),
-  Decoration.line({ class: "cm-h5" }),
-  Decoration.line({ class: "cm-h6" }),
-];
-
-/** Built from a syntax tree? No — Markdown is regular enough for a line scan. */
-function buildDecorations(view: EditorView): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
-  const doc = view.state.doc;
-
-  for (const { from, to } of view.visibleRanges) {
-    let pos = from;
-    while (pos <= to) {
-      const line = doc.lineAt(pos);
-      if (isCodeBlock(view.state, line.from)) builder.add(line.from, line.from, codeLine);
-      else decorateLine(builder, line.from, line.text);
-      pos = line.to + 1;
-    }
-  }
-  return builder.finish();
-}
-
-function isCodeBlock(state: EditorState, position: number): boolean {
-  let node = syntaxTree(state).resolveInner(position, 1);
-  while (node.parent && node.name !== "FencedCode" && node.name !== "CodeBlock") node = node.parent;
-  return node.name === "FencedCode" || node.name === "CodeBlock";
-}
-
-function decorateLine(
-  builder: RangeSetBuilder<Decoration>,
-  offset: number,
-  text: string,
-) {
-  const image = imageLineParts(text);
-  if (image) {
-    const source = documentImageSource(image[2]);
-    if (source) {
-      const alt = image[1].replace(/\\([\\\[\]])/g, "$1");
-      builder.add(offset, offset + text.length, Decoration.replace({ widget: new DocumentImageWidget(source, alt) }));
-      return;
-    }
-  }
-  if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(text)) {
-    builder.add(offset, offset, ruleLine);
-    builder.add(offset, offset + text.length, hide);
-    return;
-  }
-  const heading = /^(#{1,6})\s+/.exec(text);
-  if (heading) {
-    builder.add(offset, offset, HEADINGS[heading[1].length - 1]);
-    builder.add(offset, offset + heading[0].length, hide);
-    addInline(builder, offset + heading[0].length, text.slice(heading[0].length));
-    return;
-  }
-  if (/^>\s+/.test(text)) {
-    builder.add(offset, offset, Decoration.line({ class: "cm-quote" }));
-    builder.add(offset, offset + 2, hide);
-    addInline(builder, offset + 2, text.slice(2));
-    return;
-  }
-  if (/^[-*+]\s+/.test(text) || /^\d+\.\s+/.test(text)) {
-    const match = /^([-*+]\s+|\d+\.\s+)/.exec(text)!;
-    addInline(builder, offset + match[0].length, text.slice(match[0].length));
-    return;
-  }
-  addInline(builder, offset, text);
-}
-
-function imageLineParts(text: string) {
-  const complete = /^ {0,3}!\[((?:\\.|[^\]\\])*)\]\(([^()\s]+)\)\s*$/.exec(text);
-  if (complete) return complete;
-  // A partial deletion in older versions could leave the embedded URL without
-  // a closing parenthesis. Keep that payload hidden and removable as an image.
-  return /^ {0,3}!\[((?:\\.|[^\]\\])*)\]\\?\((data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/]+=*)\)?\s*$/i.exec(text);
-}
+// ── Widgets ──────────────────────────────────────────────────────────────────
 
 class DocumentImageWidget extends WidgetType {
   constructor(readonly source: string, readonly alt: string) { super(); }
@@ -669,193 +581,25 @@ class DocumentImageWidget extends WidgetType {
   }
 }
 
-const INLINE = [
-  { pattern: /\*\*([^*]+)\*\*/g, klass: "cm-strong", delimiters: 2 },
-  { pattern: /__([^_]+)__/g, klass: "cm-strong", delimiters: 2 },
-  { pattern: /(?<!\*)\*([^*]+)\*(?!\*)/g, klass: "cm-em", delimiters: 1 },
-  { pattern: /(?<!_)_([^_]+)_(?!_)/g, klass: "cm-em", delimiters: 1 },
-  { pattern: /`([^`]+)`/g, klass: "cm-code", delimiters: 1 },
-  { pattern: /~~([^~]+)~~/g, klass: "cm-strike", delimiters: 2 },
-  { pattern: /<u>([^\n]+?)<\/u>/g, klass: "cm-underline", delimiters: 3, endDelimiters: 4 },
-  { pattern: /<mark>([^\n]+?)<\/mark>/g, klass: "cm-highlight", delimiters: 6, endDelimiters: 7 },
-  ...["green", "blue", "red", "purple"].map((color) => ({
-    pattern: new RegExp(`<span class="hook-color-${color}">([^\\n]+?)</span>`, "g"),
-    klass: `hook-color-${color}`,
-    delimiters: `<span class="hook-color-${color}">`.length,
-    endDelimiters: 7,
-  })),
-];
-
-function addInline(builder: RangeSetBuilder<Decoration>, offset: number, text: string) {
-  type Range = { from: number; to: number; decoration: Decoration };
-  const ranges: Range[] = [];
-
-  for (const { pattern, klass, delimiters, endDelimiters = delimiters } of INLINE) {
-    pattern.lastIndex = 0;
-    let match = pattern.exec(text);
-    while (match) {
-      const start = offset + match.index;
-      const innerStart = start + delimiters;
-      const innerEnd = start + match[0].length - endDelimiters;
-      ranges.push({ from: start, to: innerStart, decoration: hide });
-      ranges.push({ from: innerEnd, to: start + match[0].length, decoration: hide });
-      ranges.push({ from: innerStart, to: innerEnd, decoration: mark(klass) });
-      match = pattern.exec(text);
-    }
-  }
-
-  // Links: keep the label, hide the brackets and the target.
-  const nestedLink = /\[\[([^\]]+)\]\(([^)]*)\)\]\(([^)]*)\)/g;
-  for (const nested of text.matchAll(nestedLink)) {
-    const start = offset + nested.index!;
-    const innerEnd = start + 2 + nested[1].length + 2 + nested[2].length + 1;
-    ranges.push({ from: start, to: start + 1, decoration: hide });
-    ranges.push({ from: innerEnd, to: start + nested[0].length, decoration: hide });
-  }
-  const link = /\[([^\[\]]+)\]\(([^)]+)\)/g;
-  let match = link.exec(text);
-  while (match) {
-    const start = offset + match.index;
-    const labelStart = start + 1;
-    const labelEnd = labelStart + match[1].length;
-    ranges.push({ from: start, to: labelStart, decoration: hide });
-    ranges.push({
-      from: labelEnd,
-      to: start + match[0].length,
-      decoration: hide,
-    });
-    const url = webLinkUrl(match[2]);
-    ranges.push({
-      from: labelStart,
-      to: labelEnd,
-      decoration: Decoration.mark({
-        class: "cm-link",
-        attributes: url ? { "data-link-url": url.href } : undefined,
-      }),
-    });
-    match = link.exec(text);
-  }
-
-  ranges.sort((left, right) => left.from - right.from || left.to - right.to);
-  let last = offset;
-  for (const range of ranges) {
-    if (range.from < last) continue; // overlapping matches: keep the first
-    if (range.from > range.to) continue;
-    builder.add(range.from, range.to, range.decoration);
-    last = range.to;
+/** A hand-written `:::note` with no label still needs a heading to show. */
+class CalloutTitleWidget extends WidgetType {
+  constructor(readonly label: string) { super(); }
+  eq(other: CalloutTitleWidget) { return this.label === other.label; }
+  toDOM() {
+    const title = document.createElement("span");
+    title.className = "cm-callout-title";
+    title.textContent = this.label;
+    return title;
   }
 }
 
-const livePreview = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    images: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = buildDecorations(view);
-      this.images = this.decorations.update(imageDecorations);
-    }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged) {
-        this.decorations = buildDecorations(update.view);
-        this.images = this.decorations.update(imageDecorations);
-      }
-    }
-  },
-  {
-    decorations: (value) => value.decorations,
-    provide: (plugin) => EditorView.atomicRanges.of((view) => view.plugin(plugin)?.images ?? Decoration.none),
-  },
-);
-
-const imageDecorations = {
-  filter: (_from: number, _to: number, decoration: Decoration) => decoration.spec.widget instanceof DocumentImageWidget,
-};
-
-/** At a line break, remove the image instead of joining its Markdown with ordinary text. */
-function deleteAdjacentImage(view: EditorView, forward: boolean): boolean {
-  const { state } = view;
-  const images = view.plugin(livePreview)?.images;
-  const selection = state.selection.main;
-  if (!images || state.readOnly || !selection.empty || state.selection.ranges.length !== 1) return false;
-  const line = state.doc.lineAt(selection.head);
-  if (selection.head !== (forward ? line.to : line.from)) return false;
-  const adjacent = line.number + (forward ? 1 : -1);
-  if (adjacent < 1 || adjacent > state.doc.lines) return false;
-  const imageLine = state.doc.line(adjacent);
-  let found = false;
-  images.between(imageLine.from, imageLine.to, (from, to) => {
-    if (from === imageLine.from && to === imageLine.to) found = true;
-  });
-  if (!found) return false;
-  const changes = forward ? { from: line.to, to: imageLine.to } : { from: imageLine.from, to: line.from };
-  view.dispatch({ changes, scrollIntoView: true, userEvent: forward ? "delete.forward" : "delete.backward" });
-  return true;
-}
-
-/**
- * Expand a user deletion so an image's whole Markdown entry goes at once.
- *
- * This must also cover the DOM-input path: WebView2 can report Backspace and
- * Delete as a plain `input.type` change rather than a `delete.*` command, and
- * that path only removes the raw character under the caret, leaving the rest of
- * the encoded URL behind. Deleting either line break next to an image is treated
- * the same way, because joining the hidden Markdown with a neighbour would
- * reveal it without deleting anything.
- */
-function deleteWholeImages(transaction: Transaction) {
-  if (!transaction.docChanged) return transaction;
-  if (!transaction.isUserEvent("delete") && !transaction.isUserEvent("input")) return transaction;
-  const { doc } = transaction.startState;
-  const touched = new Set<number>();
-  transaction.changes.iterChangedRanges((from, to, newFrom, newTo) => {
-    // Only deletions. Replacing a selection should not swallow the typed text.
-    if (from === to || newFrom !== newTo) return;
-    const first = doc.lineAt(from).number;
-    const last = doc.lineAt(to).number;
-    for (let number = first; number <= last; number++) {
-      const line = doc.line(number);
-      if (!line.text.includes("![")) continue;
-      const image = imageLineParts(line.text);
-      if (!image || !documentImageSource(image[2]) || isCodeBlock(transaction.startState, line.from)) continue;
-      const content = from < line.to && to > line.from;
-      const breakBefore = number > 1 && from <= line.from - 1 && to >= line.from;
-      const breakAfter = number < doc.lines && from <= line.to && to >= line.to + 1;
-      if (content || breakBefore || breakAfter) touched.add(number);
-    }
-  });
-  const changes = [...touched].sort((a, b) => a - b).flatMap((number) => {
-    const line = doc.line(number);
-    const from = transaction.changes.mapPos(line.from, -1);
-    const to = transaction.changes.mapPos(line.to, 1);
-    return from < to ? [{ from, to }] : [];
-  });
-  return changes.length ? [transaction, { changes, sequential: true }] : transaction;
-}
-
-function webLinkUrl(destination: string): URL | null {
-  try {
-    const url = new URL(destination);
-    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
-  } catch {
-    return null;
-  }
-}
-
-function linkAt(view: EditorView, position: number) {
-  const line = view.state.doc.lineAt(position);
-  const links = /\[([^\[\]]+)\]\(([^)]+)\)/g;
-  for (const match of line.text.matchAll(links)) {
-    const from = line.from + match.index! + 1;
-    const to = from + match[1].length;
-    if (position < from || position > to) continue;
-    const url = webLinkUrl(match[2]);
-    return url ? { from, to, url: url.href, hostname: url.hostname } : null;
-  }
-  return null;
+function imageWidget({ src, alt }: { src: string; alt: string }) {
+  const source = documentImageSource(src);
+  return source ? new DocumentImageWidget(source, alt) : null;
 }
 
 const linkHover = hoverTooltip((editor, position) => {
-  const link = linkAt(editor, position);
+  const link = linkAt(editor.state, position);
   if (!link) return null;
   return {
     pos: link.from,
@@ -870,14 +614,14 @@ const linkHover = hoverTooltip((editor, position) => {
       site.textContent = link.hostname;
       const address = document.createElement("span");
       address.className = "ws-link-preview-address";
-      address.textContent = link.url;
+      address.textContent = link.href;
       details.append(site, address);
       const button = document.createElement("button");
       button.type = "button";
       button.className = "ws-link-preview-open";
       button.textContent = "Open link ↗";
       button.addEventListener("click", () => {
-        void openExternal(link.url).catch(() => { address.textContent = "Could not open this link"; });
+        void openExternal(link.href).catch(() => { address.textContent = "Could not open this link"; });
       });
       card.append(details, button);
       return { dom: card };
@@ -993,7 +737,12 @@ const tablePreview = StateField.define<DecorationSet>({
 });
 
 const formattedExtensions = [
-  livePreview, tablePreview, linkHover, EditorState.transactionFilter.of(deleteWholeImages),
+  livePreview({
+    image: imageWidget,
+    calloutTitle: (rule) => new CalloutTitleWidget(rule.defaultLabel ?? ""),
+  }),
+  tablePreview,
+  linkHover,
 ];
 
 function buildTables(state: EditorState): DecorationSet {
@@ -1023,30 +772,38 @@ function buildTables(state: EditorState): DecorationSet {
 
 // ── Shortcuts ────────────────────────────────────────────────────────────────
 
-function setTextColor(view: EditorView, color: string): boolean {
-  if (view.state.readOnly) return false;
-  const { from, to } = view.state.selection.main;
-  if (from === to) return false;
-  const line = view.state.doc.lineAt(from);
-  const existing = /<span class="hook-color-(green|blue|red|purple)">([^\n]*?)<\/span>/g;
-  for (const match of line.text.matchAll(existing)) {
-    const start = line.from + match.index!;
-    const contentStart = start + match[0].indexOf(">") + 1;
-    const contentEnd = contentStart + match[2].length;
-    if (from < contentStart || to > contentEnd) continue;
-    const oldOpen = `<span class="hook-color-${match[1]}">`;
-    const newOpen = color ? `<span class="hook-color-${color}">` : "";
-    const wrap = (text: string, open: string) => text ? open ? `${open}${text}</span>` : text : "";
-    const before = wrap(view.state.sliceDoc(contentStart, from), oldOpen);
-    const selected = view.state.sliceDoc(from, to);
-    const after = wrap(view.state.sliceDoc(to, contentEnd), oldOpen);
-    const replacement = before + wrap(selected, newOpen) + after;
-    const anchor = start + before.length + newOpen.length;
-    view.dispatch({ changes: { from: start, to: start + match[0].length, insert: replacement }, selection: { anchor, head: anchor + selected.length } });
-    return true;
+/** A toolbar action: the selection becomes a rule, or an existing rule goes. */
+function applyToSelection(editor: EditorView, rule: Rule | null, family: string): boolean {
+  if (editor.state.readOnly) return false;
+  const spec = applyRule(editor.state, rule, family);
+  if (!spec) return false;
+  editor.dispatch(spec);
+  return true;
+}
+
+function markSelection(editor: EditorView, family: string): boolean {
+  return applyToSelection(editor, ruleFor(family, "inline"), family);
+}
+
+function markColor(editor: EditorView, color: string): boolean {
+  return applyToSelection(editor, color ? ruleFor(color, "inline") : null, "color");
+}
+
+function insertCallout(editor: EditorView): boolean {
+  if (editor.state.readOnly) return false;
+  const rule = ruleFor("note", "block");
+  if (!rule) return false;
+  editor.dispatch(wrapCallout(editor.state, rule));
+  return true;
+}
+
+function webLinkUrl(destination: string): URL | null {
+  try {
+    const url = new URL(destination);
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+  } catch {
+    return null;
   }
-  if (!color) return false;
-  return toggleWrap(view, `<span class="hook-color-${color}">`, "</span>");
 }
 
 function toggleWrap(view: EditorView, marker: string, endMarker = marker): boolean {

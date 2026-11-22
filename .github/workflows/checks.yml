@@ -93,6 +93,12 @@ jobs:
       - name: Test the release gate
         run: pnpm test:release
 
+      # The document dialect is what a Workspace document *is*: the parser, the
+      # live editor's deletion repair and the read-only renderer are pure
+      # functions over Markdown, so they are tested without a window.
+      - name: Test the document dialect
+        run: pnpm test:markdown
+
       # The browser tooling drives a Chromium checkout that CI does not have, so
       # what is tested here is the part that decides a rebase's fate: the pin and
       # version parsers, the patch-series reader and the overlay rule that stops a

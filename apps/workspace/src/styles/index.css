@@ -2638,12 +2638,14 @@
 .cm-strong { font-weight: 660; }
 .cm-em { font-style: italic; }
 .cm-strike { text-decoration: line-through; color: var(--ink-3); }
-.cm-underline { text-decoration: underline; text-underline-offset: 2px; }
-.cm-highlight, .ws-preview-document mark { background: #f3dda0; color: inherit; border-radius: 2px; }
-.hook-color-green { color: #386349; }
-.hook-color-blue { color: #365f88; }
-.hook-color-red { color: #a4423a; }
-.hook-color-purple { color: #775187; }
+/* A callout is drawn line by line: the left border stacks, the hidden fences
+   shrink to the top and bottom edges of the box. */
+.cm-callout-head { border-left: 3px solid var(--sage); padding-left: 14px !important; }
+.cm-callout-title { font-weight: 620; color: var(--ink); }
+.cm-callout-body { border-left: 3px solid var(--sage); padding-left: 14px !important; background: rgba(var(--accent-rgb), 0.03); }
+.cm-callout-body-first { padding-top: 4px !important; }
+.cm-callout-body-last { padding-bottom: 4px !important; }
+.cm-callout-close { border-left: 3px solid var(--sage); font-size: 0; line-height: 9px; }
 .ws-color-trigger { position: relative; }
 .ws-color-trigger > span { position: absolute; bottom: 5px; left: 9px; right: 9px; height: 2px; border-radius: 1px; background: var(--sage); }
 .ws-color-popover { position: fixed; z-index: 100; width: 220px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--ivory); box-shadow: var(--shadow-md); animation: ws-select-in 130ms cubic-bezier(.2,.8,.2,1) both; }

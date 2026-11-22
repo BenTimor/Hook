@@ -1,0 +1,43 @@
+{
+  "name": "@hook/markdown",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Hook's document Markdown: one dialect, the live editor layer and the read-only renderer",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "mdast-util-directive": "catalog:",
+    "mdast-util-from-markdown": "catalog:",
+    "mdast-util-gfm": "catalog:",
+    "micromark-extension-directive": "catalog:",
+    "micromark-extension-gfm": "catalog:",
+    "react-markdown": "catalog:",
+    "remark-directive": "catalog:",
+    "remark-gfm": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "rehype-stringify": "^10.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "typescript": "catalog:",
+    "unified": "^11.0.5",
+    "vite": "catalog:"
+  }
+}

@@ -887,6 +887,32 @@ rows written before this rule are adopted when the service starts.
   round-trip to lose formatting. A formatting toolbar adds headings, lists,
   checklists, links, inline styles, code blocks, dividers and Markdown tables.
   The formatted editor is the default and lets people edit table cells directly.
+- **Formatting beyond Markdown is a directive, not HTML.** Inline styles are
+  written in the text itself — `:red[…]`, `:green[…]`, `:blue[…]`, `:purple[…]`,
+  `:mark[…]`, `:underline[…]`, `:kbd[…]` — and a callout is a block:
+  `:::note[Title]` … `:::` (also `tip`, `warning`, `danger`). A label holds
+  ordinary Markdown, so `:red[a **bold** word]` works, and blocks nest by adding
+  a colon (`::::note[…]` around `:::tip[…]`). A word that is not a registered
+  rule, an empty label and a block word used in a sentence all stay exactly as
+  typed, so prose like `localhost:8080` is never reformatted. Raw HTML is not
+  rendered at all — it is shown as the text it is — which is why every surface
+  (the Workspace window, the chat side panel and the phone) draws the same
+  document the same way, without a sanitizer.
+  `packages/markdown/src/rules.ts` is the whole registry: one entry names a
+  word, an element and a class, and the live editor, the toolbar and every
+  preview pick it up together. Editing behaves the way a word processor does:
+  inline markup is invisible, so an edit only ever changes the text it wraps and
+  the markers are put back around whatever survived. The caret stops at the
+  content edge of a run — never on a marker — so an arrow key always crosses a
+  visible character, a click at the end of a run lands inside it (typing
+  continues the run), and Backspace removes a character rather than the colour.
+  Delete the whole content and the construct goes with it. A callout or a picture is a unit instead: deleting at
+  its edge removes it. Inline HTML from older documents
+  (`<span class="hook-color-red">`, `<mark>`, `<u>`) is rewritten to the
+  directive syntax when the service starts; a code sample keeps its HTML.
+  One upstream trap to know: a fenced code block inside a callout must not
+  contain a line of nothing but colons, because that closes the callout early.
+  Give the callout one more colon than the sample needs.
   Use **Add image** in a document or task description to insert a web image or
   select a PNG, JPEG, GIF, or WebP file. You can also paste an image from the
   clipboard or drop an image file onto the editor. Embedded images sync with
@@ -1881,6 +1907,7 @@ cargo test -p hook-core -- --ignored             # live tests against `pnpm mock
 pnpm typecheck                                  # the only static gate: every package + the site
 pnpm waitlist:test                              # API, auth, proxy, download, sync, git, devices, relay, preview, workspace
 pnpm test:release                               # "is this tree already published?"
+pnpm test:markdown                              # the document dialect: parser, live editor, renderer
 pnpm test:licenses                              # every dep still fits AGPL-3.0-only
 pnpm release                                    # build + publish the installers
 ```

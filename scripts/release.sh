@@ -102,6 +102,7 @@ else
   step "Checks"
   pnpm typecheck
   pnpm test:release
+  pnpm test:markdown
   cargo test -p hook-core
 fi
 
