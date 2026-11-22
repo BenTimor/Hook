@@ -37,6 +37,7 @@ on:
       - "scripts/merge-release-index.mjs"
       - "scripts/fetch-pi-runtime.mjs"
       - "scripts/fetch-git.mjs"
+      - "browser/**"
       - ".github/workflows/checks.yml"
   # A pull request gets the same checks whatever it touches: the path filter
   # above exists to keep main quiet, not to hide a broken import in review.
@@ -91,6 +92,13 @@ jobs:
 
       - name: Test the release gate
         run: pnpm test:release
+
+      # The browser tooling drives a Chromium checkout that CI does not have, so
+      # what is tested here is the part that decides a rebase's fate: the pin and
+      # version parsers, the patch-series reader and the overlay rule that stops a
+      # copy of an upstream file becoming an invisible fork.
+      - name: Test the browser tooling
+        run: pnpm browser:test
 
       # The only static gate: every workspace package plus the site.
       - name: Typecheck

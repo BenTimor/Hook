@@ -1,8 +1,11 @@
 # Hook Browser — POC plan
 
-> **Status: plan only.** Nothing here is implemented. `docs/browser-architecture.md`
-> holds the standing decisions about the fork itself; this file holds the order of
-> work for the first proof of concept, and why it is that order.
+> **Status: tooling and a stock build only.** `browser/` holds the pinned tag,
+> the dev args and the sync/build/verify/patch tools, and Step 0 is done on
+> Windows. The overlay is empty — Steps 1–4 are not written.
+> `docs/browser-architecture.md` holds the standing decisions about the fork
+> itself; this file holds the order of work for the first proof of concept, and
+> why it is that order.
 
 The POC answers one question: **does our overlay reach Chromium, and can the Hook
 chat surface live inside it?** It is not a browser you can daily-drive, and it is
@@ -67,6 +70,16 @@ needed only when upstream moves.
 path also exists upstream (a file copied instead of patched), and fails if a
 patch in `series` does not apply to a clean tree.
 
+The four tools are the whole interface — `browser/README.md` holds the dev loop,
+the prerequisites and the traps:
+
+```bash
+node browser/tools/sync.mjs      # fetch/refresh the tree at browser/VERSION
+node browser/tools/build.mjs     # gn gen + autoninja -C out/Dev chrome
+node browser/tools/verify.mjs    # tag, overlay rule, patch stack, junction
+node browser/tools/patch.mjs     # list | add <slug> [-- paths] | apply
+```
+
 ## The steps
 
 ### Step 0 — the tree (background, ~2–4 h of machine time)
@@ -78,6 +91,15 @@ Done when: a stock Chromium runs, and `out/Dev` is warm enough that a later
 WebUI change is a repack rather than a rebuild.
 
 Nothing in the repo depends on this finishing, but Steps 1–4 all wait on it.
+
+**Done on Windows.** `sync.mjs` and `build.mjs` produced `out/Dev/chrome.exe`
+from tag `159.0.8154.13`: 27 GB of tree, 3 h 43 m of build on 28 cores, 12 GB of
+output, and the binary opens a window. The estimate that was wrong was the
+toolchain, not the build: M159 pins Windows SDK 10.0.28000 *including the
+Debugging Tools feature*, and `build/vs_toolchain.py` cannot see a VS 2022
+BuildTools install unless `vs2022_install` is set. Both are prerequisites in
+`browser/README.md` now, and `sync.mjs` checks the SDK before a build wastes an
+evening.
 
 ### Step 1 — prove the seam (the only POC that matters)
 
@@ -162,44 +184,47 @@ profiles; password manager and autofill; ad blocking; memory policy; Widevine;
 update channel; MSIX; `products.mjs`, release scripts and version bumps; any new
 chat-agent tool.
 
-## Night-run checklist
+## First run
 
-Run from `C:\Dev`. Order matters only where noted.
+Prerequisites are in `browser/README.md`: depot_tools, a Visual Studio the tag's
+toolchain accepts, the SDK version it pins (with the Debugging Tools feature),
+and Defender/indexing exclusions for both trees. Then:
 
 ```bash
-# 1. depot_tools (~1 min)
-git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git C:\Dev\depot_tools
-#    then put C:\Dev\depot_tools first on PATH for this shell:
-export PATH="/c/Dev/depot_tools:$PATH"
-export DEPOT_TOOLS_WIN_TOOLCHAIN=0
-
-# 2. the tree (~30-90 min, ~60-90 GB)
-mkdir -p /c/Dev/cr && cd /c/Dev/cr
-gclient config --name src https://chromium.googlesource.com/chromium/src.git@<TAG>
-gclient sync --no-history
-
-# 3. build the stock target (~2-3 h on 28 cores)
-cd src
-gn gen out/Dev --args='is_debug=false is_component_build=true symbol_level=0 blink_symbol_level=0 v8_symbol_level=0'
-autoninja -C out/Dev chrome
+node browser/tools/sync.mjs      # ~30-90 min cold, ~27 GB, retries the rate limit
+node browser/tools/verify.mjs    # tag, overlay rule, patch stack, junction
+node browser/tools/build.mjs     # ~4 h on 28 cores, once
 ```
 
-Traps, in the order they bite:
+Both default to `C:\Dev\cr` and take `--root` (or `HOOK_CHROMIUM_ROOT`) for
+another short path. `build.mjs --gen-only` is what a WebUI-only iteration needs.
+
+Traps that cost a night the first time, in the order they bit. The tools handle
+all of them now; `browser/README.md` has the detail.
 
 - **Exclude `C:\Dev\cr` and `C:\Dev\depot_tools` from Defender and from Windows
-  indexing before step 3.** The difference is multiples, not percent.
+  indexing before the build.** The difference is multiples, not percent.
+- **`gclient sync --no-history` trips Google's anonymous rate limit** (`429
+  RESOURCE_EXHAUSTED`) when it shallow-fetches ~100 deps in parallel. Throttle to
+  `--jobs 2` and retry; the first attempt will fail.
+- **A dep that loses that race keeps a `.git` with no checkout**, is then
+  considered healthy by gclient forever, and breaks the build hours later with
+  "missing and no known rule to make it". Delete that directory and re-sync —
+  that is the only in-place recovery.
+- **`DEPOT_TOOLS_WIN_TOOLCHAIN=0` and `vs2022_install` are both required** off
+  Google's network and with BuildTools under `Program Files (x86)`; without the
+  second, `gn gen` reports "No supported Visual Studio can be found".
+- **The SDK installer's `/features` switch replaces the default feature set.** A
+  debuggers-only run marks the bundle installed, and every later plain run becomes
+  a silent no-op "modify". Uninstall, then a plain `/q`.
 - **Never run `gclient sync -D`** once `src\hook` is a junctioned overlay: it can
-  remove unmanaged directories. Use plain `gclient sync`.
-- **Recreate the junction after any re-sync**, and keep `hook/` in
-  `src/.git/info/exclude` so Chromium's `git status` stays clean:
-  `cmd //c mklink //J "C:\Dev\cr\src\hook" "<repo>\browser\overlay\src\hook"`
-- **Build `chrome`, never `all`.**
-- Set the symbol levels **before** the first build; changing them forces a full
-  recompile.
+  remove unmanaged directories. Plain `gclient sync` recreates the junction.
+- **Build `chrome`, never `all`.** Set the symbol levels before the first build;
+  changing them forces a full recompile.
 
-Stop points, if the night runs short: after step 2 the tree exists and nothing is
-lost; after step 3 a stock browser runs. Step 1 of the plan can happen on any
-later evening.
+Stop points, if the night runs short: after `sync.mjs` the tree exists and nothing
+is lost; after `build.mjs` a stock browser runs. Step 1 of the plan can happen on
+any later evening.
 
 ## Still open
 

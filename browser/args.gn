@@ -1,0 +1,13 @@
+# Dev build of Hook Browser. Copied into `out/Dev/args.gn` by tools/build.mjs.
+#
+# is_component_build is the single biggest iteration win: the browser is then
+# a small executable plus DLLs, and a C++ change relinks one module instead of
+# linking a 200 MB image. It is dev only — releases are not component builds.
+#
+# The symbol levels are set before the first build on purpose: changing them
+# afterwards forces a full recompile of everything.
+is_debug = false
+is_component_build = true
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0

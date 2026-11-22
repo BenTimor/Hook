@@ -1,0 +1,18 @@
+# Template for the checkout's .gclient, rendered by tools/sync.mjs with the tag
+# from browser/VERSION. It lives here so that "which Chromium" is one reviewed
+# line rather than a file on someone's disk.
+#
+# `managed: False` because the tree is driven by gclient sync, not by the
+# managed-DEPS machinery; `custom_deps` stays empty on purpose — the overlay is
+# a junction (see sync.mjs), not a dependency, so that editing the repository
+# edits the bytes Chromium compiles.
+solutions = [
+  {
+    "name": "src",
+    "url": "https://chromium.googlesource.com/chromium/src.git@__TAG__",
+    "deps_file": "DEPS",
+    "managed": False,
+    "custom_deps": {},
+    "custom_vars": {},
+  },
+]

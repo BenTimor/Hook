@@ -1,0 +1,3 @@
+# Chromium patches, applied in this order by tools/patch.mjs.
+# One hunk at a time, under 80 lines each. See docs/browser-architecture.md,
+# "Why a rebase and not a merge". Empty is the goal.

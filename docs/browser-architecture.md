@@ -112,8 +112,9 @@ GitHub's per-file and per-push limits, and anything ignored is destroyed by
 advice, because `third_party/…` paths hit `MAX_PATH` under a deep root — and the
 overlay is a directory junction into it, so editing `Hook/browser/overlay/src/hook/…`
 edits the bytes the build compiles. What is committed is the overlay, the patch
-stack, the pinned tag and the scripts that materialise the tree; `gclient`'s
-`custom_deps` does the same wiring on CI.
+stack, the pinned tag and the scripts that materialise the tree; re-running
+`browser/tools/sync.mjs` recreates the junction, which is the same wiring with
+nothing to keep in step.
 
 The overlay is expected to stay modest — tens of thousands of lines, not the
 million that Brave's carries, because most product surface is WebUI and reused

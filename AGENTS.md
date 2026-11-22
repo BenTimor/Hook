@@ -89,6 +89,12 @@ pnpm test:cla
 pnpm git
 pnpm engine
 
+# Hook Browser: the Chromium checkout lives outside the repo, see browser/README.md
+pnpm browser:sync               # fetch/refresh the tree at browser/VERSION
+pnpm browser:build              # gn gen + autoninja -C out/Dev chrome
+pnpm browser:verify             # tag, overlay rule, patch stack, junction
+pnpm browser:test
+
 # Offline chat against a fake OpenAI-compatible endpoint on :8787
 pnpm mock
 ```
@@ -221,6 +227,15 @@ bash.
   `src-tauri` passes `Product::Mobile` + `Capabilities::mobile()`; there are no
   agents, no folder picker and no installer, and `scripts/release.sh` does not
   build it.
+- `browser/` — Hook Browser's build environment, and the only part of the browser
+  that is in this repository. `VERSION` is the one pinned Chromium tag,
+  `args.gn` the dev GN args, `overlay/src/hook/` the new paths that are
+  junctioned into the checkout as `src/hook`, `patches/series` the small edits to
+  upstream files that survive a rebase, and `tools/{sync,build,verify,patch}.mjs`
+  the whole interface. The ~100 GB checkout itself never enters the repo and
+  `browser/README.md` carries the dev loop, the toolchain prerequisites and the
+  traps. Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
+  Chromium build ever runs on a push.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
   `hook://sync`, `hook://import`, `hook://update`).
@@ -590,6 +605,11 @@ Changing one side of a boundary is the most common way to break this repo.
 - Persistence is atomic on purpose (temp file + rename). Go through `store.rs`.
 - Preview serving is loopback-only and path-contained (`preview.rs`); keep that
   when adding routes or file kinds.
+- **The Chromium overlay is new paths only.** `browser/overlay/src/hook/` must not
+  contain a copy of an upstream file — `pnpm browser:verify` fails if it does,
+  because a copy silently recreates the merged fork one stale file at a time.
+  Upstream edits go in `browser/patches/series`, one reviewable hunk at a time,
+  and they are expected to fail loudly when the tag moves.
 - Two traps only appear in packaged builds (`strip_verbatim`, resource directory
   mapping). Both are documented and tested — keep the tests.
 
