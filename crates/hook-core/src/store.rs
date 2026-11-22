@@ -5,6 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const DEFAULT_TITLE: &str = "New chat";
 
@@ -526,12 +527,22 @@ impl Store {
     }
 
     pub fn save(&self, chat: &mut Chat) -> Result<(), String> {
-        self.save_inner(chat, true)
+        self.save_inner(chat, true).map(|_| ())
     }
 
     /// Write a version that arrived from the account. It is already the
     /// canonical one, so it must not be queued for upload again.
-    pub fn save_remote(&self, chat: &mut Chat) -> Result<(), String> {
+    ///
+    /// Returns false when this machine has moved past that copy, in which case
+    /// nothing is written: the account's copy is a snapshot from before a reply
+    /// or a picture the turn wrote meanwhile, and putting it back would delete
+    /// it. The caller keeps the chat queued so the next push merges both sides.
+    pub fn save_remote(&self, chat: &mut Chat) -> Result<bool, String> {
+        if let Ok(local) = self.load(&chat.meta.id) {
+            if local.meta.updated_at > chat.meta.updated_at {
+                return Ok(false);
+            }
+        }
         self.save_inner(chat, false)
     }
 
@@ -550,7 +561,9 @@ impl Store {
                 local.meta.stub_state = stub.stub_state;
                 local.meta.device_id = stub.device_id;
                 local.meta.device_name = stub.device_name;
-                local.meta.updated_at = stub.updated_at;
+                // The label is a local meta update: it must not be refused for
+                // being older than the transcript this device already has.
+                local.meta.updated_at = local.meta.updated_at.max(stub.updated_at);
                 self.save_remote(&mut local)?;
                 Ok(true)
             }
@@ -565,7 +578,7 @@ impl Store {
         }
     }
 
-    fn save_inner(&self, chat: &mut Chat, dirty: bool) -> Result<(), String> {
+    fn save_inner(&self, chat: &mut Chat, dirty: bool) -> Result<bool, String> {
         chat.refresh_meta();
         let path = self.chat_path(&chat.meta.id);
         let bytes = serde_json::to_vec_pretty(chat).map_err(|e| e.to_string())?;
@@ -583,7 +596,7 @@ impl Store {
         if dirty && !chat.meta.is_local_only() {
             self.mark_dirty(&chat.meta.id);
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Folder holding the pictures of one chat.
@@ -702,7 +715,7 @@ impl Store {
             height,
             bytes: data.len() as u64,
             kind: kind.map(str::to_string),
-            sha256: None,
+            sha256: Some(sha256_hex(data)),
         })
     }
 
@@ -1009,10 +1022,27 @@ pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension("json.tmp");
+    // A unique temp name, never one shared per target: two writers (a turn and
+    // the sync engine, on different threads) would otherwise fill the same file
+    // and the rename would commit whichever bytes landed last — a lost update
+    // that put an older copy back on disk under a newer save.
+    let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
     fs::write(&tmp, bytes).map_err(|e| format!("write: {e}"))?;
-    fs::rename(&tmp, path).map_err(|e| format!("commit: {e}"))?;
-    Ok(())
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("commit: {e}")
+    })
+}
+
+/// The digest the account names a picture by. Computed when the picture is
+/// stored, so a chat never has to be re-saved to learn it.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 fn sort_metas(metas: &mut [ChatMeta]) {
@@ -1100,6 +1130,58 @@ mod tests {
         0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
         0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
+
+    #[test]
+    fn a_picture_records_its_digest_when_it_is_stored() {
+        // The account names a picture by its digest. Learning it later meant
+        // re-saving the chat mid-upload, which could undo a reply the turn had
+        // just written.
+        let root = std::env::temp_dir().join(format!("hook-digest-{}", uuid::Uuid::new_v4()));
+        let store = Store::new(root.clone()).unwrap();
+        let mut chat = Chat::new();
+        store.save(&mut chat).unwrap();
+        let attachment = store.save_image(&chat.meta.id, "image/png", PNG, 1, 1, Some("user")).unwrap();
+        assert_eq!(
+            attachment.sha256.as_deref(),
+            Some(sha256_hex(PNG).as_str()),
+            "the digest is known before the first push"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_copy_from_the_account_never_replaces_a_newer_one_here() {
+        let root = std::env::temp_dir().join(format!("hook-stamp-{}", uuid::Uuid::new_v4()));
+        let store = Store::new(root.clone()).unwrap();
+        let mut chat = Chat::new();
+        chat.messages.push(Message::new("user", "hello", "complete"));
+        store.save(&mut chat).unwrap();
+        let older = store.load(&chat.meta.id).unwrap();
+
+        // The turn writes the reply after that copy was taken.
+        let mut newer = store.load(&chat.meta.id).unwrap();
+        newer.messages.push(Message::new("assistant", "the answer", "complete"));
+        newer.meta.updated_at = older.meta.updated_at + 5_000;
+        store.save(&mut newer).unwrap();
+
+        // The account's snapshot is from before it.
+        let mut stale = older.clone();
+        assert!(!store.save_remote(&mut stale).unwrap(), "an older copy must not land");
+        let kept = store.load(&chat.meta.id).unwrap();
+        assert_eq!(kept.messages.len(), 2, "the reply is still there");
+
+        // A copy the account made later does land.
+        let mut fresher = older.clone();
+        fresher.meta.updated_at = newer.meta.updated_at + 5_000;
+        fresher.messages.push(Message::new("user", "from my laptop", "complete"));
+        assert!(store.save_remote(&mut fresher).unwrap());
+        let applied = store.load(&chat.meta.id).unwrap();
+        assert_eq!(
+            applied.messages.last().map(|message| message.content.as_str()),
+            Some("from my laptop")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn a_coding_chat_stays_on_this_computer() {

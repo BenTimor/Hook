@@ -171,10 +171,20 @@ function mergeMessages(local: Message[], incoming: Message[]): Message[] {
   return [...incoming, ...local.filter((message) => !known.has(message.id))];
 }
 
-function settle(messages: Message[], streaming: boolean): Message[] {
+/**
+ * What to do with a message the backend stopped writing. A user's Stop leaves
+ * "Stopped"; a turn that died says why, so a reply replaced mid-stream is not
+ * shown as if the person had stopped it.
+ */
+function settle(messages: Message[], streaming: boolean, failed?: string): Message[] {
   const shown = visible(messages);
   if (streaming) return shown;
-  return shown.map((m) => (m.status === "streaming" ? { ...m, status: "aborted" } : m));
+  return shown.map((m) => {
+    if (m.status !== "streaming") return m;
+    return failed
+      ? { ...m, status: "error", error: failed }
+      : { ...m, status: "aborted" };
+  });
 }
 
 let deltaQueue: Record<string, string> = {};
@@ -413,6 +423,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
                   messages: settle(
                     mergeMessages(state.messages, event.messages),
                     false,
+                    event.message,
                   ),
                 }
               : {}),
@@ -485,11 +496,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
               .getChat(activeId)
               .then((chat) => {
                 if (
-                  get().activeId === activeId &&
-                  !get().streams[activeId] &&
-                  !get().activity[activeId]
+                  get().activeId !== activeId ||
+                  get().streams[activeId] ||
+                  get().activity[activeId]
                 )
-                  set({ messages: settle(chat.messages, false) });
+                  return;
+                // A file that still says "streaming" belongs to a turn this
+                // window is not watching — or one whose last save was lost.
+                // Settling it would show an empty "Stopped" reply and throw
+                // away the answer on screen, so leave the messages alone.
+                if (chat.messages.some((message) => message.status === "streaming"))
+                  return;
+                set({ messages: settle(chat.messages, false) });
               })
               .catch(() => {
                 // It was deleted on another computer.

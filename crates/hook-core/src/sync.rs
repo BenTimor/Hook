@@ -25,7 +25,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 
 use crate::auth::AuthStore;
@@ -33,7 +32,7 @@ use crate::git::{self, GitRuntime};
 use crate::memory::{Entry, MemoryStore};
 use crate::projects::ProjectsStore;
 use crate::settings::SettingsStore;
-use crate::store::{now_ms, Chat, ChatMeta, Store, KIND_CODING};
+use crate::store::{now_ms, sha256_hex, Chat, ChatMeta, Store, KIND_CODING};
 
 const CYCLE: Duration = Duration::from_secs(15);
 const MAX_BACKOFF: Duration = Duration::from_secs(120);
@@ -48,15 +47,6 @@ const MEDIA_MEMORY: usize = 2000;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -792,15 +782,23 @@ impl SyncEngine {
                     };
                     if result["deleted"].as_bool() == Some(true) {
                         self.store.remove_synced(id);
-                    } else if self.locally_streaming(id) {
-                        // The reply started while this request was in flight.
-                        // Keep it; the next cycle merges again.
-                        continue;
+                        applied.push(id.to_string());
                     } else if let Some(chat_value) = result.get("chat") {
                         match serde_json::from_value::<Chat>(chat_value.clone()) {
                             Ok(mut chat) => {
-                                if let Err(error) = self.store.save_remote(&mut chat) {
-                                    eprintln!("hook: could not apply a synced chat: {error}");
+                                if self.local_wins(id, &chat) {
+                                    // The turn wrote while this request was in
+                                    // flight, so the merged copy predates the
+                                    // reply. Keep the file; the next cycle
+                                    // merges both sides again.
+                                    continue;
+                                }
+                                match self.store.save_remote(&mut chat) {
+                                    Ok(true) => applied.push(id.to_string()),
+                                    Ok(false) => {}
+                                    Err(error) => {
+                                        eprintln!("hook: could not apply a synced chat: {error}")
+                                    }
                                 }
                             }
                             Err(error) => {
@@ -808,7 +806,6 @@ impl SyncEngine {
                             }
                         }
                     }
-                    applied.push(id.to_string());
                 }
             }
             for (id, version) in &versions {
@@ -834,19 +831,27 @@ impl SyncEngine {
         self.save_state()
     }
 
-    /// True when the copy on this machine belongs to a turn that has not
-    /// finished. The incoming copy never says so (a streaming chat is never
-    /// uploaded), which is exactly why the check has to be local: without it,
-    /// the account's older copy lands on top of the reply being written.
-    fn locally_streaming(&self, id: &str) -> bool {
-        self.store
-            .load(id)
-            .map(|chat| {
-                chat.messages
-                    .iter()
-                    .any(|message| message.status == "streaming")
-            })
-            .unwrap_or(false)
+    /// True when this machine's copy has moved past the copy the account wants
+    /// to apply, so the incoming one must not replace it.
+    ///
+    /// A chat is never uploaded while a turn is writing it, so the account's
+    /// copy is a snapshot from before the reply existed. Comparing stamps is the
+    /// only thing that tells them apart: a picture upload keeps one request in
+    /// flight for seconds, long enough for the reply to be written and accepted
+    /// as "not streaming" — which is how a finished answer was deleted and the
+    /// chat came back looking stopped. The next push merges both sides.
+    fn local_wins(&self, id: &str, remote: &Chat) -> bool {
+        let remote_at = remote.meta.updated_at;
+        let Ok(local) = self.store.load(id) else {
+            return false;
+        };
+        // A turn that has not finished is never uploaded at all; its stamp may
+        // even be equal when two saves share a millisecond.
+        local.meta.updated_at > remote_at
+            || local
+                .messages
+                .iter()
+                .any(|message| message.status == "streaming")
     }
 
     /// Upload every picture on this chat once. A failed picture never blocks
@@ -882,7 +887,44 @@ impl SyncEngine {
             }
         }
         if learned {
-            let _ = self.store.save_remote(chat);
+            // A picture stored before digests were recorded at save time. Put
+            // the digest on the chat as it is *now*: this request's copy is a
+            // snapshot, and writing it back would undo whatever the turn wrote
+            // while the upload was in flight.
+            let digests: HashMap<String, String> = chat
+                .messages
+                .iter()
+                .flat_map(|message| message.attachments.iter())
+                .filter_map(|attachment| {
+                    attachment
+                        .sha256
+                        .clone()
+                        .map(|digest| (attachment.id.clone(), digest))
+                })
+                .collect();
+            if let Ok(mut current) = self.store.load(&chat.meta.id) {
+                let mut touched = false;
+                for message in &mut current.messages {
+                    for attachment in &mut message.attachments {
+                        let missing = attachment
+                            .sha256
+                            .as_deref()
+                            .map(str::is_empty)
+                            .unwrap_or(true);
+                        if !missing {
+                            continue;
+                        }
+                        if let Some(digest) = digests.get(&attachment.id) {
+                            attachment.sha256 = Some(digest.clone());
+                            touched = true;
+                        }
+                    }
+                }
+                if touched {
+                    current.meta.updated_at = now_ms();
+                    let _ = self.store.save(&mut current);
+                }
+            }
         }
         for (digest, mime, bytes) in uploads {
             let response = self
@@ -1205,17 +1247,13 @@ impl SyncEngine {
                                 }
                             };
                             // Never replace a conversation that is being
-                            // written right now; retry once that turn ends.
-                            // The incoming copy cannot show it — the streaming
-                            // chat is not uploaded — so ask this machine.
-                            if self.locally_streaming(&id)
-                                || chat
-                                    .messages
-                                    .iter()
-                                    .any(|message| message.status == "streaming")
-                            {
-                                deferred = true;
-                                break;
+                            // written right now, and never a copy this machine
+                            // has moved past: the incoming copy cannot show a
+                            // turn that has not been uploaded. The next push
+                            // merges both sides and the union comes back.
+                            if self.local_wins(&id, &chat) {
+                                last = seq;
+                                continue;
                             }
                             if !self.download_media(token, &chat).await {
                                 // A transient picture failure: keep the cursor
@@ -1223,10 +1261,14 @@ impl SyncEngine {
                                 deferred = true;
                                 break;
                             }
-                            if let Err(error) = self.store.save_remote(&mut chat) {
-                                eprintln!("hook: could not apply a synced chat: {error}");
-                            } else {
-                                chats_changed = true;
+                            match self.store.save_remote(&mut chat) {
+                                Ok(true) => chats_changed = true,
+                                // This machine is ahead of the account: keep
+                                // the local copy and push it next cycle.
+                                Ok(false) => {}
+                                Err(error) => {
+                                    eprintln!("hook: could not apply a synced chat: {error}")
+                                }
                             }
                         }
                     }
@@ -1658,7 +1700,10 @@ mod tests {
                             "createdAt": 2000,
                             "status": "complete"
                         }));
-                    merged["meta"]["updatedAt"] = serde_json::json!(3000);
+                    // The account's merged copy is newer than what was
+                    // uploaded (a real one always is), so it lands here.
+                    let uploaded = merged["meta"]["updatedAt"].as_i64().unwrap_or(0);
+                    merged["meta"]["updatedAt"] = serde_json::json!(uploaded + 1000);
                     serde_json::json!({
                         "results": [{
                             "id": merged["meta"]["id"].clone(),
@@ -2027,6 +2072,85 @@ mod tests {
             local.messages.last().map(|message| message.status.as_str()),
             Some("streaming"),
             "the reply being written must survive a sync cycle"
+        );
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn a_finished_reply_survives_the_copy_that_was_uploaded_before_it() {
+        // The bug a picture made easy to hit: `upload_media` keeps one push in
+        // flight for seconds, so the merged copy of a chat that had only its
+        // user message comes back *after* the turn wrote the reply. That copy is
+        // older than the file, and applying it deleted the answer — the window
+        // showed a stopped turn and the file kept only the question.
+        let store_cell: Arc<Mutex<Option<Arc<Store>>>> = Arc::new(Mutex::new(None));
+        let cell = store_cell.clone();
+        let (url, seen) = mock_server(move |method, path, body| {
+            match (method, path.split('?').next()) {
+                ("POST", Some("/api/sync/chats")) => {
+                    let chat = body["chats"][0].clone();
+                    let id = chat["meta"]["id"].as_str().unwrap().to_string();
+                    // The turn finishes while the upload is in flight.
+                    if let Some(store) = cell.lock().unwrap().clone() {
+                        let mut local = store.load(&id).unwrap();
+                        if !local.messages.iter().any(|m| m.role == "assistant") {
+                            let mut reply = Message::new("assistant", "the answer", "complete");
+                            reply.created_at = local.meta.updated_at + 1;
+                            local.messages.push(reply);
+                            local.meta.updated_at += 1;
+                            store.save(&mut local).unwrap();
+                        }
+                    }
+                    // The account's answer predates the reply: it saw the
+                    // question only, exactly like a real merge would.
+                    serde_json::json!({
+                        "results": [{ "id": chat["meta"]["id"].clone(), "chat": chat }],
+                        "cursor": 5
+                    })
+                }
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 5, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        *store_cell.lock().unwrap() = Some(fixture.store.clone());
+        let mut chat = Chat::new();
+        chat.messages.push(Message::new("user", "start here", "complete"));
+        fixture.store.save(&mut chat).unwrap();
+        let id = chat.meta.id.clone();
+
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.cycle().await.expect("one cycle");
+
+        let local = fixture.store.load(&id).unwrap();
+        assert_eq!(
+            local.messages.last().map(|message| message.content.as_str()),
+            Some("the answer"),
+            "a copy taken before the reply must not delete it"
+        );
+
+        // The reply is still queued, so the next cycle carries it to the
+        // account instead of leaving the two copies apart forever.
+        engine.cycle().await.expect("a second cycle");
+        let pushed = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "POST" && path == "/api/sync/chats")
+            .map(|(_, _, body)| body.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            pushed.iter().any(|body| body["chats"][0]["messages"]
+                .as_array()
+                .map(|messages| messages
+                    .iter()
+                    .any(|message| message["content"] == "the answer"))
+                .unwrap_or(false)),
+            "the reply reaches the account on the next cycle"
         );
         fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }
