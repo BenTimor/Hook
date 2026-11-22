@@ -1,0 +1,51 @@
+/* Hook Browser: chrome://hook, Step 1 of docs/browser-poc-plan.md.
+ *
+ * Disposable on purpose. The real surfaces arrive in Step 2 on packages/ui
+ * tokens; this page exists to prove that our resources are served at all.
+ */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  align-items: center;
+  background: light-dark(#fbfbfb, #131316);
+  color: light-dark(#17171a, #ececf0);
+  display: flex;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  justify-content: center;
+}
+
+.seam {
+  text-align: center;
+}
+
+.mark {
+  background: light-dark(#17171a, #ececf0);
+  border-radius: 10px;
+  height: 28px;
+  margin: 0 auto 20px;
+  width: 28px;
+}
+
+h1 {
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.lede {
+  color: light-dark(#62626b, #9a9aa4);
+  font-size: 15px;
+  margin: 6px 0 0;
+}
+
+.status {
+  color: light-dark(#8b8b95, #74747e);
+  font-size: 13px;
+  margin: 28px 0 0;
+}

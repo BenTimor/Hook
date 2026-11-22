@@ -12,7 +12,7 @@
  *
  * Build `chrome`, never `all` — `all` drags in every test binary.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -82,7 +82,18 @@ export async function main(argv) {
 
   const out = resolve(join(src, outRel));
   mkdirSync(out, { recursive: true });
-  writeFileSync(join(out, "args.gn"), readFileSync(ARGS_FILE, "utf8"));
+  const argsGn = readFileSync(ARGS_FILE, "utf8");
+  writeFileSync(join(out, "args.gn"), argsGn);
+
+  // A directory built by siso keeps a marker that depot_tools' ninja wrapper
+  // refuses to build past. The overlay is a Windows junction, which siso's
+  // hashfs cannot read, so args.gn pins ninja; clear the marker and say what
+  // switching costs. Siso never wrote ninja's build log, so the first ninja
+  // build recompiles the tree even though every output is already on disk.
+  if (/^\s*use_siso\s*=\s*false\s*$/m.test(argsGn) && existsSync(join(out, ".siso_deps"))) {
+    unlinkSync(join(out, ".siso_deps"));
+    note(`cleared the siso marker in ${outRel}: switching to ninja recompiles the tree once`);
+  }
 
   const gn = existsSync(join(src, "buildtools", "win", "gn.exe"))
     ? join(src, "buildtools", "win", "gn.exe")

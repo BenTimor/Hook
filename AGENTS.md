@@ -234,7 +234,9 @@ bash.
   upstream files that survive a rebase, and `tools/{sync,build,verify,patch}.mjs`
   the whole interface. The ~100 GB checkout itself never enters the repo and
   `browser/README.md` carries the dev loop, the toolchain prerequisites and the
-  traps. Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
+  traps. `args.gn` pins `use_siso = false`: siso cannot read the overlay
+  junction, so the tree builds with ninja (`browser/README.md`, "Traps").
+  Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
   Chromium build ever runs on a push.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,

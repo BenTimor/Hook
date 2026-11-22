@@ -4,6 +4,14 @@
 # a small executable plus DLLs, and a C++ change relinks one module instead of
 # linking a 200 MB image. It is dev only — releases are not component builds.
 #
+# Siso is off on purpose. The overlay reaches the checkout through a Windows
+# directory junction, and siso's hashfs follows a junction as an absolute
+# symlink outside the source root, which it refuses (`store resolve next dir
+# hook failed`). Ninja follows it. With no remote execution on a dev machine
+# the difference is scheduling, not the build. Set this back when siso can read
+# through a junction.
+use_siso = false
+#
 # The symbol levels are set before the first build on purpose: changing them
 # afterwards forces a full recompile of everything.
 is_debug = false

@@ -56,6 +56,19 @@ tree defaults to `C:\Dev\cr`; override with `--root` or `HOOK_CHROMIUM_ROOT`.
 `build.mjs --gen-only` stops after `gn gen`, which is what a WebUI-only iteration
 usually needs.
 
+## Switching from a siso build directory
+
+The overlay is a junction and siso cannot read one, so `args.gn` pins
+`use_siso = false` (see Traps). A fresh `out/Dev` therefore builds with ninja
+from the start.
+
+An `out/Dev` that was already built by siso still contains `.siso_deps`.
+`build.mjs` clears that marker and says so, but ninja has no record of the
+completed actions — siso never writes ninja's build log — so that first build
+recompiles the tree: hours, once. Every output already on disk, including
+`out/Dev/chrome.exe`, keeps working in the meantime; only a rebuild pays the
+cost. Nothing in the repository depends on that build completing.
+
 ## Dev loop
 
 Most product work does not need a Chromium build. WebUI is TypeScript and runs
@@ -88,6 +101,13 @@ Each of these cost a night at least once.
   own setup mutex — elevate a wrapper script.
 - **`DEPOT_TOOLS_WIN_TOOLCHAIN=0` is required off Google's network.** The
   downloadable toolchain is Googlers-only, and the tools set this for you.
+- **Siso cannot read the overlay through the junction.** Its hashfs follows a
+  Windows junction as an absolute symlink and refuses it (`store resolve next
+  dir hook failed`). `args.gn` therefore sets `use_siso = false`, and
+  `build.mjs` builds with ninja, which follows the junction. A directory that
+  was previously built by siso recompiles everything once on the switch, because
+  siso never wrote ninja's build log; `build.mjs` clears the siso marker and says
+  so. Set `use_siso = true` again when siso learns junctions.
 
 ## Upgrading Chromium
 
@@ -105,5 +125,13 @@ quarter behind means shipping a vulnerable browser, so this is an obligation.
 ## Status
 
 Step 0 of the POC plan is done on Windows: the tree builds at tag `159.0.8154.13`
-and a stock Chromium runs. The overlay is empty — Step 1, the seam
-(`chrome://hook`, the mojom tab list, the sign-in throttle), is not written.
+and a stock Chromium runs. Step 1's first checkpoint is in: the overlay adds
+`chrome://hook`, served from our own `hook_resources.pak` and drawn by
+`overlay/src/hook/resources/`. The mojom tab list and the signed-out navigation
+throttle are the rest of Step 1.
+
+`out/Dev` on this machine is still a siso build with the overlay linked in; the
+switch to ninja is documented above and deferred. The built `chrome.exe` opens
+`chrome://hook` today, and no rebuild is needed until the browser code changes.
+The next browser work waits for that rebuild and is built against the real host
+and backend: there is no prototype panel to throw away.

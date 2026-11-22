@@ -1,0 +1,21 @@
+# Hook Browser: the chrome://hook page.
+#
+# build_webui generates the .grd, the resource map and hook_resources.pak, so
+# there is no hand-written .grd to keep in step. chrome/chrome_paks.gni adds
+# the pak to the repack (one line in browser/patches/); this target is also a
+# dependency there, or the pak is never built.
+
+import("//ui/webui/resources/tools/build_webui.gni")
+
+build_webui("build") {
+  grd_prefix = "hook"
+
+  # A plain page: the stylesheet is a static resource, not a
+  # css_to_wrapper module. css_files would pull in Polymer for no reason.
+  static_files = [
+    "hook.css",
+    "hook.html",
+  ]
+
+  ts_files = [ "hook.ts" ]
+}

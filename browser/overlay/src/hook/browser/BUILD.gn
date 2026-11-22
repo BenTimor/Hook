@@ -1,0 +1,23 @@
+# Hook Browser: the browser-process half of the WebUI seam.
+#
+# Nothing in this file is compiled until a patch adds "//hook/browser" to the
+# deps of //chrome/browser/ui/webui:configs. That is deliberate: the overlay is
+# inert in a stock checkout, and the patch is the one line that wakes it up.
+
+source_set("browser") {
+  sources = [
+    "ui/webui/hook_ui.cc",
+    "ui/webui/hook_ui.h",
+  ]
+
+  public_deps = [
+    "//content/public/browser",
+    "//ui/webui",
+  ]
+
+  deps = [
+    "//chrome/browser/profiles:profile",
+    "//content/public/common",
+    "//hook/resources:resources",
+  ]
+}

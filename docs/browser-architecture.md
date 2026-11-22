@@ -201,6 +201,9 @@ same command; nothing about the prompt changes, and no browser tool is involved.
 `packages/ui` (tokens, plain CSS) and `packages/chat` (`ChatDock`, `Thread`,
 `MessageItem`, `Composer`) are React and are meant to have no host dependency, so
 they compile into WebUI assets and render in a `chrome://` surface largely as-is.
+Chromium's own WebUI pipeline is Lit and ships no React, so the browser builds
+these packages with Vite as a static bundle that the overlay serves from its pak;
+`build_webui` packages the output, it does not compile the components.
 Two module-scope imports currently break that claim — `packages/chat/src/open.ts`
 and `packages/ui/src/window.ts` import `@tauri-apps/api` — and both become an
 injected opener and a host check before the browser links either package. Only

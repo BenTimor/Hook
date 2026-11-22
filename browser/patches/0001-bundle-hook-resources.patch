@@ -1,0 +1,20 @@
+diff --git a/chrome/chrome_paks.gni b/chrome/chrome_paks.gni
+index 631fbe8903..82030b97e3 100644
+--- a/chrome/chrome_paks.gni
++++ b/chrome/chrome_paks.gni
+@@ -255,6 +255,7 @@ template("chrome_extra_paks") {
+         "$root_gen_dir/chrome/feedback_resources.pak",
+         "$root_gen_dir/chrome/gaia_auth_host_resources.pak",
+         "$root_gen_dir/chrome/glic_untrusted_resources.pak",
++        "$root_gen_dir/chrome/hook_resources.pak",
+         "$root_gen_dir/chrome/indigo_resources.pak",
+         "$root_gen_dir/chrome/inspect_resources.pak",
+         "$root_gen_dir/chrome/iwa_dev_resources.pak",
+@@ -300,6 +301,7 @@ template("chrome_extra_paks") {
+         "//chrome/browser/resources/contextual_cueing/internals:resources",
+         "//components/headless/command_handler",
+         "//content/browser/tracing:resources",
++        "//hook/resources:resources",
+       ]
+       if (is_chrome_branded) {
+         sources += [

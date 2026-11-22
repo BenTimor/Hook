@@ -23,12 +23,15 @@ Mirrors `src/` inside the checkout:
 
 ```
 overlay/src/hook/
-  browser/            C++ — agent controller, tab model, ad interception, vault
-  common/             mojom IDL for the WebUI <-> browser IPC
+  browser/            C++ — the WebUI controller, later the tab model and more
+  common/             mojom IDL for the WebUI <-> browser IPC, shared constants
   app/                branding, icons, .grd strings, resources
   browser/resources/  WebUI: the React surfaces
+  resources/          the chrome://hook page (Step 1)
   rust/               hook-core, built without Tauri
   tests/              our own browser tests
 ```
 
-Empty until Step 1 of `docs/browser-poc-plan.md` proves the seam.
+Step 1's first checkpoint lives in `browser/ui/webui/` and `resources/`: the page
+is served from the generated `hook_resources.pak`. The tab list and the sign-in
+throttle are the rest of Step 1.
