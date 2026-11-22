@@ -1,3 +1,11 @@
+HookCode 0.5.1
+
+Advanced mode now belongs to your account, not to one computer: turn it on here and HookCode on your phone shows the same view, and the other way around. It is still off by default.
+
+Your own model endpoint can now reach your other devices. On a paid plan with cloud sync on, Hook saves one encrypted copy of the endpoint, key and model name on your account, so Hook Workspace and HookCode on your phone use the same provider without the key being typed again. Turn cloud sync off and the key stays on the computer that entered it. A key typed under one account is never uploaded to another account that signs in on the same machine.
+
+On the phone, starting a coding agent on a computer is now an Advanced action, like it is on the desktop: with Advanced off, the chat agent gets the work and decides whether a machine is needed.
+
 HookCode 0.5.0
 
 Your other computers are now part of the app. Settings > Your machines lists every computer signed in to your account, with its name, platform, version and online state. Rename a machine, turn remote work on or off, or forget it; every run records the computer it used.
