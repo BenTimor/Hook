@@ -44,6 +44,9 @@ export type {
 } from "./WorkSteps";
 export type {
   AnswerBlock,
+  AnswerPart,
+  AnswerTextPart,
+  AnswerWorkPart,
   MessageBlock,
   ThreadBlock,
 } from "./turns";

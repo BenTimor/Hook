@@ -1437,14 +1437,22 @@ deleting the account clears memory).
 Settings → **Advanced** turns on a debugging view of how answers are made. It is
 off by default and stored in `settings.json`.
 
-- **In a conversation**, every turn shows the model's thinking and the tools it
-  ran above the reply. While the turn runs the block stays open; when the final
-  reply lands it folds to one line (`Thinking · 2 tool calls`) and that line
-  reopens it. Tool calls get a readable title and the argument that identifies
-  the work (the command, the path, the query); expanding one shows the full
-  arguments and the result. Nothing new is written for this: reasoning and tool
-  calls were already in the chat file, and the history/prefix rules in
-  **Memory → Why the prefix is append-only** are unchanged.
+- **In a conversation**, a turn keeps the order it happened in: each message the
+  model wrote, with one fold of thinking and tool calls between the messages.
+  The newest fold stays open while the turn runs; when the turn ends it closes
+  to one line (`Thinking · 2 tool calls`) and that line reopens it. Tool calls
+  get a readable title and the argument that identifies the work (the command,
+  the path, the query); expanding one shows the full arguments and the result.
+  Nothing new is written for this: reasoning and tool calls were already in the
+  chat file, and the history/prefix rules in **Memory → Why the prefix is
+  append-only** are unchanged.
+- **With Advanced off**, the conversation is the simple view: only the last
+  message of each turn is drawn. Everything before it — earlier messages,
+  thinking, tool calls — is hidden and belongs to Advanced. The prompt always
+  says that the final message must contain the complete answer, so the same
+  reply works in both views. The Workspace dock always has this view; the chat
+  window and the phone can turn Advanced on. A direct coding chat keeps every
+  message in the simple view, because its engine is not given that rule.
 - **The sidebar** gains a **Coding agents** tree: one folder per project, with
   rows for runs that are still working, plus a run that stopped (stopped,
   failed, interrupted) in the open chat within the last few minutes. Older

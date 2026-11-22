@@ -247,7 +247,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_preview",
-            "Show a task, board or document in the user's preview panel. Use it when you changed or read something worth looking at; the user can then read it beside the chat.",
+            "Show a task, board or document in the user's preview panel. Call it as soon as you know what to show and before you write the reply: the tool result has to be followed by another message, so previewing after the answer turns that message into a redundant confirmation. The user can read it beside the chat; do not say that it is open.",
             json!({
                 "type": "object",
                 "properties": {

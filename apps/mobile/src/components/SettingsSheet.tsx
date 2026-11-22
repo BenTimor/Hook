@@ -333,7 +333,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
           <label className="setting-row">
             <span className="setting-copy">
               <strong>Advanced mode</strong>
-              <em>Show what the agent thought and which tools it used.</em>
+              <em>Show every message, what the agent thought and which tools it used.</em>
             </span>
             <input
               type="checkbox"

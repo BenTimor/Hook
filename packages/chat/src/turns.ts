@@ -8,16 +8,36 @@ export interface MessageBlock<M extends ChatMessage> {
   message: M;
 }
 
+/** One message the model wrote, in the turn's own order. */
+export interface AnswerTextPart<M extends ChatMessage> {
+  kind: "text";
+  key: string;
+  message: M;
+  text: string;
+}
+
+/** One fold of thinking and tool calls between two messages. */
+export interface AnswerWorkPart {
+  kind: "work";
+  key: string;
+  steps: WorkStep[];
+  live: boolean;
+}
+
+export type AnswerPart<M extends ChatMessage> =
+  | AnswerTextPart<M>
+  | AnswerWorkPart;
+
 /**
- * One assistant turn: the work that led to it plus the answer it ended with.
- * `message` is absent while the turn is still working, when everything there is
- * belongs inside the work block.
+ * One assistant turn. `parts` is what the reader sees, in the order it
+ * happened: a message, the work it set off, the next message. `message` is the
+ * message the turn's actions belong to.
  */
 export interface AnswerBlock<M extends ChatMessage> {
   type: "answer";
   key: string;
   message?: M;
-  steps: WorkStep[];
+  parts: AnswerPart<M>[];
   live: boolean;
 }
 
@@ -26,6 +46,12 @@ export type ThreadBlock<M extends ChatMessage> = MessageBlock<M> | AnswerBlock<M
 interface BuildOptions {
   /** Advanced mode: hidden tool traffic and intermediate messages are shown. */
   showDetails: boolean;
+  /**
+   * The simple view draws only the turn's last message. A product turns this
+   * off for a conversation whose agent was not told that rule (a direct coding
+   * chat), keeping the simple view Hook always had: one bubble per message.
+   */
+  finalOnly: boolean;
   /** The text of the streaming reply, before the message has been saved. */
   streamText?: string;
   /** The reasoning of the streaming reply, before the message has been saved. */
@@ -37,37 +63,19 @@ interface BuildOptions {
 /**
  * Turn the flat message list into what the thread draws. A turn starts after a
  * user message (or a previous answer) and ends when the assistant replies
- * without calling a tool. Everything before that reply — thinking, narration,
- * tool calls — becomes the work block above it.
+ * without calling a tool.
  *
- * Without advanced mode hidden messages and tool results are dropped before
- * any of this, which is exactly the conversation the simple view always had.
+ * Advanced mode keeps the turn in reading order: every message the model
+ * wrote, with one fold of thinking and tool calls between the messages.
+ *
+ * The simple view draws only the turn's last message. The agent is told that
+ * this is all the user sees, so the answer has to be complete there; everything
+ * before it — earlier messages, thinking, tool calls — belongs to advanced mode.
  */
 export function buildBlocks<M extends ChatMessage>(
   messages: M[],
   options: BuildOptions,
 ): ThreadBlock<M>[] {
-  // The simple view is exactly the conversation it always was: one bubble per
-  // visible message, no folding. Advanced mode is where turns become groups.
-  if (!options.showDetails) {
-    return messages
-      .filter(
-        (message) =>
-          !message.hidden && message.role !== "system" && message.role !== "tool",
-      )
-      .map((message): ThreadBlock<M> =>
-        message.role === "user"
-          ? { type: "message", key: message.id, message }
-          : {
-              type: "answer",
-              key: message.id,
-              message,
-              steps: [],
-              live: message.status === "streaming",
-            },
-      );
-  }
-
   const results = new Map<string, string>();
   for (const message of messages) {
     if (message.role === "tool" && message.toolCallId) {
@@ -75,10 +83,40 @@ export function buildBlocks<M extends ChatMessage>(
     }
   }
 
-  const shown = messages.filter(
-    (message) =>
-      message.role !== "system" &&
-      (message.role !== "user" || !message.hidden),
+  // A direct coding chat is the engine's own conversation: Hook cannot tell it
+  // that only the last message is read, so its simple view keeps every message.
+  if (!options.showDetails && !options.finalOnly) {
+    return messages
+      .filter(
+        (message) =>
+          !message.hidden &&
+          message.role !== "system" &&
+          message.role !== "tool",
+      )
+      .map((message): ThreadBlock<M> => {
+        if (message.role === "user") {
+          return { type: "message", key: message.id, message };
+        }
+        const text =
+          message.status === "streaming" && options.streamText !== undefined
+            ? options.streamText
+            : message.content;
+        return {
+          type: "answer",
+          key: message.id,
+          message,
+          parts: [{ kind: "text", key: message.id, message, text }],
+          live: message.status === "streaming",
+        };
+      });
+  }
+
+  // The simple view drops hidden traffic before grouping; the advanced one
+  // keeps it and never draws a system message or a hidden user message.
+  const shown = messages.filter((message) =>
+    options.showDetails
+      ? message.role !== "system" && (message.role !== "user" || !message.hidden)
+      : !message.hidden && message.role !== "system" && message.role !== "tool",
   );
 
   const blocks: ThreadBlock<M>[] = [];
@@ -127,36 +165,84 @@ function buildTurn<M extends ChatMessage>(
   const last = assistants[assistants.length - 1];
   const streaming = last.status === "streaming";
   const final = (last.toolCalls?.length ?? 0) === 0 ? last : undefined;
-  const steps: WorkStep[] = [];
+  // The last turn is still going while the model narrates (streaming) or has
+  // handed over to a tool that has not produced the next model call yet. Older
+  // turns are history even when they ended on a tool call (an abandoned run).
+  const live =
+    streaming || (isLast && options.turnRunning && (last.toolCalls?.length ?? 0) > 0);
+  const answerText = (message: M) => {
+    const streamText =
+      message.id === last.id && streaming ? options.streamText : undefined;
+    return streamText !== undefined ? streamText : message.content;
+  };
+
+  if (!options.showDetails) {
+    // The simple view has no work block to fall back on: draw the turn's last
+    // message and nothing before it. A blank message is still drawn while it
+    // streams (the thinking dots) or when it carries an error or a stop note;
+    // otherwise fall back to the last message that actually said something, so
+    // a silent follow-up can never blank out the answer above it.
+    const fallback =
+      !live &&
+      answerText(last).trim() === "" &&
+      last.status !== "error" &&
+      last.status !== "aborted"
+        ? [...assistants]
+            .reverse()
+            .find((message) => answerText(message).trim() !== "")
+        : undefined;
+    const shown = fallback ?? last;
+    const text = answerText(shown);
+    const keep =
+      text.trim() !== "" ||
+      (shown === last && streaming) ||
+      shown.status === "error" ||
+      shown.status === "aborted";
+    return {
+      type: "answer",
+      key: shown.id,
+      message: shown,
+      parts: keep
+        ? [{ kind: "text", key: shown.id, message: shown, text }]
+        : [],
+      live,
+    };
+  }
+
+  const parts: AnswerPart<M>[] = [];
+  const pushWork = (key: string, steps: WorkStep[]) => {
+    if (steps.length === 0) return;
+    const previous = parts[parts.length - 1];
+    // Consecutive tool rounds with nothing said between them are one fold.
+    if (previous?.kind === "work") {
+      previous.steps.push(...steps);
+      return;
+    }
+    parts.push({ kind: "work", key, steps, live: false });
+  };
 
   for (const message of assistants) {
     if (message.role !== "assistant") continue;
-    const isFinal = final?.id === message.id;
     const streamReasoning =
       message.id === last.id && streaming ? options.streamReasoning : undefined;
     const reasoning =
-      streamReasoning !== undefined ? streamReasoning : message.reasoning;
-    if (reasoning?.trim()) {
+      (streamReasoning !== undefined
+        ? streamReasoning
+        : message.reasoning
+      )?.trim() ?? "";
+    const text = answerText(message).trim();
+    const calls = message.toolCalls ?? [];
+    const steps: WorkStep[] = [];
+
+    if (reasoning) {
       steps.push({
         kind: "reasoning",
         id: `${message.id}-reasoning`,
-        text: reasoning.trim(),
+        text: reasoning,
         streaming: streaming && message.id === last.id,
       });
     }
-
-    const streamText =
-      message.id === last.id && streaming ? options.streamText : undefined;
-    const text = streamText !== undefined ? streamText : message.content;
-    if (!isFinal && text.trim()) {
-      steps.push({
-        kind: "text",
-        id: `${message.id}-text`,
-        text: text.trim(),
-      });
-    }
-
-    for (const call of message.toolCalls ?? []) {
+    for (const call of calls) {
       const hasResult = results.has(call.id);
       steps.push({
         kind: "tool",
@@ -167,21 +253,41 @@ function buildTurn<M extends ChatMessage>(
         running: !hasResult && isLast && options.turnRunning,
       });
     }
+
+    if (text && calls.length > 0) {
+      // The message was written before the calls it made, so it comes first;
+      // the fold sits between it and whatever the model says next.
+      parts.push({ kind: "text", key: message.id, message, text });
+      pushWork(`${message.id}-work`, steps);
+    } else if (text) {
+      // Thinking that produced a final answer belongs above that answer.
+      pushWork(`${message.id}-work`, steps);
+      parts.push({ kind: "text", key: message.id, message, text });
+    } else {
+      pushWork(`${message.id}-work`, steps);
+    }
   }
 
-  // The last turn is still going while the model narrates (streaming) or has
-  // handed over to a tool that has not produced the next model call yet. Older
-  // turns are history even when they ended on a tool call (an abandoned run).
-  const live =
-    streaming || (isLast && options.turnRunning && (last.toolCalls?.length ?? 0) > 0);
+  // Only the newest fold stays open while the turn runs; the earlier ones have
+  // already handed over to a message and fold like history.
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part.kind === "work") {
+      part.live = live;
+      break;
+    }
+  }
 
-  // A turn that is only tool traffic has no answer to draw — the work block is
-  // the whole thing until the next model call produces a reply.
+  const textParts = parts.filter(
+    (part): part is AnswerTextPart<M> => part.kind === "text",
+  );
+  const message = textParts[textParts.length - 1]?.message ?? final;
+
   return {
     type: "answer",
     key: final?.id ?? last.id,
-    message: final,
-    steps,
+    message,
+    parts,
     live,
   };
 }

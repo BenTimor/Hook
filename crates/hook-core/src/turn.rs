@@ -67,7 +67,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - A document *is* its Markdown. To change one, read it, then send the revision you read (baseRev) with the new Markdown. If the write comes back refused, the document changed while you were working: read it again.
 - You may invite people as viewer or editor, change roles, remove people, and accept an invitation the user asked you to accept. Never transfer ownership — tell the user to do that in Workspace.
 - Deleting a project, board or document is permanent for everyone in it. Say what will disappear and ask first unless the user was unambiguous.
-- workspace_preview puts a task, board or document beside the chat. Use it after changing something worth looking at.
+- workspace_preview puts a task, board or document beside the chat. Call it before you write the reply that describes the change, never after: the tool result has to be followed by another message, so answering first turns that message into a redundant confirmation. The panel is visible; do not say it is open.
 
 ## Steering a running agent
 - While a coding agent is working, a message from the user is guidance for that agent, not a request for you to do work. Call list_agents or agent_status, find the live agent in this chat, and pass the instruction on with steer_agent. Then reply with one short line saying what you told it to change.
@@ -90,6 +90,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 ## Style
 - Be concise and concrete. Markdown is fine.
 - No preamble, no restating the question, no filler.
+- Your final message of a turn is the answer. It must contain the direct answer, with all the details the user needs; earlier messages may not be shown, so never put part of the answer there.
 - Never end a message with a promise about the future: no 'I'll tell you when...', 'I'll report back', 'stay tuned'. If there is something worth saying later, that is when you say it; if you have something to say now, say it now.
 - The user never sees the coding agents themselves - no logs, no ids, no session browser - but they do see the plain-language checklist you put in `plan` and a Stop button. Everything else they know comes from your messages.
 - The user may attach pictures to their own messages. Treat them as part of the question.";
@@ -1057,7 +1058,16 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
         board,
         tasks,
     );
-    json!({ "shown": true, "kind": kind, "title": title }).to_string()
+    let hint = "The panel is already open. Do not say so in your reply. Make sure your final message contains the complete answer, with all the details the user needs.";
+    json!({
+        "shown": true,
+        "kind": kind,
+        "title": title,
+        // The panel is the confirmation. The last message still has to carry
+        // the answer, because that is what every view reads.
+        "hint": hint,
+    })
+    .to_string()
 }
 
 /// What the status line under a turn says while a tool runs.
@@ -2333,6 +2343,22 @@ mod capability_tests {
     }
 
     #[test]
+    fn the_final_message_rule_does_not_depend_on_the_view() {
+        let cfg = config();
+        for caps in [
+            crate::Capabilities::chat(),
+            crate::Capabilities::mobile(),
+        ] {
+            let prompt = system_prompt(&cfg, caps, true);
+            assert!(
+                prompt.contains("Your final message of a turn is the answer"),
+                "the rule must survive capability trimming"
+            );
+            assert!(prompt.contains("never put part of the answer there"));
+        }
+    }
+
+    #[test]
     fn capabilities_remove_sections_whole() {
         let cfg = config();
         let bare = system_prompt(
@@ -2375,6 +2401,7 @@ mod capability_tests {
         assert!(phone.contains("## Projects"));
         assert!(phone.contains("This device is a controller"));
         assert!(phone.contains("workspace_preview puts a task, board or document"));
+        assert!(phone.contains("Call it before you write the reply"));
         // ...and a product without the Workspace preview keeps the section but
         // loses that one line, without touching the ones around it.
         let no_preview = system_prompt(

@@ -204,11 +204,16 @@ bash.
   conversation and the input, prop-driven and store-free. `TurnActivity` is the
   line that says what a running turn is doing ("Thinking…", "Searching the web
   for …"); the store hands it the labels and it owns the pacing. In advanced
-  mode `Thread` groups each turn's thinking and tool calls into one fold above
-  the answer (`turns.ts`), drawn by `WorkSteps.tsx`, so the conversation and the
-  coding-agent inspector share one renderer. `apps/chat/src/
-  components/{Thread,Composer}.tsx` are the thin store adapters; a product
-  supplies the pictures (`renderExtras`) and what Report means (`onReport`).
+  mode `Thread` keeps a turn in reading order (`turns.ts`): each message the
+  model wrote, with one fold of thinking and tool calls between the messages,
+  drawn by `WorkSteps.tsx`, so the conversation and the coding-agent inspector
+  share one renderer. With advanced off the turn draws only its last message;
+  the prompt always says that the final message is the complete answer, so the
+  same reply works in both views. A direct coding chat opts out (`finalOnly`)
+  because its engine is not given that rule.
+  `apps/chat/src/components/{Thread,Composer}.tsx` are the thin store adapters;
+  a product supplies the pictures (`renderExtras`) and what Report means
+  (`onReport`).
   `apps/chat/src/components/{AgentTree,AgentInspector}.tsx` are the sidebar tree
   and the read-only transcript drawer. `chat.css` holds their styles and
   `dock.css` the 380px overrides, so both apps look the same.
@@ -320,7 +325,11 @@ Changing one side of a boundary is the most common way to break this repo.
   activity line (`TurnActivity.tsx`, drawn by `Thread.tsx`) is the *empty*
   reply's place: a message that is merely streaming must not hide it, or a
   thinking model leaves a blank window for half a minute. Only text that is on
-  screen counts as "arriving".
+  screen counts as "arriving". With Advanced off the thread draws only the
+  turn's last message (`turns.ts`; a direct coding chat opts out with
+  `finalOnly`). The prompt's **Style** section always says the final message is
+  the complete answer, independent of the mode, so the same reply works in both
+  views.
 - **Advanced-mode change (thinking, tool calls, coding-agent inspector):**
   `settings.rs` (`advanced_mode`) → `commands.rs` (`set_advanced_mode`) →
   `bridge.ts` / `types.ts` / `mock.ts` → the settings in the store →

@@ -422,6 +422,10 @@ body {
     padding-bottom: 22px;
   }
 
+  .mobile-thread .msg[data-actions="false"] {
+    padding-bottom: 0;
+  }
+
   .mobile-thread .msg-actions {
     opacity: 1;
     height: 22px;

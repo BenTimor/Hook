@@ -518,10 +518,12 @@ export function SettingsSheet() {
               Show thinking and tool calls
             </label>
             <p className="sheet-help">
-              Every answer folds the model's thinking and the tools it ran into
-              one block you can open again, and the sidebar lists the coding
-              agents with a read-only view of what each one did. Off by default,
-              because it is a lot of detail.
+              Every turn shows each message the model wrote, with the thinking
+              and tool calls between the messages folded into blocks you can
+              open again, and the sidebar lists the coding agents with a
+              read-only view of what each one did. With it off, only the last
+              message of each turn is shown. Off by default, because it is a
+              lot of detail.
             </p>
 
             <div className="sheet-subhead">

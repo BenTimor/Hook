@@ -48,6 +48,7 @@ export function Thread() {
         streamReasoning={streamReasoning}
         activity={activity}
         showDetails={showDetails}
+        finalOnly={!coding}
         onRegenerate={coding ? undefined : () => void regenerate()}
         onEdit={coding ? undefined : (id, text) => void edit(id, text)}
         onReport={setReporting}

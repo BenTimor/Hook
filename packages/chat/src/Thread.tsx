@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { MessageItem } from "./MessageItem";
 import { TurnActivity } from "./TurnActivity";
 import { WorkGroup } from "./WorkSteps";
-import { buildBlocks } from "./turns";
+import { buildBlocks, type AnswerTextPart } from "./turns";
 import type { ChatMessage } from "./types";
 import "./chat.css";
 
@@ -24,6 +24,12 @@ export interface ThreadProps<M extends ChatMessage> {
    * agents' work, instead of only the answers.
    */
   showDetails?: boolean;
+  /**
+   * The simple view draws only the turn's last message. A direct coding chat
+   * turns this off, because its engine was not told the rule; every visible
+   * message is drawn instead.
+   */
+  finalOnly?: boolean;
   onRegenerate?: () => void;
   onEdit?: (id: string, text: string) => void;
   onReport?: (message: M) => void;
@@ -43,6 +49,7 @@ export function Thread<M extends ChatMessage>({
   streamReasoning,
   activity,
   showDetails,
+  finalOnly = true,
   onRegenerate,
   onEdit,
   onReport,
@@ -54,39 +61,40 @@ export function Thread<M extends ChatMessage>({
   const stick = useRef(true);
   const prevCount = useRef(0);
 
-  // A turn's thinking and tool calls fold into one block above its answer.
-  // Without advanced mode the builder drops that traffic before it can reach
-  // the screen, so this is also the place that guarantees no tool result is
-  // drawn by accident.
+  // A turn keeps the order it happened in: a message, the work it set off,
+  // then the next message. Without advanced mode the builder drops everything
+  // but the turn's last message, so this is also the place that guarantees no
+  // tool result or earlier message is drawn by accident. A direct coding chat
+  // opts out of "last message only" because its engine was not told the rule.
   const blocks = useMemo(
     () =>
       buildBlocks(messages, {
         showDetails: Boolean(showDetails),
+        finalOnly: finalOnly !== false,
         streamText,
         streamReasoning,
         turnRunning: activity !== undefined,
       }),
-    [messages, showDetails, streamText, streamReasoning, activity],
+    [messages, showDetails, finalOnly, streamText, streamReasoning, activity],
   );
 
   const last = blocks[blocks.length - 1];
-  // "Text arriving" means text the user can read, not a reply that merely
-  // exists: a streaming message spends its first seconds empty, and a thinking
-  // model can spend many. The activity line is what fills that gap, so it
-  // steps aside only once there is something to read.
-  const streamingAnswer =
-    last?.type === "answer" &&
-    last.message?.role === "assistant" &&
-    last.message.status === "streaming"
-      ? last.message
-      : undefined;
-  const textArriving = (streamText ?? streamingAnswer?.content ?? "").trim() !== "";
+  // "Text arriving" means the reply that is streaming right now has words the
+  // user can read. A reply spends its first seconds empty, and a thinking model
+  // can spend many, so the activity line fills that gap. Text already on screen
+  // from an earlier message does not hide what the current step is doing.
+  const lastPart =
+    last?.type === "answer" ? last.parts[last.parts.length - 1] : undefined;
+  const textArriving =
+    lastPart?.kind === "text" &&
+    lastPart.message.status === "streaming" &&
+    lastPart.text.trim() !== "";
   const showActivity = activity !== undefined && !textArriving;
 
-  const lastAssistantId = useMemo(() => {
+  const lastAnswerKey = useMemo(() => {
     for (let i = blocks.length - 1; i >= 0; i -= 1) {
       const block = blocks[i];
-      if (block.type === "answer" && block.message) return block.message.id;
+      if (block.type === "answer") return block.key;
     }
     return null;
   }, [blocks]);
@@ -143,36 +151,70 @@ export function Thread<M extends ChatMessage>({
             );
           }
 
+          // An empty streaming reply belongs to the activity line. Drawing it
+          // here as well is the duplicate "Thinking" the simple view showed.
+          const parts = block.parts.filter(
+            (part) =>
+              part.kind === "work" ||
+              part.message.status !== "streaming" ||
+              part.text.trim() !== "",
+          );
+          // A message with an error or a stop note that has no text of its own
+          // still needs somewhere to say so, after the text the turn did write.
           const message = block.message;
-          const streaming = message?.status === "streaming";
-          const body =
-            streaming && streamText !== undefined
-              ? streamText
-              : (message?.content ?? "");
-          // The activity line is the empty streaming reply's place. With
-          // advanced mode its thinking still belongs above it.
-          const emptyStreaming = streaming && !body;
+          const lastText = [...parts]
+            .reverse()
+            .find((part): part is AnswerTextPart<M> => part.kind === "text");
+          const tailStatus =
+            message !== undefined &&
+            (message.status === "error" || message.status === "aborted") &&
+            lastText?.message.id !== message.id;
 
-          if (!message || emptyStreaming) {
-            return block.steps.length ? (
-              <div className="msg" data-role="assistant" key={block.key}>
-                <WorkGroup steps={block.steps} live={block.live} />
-              </div>
-            ) : null;
-          }
+          if (parts.length === 0 && !tailStatus) return null;
 
           return (
-            <MessageItem
-              key={block.key}
-              message={message}
-              steps={block.steps}
-              workLive={block.live}
-              streamText={streaming ? streamText : undefined}
-              isLastAssistant={message.id === lastAssistantId}
-              onRegenerate={onRegenerate}
-              onReport={onReport}
-              renderExtras={renderExtras}
-            />
+            <div className="answer-turn" key={block.key}>
+              {parts.map((part) => {
+                if (part.kind === "work") {
+                  return (
+                    <div
+                      className="msg"
+                      data-role="assistant"
+                      data-actions="false"
+                      key={part.key}
+                    >
+                      <WorkGroup steps={part.steps} live={part.live} />
+                    </div>
+                  );
+                }
+                const last = part === lastText;
+                const lastPart = part === parts[parts.length - 1];
+                return (
+                  <MessageItem
+                    key={part.key}
+                    message={part.message}
+                    text={part.text}
+                    showActions={last && lastPart && !tailStatus}
+                    isLastAssistant={
+                      last && lastPart && block.key === lastAnswerKey && !block.live
+                    }
+                    onRegenerate={last ? onRegenerate : undefined}
+                    onReport={last ? onReport : undefined}
+                    renderExtras={renderExtras}
+                  />
+                );
+              })}
+              {tailStatus && message ? (
+                <MessageItem
+                  key={`${block.key}-status`}
+                  message={message}
+                  text=""
+                  showActions={false}
+                  isLastAssistant={false}
+                  renderExtras={renderExtras}
+                />
+              ) : null}
+            </div>
           );
         })}
         {showActivity ? <TurnActivity labels={activity} /> : null}

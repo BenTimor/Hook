@@ -9,12 +9,19 @@ import "./chat.css";
 
 export interface MessageItemProps<M extends ChatMessage> {
   message: M;
+  /**
+   * The text to draw for this part. The turn builder composes it, so it can be
+   * newer than `message.content` while a reply is still streaming.
+   */
+  text?: string;
   /** The text of a reply that is still arriving, if this is the one streaming. */
   streamText?: string;
   /** Thinking and tool calls that led to this reply, folded above it. */
   steps?: WorkStep[];
   /** The turn is still running, so the work block stays open for now. */
   workLive?: boolean;
+  /** Copy/Regenerate/Report belong to the turn's last message, not to every one. */
+  showActions?: boolean;
   isLastAssistant?: boolean;
   onRegenerate?: () => void;
   onEdit?: (id: string, text: string) => void;
@@ -46,9 +53,11 @@ function ThinkingDots() {
  */
 export function MessageItem<M extends ChatMessage>({
   message,
+  text,
   streamText,
   steps,
   workLive,
+  showActions,
   isLastAssistant,
   onRegenerate,
   onEdit,
@@ -63,7 +72,9 @@ export function MessageItem<M extends ChatMessage>({
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
   const streaming = message.status === "streaming";
-  const body = streaming && streamText !== undefined ? streamText : message.content;
+  const body =
+    text ??
+    (streaming && streamText !== undefined ? streamText : message.content);
   const empty = streaming && !body;
 
   const copy = async () => {
@@ -152,7 +163,11 @@ export function MessageItem<M extends ChatMessage>({
   }
 
   return (
-    <div className="msg" data-role="assistant">
+    <div
+      className="msg"
+      data-role="assistant"
+      data-actions={showActions === false ? "false" : undefined}
+    >
       {steps && steps.length > 0 && <WorkGroup steps={steps} live={workLive} />}
 
       {empty ? <ThinkingDots /> : <Markdown content={body} streaming={streaming} />}
@@ -167,24 +182,26 @@ export function MessageItem<M extends ChatMessage>({
       )}
       {message.status === "aborted" && <div className="aborted-note">Stopped</div>}
 
-      <div className="msg-actions">
-        <button className="mini-btn" onClick={() => void copy()}>
-          {copied ? <Check strokeWidth={2.2} /> : <Copy strokeWidth={1.9} />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-        {isLastAssistant && !streaming && onRegenerate && (
-          <button className="mini-btn" onClick={onRegenerate}>
-            <RefreshCw strokeWidth={1.8} />
-            Regenerate
+      {showActions !== false && (
+        <div className="msg-actions">
+          <button className="mini-btn" onClick={() => void copy()}>
+            {copied ? <Check strokeWidth={2.2} /> : <Copy strokeWidth={1.9} />}
+            {copied ? "Copied" : "Copy"}
           </button>
-        )}
-        {!streaming && message.content.trim() && onReport && (
-          <button className="mini-btn" onClick={() => onReport(message)}>
-            <Flag strokeWidth={1.8} />
-            Report
-          </button>
-        )}
-      </div>
+          {isLastAssistant && !streaming && onRegenerate && (
+            <button className="mini-btn" onClick={onRegenerate}>
+              <RefreshCw strokeWidth={1.8} />
+              Regenerate
+            </button>
+          )}
+          {!streaming && body.trim() && onReport && (
+            <button className="mini-btn" onClick={() => onReport(message)}>
+              <Flag strokeWidth={1.8} />
+              Report
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

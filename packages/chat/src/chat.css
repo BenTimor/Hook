@@ -23,6 +23,19 @@
   gap: 29px;
 }
 
+/* One assistant turn in advanced mode: its messages and the folds between them,
+   kept in the order they happened. The outer thread gap is what separates
+   turns; the inner gap only separates a turn's own parts. */
+.answer-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.answer-turn .work-group {
+  margin-bottom: 0;
+}
+
 /* ── Messages ──────────────────────────────────────────────────────────── */
 
 .msg {

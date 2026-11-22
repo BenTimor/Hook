@@ -36,6 +36,7 @@ export function Conversation({ onChats }: { onChats: () => void }) {
   const stream = activeId ? streams[activeId] : undefined;
   const labels = activeId ? activity[activeId] : undefined;
   const activeChat = chats.find((chat) => chat.id === activeId);
+  const coding = activeChat?.kind === "coding";
   const title = activeChat?.title ?? "New chat";
   const remoteDevice = activeChat?.remote
     ? devices?.find((device) => device.id === activeChat.deviceId)
@@ -90,6 +91,7 @@ export function Conversation({ onChats }: { onChats: () => void }) {
         streamReasoning={stream?.reasoning}
         activity={labels}
         showDetails={showDetails}
+        finalOnly={!coding}
         onReport={setReporting}
         renderExtras={(message) => (
           <MessageImages
