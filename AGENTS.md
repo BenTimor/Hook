@@ -156,22 +156,27 @@ bash.
 - `crates/hook-core/src/auth.rs` — device flow, the shared
   `%APPDATA%\app.hook\account.json`, per-product mirrors, git-token rotation,
   and the account side of entitlements: the plan, the account-wide cloud-sync
-  switch and the free message window (`/api/auth/me`, `/api/auth/preferences`).
+  switch, the shared advanced-mode preference and the free message window
+  (`/api/auth/me`, `/api/auth/preferences`).
 - `crates/hook-core/src/settings.rs` — this *product's* `settings.json`: the
-  projects folder, the memory and advanced switches, and a personal model
-  endpoint and key. The key is deliberately not in the account file, not synced
-  and not shared between products.
+  projects folder, the memory switch, this device's answer for advanced mode (a
+  fallback when the account has none), and the personal model endpoint with the
+  stamp of when it was last set or cleared. The key is never in the account
+  file; it reaches the other products only through `server/provider.mjs`, which
+  keeps it encrypted for a paid account whose sync switch is on.
 - `server/plans.mjs` — the entitlement in one place: what `free` limits, the
   rolling 24-hour message window, and the sync refusal used by the proxy, the
-  sync router, the git router and the admin script. A waitlisted row has a null
-  `plan`; `--approve` assigns `free` unless `--plan` says otherwise. `server/events.mjs` accepts the client-side
+  sync router, the git router, the provider router and the admin script. A
+  waitlisted row has a null `plan`; `--approve` assigns `free` unless `--plan`
+  says otherwise. `server/events.mjs` accepts the client-side
   analytics kinds the proxy cannot see (personal endpoint, quota refusal, sync
   switch).
 - `crates/hook-core/src/{store,sync}.rs` — chats on disk and the background
-  sync engine (cursor, pending queue, account quarantine, media). `sync.rs` also
-  owns the policy: a free account and an account whose switch is off never reach
-  the network, and the loop re-checks `/api/auth/me` so a change made in another
-  product arrives without a restart.
+  sync engine (cursor, pending queue, account quarantine, media, memory, the
+  personal endpoint). `sync.rs` also owns the policy: a free account and an
+  account whose switch is off never reach the network, and the loop re-checks
+  `/api/auth/me` so a change made in another product arrives without a restart
+  (plan, sync switch and advanced mode alike).
   `ChatMeta.kind = "coding"` marks a chat the user has with a coding agent
   directly: it carries `projectPath` and `sessionId`, and its content is never
   uploaded. Its **stub** (id, title, owning device, state, count) travels via
@@ -331,9 +336,16 @@ Changing one side of a boundary is the most common way to break this repo.
   the complete answer, independent of the mode, so the same reply works in both
   views.
 - **Advanced-mode change (thinking, tool calls, coding-agent inspector):**
-  `settings.rs` (`advanced_mode`) → `commands.rs` (`set_advanced_mode`) →
+  `server/auth.mjs` (`advanced_mode` column, `advancedMode` on `publicUser` and
+  `/api/auth/preferences`) → `auth.rs` (`advanced_mode` on the session,
+  `set_advanced_mode`; `sync.rs::refresh_account` seeds a window that already had
+  it on) → `settings.rs` (`advanced_mode`, the signed-out fallback) →
+  `commands.rs` (`set_advanced_mode`, `settings_view`) →
   `bridge.ts` / `types.ts` / `mock.ts` → the settings in the store →
   `Thread showDetails` → `packages/chat/src/turns.ts` and `WorkSteps.tsx`.
+  It is account state, not product state: the phone follows the computer, a free
+  account may set it (it is a boolean, not content), and `settings.json` only
+  answers when the account has no value.
   The agent half is `agent.rs::transcript` + `commands::agent_transcript` →
   `AgentInspector.tsx`; live thinking comes from the `message_update` records
   that are otherwise skipped. Hidden messages and tool results must stay in
@@ -349,11 +361,13 @@ Changing one side of a boundary is the most common way to break this repo.
   `HOOK_DIRECT` branch → `bridge.ts` / `types.ts` / `mock.ts` →
   `useChatStore` (`newCodingChat`, `changeCodingFolder`, `answerAgent`) →
   `Sidebar` (the New chat menu and the advanced filter), `ChatRow`,
-  `PaneHead`, `AgentBoard`, `Composer` (`steer`). Three filters matter: the
-  sidebar hides these chats while Advanced is off, `setAdvancedMode` closes one
-  that is already open (the simple view cannot fold its per-tool turns), and
-  `AgentTree` skips `direct` runs; `apps/workspace`'s chat transport always
-  filters them out.
+  `PaneHead`, `AgentBoard`, `Composer` (`steer`). Four filters matter: the
+  sidebar hides these chats while Advanced is off, the phone's archive does the
+  same (`ChatList`), `setAdvancedMode` closes one that is already open (the
+  simple view cannot fold its per-tool turns), and `AgentTree` skips `direct`
+  runs; `apps/workspace`'s chat transport always filters them out. The phone's
+  **Code on <machine>** chip is an Advanced action for the same reason: with it
+  off the chat agent starts the run, not a button.
   One trap: a direct run starts from `send_message`. It is now async so the
   remote path can wait for an RPC, but the agent driver and the turn still use
   `tauri::async_runtime` (the driver spawn in `agent.rs` included). A
@@ -362,9 +376,9 @@ Changing one side of a boundary is the most common way to break this repo.
   unwind.
 - **Free-plan / entitlement change:** `server/plans.mjs` (the rule and the 24-hour
   window) → `server/deepseek.mjs` (refusals, `plan`/`message_id` on
-  `usage_events`) → `server/sync.mjs` (the gate) → `auth.rs` (`plan`,
-  `cloud_sync`, `quota` on the session and `AuthView`) → `sync.rs`
-  (`policy_for`, the minute `/me` poll, `SyncView.available`/`reason`) →
+  `usage_events`) → `server/sync.mjs` and `server/provider.mjs` (the gates) →
+  `auth.rs` (`plan`, `cloud_sync`, `quota` on the session and `AuthView`) →
+  `sync.rs` (`policy_for`, the minute `/me` poll, `SyncView.available`/`reason`) →
   `provider.rs` (`ProviderTarget`) → `settings.rs` (the personal provider) →
   `commands.rs` + `generate_handler!` → `bridge.ts` / `types.ts` / `mock.ts` →
   `SettingsSheet` (all three products) and `ChatRow`'s cloud mark. The server
@@ -392,6 +406,20 @@ Changing one side of a boundary is the most common way to break this repo.
   (`/memory`, the `/changes` union) → `server/api.mjs` (`sync_memory`) →
   `server/sync.test.mjs`. Keep the frames append-only and the caps enforced;
   `pinned_budget_chars` is what stops memory from eating the prompt.
+- **Personal model endpoint sync (the account copy of a BYOK key):**
+  `settings.rs` (`custom_provider_changed_at`, `adopt_provider`) →
+  `sync.rs` (`sync_provider` / `push_provider` / `pull_provider`, which run inside
+  the ordinary cycle and are gated by the same policy) → `server/provider.mjs`
+  (AES-256-GCM with `HOOK_PROVIDER_SECRET`, metadata and secret on separate
+  routes, `syncRefusal` on every one) → `server/api.mjs` (`account_provider`) →
+  `server/provider.test.mjs`. The key is a credential: never log it, never put it
+  in a `/changes` payload or an analytics event, never return it from the
+  metadata route, and keep a clear a tombstone with the fields emptied. The
+  client sends the stamp the user's action recorded; an older stamp never wins.
+  A key belongs to the account that typed it (`custom_provider_account`): when a
+  different account signs in on the same machine the endpoint is neither pushed
+  nor pulled, so one person's key cannot cross into another's cloud account.
+  A server without the secret stores nothing — do not add a plaintext fallback.
 - **Remote control / a new machine operation:** `docs/relay-protocol.md` →
   `server/{devices,relay}.mjs` (+ `server/api.mjs` migrations) →
   `crates/hook-core/src/{devices,relay,remote}.rs` → `tools.rs` (a required
@@ -592,11 +620,21 @@ Changing one side of a boundary is the most common way to break this repo.
   every product; writes go through `auth.rs` (atomic, unique temp name) and a
   sign-out must clear the session for all of them. Never write a product-specific
   token there. A personal model key is exactly that kind of thing: it lives in
-  the product's `settings.json`, never in the account file, and never leaves this
-  computer except to the endpoint it names. `%APPDATA%\app.hook\memory\` is the same kind of shared,
+  the product's `settings.json`, never in the account file, and it leaves this
+  computer only for the endpoint it names — plus the encrypted account copy
+  below. `%APPDATA%\app.hook\memory\` is the same kind of shared,
   account-scoped data: one file per account, atomic writes with a unique temp
   name, and never uploaded to a different account (the file name is a hash of
   the account).
+- **A personal model key is a credential, and the account keeps only ciphertext.**
+  It reaches another product only through `server/provider.mjs`: AES-256-GCM with
+  the account subject as additional data, the key derived from
+  `HOOK_PROVIDER_SECRET`, `no-store`, metadata and secret on separate routes, and
+  a paid plan with cloud sync required. Never log it, never include it in
+  `/api/sync/changes`, `/api/auth/me`, an analytics event, an error message or a
+  support report, and never fall back to storing it in the clear when the
+  deployment has no secret. A clear is a tombstone whose fields are emptied, so a
+  stale push cannot resurrect a key the user removed.
 - **Never rewrite the request prefix.** Providers cache a request by its longest
   common prefix with an earlier one, so anything that changes the *start* of a
   turn's message list throws away the whole cached conversation. The leading

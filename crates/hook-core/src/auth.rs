@@ -154,6 +154,12 @@ pub struct StoredSession {
     /// free account whatever this says.
     #[serde(default)]
     pub cloud_sync: Option<bool>,
+    /// Whether this account's conversation shows thinking, tool calls and the
+    /// coding-agent inspector. Account state, not product state: the phone
+    /// follows the computer. `None` means nobody has set it yet, so this
+    /// product's own `settings.json` answers.
+    #[serde(default)]
+    pub advanced_mode: Option<bool>,
 }
 
 /// The free plan's 24-hour message window, as the account service reports it.
@@ -296,6 +302,8 @@ struct ApiUser {
     plan: Option<String>,
     #[serde(default)]
     cloud_sync: Option<bool>,
+    #[serde(default)]
+    advanced_mode: Option<bool>,
 }
 
 /// The answer to a native sign-in: the same session the device flow returns.
@@ -383,6 +391,7 @@ impl AuthStore {
                 git_token: None,
                 plan: None,
                 cloud_sync: None,
+                advanced_mode: None,
             })
         };
         let device = if is_valid_device_id(&shared.device_id) {
@@ -511,6 +520,45 @@ impl AuthStore {
         lock(&self.session).as_ref().and_then(|s| s.cloud_sync)
     }
 
+    /// The account's display preference. `None` means the account has never had
+    /// one set, and this product's `settings.json` is the answer.
+    pub fn advanced_mode(&self) -> Option<bool> {
+        lock(&self.session).as_ref().and_then(|s| s.advanced_mode)
+    }
+
+    /// Set the account's display preference, for every Hook product.
+    ///
+    /// It is account state, not product state, so a phone shows the same view
+    /// as the computer. Any plan may set it: it is one boolean and uploads no
+    /// conversation, which is why the preferences route does not apply the
+    /// paid-plan rule that guards the sync switch itself.
+    pub async fn set_advanced_mode(&self, enabled: bool) -> Result<(), String> {
+        if !self.required {
+            return Ok(());
+        }
+        let Some(token) = self.token() else {
+            return Err("Sign in to Hook to change this.".into());
+        };
+        let response = self
+            .client
+            .post(format!("{}/api/auth/preferences", self.base_url))
+            .bearer_auth(&token)
+            .header("x-hook-device", self.device_id())
+            .json(&serde_json::json!({ "advancedMode": enabled }))
+            .send()
+            .await
+            .map_err(|e| format!("Could not reach hookcode.io: {e}"))?;
+        if !response.status().is_success() {
+            return Err(error_message(response, "Could not change advanced mode.").await);
+        }
+        let body: PreferencesResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Unexpected account response: {e}"))?;
+        self.remember_account(&body.user, body.quota);
+        Ok(())
+    }
+
     pub fn quota(&self) -> Option<Quota> {
         lock(&self.quota).clone()
     }
@@ -527,6 +575,9 @@ impl AuthStore {
         }
         if user.cloud_sync.is_some() {
             session.cloud_sync = user.cloud_sync;
+        }
+        if user.advanced_mode.is_some() {
+            session.advanced_mode = user.advanced_mode;
         }
         if let Err(error) = self.save_session(&session) {
             eprintln!("hook: could not save the account state: {error}");
@@ -739,6 +790,7 @@ impl AuthStore {
                         git_token: None,
                         plan: user.plan,
                         cloud_sync: user.cloud_sync,
+                        advanced_mode: user.advanced_mode,
                     };
                     *lock(&self.quota) = polled.quota;
                     if let Err(error) = self.save_session(&session) {
@@ -852,6 +904,7 @@ impl AuthStore {
             git_token: None,
             plan: session.user.plan,
             cloud_sync: session.user.cloud_sync,
+            advanced_mode: session.user.advanced_mode,
         })?;
         Ok(self.view())
     }
@@ -1020,6 +1073,7 @@ mod tests {
             git_token: None,
             plan: None,
             cloud_sync: None,
+            advanced_mode: None,
         };
         auth.save_session(&session).unwrap();
         let reopened = AuthStore::new(&dir.join("app.hook.chat"), "https://hookcode.io", true, "");
@@ -1076,6 +1130,7 @@ mod tests {
             git_token: None,
             plan: None,
             cloud_sync: None,
+            advanced_mode: None,
         })
         .unwrap();
 
@@ -1107,6 +1162,7 @@ mod tests {
             git_token: None,
             plan: None,
             cloud_sync: None,
+            advanced_mode: None,
         };
         fs::write(dir.join("auth.json"), serde_json::to_string(&legacy).unwrap()).unwrap();
 

@@ -1207,7 +1207,10 @@ fn settings_view(state: &AppState) -> SettingsView {
     SettingsView {
         projects_dir: projects_dir.to_string_lossy().to_string(),
         projects,
-        advanced_mode: state.settings.advanced_mode(),
+        advanced_mode: state
+            .auth
+            .advanced_mode()
+            .unwrap_or_else(|| state.settings.advanced_mode()),
         plan: state.auth.plan(),
         cloud_sync: state.auth.cloud_sync().unwrap_or(true),
         custom_provider: state.settings.custom_provider().map(|provider| CustomProviderView {
@@ -1232,22 +1235,38 @@ pub async fn set_projects_dir(
     Ok(settings_view(&state))
 }
 
-/// Turn the debugging view on or off. The UI re-renders from the returned
-/// settings, so the switch and the conversation can never disagree.
+/// Turn the debugging view on or off.
+///
+/// It is account state, not product state: the setting lives on the account so
+/// the phone and Hook Workspace show the same view as this computer. The local
+/// `settings.json` is kept in step as the fallback for a signed-out window. The
+/// UI re-renders from the returned settings, so the switch and the conversation
+/// can never disagree.
 #[tauri::command]
-pub fn set_advanced_mode(
+pub async fn set_advanced_mode(
     state: State<'_, Arc<AppState>>,
     enabled: bool,
 ) -> Result<SettingsView, String> {
-    state.settings.set_advanced_mode(enabled)?;
+    if state.auth.required() && state.auth.token().is_some() {
+        state.auth.set_advanced_mode(enabled).await?;
+        // Only a cache: a disk that refuses the write must not fail a switch the
+        // account already accepted.
+        if let Err(error) = state.settings.set_advanced_mode(enabled) {
+            eprintln!("hook: could not cache advanced mode: {error}");
+        }
+    } else {
+        state.settings.set_advanced_mode(enabled)?;
+    }
     Ok(settings_view(&state))
 }
 
 /// Save the user's own model endpoint for this product.
 ///
-/// The key stays on this computer and is never uploaded: it belongs to this
-/// product's `settings.json`, not the shared account file. A free account that
-/// sets one may use coding agents and is not metered by Hook.
+/// The key is stored in this product's `settings.json` and sent only to the
+/// endpoint it names. A paid account with cloud sync on also gets one encrypted
+/// copy on the account, so the phone and Workspace can use it without the key
+/// being typed again; with sync off it never leaves this computer. A free
+/// account that sets one may use coding agents and is not metered by Hook.
 #[tauri::command]
 pub fn set_custom_provider(
     state: State<'_, Arc<AppState>>,
@@ -1255,9 +1274,15 @@ pub fn set_custom_provider(
     api_key: Option<String>,
     model: String,
 ) -> Result<SettingsView, String> {
-    state
-        .settings
-        .set_custom_provider(&base_url, api_key.as_deref().unwrap_or(""), &model)?;
+    let account = state.auth.subject();
+    state.settings.set_custom_provider(
+        &base_url,
+        api_key.as_deref().unwrap_or(""),
+        &model,
+        account.as_deref(),
+    )?;
+    // Share it now rather than on the next cycle: the user just pressed Save.
+    state.sync.wake();
     let shared = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         refresh_capabilities(&shared).await;
@@ -1268,7 +1293,10 @@ pub fn set_custom_provider(
 
 #[tauri::command]
 pub fn clear_custom_provider(state: State<'_, Arc<AppState>>) -> Result<SettingsView, String> {
-    state.settings.clear_custom_provider()?;
+    let account = state.auth.subject();
+    state.settings.clear_custom_provider(account.as_deref())?;
+    // The clear has to reach the other devices too.
+    state.sync.wake();
     let shared = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         refresh_capabilities(&shared).await;

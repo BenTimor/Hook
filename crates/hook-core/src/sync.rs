@@ -19,6 +19,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -81,6 +82,11 @@ struct SyncState {
     /// Stubs whose chat was deleted here; sent once, then forgotten.
     #[serde(default)]
     pending_stub_deletes: Vec<String>,
+    /// The personal-endpoint change stamp last pushed to or adopted from the
+    /// account. An unchanged endpoint is not sent every cycle, and one that was
+    /// adopted is not echoed straight back.
+    #[serde(default)]
+    provider_synced_at: i64,
 }
 
 /// What the Settings sheet (and support) can show without exposing any git.
@@ -127,6 +133,11 @@ fn policy_for(auth: &AuthStore) -> (bool, bool, Option<&'static str>) {
 /// engine testable without a running Tauri app.
 pub type Emitter = Arc<dyn Fn(&str, Value) + Send + Sync>;
 
+/// Called when a value the window reads from `settings.json` came from the
+/// account (the personal endpoint), so the product can probe the new model
+/// again. Optional: a headless build and the tests have nothing to poke.
+pub type SettingsSignal = Arc<dyn Fn() + Send + Sync>;
+
 pub struct SyncEngine {
     emit: Emitter,
     data_dir: PathBuf,
@@ -145,6 +156,11 @@ pub struct SyncEngine {
     client: reqwest::Client,
     configured_token: Mutex<Option<String>>,
     media_seen: Mutex<HashSet<String>>,
+    settings_changed: std::sync::OnceLock<SettingsSignal>,
+    /// One attempt per run to share this window's advanced mode with an account
+    /// that has never stored one. A retry loop would only fill the log while the
+    /// account service has not learned about the preference yet.
+    advanced_seed_attempted: AtomicBool,
 }
 
 impl SyncEngine {
@@ -195,6 +211,8 @@ impl SyncEngine {
                 .unwrap_or_else(|_| reqwest::Client::new()),
             configured_token: Mutex::new(None),
             media_seen: Mutex::new(media_seen),
+            settings_changed: std::sync::OnceLock::new(),
+            advanced_seed_attempted: AtomicBool::new(false),
         };
         // A device that has never synced uploads the whole local history once.
         if engine.auth.required() && engine.state.lock().map(|s| s.owner.is_empty()).unwrap_or(true) {
@@ -228,6 +246,11 @@ impl SyncEngine {
     /// Ask the loop to run now (sign-in, window focus, a finished turn).
     pub fn wake(&self) {
         self.notify.notify_one();
+    }
+
+    /// The product's reaction to an endpoint that arrived from the account.
+    pub fn on_settings_changed(&self, signal: SettingsSignal) {
+        let _ = self.settings_changed.set(signal);
     }
 
     /// A deleted direct chat is back. Drop the tombstone that has not been sent
@@ -346,6 +369,11 @@ impl SyncEngine {
         }
         self.push_projects(&token).await?;
         self.push_memory(&token).await?;
+        // The personal endpoint is small but is a credential: push what this
+        // device has, then adopt a newer one from another device.
+        if let Err(error) = self.sync_provider(&token).await {
+            eprintln!("hook: personal endpoint: {error}");
+        }
         self.pull(&token).await?;
         self.prepare_projects().await;
         Ok(())
@@ -368,7 +396,11 @@ impl SyncEngine {
         if !due {
             return;
         }
-        let before = (self.auth.plan(), self.auth.cloud_sync());
+        let before = (
+            self.auth.plan(),
+            self.auth.cloud_sync(),
+            self.auth.advanced_mode(),
+        );
         match self.auth.refresh().await {
             crate::auth::RefreshOutcome::Revoked(message) => {
                 self.auth.clear_session();
@@ -383,7 +415,34 @@ impl SyncEngine {
             }
             crate::auth::RefreshOutcome::Valid => {}
         }
-        if before != (self.auth.plan(), self.auth.cloud_sync()) {
+        // The account has never stored a display preference, and this window has
+        // one switched on: share it. Without this, a computer that already had
+        // advanced mode on would not reach the phone until somebody toggled it
+        // twice. Only `true` is seeded — `false` is the default everywhere.
+        if self.auth.advanced_mode().is_none()
+            && self.settings.advanced_mode()
+            && !self.advanced_seed_attempted.swap(true, Ordering::SeqCst)
+        {
+            if let Err(error) = self.auth.set_advanced_mode(true).await {
+                eprintln!("hook: could not share advanced mode: {error}");
+            }
+        }
+        // Keep the local fallback in step with the account that just answered,
+        // so a signed-out window does not draw a view the account turned off.
+        if let Some(enabled) = self.auth.advanced_mode() {
+            if self.settings.advanced_mode() != enabled {
+                if let Err(error) = self.settings.set_advanced_mode(enabled) {
+                    eprintln!("hook: could not cache advanced mode: {error}");
+                }
+            }
+        }
+        if before
+            != (
+                self.auth.plan(),
+                self.auth.cloud_sync(),
+                self.auth.advanced_mode(),
+            )
+        {
             if let Ok(value) = serde_json::to_value(self.auth.view()) {
                 let _ = (self.emit)("hook://auth", value);
             }
@@ -469,6 +528,19 @@ impl SyncEngine {
             .get(self.url(path))
             .bearer_auth(token)
             .header("x-hook-device", self.auth.device_id())
+            .send()
+            .await
+            .map_err(|e| format!("Could not reach Hook: {e}"))?;
+        self.parse(response).await
+    }
+
+    async fn put(&self, token: &str, path: &str, body: Value) -> Result<Value, String> {
+        let response = self
+            .client
+            .put(self.url(path))
+            .bearer_auth(token)
+            .header("x-hook-device", self.auth.device_id())
+            .json(&body)
             .send()
             .await
             .map_err(|e| format!("Could not reach Hook: {e}"))?;
@@ -983,6 +1055,118 @@ impl SyncEngine {
         Ok(())
     }
 
+    // ── the personal model endpoint ─────────────────────────────────────
+
+    /// Push this device's endpoint when it changed, then adopt a newer one.
+    ///
+    /// The endpoint is a credential, so it does not ride with the chats: its
+    /// own routes store it encrypted and hand the key back only to a device
+    /// that is adopting it. Both directions are last-write-wins on the stamp
+    /// the user's action recorded, the same rule memory uses.
+    ///
+    /// A key belongs to the account that typed it. If a different account signs
+    /// in on this machine, the endpoint keeps working here — it always has — but
+    /// it is neither uploaded to that account nor overwritten by it.
+    async fn sync_provider(&self, token: &str) -> Result<(), String> {
+        let Some(subject) = self.auth.subject() else {
+            return Ok(());
+        };
+        if self
+            .settings
+            .provider_account()
+            .is_some_and(|owner| owner != subject)
+        {
+            return Ok(());
+        }
+        // A key typed before the owner was recorded belongs to the first account
+        // that syncs it, so an existing endpoint still reaches the other devices.
+        if let Err(error) = self.settings.claim_provider(&subject) {
+            eprintln!("hook: could not take ownership of the endpoint: {error}");
+        }
+        self.push_provider(token).await?;
+        self.pull_provider(token, &subject).await
+    }
+
+    async fn push_provider(&self, token: &str) -> Result<(), String> {
+        let changed_at = self.settings.provider_changed_at();
+        if changed_at <= 0 || changed_at <= lock(&self.state).provider_synced_at {
+            return Ok(());
+        }
+        let body = match self.settings.custom_provider() {
+            Some(provider) => json!({
+                "updatedAt": changed_at,
+                "provider": {
+                    "baseUrl": provider.base_url,
+                    "apiKey": provider.api_key,
+                    "model": provider.model,
+                },
+            }),
+            // A clear is a fact too: the other devices must go back to Hook's
+            // models instead of keeping a key nobody wants any more.
+            None => json!({ "updatedAt": changed_at, "provider": null }),
+        };
+        match self.put(token, "/api/provider", body).await {
+            Ok(_) => {
+                lock(&self.state).provider_synced_at = changed_at;
+                self.save_state()
+            }
+            Err(error) => {
+                // An older account service, or the account turned sync off. This
+                // must not turn into a sync error every fifteen seconds.
+                eprintln!("hook: could not share the personal endpoint: {error}");
+                Ok(())
+            }
+        }
+    }
+
+    async fn pull_provider(&self, token: &str, subject: &str) -> Result<(), String> {
+        let response = match self.get(token, "/api/provider").await {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("hook: could not read the account's endpoint: {error}");
+                return Ok(());
+            }
+        };
+        let remote_at = response["updatedAt"].as_i64().unwrap_or(0);
+        if remote_at <= 0 || remote_at <= self.settings.provider_changed_at() {
+            return Ok(());
+        }
+        // The key has its own route, so a metadata response can never leak it.
+        let secret = self.get(token, "/api/provider/secret").await?;
+        let provider = secret["provider"].as_object().and_then(|value| {
+            Some(crate::settings::CustomProvider {
+                base_url: value.get("baseUrl")?.as_str()?.to_string(),
+                api_key: value.get("apiKey")?.as_str()?.to_string(),
+                model: value.get("model")?.as_str()?.to_string(),
+            })
+        });
+        // A row with no usable key is not an endpoint; adopting it would leave
+        // this device with half a provider and no way to talk to it.
+        let provider = provider.filter(crate::settings::CustomProvider::is_complete);
+        if remote_at > 0 && secret["provider"].is_object() && provider.is_none() {
+            return Ok(());
+        }
+        if !self.settings.adopt_provider(provider, remote_at, subject) {
+            return Ok(());
+        }
+        lock(&self.state).provider_synced_at = remote_at;
+        self.save_state()?;
+        if let Some(signal) = self.settings_changed.get() {
+            signal();
+        }
+        (self.emit)(
+            "hook://sync",
+            json!({
+                "chats": false,
+                "projects": false,
+                "memory": false,
+                "settings": true,
+                "at": now_ms(),
+            }),
+        );
+        Ok(())
+    }
+
     // ── pull ────────────────────────────────────────────────────────────
     async fn pull(&self, token: &str) -> Result<(), String> {
         let mut cursor = lock(&self.state).cursor;
@@ -1405,6 +1589,7 @@ mod tests {
             git_token: None,
             plan: None,
             cloud_sync: None,
+            advanced_mode: None,
         })
         .unwrap();
         let store = Arc::new(Store::new(base.clone()).unwrap());
@@ -1842,6 +2027,240 @@ mod tests {
             local.messages.last().map(|message| message.status.as_str()),
             Some("streaming"),
             "the reply being written must survive a sync cycle"
+        );
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn a_personal_endpoint_is_shared_once() {
+        let (url, seen) = mock_server(|method, path, body| {
+            match (method, path.split('?').next()) {
+                ("PUT", Some("/api/provider")) => serde_json::json!({
+                    "provider": {
+                        "baseUrl": body["provider"]["baseUrl"].clone(),
+                        "model": body["provider"]["model"].clone(),
+                        "hasKey": true,
+                        "updatedAt": body["updatedAt"].clone()
+                    },
+                    "updatedAt": body["updatedAt"].clone()
+                }),
+                ("GET", Some("/api/provider")) => {
+                    // Nothing on the account yet: this device is the first.
+                    serde_json::json!({ "provider": null, "updatedAt": 0 })
+                }
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        fixture
+            .settings
+            .set_custom_provider("https://api.example.test/v1", "sk-local", "gpt-4o", Some("subject-sync"))
+            .unwrap();
+        let stamp = fixture.settings.provider_changed_at();
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.cycle().await.expect("one cycle");
+
+        let pushed: Vec<_> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "PUT" && path == "/api/provider")
+            .map(|(_, _, body)| body.clone())
+            .collect();
+        assert_eq!(pushed.len(), 1, "the endpoint is sent once");
+        assert_eq!(pushed[0]["updatedAt"], serde_json::json!(stamp));
+        assert_eq!(pushed[0]["provider"]["apiKey"], "sk-local");
+
+        // A second cycle has nothing new to say.
+        engine.cycle().await.expect("a second cycle");
+        let pushes = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "PUT" && path == "/api/provider")
+            .count();
+        assert_eq!(pushes, 1, "an unchanged endpoint is not re-sent");
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_from_another_device_is_adopted_and_announced() {
+        let (url, seen) = mock_server(|method, path, _body| {
+            match (method, path.split('?').next()) {
+                ("GET", Some("/api/provider")) => serde_json::json!({
+                    "provider": {
+                        "baseUrl": "https://api.example.test/v1",
+                        "model": "gpt-4o",
+                        "hasKey": true,
+                        "updatedAt": 5000
+                    },
+                    "updatedAt": 5000
+                }),
+                ("GET", Some("/api/provider/secret")) => serde_json::json!({
+                    "provider": {
+                        "baseUrl": "https://api.example.test/v1",
+                        "model": "gpt-4o",
+                        "apiKey": "sk-from-the-laptop",
+                        "updatedAt": 5000
+                    },
+                    "updatedAt": 5000
+                }),
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let poked = Arc::new(Mutex::new(0u32));
+        let poked_calls = poked.clone();
+        let engine = engine(
+            &fixture,
+            Arc::new(move |event, payload| {
+                assert!(
+                    payload["settings"].as_bool() != Some(true)
+                        || event == "hook://sync",
+                    "a settings change is announced on hook://sync"
+                );
+                captured.lock().unwrap().push(event.to_string());
+            }),
+        );
+        engine.on_settings_changed(Arc::new(move || {
+            *poked_calls.lock().unwrap() += 1;
+        }));
+        engine.cycle().await.expect("one cycle");
+
+        let adopted = fixture.settings.custom_provider().expect("a provider");
+        assert_eq!(adopted.api_key, "sk-from-the-laptop");
+        assert_eq!(adopted.model, "gpt-4o");
+        assert_eq!(fixture.settings.provider_changed_at(), 5000);
+        assert_eq!(*poked.lock().unwrap(), 1, "the model card is asked again");
+        assert!(events.lock().unwrap().iter().any(|event| event == "hook://sync"));
+
+        // It is not echoed back, and the secret is fetched once.
+        engine.cycle().await.expect("a second cycle");
+        let seen = seen.lock().unwrap();
+        assert!(
+            !seen
+                .iter()
+                .any(|(method, path, _)| method == "PUT" && path == "/api/provider"),
+            "an adopted endpoint is not pushed straight back"
+        );
+        assert_eq!(
+            seen.iter()
+                .filter(|(_, path, _)| path == "/api/provider/secret")
+                .count(),
+            1
+        );
+        drop(seen);
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn a_clear_from_another_device_removes_the_endpoint_here() {
+        let (url, _seen) = mock_server(|method, path, _body| {
+            match (method, path.split('?').next()) {
+                ("GET", Some("/api/provider")) => {
+                    serde_json::json!({ "provider": null, "updatedAt": 9000 })
+                }
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        fixture
+            .settings
+            .adopt_provider(
+                Some(crate::settings::CustomProvider {
+                    base_url: "https://api.example.test/v1".into(),
+                    api_key: "sk-local".into(),
+                    model: "gpt-4o".into(),
+                }),
+                100,
+                "subject-sync",
+            );
+        assert!(fixture.settings.custom_provider().is_some());
+
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.cycle().await.expect("one cycle");
+
+        assert_eq!(fixture.settings.custom_provider(), None);
+        assert_eq!(fixture.settings.provider_changed_at(), 9000);
+        // The clear is now the newest fact, so it is not pushed back either.
+        assert_eq!(lock(&engine.state).provider_synced_at, 9000);
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_typed_under_another_account_stays_on_this_machine() {
+        let (url, seen) = mock_server(|method, path, _body| {
+            match (method, path.split('?').next()) {
+                ("GET", Some("/api/provider")) => serde_json::json!({
+                    "provider": {
+                        "baseUrl": "https://theirs.example.test/v1",
+                        "model": "theirs",
+                        "hasKey": true,
+                        "updatedAt": 5000
+                    },
+                    "updatedAt": 5000
+                }),
+                ("GET", Some("/api/provider/secret")) => serde_json::json!({
+                    "provider": {
+                        "baseUrl": "https://theirs.example.test/v1",
+                        "model": "theirs",
+                        "apiKey": "sk-theirs",
+                        "updatedAt": 5000
+                    },
+                    "updatedAt": 5000
+                }),
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        // A key typed while another account was signed in on this machine.
+        fixture.settings.adopt_provider(
+            Some(crate::settings::CustomProvider {
+                base_url: "https://mine.example.test/v1".into(),
+                api_key: "sk-mine".into(),
+                model: "mine".into(),
+            }),
+            100,
+            "someone-else",
+        );
+
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.cycle().await.expect("one cycle");
+
+        {
+            let seen = seen.lock().unwrap();
+            assert!(
+                !seen.iter().any(|(_, path, _)| path.starts_with("/api/provider")),
+                "another account's key is neither uploaded nor adopted"
+            );
+        }
+        let local = fixture.settings.custom_provider().expect("still on disk");
+        assert_eq!(local.api_key, "sk-mine");
+        assert_eq!(
+            fixture.settings.provider_account().as_deref(),
+            Some("someone-else")
         );
         fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }

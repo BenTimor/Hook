@@ -1210,6 +1210,9 @@ export function createSyncRouter({ env, db }) {
       db.prepare("DELETE FROM sync_memory WHERE google_subject = ?").run(subject);
       db.prepare("DELETE FROM sync_remote_chats WHERE google_subject = ?").run(subject);
       db.prepare("DELETE FROM sync_media WHERE google_subject = ?").run(subject);
+      // The personal endpoint is account data too: deleting the account's cloud
+      // copy must take the encrypted key with it, not leave a credential behind.
+      db.prepare("DELETE FROM account_provider WHERE google_subject = ?").run(subject);
       db.prepare("UPDATE sync_state SET next_seq = 0 WHERE google_subject = ?").run(subject);
       // Hook Workspace belongs to the same account. The projects this account
       // owns go with everything inside them; in projects owned by someone else

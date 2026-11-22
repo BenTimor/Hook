@@ -7,6 +7,7 @@ import { createPreviewTunnel } from "./preview-tunnel.mjs";
 import { createDownloadRouter, publicReleaseInfo } from "./download.mjs";
 import { createEventsRouter } from "./events.mjs";
 import { createGitRouter } from "./git.mjs";
+import { createProviderRouter } from "./provider.mjs";
 import { createReportsRouter } from "./reports.mjs";
 import { createSyncRouter } from "./sync.mjs";
 import { createWorkspaceRouter } from "./workspace.mjs";
@@ -69,6 +70,7 @@ export function createPlatform(env, { verifyGoogle } = {}) {
     router.use("/git", unavailable);
     router.use("/devices", unavailable);
     router.use("/sync", unavailable);
+    router.use("/provider", unavailable);
     router.use("/v1", unavailable);
   } else {
     router.use(
@@ -87,6 +89,13 @@ export function createPlatform(env, { verifyGoogle } = {}) {
     router.use(
       "/sync",
       createSyncRouter({ env, db: waitlist.db }),
+    );
+    // The personal model endpoint of an account that syncs it. Kept apart from
+    // `/sync` because the key needs its own storage rule: encrypted at rest,
+    // and never in a response body that also carries ordinary data.
+    router.use(
+      "/provider",
+      createProviderRouter({ env, db: waitlist.db }),
     );
     // Hook Workspace: projects, boards, tasks, documents and their people. The
     // chat agent talks to the same routes, so the product works without this

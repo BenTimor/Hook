@@ -36,6 +36,7 @@ export function ChatList({
   const chats = useMobileChat((s) => s.chats);
   const devices = useMobileChat((s) => s.devices?.devices);
   const sync = useMobileChat((s) => s.sync);
+  const advanced = useMobileChat((s) => Boolean(s.settings?.advancedMode));
   const open = useMobileChat((s) => s.open);
   const newChat = useMobileChat((s) => s.newChat);
   const renameChat = useMobileChat((s) => s.renameChat);
@@ -45,6 +46,11 @@ export function ChatList({
   // A chat that is not in the cloud is every chat while sync is off; the mark
   // opens Settings, where the reason (free plan, or the account's switch) is.
   const unsynced = Boolean(sync && !sync.enabled);
+  // A conversation with a directly-driven agent is this switch's feature, the
+  // same rule the desktop sidebar applies: its turns are tool traffic, which
+  // the simple view cannot draw. With advanced off the chat agent is what starts
+  // work on a machine, and the result lands in an ordinary conversation.
+  const listed = advanced ? chats : chats.filter((chat) => chat.kind !== "coding");
 
   const [actionsFor, setActionsFor] = useState<ChatMeta | null>(null);
   const [renaming, setRenaming] = useState<ChatMeta | null>(null);
@@ -82,13 +88,13 @@ export function ChatList({
       </header>
 
       <div className="list">
-        {chats.length === 0 ? (
+        {listed.length === 0 ? (
           <div className="empty">
             <div className="empty-title">Nothing here yet</div>
             <p>Ask Hook what is on your board, or start something new.</p>
           </div>
         ) : (
-          chats.map((chat) => (
+          listed.map((chat) => (
             <div className="row-wrap" key={chat.id}>
               <button
                 className="row"

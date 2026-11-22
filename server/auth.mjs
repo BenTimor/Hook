@@ -41,6 +41,13 @@ function publicUser(row) {
     // One switch per account, not per product: turning it off in Hook turns it
     // off in Workspace and on the phone too.
     cloudSync: Number(row.cloud_sync) !== 0,
+    // The display preference, shared for the same reason: a phone cannot show
+    // thinking the computer turned off. `null` means nobody has set it yet and
+    // each device keeps its own answer until one of them does.
+    advancedMode:
+      row.advanced_mode === null || row.advanced_mode === undefined
+        ? null
+        : Number(row.advanced_mode) !== 0,
   };
 }
 
@@ -310,10 +317,13 @@ export function createAuthRouter({ db, auth, presence }) {
   /**
    * Account-level preferences every product shares.
    *
-   * Today that is `cloudSync`: whether conversations, projects, pictures and
-   * memories may leave this account's computers. A paid account may turn it
-   * off; a free account never syncs, and the setting is refused rather than
-   * silently ignored.
+   * `advancedMode` is a display preference — thinking, tool calls, the coding
+   * agent inspector — so any signed-in account may set it. It is a boolean, not
+   * content: nothing about a conversation travels with it.
+   *
+   * `cloudSync` is different. It decides whether conversations, projects,
+   * pictures and memories may leave this account's computers, so it belongs to
+   * a paid plan; a free account is refused rather than silently ignored.
    */
   router.post("/preferences", (req, res) => {
     if (!db) return res.status(503).json({ error: "unavailable" });
@@ -326,7 +336,17 @@ export function createAuthRouter({ db, auth, presence }) {
           code: result.code,
         },
       });
-    if (planOf(result.row) === "free")
+    const body = req.body ?? {};
+    const keys = Object.keys(body);
+    if (
+      keys.length < 1 ||
+      keys.some((key) => key !== "cloudSync" && key !== "advancedMode") ||
+      (body.cloudSync !== undefined && typeof body.cloudSync !== "boolean") ||
+      (body.advancedMode !== undefined &&
+        typeof body.advancedMode !== "boolean")
+    )
+      return res.status(400).json({ error: "invalid_preferences" });
+    if (body.cloudSync !== undefined && planOf(result.row) === "free")
       return res.status(403).json({
         error: {
           message: "Cloud sync is part of a paid plan.",
@@ -334,20 +354,21 @@ export function createAuthRouter({ db, auth, presence }) {
           code: "sync_not_included",
         },
       });
-    const body = req.body ?? {};
-    if (
-      Object.keys(body).length !== 1 ||
-      typeof body.cloudSync !== "boolean"
-    )
-      return res.status(400).json({ error: "invalid_preferences" });
-    db.prepare(
-      "UPDATE waitlist_signups SET cloud_sync = ? WHERE google_subject = ?",
-    ).run(body.cloudSync ? 1 : 0, result.row.google_subject);
-    // The relay is account data too: turning sync off stops the live
-    // connection on every device, not just the next sync cycle. They reconnect
-    // and get the refusal, which the UI shows in plain words.
-    if (!body.cloudSync) {
-      presence?.closeSubject(result.row.google_subject);
+    if (body.cloudSync !== undefined) {
+      db.prepare(
+        "UPDATE waitlist_signups SET cloud_sync = ? WHERE google_subject = ?",
+      ).run(body.cloudSync ? 1 : 0, result.row.google_subject);
+      // The relay is account data too: turning sync off stops the live
+      // connection on every device, not just the next sync cycle. They reconnect
+      // and get the refusal, which the UI shows in plain words.
+      if (!body.cloudSync) {
+        presence?.closeSubject(result.row.google_subject);
+      }
+    }
+    if (body.advancedMode !== undefined) {
+      db.prepare(
+        "UPDATE waitlist_signups SET advanced_mode = ? WHERE google_subject = ?",
+      ).run(body.advancedMode ? 1 : 0, result.row.google_subject);
     }
     const row = findSignup.get(result.row.google_subject);
     res.json({ user: publicUser(row), quota: quotaView(db, row) });

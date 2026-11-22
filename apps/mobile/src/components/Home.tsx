@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Code2, FileText, History, Lightbulb, Settings, SquareTerminal } from "lucide-react";
 
 import { greeting, RemoteChatDialog } from "@hook/chat";
@@ -21,6 +21,11 @@ const SUGGESTIONS = [
  * Like the desktop window, what opens first is the composer with a greeting;
  * the conversations are one tap away behind the history button. Sending here
  * creates the chat, and the same screen becomes its conversation.
+ *
+ * Starting a coding agent on a computer is an advanced-mode action, exactly as
+ * it is on the desktop: with advanced off, the chat agent gets the work and
+ * decides for itself whether a machine is needed. The phone does not offer a
+ * second, simpler way into the same agent.
  */
 export function Home({
   onChats,
@@ -31,10 +36,16 @@ export function Home({
 }) {
   const setDraft = useMobileChat((s) => s.setDraft);
   const devices = useMobileChat((s) => s.devices);
+  const advanced = useMobileChat((s) => Boolean(s.settings?.advancedMode));
   const newRemoteCodingChat = useMobileChat((s) => s.newRemoteCodingChat);
   const [remoteOpen, setRemoteOpen] = useState(false);
   // The Android back gesture closes the picker before it leaves the screen.
   useBackHandler(BACK_LAYER.dialog, remoteOpen, () => setRemoteOpen(false));
+  useEffect(() => {
+    // Turning advanced off elsewhere (the computer, the settings sheet) must
+    // close a picker that is already open.
+    if (!advanced) setRemoteOpen(false);
+  }, [advanced]);
   const hosts =
     devices?.devices.filter(
       (device) =>
@@ -77,7 +88,7 @@ export function Home({
           <p>Ask anything. Nothing leaves this phone unless your plan syncs it.</p>
           <ChatComposer className="mobile-composer" />
           <div className="chips">
-            {hosts.length > 0 && (
+            {advanced && hosts.length > 0 && (
               <button
                 className="chip chip-machine"
                 onClick={() => setRemoteOpen(true)}
@@ -100,7 +111,7 @@ export function Home({
         </div>
       </div>
 
-      {remoteOpen && (
+      {advanced && remoteOpen && (
         <RemoteChatDialog
           devices={devices?.devices ?? []}
           selfId={devices?.selfId ?? ""}

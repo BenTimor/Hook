@@ -501,6 +501,20 @@ fn setup(
         memory.clone(),
         git_runtime,
     ));
+    // An endpoint saved on another device just became the one this app talks to.
+    // The model card has to be asked again; the window hears about it through
+    // the `hook://sync` event the engine emits.
+    sync.on_settings_changed({
+        let app = app.handle().clone();
+        Arc::new(move || {
+            if let Some(state) = app.try_state::<Arc<AppState>>() {
+                let state = state.inner().clone();
+                tauri::async_runtime::spawn(async move {
+                    commands::refresh_capabilities(&state).await;
+                });
+            }
+        })
+    });
 
     let workspace = Arc::new(workspace::WorkspaceClient::new(&cfg, auth.clone()));
 

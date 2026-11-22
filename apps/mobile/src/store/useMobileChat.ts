@@ -363,7 +363,16 @@ export const useMobileChat = create<MobileState>((set, get) => ({
 
   async setAdvanced(enabled) {
     try {
-      set({ settings: await mobile.setAdvancedMode(enabled) });
+      const settings = await mobile.setAdvancedMode(enabled);
+      set({ settings });
+      if (!enabled) {
+        // A coding-agent conversation is tool traffic, not one reply after
+        // another; the simple view cannot draw it. Step back to the empty
+        // screen instead of showing flashing bubbles. The chat itself is
+        // untouched and comes back with the switch.
+        const active = get().chats.find((chat) => chat.id === get().activeId);
+        if (active?.kind === "coding") set({ activeId: null, messages: [] });
+      }
     } catch (error) {
       set({ error: message(error) });
     }
@@ -515,6 +524,13 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     // event can arrive before `init` has finished setting the auth view. The
     // list it refreshes is the account's; a signed-out screen ignores it.
     void get().refreshSync();
+    // The personal endpoint from a computer changes what this phone talks to.
+    if (event.settings) {
+      void mobile
+        .getSettings()
+        .then((settings) => set({ settings }))
+        .catch(() => undefined);
+    }
     if (!event.chats) return;
     void get().refreshChats();
   },

@@ -133,6 +133,7 @@ WAITLIST_ORIGIN=https://$DOMAIN
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 WAITLIST_SESSION_SECRET=$(openssl rand -hex 32)
+HOOK_PROVIDER_SECRET=$(openssl rand -hex 32)
 WAITLIST_DB_PATH=/data/signups.sqlite
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-flash
@@ -158,6 +159,10 @@ else
   ensure_env DEEPSEEK_API_KEY ""
   ensure_env HOOK_MODEL_ID hook
   ensure_env DOWNLOAD_DIR /data/releases
+  # Encrypts the personal model keys a paid account syncs (server/provider.mjs).
+  # Generated once; rotating it makes saved keys unreadable, which the app heals
+  # by the user saving the endpoint again.
+  ensure_env HOOK_PROVIDER_SECRET "$(openssl rand -hex 32)"
   echo "  kept existing .env"
 fi
 if ! grep -q 'import /srv/hook-web' /opt/scout/Caddyfile 2>/dev/null; then

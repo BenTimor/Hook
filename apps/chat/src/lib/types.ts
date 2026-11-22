@@ -177,6 +177,8 @@ export interface SyncEvent {
   projects: boolean;
   /** Memories arrived from another computer. */
   memory?: boolean;
+  /** The personal model endpoint arrived from another computer. */
+  settings?: boolean;
   at: number;
 }
 

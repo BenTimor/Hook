@@ -111,6 +111,8 @@ export interface SyncEvent {
   chats: boolean;
   projects: boolean;
   memory: boolean;
+  /** The personal model endpoint arrived from another device. */
+  settings?: boolean;
   at: number;
 }
 

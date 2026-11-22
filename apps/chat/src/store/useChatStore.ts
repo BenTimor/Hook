@@ -462,7 +462,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       unsubscribeAuth = onAuthEvent(handleAuth);
       unsubscribeSync?.();
       unsubscribeSync = onSyncEvent((event) => {
-        if (event.projects) void get().refreshSettings();
+        // Projects and the personal endpoint both live in the settings view.
+        if (event.projects || event.settings) void get().refreshSettings();
         // A cycle that finished says something about whether data is moving.
         void get().refreshSync();
         if (!event.chats) return;

@@ -124,18 +124,24 @@ function PlanSection() {
 }
 
 /**
- * The user's own OpenAI-compatible endpoint, for this product only.
+ * The user's own OpenAI-compatible endpoint.
  *
- * The key is written to this product's settings file on this computer and is
- * never part of the account, sync or a support request. Hook does not see the
- * requests either: the app talks to the endpoint directly, which is why a free
- * account with a provider is not metered.
+ * The key is written to this product's settings file on this computer. A paid
+ * account with cloud sync on also keeps one encrypted copy on the account, so
+ * the phone and Hook Workspace use the same endpoint; with sync off it is this
+ * computer's alone. Hook does not see the requests either way: the app talks to
+ * the endpoint directly, which is why a free account with a provider is not
+ * metered.
  */
 function ModelSection() {
   const settings = useChatStore((s) => s.settings);
   const saveProvider = useChatStore((s) => s.saveCustomProvider);
   const clearProvider = useChatStore((s) => s.clearCustomProvider);
   const saved = settings?.customProvider ?? null;
+  // Paid plan with the account switch on: the key also travels (encrypted) to
+  // this account's other devices.
+  const shared =
+    Boolean(settings?.plan) && settings?.plan !== "free" && settings?.cloudSync;
 
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -220,11 +226,11 @@ function ModelSection() {
       <p className="sheet-help">
         Use your own OpenAI-compatible endpoint instead of Hook's models; it must
         speak the chat-completions API including tool calling. The key is saved
-        in <code>settings.json</code> in this product's folder on this computer,
-        sent only to the endpoint you enter, and never uploaded, synced or shared
-        with us. Each Hook product keeps its own — set it again
-        in Hook Workspace or HookCode if you want it there. Removing it goes back
-        to Hook's models.
+        in <code>settings.json</code> on this computer and sent only to the
+        endpoint you enter.{" "}
+        {shared
+          ? "Cloud sync is on, so Hook also keeps one encrypted copy on your account: your phone and Hook Workspace use the same endpoint without it being typed again. Turning cloud sync off keeps it on this computer."
+          : "Cloud sync is off, so the key stays on this computer and your other devices keep their own. Removing it goes back to Hook's models."}
       </p>
       {settings?.plan === "free" && (
         <p className="sheet-help">
@@ -523,7 +529,8 @@ export function SettingsSheet() {
               open again, and the sidebar lists the coding agents with a
               read-only view of what each one did. With it off, only the last
               message of each turn is shown. Off by default, because it is a
-              lot of detail.
+              lot of detail. The switch belongs to your account, so your phone
+              follows it.
             </p>
 
             <div className="sheet-subhead">

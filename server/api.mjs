@@ -605,6 +605,11 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       // The account-level switch every product reads. Free accounts never sync,
       // whatever this says.
       cloud_sync: "INTEGER NOT NULL DEFAULT 1",
+      // The display preference every product shares: thinking, tool calls and
+      // the coding-agent inspector. Null until somebody sets it, so a device
+      // that had the switch on before this column existed keeps its own answer
+      // instead of being quietly reset by the upgrade.
+      advanced_mode: "INTEGER",
     };
     for (const [name, definition] of Object.entries(additions)) {
       if (!columns.has(name))
@@ -866,6 +871,23 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
     ) STRICT;
     CREATE INDEX IF NOT EXISTS sync_memory_seq
       ON sync_memory (google_subject, seq);
+
+    -- The personal model endpoint of an account that syncs it: one row per
+    -- account. The key is AES-256-GCM ciphertext whose AAD is the account
+    -- subject, never the key itself — a leaked database row is useless without
+    -- HOOK_PROVIDER_SECRET, and a row copied to another account cannot be
+    -- opened. A clear is a tombstone with the fields emptied, so it beats a
+    -- stale push from a device that had not seen it yet.
+    CREATE TABLE IF NOT EXISTS account_provider (
+      google_subject TEXT PRIMARY KEY NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      base_url TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      key_cipher TEXT NOT NULL DEFAULT '',
+      key_iv TEXT NOT NULL DEFAULT '',
+      key_tag TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL DEFAULT 0,
+      deleted INTEGER NOT NULL DEFAULT 0
+    ) STRICT;
 
     -- The fact that a direct coding chat exists on a machine. The conversation
     -- itself stays there: no messages, no folder and no session ever enter this

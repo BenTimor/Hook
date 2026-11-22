@@ -23,15 +23,18 @@ function planName(plan: string | null | undefined): string {
 /**
  * The phone's own model endpoint.
  *
- * Per product on purpose: this key lives in this app's container, is read by
- * nobody else, and is never part of the account or its sync. A free account
- * that saves one gets coding agents (on the desktop) and is no longer metered
- * by Hook, which is why the form sits right under the plan row.
+ * The key lives in this app's container unless the account may sync: a paid
+ * plan with cloud sync on also keeps one encrypted copy on the account, so the
+ * computer and Workspace use the same endpoint. A free account that saves one
+ * gets coding agents (on the desktop) and is no longer metered by Hook, which
+ * is why the form sits right under the plan row.
  */
 function ProviderForm({ saved }: { saved: CustomProvider | null }) {
   const saveProvider = useMobileChat((s) => s.saveCustomProvider);
   const clearProvider = useMobileChat((s) => s.clearCustomProvider);
   const plan = useMobileChat((s) => s.settings?.plan);
+  const cloudSync = useMobileChat((s) => s.settings?.cloudSync);
+  const shared = Boolean(plan) && plan !== "free" && Boolean(cloudSync);
   const [baseUrl, setBaseUrl] = useState(saved?.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(saved?.model ?? "");
@@ -70,9 +73,10 @@ function ProviderForm({ saved }: { saved: CustomProvider | null }) {
       <p className="settings-help">
         Use your own OpenAI-compatible endpoint instead of Hook’s models; it must
         speak the chat-completions API including tool calling. The key is stored
-        in this app on this phone, sent only to the endpoint you enter, and never
-        uploaded, synced or shared with us. The desktop and Hook
-        Workspace keep their own — set it there too if you want it.
+        in this app on this phone and sent only to the endpoint you enter.{" "}
+        {shared
+          ? "Cloud sync is on, so Hook also keeps one encrypted copy on your account: your computer and Hook Workspace use the same endpoint without it being typed again. Turning cloud sync off keeps it on this phone."
+          : "Cloud sync is off, so each device keeps its own key: set it on the desktop too if you want it there."}
       </p>
       {plan === "free" && (
         <p className="settings-help">
@@ -333,7 +337,10 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
           <label className="setting-row">
             <span className="setting-copy">
               <strong>Advanced mode</strong>
-              <em>Show every message, what the agent thought and which tools it used.</em>
+              <em>
+                Show every message, what the agent thought and which tools it
+                used. Shared by this account, so your computer follows it.
+              </em>
             </span>
             <input
               type="checkbox"
