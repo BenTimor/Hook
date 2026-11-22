@@ -30,6 +30,12 @@ write `<span>`, `<u>`, `<mark>` or `<br>` and expect formatting.
 | `> quote` | a quote |
 | `---` on its own line | a divider |
 | a `\| a \| b \|` header and a `\| --- \|` row | a table |
+| a newline inside a paragraph | a line break, on its own line |
+
+A blank line starts a new paragraph; a single newline is a line break. That is
+the formatted editor's view of the text, so a paragraph written across three
+lines reads as three lines — keep a paragraph on one line, and put each row of
+a plain list (`1 - 5`) on its own.
 
 ## Colour
 
@@ -120,6 +126,10 @@ To show the syntax as an example, put it in inline code: `` `:red[x]` ``.
 
 ## Traps
 
+- **A paragraph typed across lines keeps those lines.** A newline is a line
+  break here, not the space Markdown prints elsewhere, so a long paragraph
+  wrapped by hand reads as several short ones. Write it on one line, and use a
+  blank line (or a list, or a table) to separate things.
 - **A colon-only line inside a fenced code block.** A line of `:::` inside a code
   sample closes the callout around it, and the rest spills out. Give the callout
   one more colon than the sample needs (`::::note` … `::::`) and it closes where

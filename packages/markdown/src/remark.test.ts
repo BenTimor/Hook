@@ -8,7 +8,7 @@ import remarkDirective from "remark-directive";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 
-import { documentDirectives } from "./remark.ts";
+import { documentBreaks, documentDirectives } from "./remark.ts";
 
 /**
  * The read view, end to end: the same remark pipeline `DocumentMarkdown` hands
@@ -21,6 +21,7 @@ async function render(markdown: string): Promise<string> {
     .use(remarkGfm)
     .use(remarkDirective)
     .use(documentDirectives)
+    .use(documentBreaks)
     .use(remarkRehype)
     .use(rehypeStringify)
     .process(markdown);
@@ -88,6 +89,26 @@ test("an unknown block keeps its body and shows its fences", async () => {
 test("raw HTML is text, never an element", async () => {
   assert.equal(await render("a <b>bold</b> word"), "<p>a &#x3C;b>bold&#x3C;/b> word</p>");
   assert.equal(await render("<div>block</div>"), "<p>&#x3C;div>block&#x3C;/div></p>");
+});
+
+test("a single newline is a line break, not a space", async () => {
+  // The formatted editor draws the document's own lines, so the page has to
+  // keep them: a document's rows at the bottom are not a list and not a table.
+  assert.equal(await render("1 - 5\n2 - 3\n3 - 6"), "<p>1 - 5<br>\n2 - 3<br>\n3 - 6</p>");
+});
+
+test("a continuation line inside a list item keeps its line", async () => {
+  assert.equal(await render("1. title\nbody"), "<ol>\n<li>title<br>\nbody</li>\n</ol>");
+});
+
+test("a blank line is still a paragraph, and a hard break is not doubled", async () => {
+  assert.equal(await render("a\n\nb"), "<p>a</p>\n<p>b</p>");
+  assert.equal(await render("a  \nb"), "<p>a<br>\nb</p>");
+});
+
+test("a line break inside a directive label draws, and code is untouched", async () => {
+  assert.match(await render(":red[a\nb]"), /class="hook-color-red">a<br>\nb<\/span>/);
+  assert.equal(await render("```\na\nb\n```"), "<pre><code>a\nb\n</code></pre>");
 });
 
 test("a colon-only line inside a code fence still closes the callout", async () => {

@@ -3,7 +3,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markd
 import remarkGfm from "remark-gfm";
 import remarkDirective from "remark-directive";
 
-import { documentDirectives } from "./remark.ts";
+import { documentBreaks, documentDirectives } from "./remark.ts";
 import { documentImageSource } from "./images.ts";
 
 /**
@@ -12,7 +12,9 @@ import { documentImageSource } from "./images.ts";
  * The desktop's dashboard tile, the chat side panel and the phone's sheet all
  * draw documents through here, so the same Markdown is the same page
  * everywhere. The root carries `hook-doc` (tokens.css), whose numbers are the
- * formatted editor's, so the page a person reads matches the one they wrote.
+ * formatted editor's, so the page a person reads matches the one they wrote —
+ * including its line breaks: a single newline is one, as in the editor, never
+ * the space CommonMark would put there.
  *
  * Raw HTML is not parsed at all: the dialect is the only formatting language,
  * and a document can never inject an element.
@@ -27,7 +29,12 @@ export interface DocumentMarkdownProps {
   className?: string;
 }
 
-const remarkPlugins = [remarkGfm, remarkDirective, documentDirectives as never];
+const remarkPlugins = [
+  remarkGfm,
+  remarkDirective,
+  documentDirectives as never,
+  documentBreaks as never,
+];
 
 export const DocumentMarkdown = memo(function DocumentMarkdown({
   markdown,

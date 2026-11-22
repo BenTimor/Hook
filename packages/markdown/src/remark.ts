@@ -20,6 +20,48 @@ export function documentDirectives() {
   };
 }
 
+/**
+ * A single newline stays a line break.
+ *
+ * CommonMark calls `a\nb` a soft break and draws it as a space, while the
+ * formatted editor draws the document's own lines — so a page that collapsed
+ * them read as one run-on line, and the rows at the bottom of a document
+ * (`1 - 5`, `2 - 3`, … written without pipes or bullets) came out as
+ * "1 - 5 2 - 3 3 - 6". A blank line is still a new paragraph (a separate node,
+ * untouched), and two trailing spaces are still Markdown's own hard break.
+ *
+ * Runs after `documentDirectives`, so every directive is still measured against
+ * its own position in the source before any text node is split.
+ */
+export function documentBreaks() {
+  return (tree: MdastNode) => {
+    breakLines(tree);
+  };
+}
+
+function breakLines(node: MdastNode) {
+  const children = node.children;
+  if (!children) return;
+
+  let index = 0;
+  while (index < children.length) {
+    const child = children[index];
+    if (child.type !== "text" || !child.value?.includes("\n")) {
+      breakLines(child);
+      index += 1;
+      continue;
+    }
+    const lines = child.value.split("\n");
+    const pieces: MdastNode[] = [];
+    for (let at = 0; at < lines.length; at += 1) {
+      if (at > 0) pieces.push({ type: "break" });
+      if (lines[at]) pieces.push({ type: "text", value: lines[at] });
+    }
+    children.splice(index, 1, ...pieces);
+    index += pieces.length;
+  }
+}
+
 const PHRASING = new Set([
   "paragraph",
   "heading",

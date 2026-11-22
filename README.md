@@ -908,7 +908,7 @@ rows written before this rule are adopted when the service starts.
   preview pick it up together. Reading draws the page with `.hook-doc`
   (`packages/ui/src/tokens.css`), whose numbers are the formatted editor's, so
   the chat side panel, the phone sheet and the dashboard tile show a document
-  the way the Workspace window does — direction included.
+  the way the Workspace window does — direction and line breaks included.
   Editing behaves the way a word processor does:
   inline markup is invisible, so an edit only ever changes the text it wraps and
   the markers are put back around whatever survived. The caret stops at the

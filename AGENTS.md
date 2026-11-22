@@ -242,7 +242,9 @@ bash.
 - `packages/markdown/` — the document dialect every Workspace surface draws.
   `rules.ts` is the registry (a word, an element, a class, a scope); `parse.ts`
   turns one inline block into constructs through micromark's directive grammar;
-  `remark.ts` is the same grammar for `react-markdown`; `DocumentMarkdown.tsx`
+  `remark.ts` is the same grammar for `react-markdown`, plus the editor's
+  line-break rule (a single newline stays a line break; CommonMark would print a
+  space, and a document's rows would come out as one run-on line); `DocumentMarkdown.tsx`
   is the renderer `QuickPreview`, `WorkspacePreview` and the phone all use;
   `live.ts` is the CodeMirror half — decorations, the deletion repair, the
   toolbar's `applyRule`, and the callout scan. `rules.ts`,
