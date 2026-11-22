@@ -1103,9 +1103,11 @@ It is the same code, not a second implementation:
 - **The preview is a sheet.** `workspace_preview` already returns the board,
   task or document as JSON, and `packages/chat/src/preview` draws it. The
   desktop puts that in a 440px column; a phone has nowhere to put a column, so
-  the same components come up from the bottom. `preview_pages` is off because the
-  HTML page a coding agent writes is served from a project folder this device
-  does not have — which is exactly why `Capabilities` separates the two.
+  the same components come up from the bottom. `preview_pages` is off locally
+  because the HTML page a coding agent writes is served from a project folder
+  this device does not have — which is exactly why `Capabilities` separates the
+  two. A page from a computer arrives over the relay as a ticket URL and is drawn
+  in the same sheet.
 - **Signing in is the device flow, unless the device has a sheet of its own.**
   The desktop asks for a code, opens the browser, and polls. A phone calls
   `GET /api/auth/config` for the web client id, opens Android's Credential
@@ -1122,8 +1124,8 @@ A phone cannot run a coding agent: iOS forbids executing a bundled interpreter
 and has no background execution to speak of, and Android only allows it through
 machinery (a userland in the app's storage, or a bundled node in the native
 library directory) that turns the app into a different product. Coding agents
-stay on a computer that is on; the phone is where you read, approve and steer
-them.
+stay on a computer that is on; the phone is where you start them, read the
+progress, approve a question and steer them.
 
 ## One account, several products
 
@@ -1137,7 +1139,13 @@ family's centre of gravity:
 - **One device id per machine.** The server rotates a git token per
   `(account, device)` pair, so two products sharing an id look like one computer
   rather than two. Only the chat app mints git tokens; Workspace never does, so
-  they cannot revoke each other.
+  they cannot revoke each other. The account also keeps a small **machine
+  registry** (`/api/devices`): the name, platform, app version, capabilities and
+  last-seen time. No conversation or project content lives there.
+- **One relay.** Every running product holds an outbound WebSocket to
+  `/api/relay`. Hook and a headless install are hosts; Hook Workspace and the
+  phone are controllers. The phone can start and watch work on a computer
+  without that computer accepting an inbound connection.
 - **Capabilities, not forks.** The backend is a single crate (`hook-core`). A
   product passes `Product` and `Capabilities` to `hook_core::builder`; the chat
   agent's prompt and toolset are trimmed to what that product can honour. Hook
@@ -1182,8 +1190,10 @@ exist so the user reads a sentence instead of an HTTP error.
   `X-Hook-Message-Id`, and the proxy counts distinct ids. Regenerating or editing
   a message does not spend a second slot. The window rolls, so nothing resets at
   a wall-clock hour; `/api/auth/me` reports `quota.resetAt`.
-- **No coding agents.** The backend refuses to create one, the chat agent's
-  toolset omits the agent tools, and the proxy refuses `X-Hook-Surface: coding`.
+- **No coding agents or remote control.** The backend refuses to create one, the
+  chat agent's toolset omits the agent tools, and the proxy refuses
+  `X-Hook-Surface: coding`. Running work on another machine is also paid-only,
+  and needs cloud sync on.
 - **Normal chats, Hook Workspace and integrations are unaffected.** Workspace
   data lives on the account by design; the free plan does not restrict it.
 
@@ -1198,8 +1208,9 @@ the account, not in a product's settings file, so turning it off in one product
 turns it off in all of them. While it is off the sync endpoints refuse that
 account (`sync_disabled`), nothing new is uploaded, and every conversation is
 marked **not in the cloud** — the mark explains why when clicked. Already-synced
-data stays on the account until it is deleted. `DELETE /api/sync/account`
-remains available.
+data stays on the account until it is deleted. While it is off the live relay
+refuses the account too, so no other device can reach this machine's agents.
+`DELETE /api/sync/account` remains available.
 
 ### Your own model endpoint (all plans)
 
@@ -1269,7 +1280,8 @@ see it:
   projects.json            the notes the chat agent keeps about projects
   agents.json              coding-agent runs and their states
   auth.json                a mirror of the shared account, so a downgrade works
-  device.json              this installation's id (git tokens rotate per device)
+  device.json              this installation's id (git tokens rotate per device;
+                           machine names and presence live on the account)
   sync.json                the sync cursor, pending uploads and account owner
   accounts\<id>\           conversations moved aside when a different account
                            signs in on this machine (never uploaded)
@@ -1300,7 +1312,7 @@ installs share chats and sign-in. In-app updates download installers to
 
 A paid account keeps the whole workspace in step without a button, unless the
 account has switched cloud sync off (see **Plans, limits and your own model**).
-A free account never syncs. Two independent mechanisms are at work:
+A free account never syncs. Several independent mechanisms are at work:
 
 - **Conversations.** Each device pushes changed chats to `/api/sync/chats` and
   pulls everything newer than its cursor from `/api/sync/changes`. The server is
@@ -1333,6 +1345,11 @@ A free account never syncs. Two independent mechanisms are at work:
   computer does not come back from another. It is not one document per account
   on purpose: two devices editing different memories merge instead of
   overwriting each other.
+- **The live relay.** `/api/relay` is a WebSocket, not a store: presence, remote
+  commands and the live copy of a turn on another machine. It is gated by the
+  same paid + sync-on rule, so a free account or a switched-off account cannot
+  reach another device through it. A missed frame costs nothing; the viewer
+  reloads the chat through the normal sync path.
 
 Project identities belong to the account, not to an installation. Because both
 Hook and Hook Workspace open the same projects folder on a machine, two windows
@@ -1556,6 +1573,46 @@ off by default and stored in `settings.json`.
   (see **Talking to a coding agent directly**). Turning Advanced off hides those
   conversations from the sidebar and closes one that is open; nothing is deleted,
   and they come back with the switch.
+
+## Your machines
+
+A paid account with cloud sync on can run coding work on any computer connected
+to the same account. Hook is the host; Hook Workspace and HookCode are
+controllers, so they can start, steer and stop work on a host but never run an
+agent themselves.
+
+- **The list.** **Settings → Your machines** shows every machine Hook has seen:
+  its editable name, platform, app version, whether it is online, and whether it
+  accepts remote work. A machine appears while Hook is running on it; turning
+  the last switch off stops it accepting commands without removing it.
+- **Starting work.** The chat agent calls `list_machines` and chooses: the
+  machine the user named, the one this project ran on last, or the only one
+  online. If none are on it says so and starts nothing; if several are possible
+  it asks one short question with their names. Every agent tool takes the
+  machine, even when there is only one, so the conversation records where each
+  run happened.
+- **Live.** A run on another machine publishes the same stream the local window
+  draws: the answer, the plan, the status line. Close the laptop's window and
+  the tray keeps Hook and its agents running; **Quit Hook** in the tray stops
+  them. The phone can watch the same conversation and steer it.
+- **Previews.** A preview served by a computer is opened through
+  `<ticket>.preview.hookcode.io`, with the account service as the middleman. The
+  machine dials out; nothing needs a forwarded port. The ticket is short-lived
+  and only reaches the active preview for that conversation.
+- **Requirements.** Remote control is part of a paid plan and requires cloud
+  sync on. A free account can still use its own model endpoint for local agents;
+  it cannot reach another machine.
+- **Direct coding chats** (the user talking to `pi` themselves) can live on
+  another machine too. The New chat menu offers **Coding agent on another
+  machine…**; choose a host and one of its projects, or create a new project
+  there from the same dialog. The host keeps the folder, the engine and the
+  session. Only a small stub syncs — title, machine, live
+  state, message count — never the transcript, a path or a session id. Opening
+  the chat on another device fetches the conversation over the relay and caches
+  it locally; that cache never uploads. If the host is offline, the cached copy
+  opens instead. Steering, stopping and renaming still reach the host; changing
+  the folder or deleting the chat happens on the machine that owns it, because
+  the folder and the engine only exist there.
 
 ## Coding agents
 
@@ -1869,7 +1926,7 @@ Details worth knowing:
 cargo test                                      # the whole workspace: no engine, no network
 cargo test -p hook-core -- --ignored             # live tests against `pnpm mock`
 pnpm typecheck                                  # the only static gate: every package + the site
-pnpm waitlist:test                              # API, auth, proxy, download, sync, git, workspace
+pnpm waitlist:test                              # API, auth, proxy, download, sync, git, devices, relay, preview, workspace
 pnpm test:release                               # "is this tree already published?"
 pnpm test:licenses                              # every dep still fits AGPL-3.0-only
 pnpm release                                    # build + publish the installers
@@ -1905,8 +1962,12 @@ view, several assignees on one task, comment editing and deletion by author or
 manager, an agent comment
 that carries the conversation it came from, a stale document write that is refused
 with the current copy, folder nesting and deletion that keeps its contents, and
-account deletion that removes owned projects but not other people's. `server/releases.test.mjs` covers the second product's
-index and its "not published yet" answer.
+account deletion that removes owned projects but not other people's.
+`server/relay.test.mjs` drives two real WebSocket clients against the hub:
+presence, host/controller roles, RPC routing and timeout, per-chat fan-out,
+removal and the paid gate. `server/preview.test.mjs` mints a ticket, tunnels a
+request over the host's socket and checks the response. `server/releases.test.mjs`
+covers the second product's index and its "not published yet" answer.
 
 ## A note on packaged builds
 

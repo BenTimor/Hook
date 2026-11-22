@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
-  "description": "Hook \u2014 the desktop products, the shared packages they are built from, and the account service",
+  "description": "Hook — the desktop products, the shared packages they are built from, and the account service",
   "packageManager": "pnpm@10.28.1",
   "scripts": {
     "dev": "pnpm --dir apps/chat run dev",
@@ -37,10 +37,10 @@
     "browser:test": "node --test browser/tools/tools.test.mjs",
     "waitlist:dev": "vite --config waitlist.vite.config.mjs",
     "waitlist:build": "pnpm run typecheck:waitlist && vite build --config waitlist.vite.config.mjs",
-    "waitlist:test": "node --test server/api.test.mjs server/platform.test.mjs server/releases.test.mjs server/git.test.mjs server/sync.test.mjs server/workspace.test.mjs",
+    "waitlist:test": "node --test server/api.test.mjs server/platform.test.mjs server/releases.test.mjs server/git.test.mjs server/sync.test.mjs server/workspace.test.mjs server/relay.test.mjs server/preview.test.mjs",
     "test:release": "node --test scripts/release-gate.test.mjs scripts/merge-release-index.test.mjs scripts/site-source-hash.test.mjs scripts/msix.test.mjs",
     "test:licenses": "node scripts/check-licenses.mjs && node --test scripts/check-licenses.test.mjs",
-  "test:cla": "node --test scripts/cla.test.mjs",
+    "test:cla": "node --test scripts/cla.test.mjs",
     "waitlist:start": "node --env-file-if-exists=.env.waitlist.local server/waitlist.mjs",
     "mock": "node dev/mock-provider.mjs"
   },
@@ -52,7 +52,8 @@
     "lucide-react": "catalog:",
     "motion": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.5.2",

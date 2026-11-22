@@ -14,6 +14,8 @@ apps/*/src-tauri/gen/
 
 # Build-time secrets — never committed
 harness.config.toml
+cloudflare.ini
+.cloudflare.ini
 
 # Bundled coding engine (see scripts/fetch-pi-runtime.mjs)
 apps/*/src-tauri/resources/pi-runtime/

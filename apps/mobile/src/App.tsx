@@ -47,11 +47,15 @@ export function App() {
     const offSync = mobile.onSync((event) =>
       useMobileChat.getState().handleSync(event),
     );
+    const offDevices = mobile.onDevices((view) =>
+      useMobileChat.getState().handleDevices(view),
+    );
     return () => {
       offChat();
       offPreview();
       offAuth();
       offSync();
+      offDevices();
     };
   }, [init]);
 

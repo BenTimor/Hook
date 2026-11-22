@@ -10,6 +10,8 @@ import type {
   Chat,
   ChatMeta,
   CustomProvider,
+  DeviceView,
+  DevicesView,
   ImportPreview,
   ImportSummary,
   MemoryEntry,
@@ -18,6 +20,7 @@ import type {
   Message,
   PlanStep,
   PreviewView,
+  RemoteProject,
   SearchHit,
   SettingsView,
   StreamEvent,
@@ -451,6 +454,84 @@ function memoryView(): MemoryView {
     maxEntries: 400,
   };
 }
+
+const MOCK_SELF_DEVICE = "dev-this-computer";
+
+const MOCK_REMOTE_PROJECTS: RemoteProject[] = [
+  { project: "hook", description: "The desktop and phone products", git: true },
+  { project: "website", description: "Landing page", git: true },
+];
+
+const MOCK_DEVICES: DeviceView[] = [
+  {
+    id: MOCK_SELF_DEVICE,
+    name: "This computer",
+    kind: "desktop",
+    platform: "windows",
+    arch: "x86_64",
+    appVersion: info.version,
+    product: "chat",
+    canHost: true,
+    online: true,
+    hostOnline: true,
+    role: "host",
+    remoteAllowed: true,
+    lastSeen: new Date().toISOString(),
+    capabilities: { codingAgents: true },
+    specs: { cpuCores: 16, projects: 3 },
+  },
+  {
+    id: "dev-studio",
+    name: "Studio Mac",
+    kind: "desktop",
+    platform: "macos",
+    arch: "aarch64",
+    appVersion: info.version,
+    product: "chat",
+    canHost: true,
+    online: true,
+    hostOnline: true,
+    role: "host",
+    remoteAllowed: true,
+    lastSeen: new Date().toISOString(),
+    capabilities: { codingAgents: true },
+    specs: { cpuCores: 10, projects: 2 },
+  },
+  {
+    id: "dev-phone",
+    name: "Ben's iPhone",
+    kind: "mobile",
+    platform: "android",
+    arch: "aarch64",
+    appVersion: info.version,
+    product: "mobile",
+    canHost: false,
+    online: true,
+    hostOnline: false,
+    role: "controller",
+    remoteAllowed: false,
+    lastSeen: new Date(Date.now() - 4 * 60_000).toISOString(),
+    capabilities: { codingAgents: false },
+    specs: null,
+  },
+  {
+    id: "dev-cloud",
+    name: "Cloud Linux",
+    kind: "headless",
+    platform: "linux",
+    arch: "x86_64",
+    appVersion: info.version,
+    product: "headless",
+    canHost: true,
+    online: false,
+    hostOnline: false,
+    role: "controller",
+    remoteAllowed: true,
+    lastSeen: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+    capabilities: { codingAgents: true },
+    specs: { cpuCores: 4, projects: 1 },
+  },
+];
 
 export const mock = {
   async appInfo() {
@@ -984,6 +1065,78 @@ export const mock = {
     return clone(chat.meta);
   },
 
+  async createRemoteCodingChat(
+    deviceId: string,
+    project: string,
+  ): Promise<ChatMeta> {
+    const device = MOCK_DEVICES.find((entry) => entry.id === deviceId);
+    if (!device) throw "That machine is no longer on this account.";
+    if (!device.hostOnline) throw `${device.name} is not online.`;
+    const now = Date.now();
+    const chatId = id("coding");
+    const meta: ChatMeta = {
+      id: chatId,
+      title: project,
+      createdAt: now,
+      updatedAt: now,
+      pinned: false,
+      messageCount: 0,
+      preview: "",
+      kind: "coding",
+      deviceId,
+      deviceName: device.name,
+      remote: true,
+      stubState: "idle",
+    };
+    chats[chatId] = { meta, messages: [] };
+    return clone(meta);
+  },
+
+  async fetchRemoteChat(chatId: string): Promise<Chat> {
+    const chat = chats[chatId];
+    if (!chat) throw "Chat not found";
+    if (!chat.meta.remote) return clone(chat);
+    if (!chat.messages.length) {
+      const now = Date.now();
+      chat.messages = [
+        {
+          id: id("m"),
+          role: "assistant",
+          content:
+            "I am on the other machine, in that project. This is a cached copy of the conversation; the engine and the folder stay there.",
+          createdAt: now,
+          status: "complete",
+        },
+      ];
+      chat.meta.updatedAt = now;
+      chat.meta.messageCount = 1;
+    }
+    return clone(chat);
+  },
+
+  async remoteProjects(_deviceId: string): Promise<RemoteProject[]> {
+    return clone(MOCK_REMOTE_PROJECTS);
+  },
+
+  async createRemoteProject(
+    _deviceId: string,
+    name: string,
+    description: string,
+  ): Promise<RemoteProject> {
+    const clean = name.trim();
+    if (!clean) throw new Error("Write a project name first.");
+    if (MOCK_REMOTE_PROJECTS.some((entry) => entry.project === clean)) {
+      throw new Error(`A project named "${clean}" already exists.`);
+    }
+    const project: RemoteProject = {
+      project: clean,
+      description: description.trim(),
+      git: false,
+    };
+    MOCK_REMOTE_PROJECTS.push(project);
+    return clone(project);
+  },
+
   async answerCodingAgent(): Promise<void> {
     // Nothing is waiting in the browser preview.
   },
@@ -1036,6 +1189,36 @@ export const mock = {
   async memorySetEnabled(enabled: boolean): Promise<MemoryView> {
     MOCK_MEMORY_ENABLED = enabled;
     return memoryView();
+  },
+
+  async devices(): Promise<DevicesView> {
+    return {
+      state: "online",
+      message: null,
+      error: null,
+      selfId: MOCK_SELF_DEVICE,
+      selfName: "This computer",
+      devices: clone(MOCK_DEVICES),
+    };
+  },
+
+  async renameDevice(deviceId: string, name: string): Promise<DeviceView> {
+    const device = MOCK_DEVICES.find((entry) => entry.id === deviceId);
+    if (!device) throw "That machine is no longer on this account.";
+    device.name = name.trim().slice(0, 60) || device.name;
+    return clone(device);
+  },
+
+  async setDeviceRemote(deviceId: string, allowed: boolean): Promise<DeviceView> {
+    const device = MOCK_DEVICES.find((entry) => entry.id === deviceId);
+    if (!device) throw "That machine is no longer on this account.";
+    device.remoteAllowed = allowed;
+    return clone(device);
+  },
+
+  async removeDevice(deviceId: string): Promise<void> {
+    const at = MOCK_DEVICES.findIndex((entry) => entry.id === deviceId);
+    if (at >= 0) MOCK_DEVICES.splice(at, 1);
   },
 
   async syncStatus(): Promise<SyncView> {

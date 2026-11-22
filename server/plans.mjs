@@ -102,6 +102,33 @@ export function quotaView(db, row) {
   };
 }
 
+/**
+ * Why remote control is unavailable, or null when the account may use it.
+ *
+ * Remote control is account data and server capacity, so it is paid-only —
+ * including for a free account that brought its own model endpoint. It also
+ * needs cloud sync on: the other device reads the same conversation, and the
+ * switch that keeps conversations off the account keeps them off the relay
+ * too.
+ */
+export function remoteRefusal(row) {
+  if (isFreePlan(row)) {
+    return {
+      code: "remote_not_included",
+      message:
+        "Running work on your other machines is part of a paid plan.",
+    };
+  }
+  if (Number(row.cloud_sync) === 0) {
+    return {
+      code: "sync_disabled",
+      message:
+        "Turn on cloud sync to use your other machines. Settings, under Advanced.",
+    };
+  }
+  return null;
+}
+
 /** Why sync is unavailable, or null when the account may sync. */
 export function syncRefusal(row) {
   if (isFreePlan(row)) {

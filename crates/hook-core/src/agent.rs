@@ -110,6 +110,13 @@ pub struct AgentInfo {
     /// sidebar's coding-agent tree (it is already a chat).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub direct: bool,
+    /// The machine this process runs on. Every run names its machine, even
+    /// when it is the only one, so a conversation read elsewhere still says
+    /// where the work happened.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_name: String,
 }
 
 impl AgentInfo {
@@ -166,6 +173,11 @@ pub struct AgentSummary {
     /// The question this run is blocked on, when it is waiting for a person.
     /// Only a directly-driven agent shows it: the chat agent relays its own.
     pub question: Option<AgentQuestion>,
+    /// The machine that owns this run.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_name: String,
 }
 
 /// The whole picture for the title-bar indicator and the per-chat task board.
@@ -349,6 +361,11 @@ pub struct AgentManager {
     /// The account's memory, so a direct agent starts with what Hook already
     /// remembers about the user. Optional: a test manager has none.
     memory: Option<Arc<crate::memory::MemoryStore>>,
+    /// This machine's id and the name the account knows it by. The name can be
+    /// changed from another device, so it is updated when the relay's `ready`
+    /// frame arrives.
+    device_id: String,
+    device_name: Mutex<String>,
 }
 
 impl AgentManager {
@@ -410,13 +427,40 @@ impl AgentManager {
             bridge: None,
             capabilities: crate::Capabilities::chat(),
             memory: None,
+            device_id: String::new(),
+            device_name: Mutex::new(crate::devices::default_name()),
         }
     }
 
     /// Use the real account store instead of the local-preview placeholder.
     pub fn with_auth(mut self, auth: Arc<AuthStore>) -> Self {
+        self.device_id = auth.device_id().to_string();
         self.auth = auth;
         self
+    }
+
+    /// The account renamed this machine (or the first `ready` frame told us the
+    /// name it already had). Runs that are already recorded carry the old name;
+    /// new ones use this.
+    pub fn set_device_name(&self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        *lock(&self.device_name) = name.to_string();
+        let mut inner = lock(&self.inner);
+        for entry in inner.agents.values_mut() {
+            entry.info.device_name = name.to_string();
+        }
+    }
+
+    pub fn device_name(&self) -> String {
+        lock(&self.device_name).clone()
+    }
+
+    /// The account's id for this machine, shared by every product it runs.
+    pub fn device_id(&self) -> String {
+        self.device_id.clone()
     }
 
     /// Provide the bundled git (or a developer fallback).
@@ -727,6 +771,8 @@ impl AgentManager {
                     waiting: info.question.is_some() || info.state == STATE_NEEDS_INPUT,
                     direct: info.direct,
                     question: info.question.clone(),
+                    device_id: info.device_id.clone(),
+                    device_name: info.device_name.clone(),
                 }
             })
             .collect();
@@ -1076,6 +1122,8 @@ impl AgentManager {
             question: None,
             plan,
             direct,
+            device_id: self.device_id.clone(),
+            device_name: self.device_name(),
         };
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -2638,6 +2686,8 @@ name = "test-model"
             question: None,
             plan: Vec::new(),
             direct: false,
+            device_id: String::new(),
+            device_name: String::new(),
         };
         inner.agents.insert(
             "ag_1".into(),
@@ -2758,6 +2808,8 @@ name = "test-model"
                         question: None,
                         plan: Vec::new(),
                         direct: false,
+                        device_id: String::new(),
+                        device_name: String::new(),
                     },
                     tx: None,
                     pid: None,
@@ -3166,6 +3218,8 @@ node \"%~dp0fake-pi.mjs\" %*
                 question: None,
                 plan,
                 direct: false,
+                device_id: String::new(),
+                device_name: String::new(),
             },
             tx: None,
             pid: None,

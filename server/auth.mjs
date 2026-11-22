@@ -56,7 +56,7 @@ function publicUser(row) {
  * The token is stored hashed and approval is checked again by every proxied
  * request, so unapproving an account takes effect on its next call.
  */
-export function createAuthRouter({ db, auth }) {
+export function createAuthRouter({ db, auth, presence }) {
   const router = Router();
   router.use(json({ limit: "16kb" }));
 
@@ -343,6 +343,12 @@ export function createAuthRouter({ db, auth }) {
     db.prepare(
       "UPDATE waitlist_signups SET cloud_sync = ? WHERE google_subject = ?",
     ).run(body.cloudSync ? 1 : 0, result.row.google_subject);
+    // The relay is account data too: turning sync off stops the live
+    // connection on every device, not just the next sync cycle. They reconnect
+    // and get the refusal, which the UI shows in plain words.
+    if (!body.cloudSync) {
+      presence?.closeSubject(result.row.google_subject);
+    }
     const row = findSignup.get(result.row.google_subject);
     res.json({ user: publicUser(row), quota: quotaView(db, row) });
   });

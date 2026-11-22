@@ -34,15 +34,16 @@ export function PreviewSheet() {
 
   if (!preview?.active || !open) return null;
 
+  const page = preview.kind === "page";
   const body: WorkspacePreviewBody = {
-    kind: preview.kind ?? "board",
+    kind: preview.kind === "page" ? "board" : (preview.kind ?? "board"),
     document: preview.document,
     task: preview.task,
     comments: preview.comments,
     board: preview.board,
     tasks: preview.tasks,
   };
-  const reportTarget = reportableFrom(body);
+  const reportTarget = page ? null : reportableFrom(body);
   const canReport = Boolean(reportTarget && reportTarget.excerpt.trim());
 
   return (
@@ -58,7 +59,11 @@ export function PreviewSheet() {
         <header className="sheet-head">
           <div className="sheet-heading">
             <div className="sheet-title">{preview.title ?? "Preview"}</div>
-            <div className="sheet-note">Hook Workspace</div>
+            <div className="sheet-note">
+              {page
+                ? preview.deviceName || "Preview"
+                : "Hook Workspace"}
+            </div>
           </div>
           {canReport && reportTarget ? (
             <button
@@ -75,7 +80,23 @@ export function PreviewSheet() {
         </header>
 
         <div className="sheet-body">
-          <WorkspacePreview body={body} />
+          {page ? (
+            preview.url ? (
+              <iframe
+                className="phone-preview-frame"
+                title={preview.title ?? "Preview"}
+                src={`${preview.url}${preview.url.includes("?") ? "&" : "?"}v=${preview.version ?? 0}`}
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+              />
+            ) : (
+              <p className="settings-help">
+                This preview lives on {preview.deviceName || "another machine"}. It
+                will load when that machine is connected.
+              </p>
+            )
+          ) : (
+            <WorkspacePreview body={body} />
+          )}
         </div>
 
         {reporting && reportTarget ? (

@@ -18,6 +18,7 @@ export function Conversation({ onChats }: { onChats: () => void }) {
   const activeId = useMobileChat((s) => s.activeId);
   const messages = useMobileChat((s) => s.messages);
   const chats = useMobileChat((s) => s.chats);
+  const devices = useMobileChat((s) => s.devices?.devices);
   const streams = useMobileChat((s) => s.streams);
   const activity = useMobileChat((s) => s.activity);
   const preview = useMobileChat((s) => s.preview);
@@ -34,8 +35,17 @@ export function Conversation({ onChats }: { onChats: () => void }) {
 
   const stream = activeId ? streams[activeId] : undefined;
   const labels = activeId ? activity[activeId] : undefined;
-  const title =
-    chats.find((chat) => chat.id === activeId)?.title ?? "New chat";
+  const activeChat = chats.find((chat) => chat.id === activeId);
+  const title = activeChat?.title ?? "New chat";
+  const remoteDevice = activeChat?.remote
+    ? devices?.find((device) => device.id === activeChat.deviceId)
+    : undefined;
+  const machine = activeChat?.remote
+    ? remoteDevice?.name ?? activeChat.deviceName ?? "another machine"
+    : null;
+  const machineOffline = Boolean(
+    activeChat?.remote && remoteDevice && !remoteDevice.hostOnline,
+  );
   const hasPreview = Boolean(preview?.active && preview.chatId === activeId);
 
   return (
@@ -44,7 +54,15 @@ export function Conversation({ onChats }: { onChats: () => void }) {
         <button className="icon-btn" title="Back" onClick={back}>
           <ChevronLeft strokeWidth={2} />
         </button>
-        <div className="bar-title">{title}</div>
+        <div className="bar-title">
+          {title}
+          {machine ? (
+            <span className="bar-sub">
+              On {machine}
+              {machineOffline ? " · offline" : ""}
+            </span>
+          ) : null}
+        </div>
         <div className="bar-actions">
           {hasPreview ? (
             <button

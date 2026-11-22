@@ -275,6 +275,17 @@
   height: 12px;
 }
 
+.row-device {
+  flex: 0 1 62px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  opacity: 0.8;
+}
+
 .row[data-active="true"] .row-title {
   font-weight: 500;
 }
@@ -477,6 +488,14 @@
   width: 11px;
   height: 11px;
   color: var(--sage);
+}
+
+.pane-chip[data-offline="true"] {
+  opacity: 0.65;
+}
+
+.pane-chip[data-remote="true"] {
+  color: var(--ink-2);
 }
 
 .pane-title {
@@ -2734,6 +2753,13 @@ body[data-preview-dragging="true"] iframe {
 .agent-tree-state {
   flex: 0 0 auto;
   font-size: 10px;
+  color: var(--ink-4);
+}
+
+.agent-machine {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 400;
   color: var(--ink-4);
 }
 

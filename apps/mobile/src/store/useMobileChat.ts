@@ -5,6 +5,7 @@ import { mobile } from "../lib/api";
 import type {
   AuthView,
   ChatMeta,
+  DevicesView,
   Message,
   PreviewView,
   SettingsView,
@@ -51,6 +52,8 @@ interface MobileState {
   settings: SettingsView | null;
   /** Whether conversations may leave this phone, and why not when they may not. */
   sync: SyncView | null;
+  /** The account's machines and this phone's relay state. */
+  devices: DevicesView | null;
   preview: PreviewView | null;
   previewOpen: boolean;
 
@@ -58,6 +61,8 @@ interface MobileState {
   refreshChats: () => Promise<void>;
   open: (chatId: string) => Promise<void>;
   newChat: () => void;
+  /** Start a direct coding chat on another machine. */
+  newRemoteCodingChat: (deviceId: string, project: string) => Promise<void>;
   back: () => void;
   setDraft: (value: string) => void;
   addDraftImages: (images: DraftImage[]) => void;
@@ -75,6 +80,12 @@ interface MobileState {
   saveCustomProvider: (baseUrl: string, apiKey: string, model: string) => Promise<void>;
   clearCustomProvider: () => Promise<void>;
   refreshSync: () => Promise<void>;
+  /** Re-read the machines list (the relay pushes it too). */
+  refreshDevices: () => Promise<void>;
+  renameDevice: (id: string, name: string) => Promise<void>;
+  setDeviceRemote: (id: string, allowed: boolean) => Promise<void>;
+  removeDevice: (id: string) => Promise<void>;
+  handleDevices: (view: DevicesView) => void;
   /** Re-read the account view (plan, cloud switch, free window). */
   refreshAuth: () => Promise<void>;
   signIn: () => Promise<void>;
@@ -104,21 +115,24 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   sending: false,
   settings: null,
   sync: null,
+  devices: null,
   preview: null,
   previewOpen: false,
 
   async init() {
     try {
-      const [auth, settings, preview, sync] = await Promise.all([
+      const [auth, settings, preview, sync, devices] = await Promise.all([
         mobile.authStatus(),
         mobile.getSettings(),
         mobile.previewState(),
         mobile.syncStatus(),
+        mobile.devices(),
       ]);
       set({
         auth,
         settings,
         sync,
+        devices,
         preview: preview && preview.active ? preview : null,
       });
       // Read the list after the auth view exists, so a sync event arriving at
@@ -158,6 +172,9 @@ export const useMobileChat = create<MobileState>((set, get) => ({
 
     const activeId = get().activeId;
     if (!activeId || get().streams[activeId] || get().activity[activeId]) return;
+    // A cached remote chat is refreshed when it is opened; sync replacing it
+    // with the stub would drop the messages this phone already has.
+    if (get().chats.find((chat) => chat.id === activeId)?.remote) return;
     try {
       const chat = await mobile.getChat(activeId);
       if (read !== chatRead) return;
@@ -177,6 +194,9 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   },
 
   async open(chatId) {
+    const previous = get().activeId;
+    if (previous && previous !== chatId) void mobile.unsubscribeChat(previous);
+    void mobile.subscribeChat(chatId);
     set({ activeId: chatId, error: null });
     try {
       const chat = await mobile.getChat(chatId);
@@ -184,16 +204,46 @@ export const useMobileChat = create<MobileState>((set, get) => ({
       // when nothing is streaming into this chat.
       if (get().activeId !== chatId) return;
       if (!get().streams[chatId]) set({ messages: chat.messages });
+      if (chat.meta.remote) {
+        // The cache is instant; the owner's copy is the truth. Offline leaves
+        // the cache on screen rather than an empty conversation.
+        void mobile
+          .fetchRemoteChat(chatId)
+          .then((remote) => {
+            if (get().activeId !== chatId) return;
+            set((state) => ({
+              messages: mergeMessages(state.messages, remote.messages),
+              chats: upsert(state.chats, remote.meta),
+            }));
+          })
+          .catch(() => undefined);
+      }
     } catch (error) {
       set({ error: message(error) });
     }
   },
 
   newChat() {
+    const previous = get().activeId;
+    if (previous) void mobile.unsubscribeChat(previous);
     set({ activeId: null, messages: [], draft: "", error: null });
   },
 
+  async newRemoteCodingChat(deviceId, project) {
+    const meta = await mobile.createRemoteCodingChat(deviceId, project);
+    set((state) => ({
+      chats: upsert(state.chats, meta),
+      activeId: meta.id,
+      messages: [],
+      draft: "",
+      error: null,
+    }));
+    void mobile.subscribeChat(meta.id);
+  },
+
   back() {
+    const previous = get().activeId;
+    if (previous) void mobile.unsubscribeChat(previous);
     set({ activeId: null, messages: [], draft: "" });
   },
 
@@ -345,6 +395,33 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     }
   },
 
+  async refreshDevices() {
+    try {
+      set({ devices: await mobile.devices() });
+    } catch {
+      // The relay pushes presence; a slow read is not worth a banner.
+    }
+  },
+
+  async renameDevice(id, name) {
+    await mobile.renameDevice(id, name);
+    await get().refreshDevices();
+  },
+
+  async setDeviceRemote(id, allowed) {
+    await mobile.setDeviceRemote(id, allowed);
+    await get().refreshDevices();
+  },
+
+  async removeDevice(id) {
+    await mobile.removeDevice(id);
+    await get().refreshDevices();
+  },
+
+  handleDevices(view) {
+    set({ devices: view });
+  },
+
   async refreshAuth() {
     try {
       set({ auth: await mobile.authRefresh() });
@@ -405,6 +482,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
           messages: [],
           draftImages: [],
           sync: null,
+          devices: null,
         });
       }
       return;
@@ -412,6 +490,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     if (wasSignedIn) {
       // A plan change or a switch flipped on another product arrives here.
       void get().refreshSync();
+      void get().refreshDevices();
       void mobile
         .getSettings()
         .then((settings) => set({ settings }))
@@ -445,7 +524,13 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     const stream = state.streams[chatId] ?? { text: "", reasoning: "" };
     switch (event.kind) {
       case "started": {
-        const chats = upsert(state.chats, event.meta);
+        const chats = upsert(
+          state.chats,
+          cachedMeta(
+            event.meta,
+            state.chats.find((chat) => chat.id === chatId),
+          ),
+        );
         // This chat is on screen, or it is the one being created right now.
         const adopt =
           state.activeId === chatId || (state.sending && state.activeId === null);
@@ -454,7 +539,10 @@ export const useMobileChat = create<MobileState>((set, get) => ({
           streams: { ...state.streams, [chatId]: { text: "", reasoning: "" } },
           activity: { ...state.activity, [chatId]: [] },
           ...(adopt
-            ? { activeId: chatId, messages: event.messages }
+            ? {
+                activeId: chatId,
+                messages: mergeMessages(state.messages, event.messages),
+              }
             : {}),
         });
         return;
@@ -497,7 +585,9 @@ export const useMobileChat = create<MobileState>((set, get) => ({
         set({
           streams,
           activity,
-          ...(state.activeId === chatId ? { messages: event.messages } : {}),
+          ...(state.activeId === chatId
+            ? { messages: mergeMessages(state.messages, event.messages) }
+            : {}),
         });
         // A finished turn is when the title is generated, so the list's order
         // and the row's preview are stale until it is read again.
@@ -529,6 +619,29 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     set({ preview: event, previewOpen: get().previewOpen || (first && event.open) });
   },
 }));
+
+/** Keep a cached chat's own identity when its owner sends an event. */
+function cachedMeta(meta: ChatMeta, local: ChatMeta | undefined): ChatMeta {
+  if (!local?.remote) return meta;
+  return {
+    ...meta,
+    remote: true,
+    deviceId: local.deviceId,
+    deviceName: local.deviceName ?? meta.deviceName,
+    projectPath: undefined,
+    sessionId: undefined,
+    pinned: local.pinned,
+    pinnedAt: local.pinnedAt,
+    stubState: local.stubState,
+  };
+}
+
+/** Union a streamed turn into what is on screen; a remote turn may not carry a
+ * reply this phone wrote a moment ago. */
+function mergeMessages(local: Message[], incoming: Message[]): Message[] {
+  const known = new Set(incoming.map((message) => message.id));
+  return [...incoming, ...local.filter((message) => !known.has(message.id))];
+}
 
 function upsert(chats: ChatMeta[], meta: ChatMeta): ChatMeta[] {
   const next = chats.some((chat) => chat.id === meta.id)

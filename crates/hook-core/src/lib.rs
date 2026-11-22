@@ -17,6 +17,7 @@ mod bridge;
 mod coding;
 mod commands;
 mod config;
+mod devices;
 mod git;
 mod guard;
 mod import;
@@ -24,6 +25,8 @@ mod memory;
 mod projects;
 mod preview;
 mod provider;
+mod relay;
+mod remote;
 mod reports;
 mod runtime;
 mod settings;
@@ -35,7 +38,7 @@ mod update;
 mod version;
 mod workspace;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
@@ -84,8 +87,13 @@ pub struct Capabilities {
     /// The same panel, showing a Hook Workspace document, task or board. It is
     /// only data from the account, which is why a phone can have this half.
     pub preview_workspace: bool,
-    /// Launch and steer `pi` coding agents inside project folders.
+    /// Launch and steer `pi` coding agents inside project folders on this
+    /// machine. Only Hook and the headless daemon host.
     pub coding_agents: bool,
+    /// Drive coding agents on the account's other machines. A phone and Hook
+    /// Workspace have this without `coding_agents`: they are controllers, not
+    /// hosts.
+    pub remote_agents: bool,
     /// Read and write Hook Workspace projects, boards, tasks and documents.
     pub workspace_tools: bool,
     /// Project folders on this machine: list, create, describe, remember in.
@@ -101,17 +109,21 @@ impl Capabilities {
             preview_pages: true,
             preview_workspace: true,
             coding_agents: true,
+            remote_agents: true,
             workspace_tools: true,
             projects: true,
         }
     }
 
-    /// Hook Workspace: the same chat and coding agents, no preview panel.
+    /// Hook Workspace: the chat agent, the account's Workspace data and the
+    /// other machines. It is not a host: Hook on the same computer runs the
+    /// agents, and Workspace forwards a "this computer" start to it.
     pub const fn workspace() -> Self {
         Self {
             preview_pages: false,
             preview_workspace: false,
-            coding_agents: true,
+            coding_agents: false,
+            remote_agents: true,
             workspace_tools: true,
             projects: true,
         }
@@ -125,6 +137,7 @@ impl Capabilities {
             preview_pages: false,
             preview_workspace: true,
             coding_agents: false,
+            remote_agents: true,
             workspace_tools: true,
             projects: false,
         }
@@ -133,7 +146,20 @@ impl Capabilities {
 
 fn emit_agents(state: &AppState) {
     // One payload feeds both the title-bar pill and the per-chat task board.
-    let _ = state.app.emit("hook://agents", state.agents.overview());
+    let overview = state.agents.overview();
+    let _ = state.app.emit("hook://agents", &overview);
+    // A controller watching a chat on this machine gets the same board. The
+    // overview is per account, but the relay fans out by chat.
+    if let Ok(payload) = serde_json::to_value(&overview) {
+        if let Ok(chats) = state.remote_chats.lock() {
+            for chat_id in chats.iter() {
+                let _ = state.relay.publish(
+                    chat_id,
+                    serde_json::json!({ "type": "agents", "overview": payload }),
+                );
+            }
+        }
+    }
 }
 
 /// Build the Tauri app: plugins, state, background loops and the IPC surface.
@@ -192,6 +218,17 @@ pub fn builder(
             commands::answer_coding_agent,
             commands::create_coding_chat,
             commands::set_coding_chat_folder,
+            commands::create_remote_coding_chat,
+            commands::fetch_remote_chat,
+            commands::remote_projects,
+            commands::remote_create_project,
+            commands::devices_list,
+            commands::subscribe_chat,
+            commands::unsubscribe_chat,
+            commands::device_rename,
+            commands::device_set_remote,
+            commands::device_remove,
+            commands::stop_remote_agent,
             commands::preview_state,
             commands::sync_status,
             commands::set_chat_context,
@@ -238,6 +275,70 @@ fn install_panic_log(data_dir: &std::path::Path) {
             let _ = file.write_all(text.as_bytes());
         }
     }));
+}
+
+/// Hook is the machine host, so closing its window must not stop the work: the
+/// window hides to the tray and the agent processes keep running. Quit lives in
+/// the tray menu, and `on_exit` still kills every child.
+#[cfg(feature = "tray")]
+fn install_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let open = MenuItem::with_id(app, "open", "Open Hook", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Hook", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let Some(icon) = app.default_window_icon().cloned() else {
+        return Ok(());
+    };
+    TrayIconBuilder::with_id("hook")
+        .icon(icon)
+        .tooltip("Hook — agents keep working while this window is closed")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            "quit" => {
+                on_exit(app);
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+        })
+        .build(app)?;
+
+    if let Some(window) = app.get_webview_window("main") {
+        let handle = app.handle().clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+        });
+    }
+    Ok(())
 }
 
 fn setup(
@@ -330,9 +431,57 @@ fn setup(
         .with_memory(memory.clone()),
     );
 
-    let preview_emit: preview::Emitter = {        let app = app.handle().clone();
+    // The live account surface: presence, remote commands and chat fan-out.
+    // The relay is a transport only; `remote.rs` decides what a command means.
+    let relay_emit: relay::Emitter = {
+        let app = app.handle().clone();
+        Arc::new(move |event, payload| {
+            let _ = app.emit(event, payload);
+        })
+    };
+    let relay = Arc::new(relay::RelayClient::new(relay_emit));
+
+    let preview_emit: preview::Emitter = {
+        let app = app.handle().clone();
+        let relay = relay.clone();
         Arc::new(move |event| {
-            let _ = app.emit("hook://preview", event);
+            let _ = app.emit("hook://preview", &event);
+            // The same panel event goes to a controller watching this chat.
+            // The URL is the host's loopback address; the viewer replaces it
+            // with a ticket URL minted by the account service.
+            let Ok(mut payload) = serde_json::to_value(&event) else {
+                return;
+            };
+            if payload.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
+                if let Some(chat_id) = payload.get("chatId").and_then(serde_json::Value::as_str) {
+                    let _ = relay.publish(
+                        chat_id,
+                        serde_json::json!({ "type": "previewClosed", "chatId": chat_id }),
+                    );
+                }
+                return;
+            }
+            let Some(chat_id) = payload
+                .get("chatId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+            else {
+                return;
+            };
+            if let Some(object) = payload.as_object_mut() {
+                object.insert(
+                    "deviceId".into(),
+                    serde_json::Value::String(relay.device_id()),
+                );
+                object.insert(
+                    "deviceName".into(),
+                    serde_json::Value::String(relay.view().self_name),
+                );
+            }
+            let _ = relay.publish(
+                &chat_id,
+                serde_json::json!({ "type": "preview", "preview": payload }),
+            );
         })
     };
 
@@ -370,6 +519,8 @@ fn setup(
         cfg: cfg.clone(),
         auth: auth.clone(),
         sync: sync.clone(),
+        relay: relay.clone(),
+        remote_chats: Arc::new(Mutex::new(HashSet::new())),
         vision: vision.clone(),
         vision_off: Arc::new(Default::default()),
         context_role_off: Arc::new(Default::default()),
@@ -380,8 +531,20 @@ fn setup(
         capabilities,
     });
     app.manage(state.clone());
+    // A coding chat written before machines existed belongs to this computer;
+    // give it the id the account knows so its stub can travel. A controller
+    // (Workspace, the phone) never owns a direct chat, even if an old sync left
+    // one behind.
+    if capabilities.coding_agents {
+        state
+            .store
+            .own_coding(&auth.device_id(), &state.agents.device_name());
+    }
     // Now that the state it acts for exists, the tool bridge can take calls.
     bridge.serve(state.clone());
+    // One connection per running product: a host for Hook, a controller for the
+    // phone and Workspace. It waits for a session and reconnects on its own.
+    relay.serve(state.clone());
     // A coding-agent chat whose engine died with the last window would keep a
     // "streaming" reply forever; turn it into the error it always was.
     coding::recover(&state.store);
@@ -468,6 +631,15 @@ fn setup(
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_focus();
+    }
+
+    // Only the chat product hosts machines today. Workspace and the phone have
+    // no agents to keep alive, so closing their window is still closing them.
+    #[cfg(feature = "tray")]
+    if product == Product::Chat {
+        if let Err(error) = install_tray(app) {
+            eprintln!("hook: could not install the tray icon: {error}");
+        }
     }
 
     Ok(())

@@ -7,7 +7,9 @@ on every deploy — edit it *here*, not on the server.
 | File | Lives on the server at | Purpose |
 |------|------------------------|---------|
 | `docker-compose.yml` | `/opt/hook-web/docker-compose.yml` | `hook-waitlist` container (built from `/opt/hook-web/app`), joins `scout_default`, SQLite bind-mounted from `/opt/hook-web/data` |
-| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, private git, conversation sync, workspace, download, release index) to the container, `www` → apex redirect |
+| `hookcode.caddy` | `/opt/hook-web/hookcode.caddy` | Caddy site block: serves `/opt/hook-web/site`, proxies `/api/*` (waitlist, device login, model proxy, private git, conversation sync, devices, relay, workspace, download, release index) to the container, `www` → apex redirect |
+| `preview.caddy` | `/opt/hook-web/preview.caddy` | `*.preview.hookcode.io` → the same container, using the wildcard certificate below. Uploaded and reloaded by the deploy. |
+| `hook-preview-cert.cron` | `/etc/cron.d/hook-preview-cert` | Renews that wildcard with certbot's Cloudflare DNS-01 plugin and reloads Caddy. |
 
 `release.config.json` (repo root) is copied into the image by the Dockerfile. It
 holds each product's floor: the chat app's `minimumVersion` (oldest build allowed
@@ -100,6 +102,45 @@ Not in this directory because it must **never** be committed:
 | File | Lives on the server at | Contents |
 |------|------------------------|----------|
 | `.env` | `/opt/hook-web/.env` (chmod 600) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WAITLIST_SESSION_SECRET`, `WAITLIST_ORIGIN`, `WAITLIST_DB_PATH`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_API_KEY`, `HOOK_MODEL_ID`, `DOWNLOAD_DIR`, `GIT_ROOT`, `SYNC_ROOT`, `PORT` |
+
+## Devices, the relay and remote previews
+
+The account service is also the machine registry and the middleman for remote
+work. Three routes, all under `/api`:
+
+| Route | Purpose |
+| --- | --- |
+| `GET/PATCH/DELETE /api/devices` | The account's machines: name, platform, version, capabilities, last seen, the per-machine "accept remote work" switch. Removing one revokes its tokens. |
+| WebSocket `/api/relay` | Presence, remote commands and live chat/agent frames. Hook and a headless install connect as **hosts**; Hook Workspace and the phone as **controllers**. Caddy already proxies WebSockets; `flush_interval -1` keeps them flowing. |
+| `POST /api/remote/preview/ticket` + `*.preview.hookcode.io` | A preview page from a machine. The ticket is random and bound to (account, machine, chat); the page requests are tunnelled over that machine's outbound socket. No inbound port on the user's computer. |
+
+The relay is **in-memory**: a deploy drops every socket and the clients
+reconnect. Presence is therefore empty for a moment after a restart and
+`last_seen_at` is what the UI shows. There is one container and one SQLite file;
+if the relay ever needs more than one process, it needs a pub/sub layer first.
+
+### The preview wildcard certificate
+
+`*.preview.hookcode.io` is a DNS-only `A` record for the same VPS IP. The stock
+`caddy:2` image has no DNS provider module, so the certificate is issued outside
+Caddy:
+
+1. The Cloudflare API token (`Zone:DNS:Edit` + `Zone:Read` for `hookcode.io`)
+   lives in `/opt/hook-web/cloudflare.ini`, mode `0600`. It is never in the repo.
+2. `certbot/dns-cloudflare` issues and renews the wildcard into
+   `/opt/hook-web/preview/`, which the container already sees at
+   `/srv/hook-web/preview/`.
+3. `preview.caddy` points its `tls` at those files; `hook-preview-cert.cron`
+   runs `renew --quiet` and reloads Caddy.
+
+Verify after a deploy:
+
+```bash
+dig +short test.preview.hookcode.io          # the VPS IP
+curl -sI https://test.preview.hookcode.io/    # a relay 401/404, never a TLS error
+openssl s_client -connect test.preview.hookcode.io:443   -servername test.preview.hookcode.io </dev/null 2>/dev/null |
+  openssl x509 -noout -subject -issuer        # CN=*.preview.hookcode.io
+```
 
 ## Two hand edits to `/opt/scout` (outside this repo)
 

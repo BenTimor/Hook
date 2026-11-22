@@ -4,11 +4,17 @@ export function hashToken(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function header(req, name) {
+  if (typeof req.get === "function") return req.get(name);
+  const value = req.headers?.[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
 /** `Authorization: Bearer <opaque token>` or null. */
 export function bearerToken(req) {
-  const header = req.get("authorization");
-  if (!header) return null;
-  const match = /^Bearer\s+([A-Za-z0-9_-]{20,200})$/i.exec(header.trim());
+  const headerValue = header(req, "authorization");
+  if (!headerValue) return null;
+  const match = /^Bearer\s+([A-Za-z0-9_-]{20,200})$/i.exec(headerValue.trim());
   return match ? match[1] : null;
 }
 
@@ -18,9 +24,9 @@ export function bearerToken(req) {
  * the opaque token; the username is ignored.
  */
 function basicToken(req) {
-  const header = req.get("authorization");
-  if (!header) return null;
-  const match = /^Basic\s+([A-Za-z0-9+/=]+)$/i.exec(header.trim());
+  const headerValue = header(req, "authorization");
+  if (!headerValue) return null;
+  const match = /^Basic\s+([A-Za-z0-9+/=]+)$/i.exec(headerValue.trim());
   if (!match) return null;
   let raw = "";
   try {
@@ -45,7 +51,7 @@ export function requestToken(req) {
  * other computers signed in to the same account.
  */
 export function deviceId(req) {
-  const value = req.get("x-hook-device") ?? "";
+  const value = header(req, "x-hook-device") ?? "";
   return /^[A-Za-z0-9_-]{8,64}$/.test(value) ? value : null;
 }
 
@@ -67,7 +73,8 @@ export function apiUser(db, req, scope = "app") {
   }
   const row = db
     .prepare(
-      `SELECT s.*, t.token_hash, t.revoked_at AS token_revoked_at
+      `SELECT s.*, t.token_hash, t.revoked_at AS token_revoked_at,
+              t.device_id AS token_device_id
        FROM api_tokens t
        JOIN waitlist_signups s ON s.google_subject = t.google_subject
        WHERE t.token_hash = ? AND t.scope = ?`,

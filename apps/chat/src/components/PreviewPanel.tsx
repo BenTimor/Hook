@@ -209,7 +209,9 @@ export function PreviewPanel() {
                   : "Hook Workspace"
               }
             >
-              {kind === "page" ? `${shown.project} / ${shown.file}` : "Hook Workspace"}
+              {kind === "page"
+                ? `${shown.deviceName ? `${shown.deviceName} · ` : ""}${shown.project} / ${shown.file}`
+                : "Hook Workspace"}
             </div>
           </div>
           {live && (

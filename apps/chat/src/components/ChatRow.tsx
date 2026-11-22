@@ -31,8 +31,13 @@ export function ChatRow({ chat, active, streaming }: Props) {
   const changeCodingFolder = useChatStore((s) => s.changeCodingFolder);
   const openSettings = useChatStore((s) => s.openSettings);
   const sync = useChatStore((s) => s.sync);
+  const devices = useChatStore((s) => s.devices?.devices);
 
   const coding = isCodingChat(chat);
+  const knownMachine = devices?.find((device) => device.id === chat.deviceId)?.name;
+  const machine = chat.remote
+    ? knownMachine ?? chat.deviceName ?? "another machine"
+    : null;
   // A coding chat is local by design (its folder and engine live on this
   // computer), so the cloud mark is about ordinary conversations only. When
   // sync is off, every one of them stays here until the account allows it.
@@ -77,7 +82,14 @@ export function ChatRow({ chat, active, streaming }: Props) {
     >
       {chat.pinned && <Pin className="row-pin" strokeWidth={2} />}
       {coding && (
-        <span className="row-badge" title={`Coding agent — ${chat.projectPath ?? ""}`}>
+        <span
+          className="row-badge"
+          title={
+            machine
+              ? `Coding agent on ${machine}`
+              : `Coding agent — ${chat.projectPath ?? ""}`
+          }
+        >
           <SquareTerminal strokeWidth={2} />
         </span>
       )}
@@ -105,6 +117,12 @@ export function ChatRow({ chat, active, streaming }: Props) {
         />
       ) : (
         <span className="row-title">{chat.title}</span>
+      )}
+
+      {machine && (
+        <span className="row-device" title={`Lives on ${machine}`}>
+          {machine}
+        </span>
       )}
 
       {unsynced && (
@@ -160,7 +178,7 @@ export function ChatRow({ chat, active, streaming }: Props) {
               <Pencil strokeWidth={1.8} />
               Rename
             </DropdownMenu.Item>
-            {coding && (
+            {coding && !chat.remote && (
               <>
                 <DropdownMenu.Item
                   className="menu-item"
@@ -180,15 +198,24 @@ export function ChatRow({ chat, active, streaming }: Props) {
                 </DropdownMenu.Item>
               </>
             )}
-            <DropdownMenu.Separator className="menu-sep" />
-            <DropdownMenu.Item
-              className="menu-item"
-              data-danger="true"
-              onSelect={() => void remove(chat.id)}
-            >
-              <Trash2 strokeWidth={1.8} />
-              Delete
-            </DropdownMenu.Item>
+            {chat.remote ? (
+              <DropdownMenu.Item className="menu-item" disabled>
+                <SquareTerminal strokeWidth={1.8} />
+                Lives on {machine}
+              </DropdownMenu.Item>
+            ) : (
+              <>
+                <DropdownMenu.Separator className="menu-sep" />
+                <DropdownMenu.Item
+                  className="menu-item"
+                  data-danger="true"
+                  onSelect={() => void remove(chat.id)}
+                >
+                  <Trash2 strokeWidth={1.8} />
+                  Delete
+                </DropdownMenu.Item>
+              </>
+            )}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>

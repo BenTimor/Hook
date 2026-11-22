@@ -822,3 +822,346 @@
     animation: none;
   }
 }
+
+/* ── Machines (Settings → Your machines, shared by Hook and HookCode) ───── */
+
+.machines {
+  margin-top: 8px;
+}
+
+.machine-note {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+.machine-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.machine-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-shell);
+  background: var(--panel);
+}
+
+.machine-icon {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-row);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.machine-copy {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.machine-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.machine-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.machine-badge[data-host="true"] {
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.machine-meta,
+.machine-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.machine-status {
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.machine-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-4);
+}
+
+.machine-dot[data-online="true"] {
+  background: var(--ok);
+}
+
+.machine-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.machine-btn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.machine-btn:hover {
+  background: var(--panel-hover);
+  color: var(--ink);
+}
+
+.machine-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.machine-rename {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.machine-rename input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-row);
+  background: var(--ivory);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.machine-toggle {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.machine-toggle input {
+  width: 14px;
+  height: 14px;
+}
+
+.machine-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+/* Choosing the computer a direct coding chat lives on. The shell is the report
+   dialog's; these are the machine and project rows inside it. */
+
+.remote-dialog {
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+}
+
+.remote-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.remote-project-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.remote-link {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.remote-link:hover {
+  text-decoration: underline;
+}
+
+.remote-project-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  background: var(--panel);
+}
+
+.remote-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--ivory);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.remote-input::placeholder {
+  color: var(--ink-3);
+}
+
+.remote-project-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.remote-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  background: var(--panel);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.remote-machines,
+.remote-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 210px;
+  overflow: auto;
+}
+
+.remote-machine,
+.remote-project {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  background: var(--ivory);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.remote-machine:hover,
+.remote-project:hover {
+  border-color: var(--line-strong);
+}
+
+.remote-machine[data-active="true"],
+.remote-project[data-active="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.remote-machine svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+}
+
+.remote-machine-copy,
+.remote-project span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.remote-machine-copy strong,
+.remote-project strong {
+  font-size: 13px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-machine-copy em,
+.remote-project em {
+  font-size: 11.5px;
+  font-style: normal;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-project {
+  padding: 9px 10px;
+}
+
+.remote-git {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.remote-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}

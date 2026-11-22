@@ -6,6 +6,7 @@ import {
   onAgentsEvent,
   onAuthEvent,
   onChatEvent,
+  onDevicesEvent,
   onPreviewEvent,
   onSyncEvent,
 } from "../lib/bridge";
@@ -20,6 +21,7 @@ import type {
   SettingsView,
   StreamEvent,
   SyncView,
+  DevicesView,
 } from "../lib/types";
 import { sortMetas, upsertMeta, isCodingChat } from "../lib/utils";
 
@@ -61,6 +63,10 @@ interface ChatStore {
   settings: SettingsView | null;
   /** Whether conversations may leave this computer, and why not when they may not. */
   sync: SyncView | null;
+  /** The account's machines and this device's relay state. */
+  devices: DevicesView | null;
+  /** Why the cached copy of a remote chat could not refresh, if it could not. */
+  remoteErrors: Record<string, string>;
   settingsOpen: boolean;
   /** The coding agent whose transcript the inspector is showing, if any. */
   inspectAgentId: string | null;
@@ -77,6 +83,8 @@ interface ChatStore {
    * in it. Advanced mode only; the backend refuses otherwise.
    */
   newCodingChat: () => Promise<void>;
+  /** Start a direct coding chat on another machine, in one of its projects. */
+  newRemoteCodingChat: (deviceId: string, project: string) => Promise<void>;
   /** Point a coding chat at another folder (a moved or renamed project). */
   changeCodingFolder: (id: string) => Promise<void>;
   /** Answer a question the active coding agent is blocked on. */
@@ -103,6 +111,11 @@ interface ChatStore {
   setCloudSync: (enabled: boolean) => Promise<void>;
   /** Re-read whether data is moving; Settings polls it while open. */
   refreshSync: () => Promise<void>;
+  /** Re-read the machines list (the relay pushes it too). */
+  refreshDevices: () => Promise<void>;
+  renameDevice: (id: string, name: string) => Promise<void>;
+  setDeviceRemote: (id: string, allowed: boolean) => Promise<void>;
+  removeDevice: (id: string) => Promise<void>;
   /** Save this product's own model endpoint and key. Throws with a readable reason. */
   saveCustomProvider: (baseUrl: string, apiKey: string, model: string) => Promise<void>;
   clearCustomProvider: () => Promise<void>;
@@ -127,6 +140,37 @@ function visible(messages: Message[]): Message[] {
   return messages.filter((m) => m.role !== "system");
 }
 
+/** Keep a cached chat's local identity when its owner sends an event. The
+ * host's meta names its own folder and session; neither exists here. */
+function cachedMeta(meta: ChatMeta, local: ChatMeta | undefined): ChatMeta {
+  if (!local?.remote) return meta;
+  return {
+    ...meta,
+    remote: true,
+    deviceId: local.deviceId,
+    deviceName: local.deviceName ?? meta.deviceName,
+    projectPath: undefined,
+    sessionId: undefined,
+    pinned: local.pinned,
+    pinnedAt: local.pinnedAt,
+    stubState: local.stubState,
+  };
+}
+
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
+/** Union a streamed turn into what is on screen. A turn on another machine
+ * carries its own view of the chat, which may not include a reply this device
+ * wrote a moment ago; losing it would make the window flicker. */
+function mergeMessages(local: Message[], incoming: Message[]): Message[] {
+  const known = new Set(incoming.map((message) => message.id));
+  return [...incoming, ...local.filter((message) => !known.has(message.id))];
+}
+
 function settle(messages: Message[], streaming: boolean): Message[] {
   const shown = visible(messages);
   if (streaming) return shown;
@@ -140,18 +184,21 @@ let booting = false;
 let unsubscribe: (() => void) | null = null;
 let unsubscribeAuth: (() => void) | null = null;
 let unsubscribeSync: (() => void) | null = null;
+let unsubscribeDevices: (() => void) | null = null;
 
 export const useChatStore = create<ChatStore>((set, get) => {
   /** Load everything that belongs to the signed-in window. */
   const loadWorkspace = async () => {
-    const [info, chats, agents, preview, settings, sync] = await Promise.all([
-      api.appInfo(),
-      api.listChats(),
-      api.agentsOverview(),
-      api.previewState(),
-      api.getSettings(),
-      api.syncStatus(),
-    ]);
+    const [info, chats, agents, preview, settings, sync, devices] =
+      await Promise.all([
+        api.appInfo(),
+        api.listChats(),
+        api.agentsOverview(),
+        api.previewState(),
+        api.getSettings(),
+        api.syncStatus(),
+        api.devices(),
+      ]);
     set({
       info,
       chats: sortMetas(chats),
@@ -165,6 +212,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // The sidebar draws the "not synced" mark from this, so it is read once
       // per window rather than polling from Settings.
       sync,
+      devices,
     });
   };
 
@@ -255,7 +303,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
         set((state) => {
           const shows = state.activeId === chatId || state.pendingNewChat;
           return {
-            chats: upsertMeta(state.chats, event.meta),
+            chats: upsertMeta(
+              state.chats,
+              cachedMeta(
+                event.meta,
+                state.chats.find((chat) => chat.id === chatId),
+              ),
+            ),
             // A new turn opens the activity line with "Thinking"; the next
             // model call of the same turn leaves what is already queued.
             activity: state.activity[chatId]
@@ -270,7 +324,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
             ...(shows
               ? {
                   activeId: chatId,
-                  messages: visible(event.messages),
+                  messages: visible(mergeMessages(state.messages, event.messages)),
                   pendingNewChat: false,
                 }
               : {}),
@@ -319,9 +373,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
           return {
             streams,
             activity,
-            chats: upsertMeta(state.chats, event.meta),
+            chats: upsertMeta(
+              state.chats,
+              cachedMeta(
+                event.meta,
+                state.chats.find((chat) => chat.id === chatId),
+              ),
+            ),
             ...(state.activeId === chatId
-              ? { messages: settle(event.messages, false) }
+              ? {
+                  messages: settle(
+                    mergeMessages(state.messages, event.messages),
+                    false,
+                  ),
+                }
               : {}),
           };
         });
@@ -336,9 +401,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
           return {
             streams,
             activity,
-            chats: upsertMeta(state.chats, event.meta),
+            chats: upsertMeta(
+              state.chats,
+              cachedMeta(
+                event.meta,
+                state.chats.find((chat) => chat.id === chatId),
+              ),
+            ),
             ...(state.activeId === chatId
-              ? { messages: settle(event.messages, false) }
+              ? {
+                  messages: settle(
+                    mergeMessages(state.messages, event.messages),
+                    false,
+                  ),
+                }
               : {}),
           };
         });
@@ -371,6 +447,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
     previewOpen: false,
     settings: null,
     sync: null,
+    devices: null,
+    remoteErrors: {},
     settingsOpen: false,
     inspectAgentId: null,
 
@@ -399,6 +477,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
               get().activity[activeId]
             )
               return;
+            // A cached remote chat is refreshed by `select`; its stub is not a
+            // reason to replace the messages this device already has.
+            if (get().chats.find((chat) => chat.id === activeId)?.remote) return;
             void api
               .getChat(activeId)
               .then((chat) => {
@@ -425,6 +506,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         void get().refreshAuth();
         void api.syncNow();
       });
+      unsubscribeDevices?.();
+      unsubscribeDevices = onDevicesEvent((view) => set({ devices: view }));
       onAgentsEvent((overview) => set({ agents: overview }));
       onPreviewEvent((preview) => {
         if (!preview.active) {
@@ -533,12 +616,41 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
     },
 
+    newRemoteCodingChat: async (deviceId, project) => {
+      if (!get().auth?.signedIn) {
+        toast.error("Sign in to Hook to start a coding agent.");
+        return;
+      }
+      try {
+        const meta = await api.createRemoteCodingChat(deviceId, project);
+        set((state) => ({
+          chats: upsertMeta(state.chats, meta),
+          activeId: meta.id,
+          messages: [],
+          draft: "",
+          draftImages: [],
+          inspectAgentId: null,
+          remoteErrors: without(state.remoteErrors, meta.id),
+          focusToken: state.focusToken + 1,
+        }));
+        void api.subscribeChat(meta.id);
+      } catch (error) {
+        toast.error(textOf(error));
+        throw error;
+      }
+    },
     select: async (id) => {
       if (get().activeId === id) return;
+      const previous = get().activeId;
+      if (previous && previous !== id) void api.unsubscribeChat(previous);
       if (id === null) {
         set({ activeId: null, messages: [], inspectAgentId: null });
         return;
       }
+      // Live events for this chat can come from another machine. The relay
+      // keeps the subscription across a reconnect and drops it when the chat
+      // is left.
+      void api.subscribeChat(id);
       try {
         const chat = await api.getChat(id);
         // Coding agents are part of the advanced view. The list already hides
@@ -555,9 +667,45 @@ export const useChatStore = create<ChatStore>((set, get) => {
           inspectAgentId: null,
           messages: settle(
             chat.messages,
-            Boolean(get().streams[id] || get().activity[id]),
+            Boolean(
+              get().streams[id] ||
+                get().activity[id] ||
+                (chat.meta.remote &&
+                  chat.messages.some((message) => message.status === "streaming")),
+            ),
           ),
+          remoteErrors: without(get().remoteErrors, id),
         });
+        if (chat.meta.remote) {
+          // The cache is what opens immediately. Ask its owner for the current
+          // transcript in the background; an offline host leaves the cache.
+          void api
+            .fetchRemoteChat(id)
+            .then((remote) => {
+              if (get().activeId !== id) return;
+              set((state) => ({
+                messages: settle(
+                  mergeMessages(state.messages, remote.messages),
+                  Boolean(
+                    state.streams[id] ||
+                      state.activity[id] ||
+                      remote.messages.some(
+                        (message) => message.status === "streaming",
+                      ),
+                  ),
+                ),
+                chats: upsertMeta(state.chats, remote.meta),
+                remoteErrors: without(state.remoteErrors, id),
+              }));
+            })
+            .catch((error) => {
+              if (get().activeId === id) {
+                set((state) => ({
+                  remoteErrors: { ...state.remoteErrors, [id]: textOf(error) },
+                }));
+              }
+            });
+        }
       } catch (error) {
         toast.error(textOf(error));
       }
@@ -838,6 +986,29 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
     },
 
+    refreshDevices: async () => {
+      try {
+        set({ devices: await api.devices() });
+      } catch {
+        // The relay pushes presence; a slow HTTP read is not worth a toast.
+      }
+    },
+
+    renameDevice: async (id, name) => {
+      await api.renameDevice(id, name);
+      await get().refreshDevices();
+    },
+
+    setDeviceRemote: async (id, allowed) => {
+      await api.setDeviceRemote(id, allowed);
+      await get().refreshDevices();
+    },
+
+    removeDevice: async (id) => {
+      await api.removeDevice(id);
+      await get().refreshDevices();
+    },
+
     saveCustomProvider: async (baseUrl, apiKey, model) => {
       const settings = await api.setCustomProvider(baseUrl, apiKey, model);
       set({ settings });
@@ -872,9 +1043,23 @@ export const useChatStore = create<ChatStore>((set, get) => {
     },
 
     stopChatAgents: async () => {
-      const { activeId } = get();
+      const { activeId, agents, devices } = get();
       if (!activeId) return;
       try {
+        // A chat can have runs on several machines. The local command stops
+        // this one; the rest are asked directly, and each host publishes the
+        // updated board back over the relay.
+        const remote = agents.agents.filter(
+          (agent) =>
+            agent.chatId === activeId &&
+            agent.deviceId &&
+            agent.deviceId !== devices?.selfId,
+        );
+        await Promise.allSettled(
+          remote.map((agent) =>
+            api.stopRemoteAgent(agent.deviceId!, agent.id),
+          ),
+        );
         const overview = await api.stopChatAgents(activeId);
         set({ agents: overview });
         toast("Coding agent stopped", { duration: 4000 });

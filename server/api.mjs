@@ -865,7 +865,53 @@ function openWaitlist(dbPath = "waitlist-data/signups.sqlite") {
       PRIMARY KEY (google_subject, entry_id)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS sync_memory_seq
-      ON sync_memory (google_subject, seq);`);
+      ON sync_memory (google_subject, seq);
+
+    -- The fact that a direct coding chat exists on a machine. The conversation
+    -- itself stays there: no messages, no folder and no session ever enter this
+    -- row. A viewer uses the stub to list the chat and to know which host to ask
+    -- for the transcript. The device_id column is the owner; another device
+    -- may not overwrite its stub.
+    CREATE TABLE IF NOT EXISTS sync_remote_chats (
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      chat_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      title TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'idle',
+      message_count INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (google_subject, chat_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS sync_remote_chat_seq
+      ON sync_remote_chats (google_subject, seq);
+
+    -- One row per machine the account knows. This is the registry the relay
+    -- and the Machines UI read; the live connection state is in memory and is
+    -- merged in at read time. A name is the account's, not the device's: the
+    -- first registration seeds it and every later one keeps it, so two products
+    -- sharing a device id cannot rename each other on startup.
+    CREATE TABLE IF NOT EXISTS devices (
+      google_subject TEXT NOT NULL REFERENCES waitlist_signups(google_subject) ON DELETE CASCADE,
+      device_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'desktop',
+      platform TEXT,
+      arch TEXT,
+      app_version TEXT,
+      product TEXT,
+      can_host INTEGER NOT NULL DEFAULT 0,
+      capabilities TEXT,
+      specs TEXT,
+      remote_allowed INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (${NOW}),
+      last_seen_at TEXT NOT NULL DEFAULT (${NOW}),
+      PRIMARY KEY (google_subject, device_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS device_owner
+      ON devices (google_subject, last_seen_at);`);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

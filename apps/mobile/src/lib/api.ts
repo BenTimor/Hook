@@ -8,7 +8,10 @@ import type {
   AuthView,
   Chat,
   ChatMeta,
+  DeviceView,
+  DevicesView,
   PreviewEvent,
+  RemoteProject,
   SettingsView,
   StreamEvent,
   SyncEvent,
@@ -81,6 +84,40 @@ export const mobile = {
   getChat: (chatId: string): Promise<Chat> =>
     isTauri() ? invoke<Chat>("get_chat", { chatId }) : demo.getChat(chatId),
 
+  /** Read a cached remote chat's transcript from the machine that owns it. */
+  fetchRemoteChat: (chatId: string): Promise<Chat> =>
+    isTauri()
+      ? invoke<Chat>("fetch_remote_chat", { chatId })
+      : demo.fetchRemoteChat(chatId),
+
+  /** Start a direct coding chat on another machine. */
+  createRemoteCodingChat: (
+    deviceId: string,
+    project: string,
+  ): Promise<ChatMeta> =>
+    isTauri()
+      ? invoke<ChatMeta>("create_remote_coding_chat", { deviceId, project })
+      : demo.createRemoteCodingChat(deviceId, project),
+
+  remoteProjects: (deviceId: string): Promise<RemoteProject[]> =>
+    isTauri()
+      ? invoke<RemoteProject[]>("remote_projects", { deviceId })
+      : demo.remoteProjects(deviceId),
+
+  /** Create a project folder on another machine. */
+  createRemoteProject: (
+    deviceId: string,
+    name: string,
+    description = "",
+  ): Promise<RemoteProject> =>
+    isTauri()
+      ? invoke<RemoteProject>("remote_create_project", {
+          deviceId,
+          name,
+          description,
+        })
+      : demo.createRemoteProject(deviceId, name, description),
+
   renameChat: (chatId: string, title: string): Promise<void> =>
     isTauri() ? invoke<void>("rename_chat", { chatId, title }) : demo.renameChat(),
 
@@ -150,6 +187,31 @@ export const mobile = {
   syncStatus: (): Promise<SyncView> =>
     isTauri() ? invoke<SyncView>("sync_status") : demo.syncStatus(),
 
+  /** The account's machines and this phone's relay state. */
+  devices: (): Promise<DevicesView> =>
+    isTauri() ? invoke<DevicesView>("devices_list") : demo.devices(),
+
+  subscribeChat: (chatId: string): Promise<void> =>
+    isTauri() ? invoke<void>("subscribe_chat", { chatId }) : Promise.resolve(),
+
+  unsubscribeChat: (chatId: string): Promise<void> =>
+    isTauri() ? invoke<void>("unsubscribe_chat", { chatId }) : Promise.resolve(),
+
+  renameDevice: (deviceId: string, name: string): Promise<DeviceView> =>
+    isTauri()
+      ? invoke<DeviceView>("device_rename", { deviceId, name })
+      : demo.renameDevice(deviceId, name),
+
+  setDeviceRemote: (deviceId: string, allowed: boolean): Promise<DeviceView> =>
+    isTauri()
+      ? invoke<DeviceView>("device_set_remote", { deviceId, allowed })
+      : demo.setDeviceRemote(deviceId, allowed),
+
+  removeDevice: (deviceId: string): Promise<void> =>
+    isTauri()
+      ? invoke<void>("device_remove", { deviceId })
+      : demo.removeDevice(deviceId),
+
   syncNow: (): Promise<void> =>
     isTauri() ? invoke<void>("sync_now") : demo.noop(),
 
@@ -186,6 +248,10 @@ export const mobile = {
 
   onSync: (listener: (event: SyncEvent) => void): (() => void) =>
     subscribe("hook://sync", listener),
+
+  /** The relay's presence changed, or this phone's connection did. */
+  onDevices: (listener: (view: DevicesView) => void): (() => void) =>
+    subscribe("hook://devices", listener),
 };
 
 function subscribe<T>(event: string, listener: (payload: T) => void): () => void {

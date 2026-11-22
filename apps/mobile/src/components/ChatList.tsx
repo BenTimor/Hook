@@ -8,6 +8,7 @@ import {
   PinOff,
   Plus,
   Settings,
+  SquareTerminal,
   Trash2,
 } from "lucide-react";
 
@@ -33,6 +34,7 @@ export function ChatList({
   onSettings: () => void;
 }) {
   const chats = useMobileChat((s) => s.chats);
+  const devices = useMobileChat((s) => s.devices?.devices);
   const sync = useMobileChat((s) => s.sync);
   const open = useMobileChat((s) => s.open);
   const newChat = useMobileChat((s) => s.newChat);
@@ -103,7 +105,13 @@ export function ChatList({
                     {chat.title}
                   </span>
                   <span className="row-preview">
-                    {chat.preview || "No reply yet"}
+                    {chat.remote
+                      ? `On ${
+                          devices?.find((device) => device.id === chat.deviceId)?.name ??
+                          chat.deviceName ??
+                          "another machine"
+                        }`
+                      : chat.preview || "No reply yet"}
                   </span>
                 </div>
                 <span className="row-when">{when(chat.updatedAt)}</span>
@@ -190,23 +198,30 @@ export function ChatList({
                 <Pencil strokeWidth={1.8} />
                 Rename
               </button>
-              <button
-                className="action action-danger"
-                onClick={() => {
-                  if (!confirmingDelete) {
-                    // A phone deletes with a thumb, so the second tap is the
-                    // confirmation. The desktop has an undo in its toast; there
-                    // is nowhere to put one here.
-                    setConfirmingDelete(true);
-                    return;
-                  }
-                  void removeChat(actionsFor.id);
-                  closeActions();
-                }}
-              >
-                <Trash2 strokeWidth={1.8} />
-                {confirmingDelete ? "Delete permanently" : "Delete"}
-              </button>
+              {actionsFor.remote ? (
+                <button className="action" disabled>
+                  <SquareTerminal strokeWidth={1.8} />
+                  Lives on {actionsFor.deviceName ?? "another machine"}
+                </button>
+              ) : (
+                <button
+                  className="action action-danger"
+                  onClick={() => {
+                    if (!confirmingDelete) {
+                      // A phone deletes with a thumb, so the second tap is the
+                      // confirmation. The desktop has an undo in its toast; there
+                      // is nowhere to put one here.
+                      setConfirmingDelete(true);
+                      return;
+                    }
+                    void removeChat(actionsFor.id);
+                    closeActions();
+                  }}
+                >
+                  <Trash2 strokeWidth={1.8} />
+                  {confirmingDelete ? "Delete permanently" : "Delete"}
+                </button>
+              )}
             </div>
           </div>
         </div>

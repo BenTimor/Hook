@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, Pin, Plus, Search, Settings2, SquareTerminal, X } from "lucide-react";
+import { ChevronDown, Laptop, Pin, Plus, Search, Settings2, SquareTerminal, X } from "lucide-react";
 
 import { api } from "../lib/bridge";
 import type { SearchHit } from "../lib/types";
@@ -10,6 +10,7 @@ import { isLiveAgent } from "../lib/agents";
 import { AgentTree } from "./AgentTree";
 import { ChatRow } from "./ChatRow";
 import { HookMark } from "@hook/ui";
+import { RemoteChatDialog } from "@hook/chat";
 
 export function Sidebar() {
   const chats = useChatStore((s) => s.chats);
@@ -20,6 +21,8 @@ export function Sidebar() {
   const select = useChatStore((s) => s.select);
   const newChat = useChatStore((s) => s.newChat);
   const newCodingChat = useChatStore((s) => s.newCodingChat);
+  const newRemoteCodingChat = useChatStore((s) => s.newRemoteCodingChat);
+  const devices = useChatStore((s) => s.devices);
   const info = useChatStore((s) => s.info);
   const open = useChatStore((s) => s.sidebarOpen);
   const searchToken = useChatStore((s) => s.searchToken);
@@ -34,6 +37,7 @@ export function Sidebar() {
 
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
+  const [remoteOpen, setRemoteOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -146,6 +150,15 @@ export function Sidebar() {
                     <SquareTerminal strokeWidth={1.8} />
                     Coding agent…
                   </DropdownMenu.Item>
+                  {settings?.plan !== "free" && (
+                    <DropdownMenu.Item
+                      className="menu-item"
+                      onSelect={() => setRemoteOpen(true)}
+                    >
+                      <Laptop strokeWidth={1.8} />
+                      Coding agent on another machine…
+                    </DropdownMenu.Item>
+                  )}
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
@@ -250,6 +263,19 @@ export function Sidebar() {
         <span className="grow" />
         <span>v{info?.version ?? "0.1.0"}</span>
       </div>
+
+      {remoteOpen && (
+        <RemoteChatDialog
+          devices={devices?.devices ?? []}
+          selfId={devices?.selfId ?? ""}
+          onClose={() => setRemoteOpen(false)}
+          loadProjects={api.remoteProjects}
+          createProject={api.createRemoteProject}
+          onCreate={(deviceId, project) =>
+            newRemoteCodingChat(deviceId, project)
+          }
+        />
+      )}
     </aside>
   );
 }

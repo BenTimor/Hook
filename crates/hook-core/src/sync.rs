@@ -32,7 +32,7 @@ use crate::git::{self, GitRuntime};
 use crate::memory::{Entry, MemoryStore};
 use crate::projects::ProjectsStore;
 use crate::settings::SettingsStore;
-use crate::store::{now_ms, Chat, Store};
+use crate::store::{now_ms, Chat, ChatMeta, Store, KIND_CODING};
 
 const CYCLE: Duration = Duration::from_secs(15);
 const MAX_BACKOFF: Duration = Duration::from_secs(120);
@@ -74,6 +74,13 @@ struct SyncState {
     media: Vec<String>,
     /// Projects whose repository is prepared on this machine.
     prepared: Vec<String>,
+    /// Fingerprint of each owned direct chat's stub as last accepted, so an
+    /// unchanged stub is not pushed every cycle.
+    #[serde(default)]
+    stub_versions: HashMap<String, String>,
+    /// Stubs whose chat was deleted here; sent once, then forgotten.
+    #[serde(default)]
+    pending_stub_deletes: Vec<String>,
 }
 
 /// What the Settings sheet (and support) can show without exposing any git.
@@ -223,6 +230,35 @@ impl SyncEngine {
         self.notify.notify_one();
     }
 
+    /// A deleted direct chat is back. Drop the tombstone that has not been sent
+    /// yet and let the next push describe it again.
+    pub fn revive_stub(&self, chat_id: &str) {
+        {
+            let mut state = lock(&self.state);
+            state.pending_stub_deletes.retain(|id| id != chat_id);
+            state.stub_versions.remove(chat_id);
+        }
+        let _ = self.save_state();
+        self.notify.notify_one();
+    }
+
+    /// The owner deleted a direct chat: its stub has to go too, or every other
+    /// device keeps listing a conversation that no longer exists. The tombstone
+    /// is sent on the next cycle; the chat file is already gone by then.
+    pub fn forget_stub(&self, chat_id: &str) {
+        {
+            let mut state = lock(&self.state);
+            if !state.pending_stub_deletes.iter().any(|id| id == chat_id) {
+                state.pending_stub_deletes.push(chat_id.to_string());
+            }
+            state.stub_versions.remove(chat_id);
+        }
+        if let Err(error) = self.save_state() {
+            eprintln!("hook: could not remember a deleted remote stub: {error}");
+        }
+        self.notify.notify_one();
+    }
+
     pub fn spawn(self: Arc<Self>) {
         tauri::async_runtime::spawn(async move {
             let mut failures = 0u32;
@@ -303,6 +339,11 @@ impl SyncEngine {
         lock(&self.view).state = "syncing".into();
         self.configure_git().await;
         self.push_chats(&token).await?;
+        // A stub is a convenience for other devices; an older account service
+        // without the route must not stop ordinary chats from syncing.
+        if let Err(error) = self.push_remote_stubs(&token).await {
+            eprintln!("hook: remote chat stubs: {error}");
+        }
         self.push_projects(&token).await?;
         self.push_memory(&token).await?;
         self.pull(&token).await?;
@@ -450,6 +491,120 @@ impl SyncEngine {
     }
 
     // ── push ────────────────────────────────────────────────────────────
+    /// Push the existence of this machine's direct coding chats. The stub is
+    /// deliberately tiny: a viewer learns there is a conversation, which host
+    /// owns it and that it is running, and asks that host for the transcript
+    /// over the relay. No message, folder or session id enters the account.
+    async fn push_remote_stubs(&self, token: &str) -> Result<(), String> {
+        let device = self.auth.device_id();
+        let owned: Vec<ChatMeta> = self
+            .store
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|meta| meta.is_owned_coding(&device))
+            .collect();
+        let pending = lock(&self.state).pending_stub_deletes.clone();
+        let mut chats: Vec<Value> = Vec::new();
+        let mut versions: HashMap<String, String> = HashMap::new();
+        for meta in owned {
+            let state = self.stub_state(&meta.id);
+            let fingerprint = format!(
+                "{}|{}|{}|{}",
+                meta.updated_at, meta.message_count, state, meta.title
+            );
+            let unchanged = lock(&self.state)
+                .stub_versions
+                .get(&meta.id)
+                .map(|known| known == &fingerprint)
+                .unwrap_or(false);
+            if unchanged {
+                continue;
+            }
+            chats.push(json!({
+                "id": meta.id,
+                "title": meta.title,
+                "createdAt": meta.created_at,
+                "updatedAt": meta.updated_at,
+                "state": state,
+                "messageCount": meta.message_count,
+                "deleted": false,
+            }));
+            versions.insert(meta.id, fingerprint);
+        }
+        for id in &pending {
+            chats.push(json!({
+                "id": id,
+                "deleted": true,
+                "updatedAt": now_ms(),
+            }));
+        }
+        if chats.is_empty() {
+            return Ok(());
+        }
+
+        for batch in chats.chunks(MAX_BATCH) {
+            let response = self
+                .post(token, "/api/sync/remote-chats", json!({ "chats": batch }))
+                .await?;
+            let accepted: std::collections::HashSet<String> = response["chats"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|item| item["ok"].as_bool() == Some(true))
+                .filter_map(|item| item["id"].as_str().map(str::to_string))
+                .collect();
+            let mut guard = lock(&self.state);
+            for item in batch {
+                let Some(id) = item["id"].as_str() else {
+                    continue;
+                };
+                if item["deleted"].as_bool() == Some(true) {
+                    if accepted.contains(id) {
+                        guard.pending_stub_deletes.retain(|pending| pending != id);
+                    }
+                } else if accepted.contains(id) {
+                    if let Some(fingerprint) = versions.get(id) {
+                        guard.stub_versions.insert(id.to_string(), fingerprint.clone());
+                    }
+                } else {
+                    // The server refused (the row belongs to another device).
+                    // Retrying the same id would only repeat the refusal; keep
+                    // the version we know so the next mutation tries again.
+                    guard.stub_versions.remove(id);
+                }
+            }
+        }
+        self.save_state()
+    }
+
+    /// `running` when the engine is writing, `error` when the last reply is one;
+    /// otherwise idle. This is the durable half of the badge a viewer draws from
+    /// a stub; live state also arrives over the relay while the chat is open.
+    fn stub_state(&self, chat_id: &str) -> String {
+        let Ok(chat) = self.store.load(chat_id) else {
+            return "idle".into();
+        };
+        if chat
+            .messages
+            .iter()
+            .any(|message| message.status == "streaming")
+        {
+            return "running".into();
+        }
+        match chat
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "assistant")
+            .map(|message| message.status.as_str())
+        {
+            Some("error") => "error".into(),
+            _ => "idle".into(),
+        }
+    }
+
     async fn push_chats(&self, token: &str) -> Result<(), String> {
         let mut ids = self.store.dirty_ids();
         for id in lock(&self.state).pending_chats.clone() {
@@ -888,6 +1043,58 @@ impl SyncEngine {
                                 eprintln!("hook: could not apply a synced chat: {error}");
                             } else {
                                 chats_changed = true;
+                            }
+                        }
+                    }
+                    "remoteChat" => {
+                        let id = change["id"].as_str().unwrap_or_default();
+                        let host = change["deviceId"].as_str().unwrap_or_default();
+                        if id.is_empty() || host.is_empty() {
+                            last = seq;
+                            continue;
+                        }
+                        // This is the machine's own stub coming back. The local
+                        // chat is the original; never turn it into a cache.
+                        if host == self.auth.device_id() {
+                            last = seq;
+                            continue;
+                        }
+                        if change["deleted"].as_bool() == Some(true) {
+                            let local = self.store.load(id).ok();
+                            if local.map(|chat| chat.meta.remote).unwrap_or(false) {
+                                self.store.remove_synced(id);
+                                chats_changed = true;
+                            }
+                        } else {
+                            let meta = ChatMeta {
+                                id: id.to_string(),
+                                title: change["title"].as_str().unwrap_or("Coding agent").to_string(),
+                                created_at: change["createdAt"].as_i64().unwrap_or(0),
+                                updated_at: change["updatedAt"].as_i64().unwrap_or(0),
+                                pinned: false,
+                                pinned_at: None,
+                                message_count: change["messageCount"].as_u64().unwrap_or(0)
+                                    as usize,
+                                preview: String::new(),
+                                source: None,
+                                source_id: None,
+                                source_updated_at: None,
+                                kind: Some(KIND_CODING.to_string()),
+                                project_path: None,
+                                session_id: None,
+                                device_id: Some(host.to_string()),
+                                device_name: change["deviceName"]
+                                    .as_str()
+                                    .map(str::to_string),
+                                remote: true,
+                                stub_state: change["state"].as_str().map(str::to_string),
+                            };
+                            match self.store.apply_stub(meta) {
+                                Ok(true) => chats_changed = true,
+                                Ok(false) => {}
+                                Err(error) => {
+                                    eprintln!("hook: could not apply a remote chat: {error}")
+                                }
                             }
                         }
                     }

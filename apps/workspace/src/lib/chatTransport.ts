@@ -22,6 +22,9 @@ interface Chat {
   messages: DockMessage[];
 }
 
+/** The chat the dock is showing, so its live relay subscription follows it. */
+let liveChat: string | null = null;
+
 /** Whether this account's conversations stay on this computer. */
 async function cloudOff(): Promise<boolean> {
   try {
@@ -62,6 +65,13 @@ export const chatTransport: ChatTransport = {
 
   async getChat(id: string): Promise<{ messages: DockMessage[] }> {
     if (!isTauri()) return { messages: demoMessages.get(id) ?? [] };
+    if (liveChat && liveChat !== id) {
+      void invoke("unsubscribe_chat", { chatId: liveChat });
+    }
+    liveChat = id;
+    // A run on another machine publishes its reply on the relay; the dock is a
+    // controller even though it never shows the agent board.
+    void invoke("subscribe_chat", { chatId: id });
     const chat = await invoke<Chat>("get_chat", { chatId: id });
     return { messages: chat.messages };
   },

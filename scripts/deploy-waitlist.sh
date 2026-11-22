@@ -102,16 +102,24 @@ else
 fi
 
 CADDY_CHANGED=0
-step "Syncing $DIR/hookcode.caddy"
-ssh_do "cat > '$DIR/hookcode.caddy.new'" < infra/hookcode.caddy
-if ssh_do "cmp -s '$DIR/hookcode.caddy' '$DIR/hookcode.caddy.new'"; then
-  ssh_do "rm -f '$DIR/hookcode.caddy.new'"
-  echo "  unchanged"
-else
-  ssh_do "mv '$DIR/hookcode.caddy.new' '$DIR/hookcode.caddy'"
-  echo "  updated"
-  CADDY_CHANGED=1
-fi
+for CADDY_FILE in hookcode.caddy preview.caddy; do
+  step "Syncing $DIR/$CADDY_FILE"
+  ssh_do "cat > '$DIR/$CADDY_FILE.new'" < "infra/$CADDY_FILE"
+  if ssh_do "cmp -s '$DIR/$CADDY_FILE' '$DIR/$CADDY_FILE.new'"; then
+    ssh_do "rm -f '$DIR/$CADDY_FILE.new'"
+    echo "  unchanged"
+  else
+    ssh_do "mv '$DIR/$CADDY_FILE.new' '$DIR/$CADDY_FILE'"
+    echo "  updated"
+    CADDY_CHANGED=1
+  fi
+done
+
+# The wildcard certificate for *.preview.hookcode.io is renewed by certbot's
+# Cloudflare DNS-01 plugin, outside Caddy, and Caddy is reloaded afterwards.
+step "Installing the preview certificate renewal"
+ssh_do "cat > /etc/cron.d/hook-preview-cert" < infra/hook-preview-cert.cron
+ssh_do "chmod 644 /etc/cron.d/hook-preview-cert"
 
 step "Bootstrapping $DIR/.env + data volume"
 ssh_do "DIR='$DIR' DOMAIN='$DOMAIN' bash -s" <<'REMOTE'

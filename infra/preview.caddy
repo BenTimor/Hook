@@ -1,0 +1,21 @@
+# Per-preview origins.
+#
+# A preview is served from `<ticket>.preview.hookcode.io`, not from a path on
+# the main site. Two reasons: an HTML page that uses `/assets/...` keeps
+# working (the root of the subdomain is the preview root), and the page gets its
+# own origin instead of sharing hookcode.io's cookies and storage.
+#
+# The wildcard certificate is issued by certbot with a Cloudflare DNS-01
+# challenge (see infra/hook-preview-cert.cron) and mounted through the same
+# /opt/hook-web volume as the rest of this directory. Caddy does not try to
+# obtain its own certificate for this name.
+*.preview.hookcode.io {
+	tls /srv/hook-web/preview/live/preview-hookcode/fullchain.pem /srv/hook-web/preview/live/preview-hookcode/privkey.pem
+
+	# The relay answers HTTP requests for a ticket by tunnelling them over the
+	# machine's outbound WebSocket; there is no inbound port on the machine.
+	# flush_interval -1 keeps that stream from being buffered.
+	reverse_proxy hook-waitlist:5173 {
+		flush_interval -1
+	}
+}

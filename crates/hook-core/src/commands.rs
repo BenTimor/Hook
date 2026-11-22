@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -35,6 +36,12 @@ pub struct AppState {
     pub auth: Arc<AuthStore>,
     /// Background conversation and project sync.
     pub sync: Arc<crate::sync::SyncEngine>,
+    /// The live account connection: presence, remote commands and chat fan-out.
+    pub relay: Arc<crate::relay::RelayClient>,
+    /// Chats a controller is driving on this machine. Their live turn and agent
+    /// events are mirrored to the relay; a chat used only here never leaves the
+    /// process.
+    pub remote_chats: Arc<Mutex<HashSet<String>>>,
     /// Whether the model can see images, taken from its `/models` card.
     pub vision: Arc<std::sync::atomic::AtomicBool>,
     /// Set when the endpoint rejects image parts anyway, so later turns stop
@@ -127,6 +134,78 @@ impl AppState {
 #[tauri::command]
 pub fn sync_status(state: State<'_, Arc<AppState>>) -> crate::sync::SyncView {
     state.sync.status()
+}
+
+/// The account's machines, as last reported by the relay. The list is empty
+/// until the first connection; `state` says whether that connection is
+/// connecting, online, refused (free plan or sync off) or offline.
+#[tauri::command]
+pub fn devices_list(state: State<'_, Arc<AppState>>) -> crate::relay::RelayView {
+    state.relay.view()
+}
+
+/// Watch the live stream of one conversation. The relay remembers the
+/// subscription across a reconnect; a chat that is not open on this device is
+/// not subscribed, so its frames are simply not sent here.
+#[tauri::command]
+pub fn subscribe_chat(state: State<'_, Arc<AppState>>, chat_id: String) {
+    state.relay.subscribe(&chat_id);
+}
+
+#[tauri::command]
+pub fn unsubscribe_chat(state: State<'_, Arc<AppState>>, chat_id: String) {
+    state.relay.unsubscribe(&chat_id);
+}
+
+#[tauri::command]
+pub async fn device_rename(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    name: String,
+) -> Result<crate::devices::DeviceView, String> {
+    let auth = state.auth.clone();
+    crate::devices::rename(&auth, &device_id, &name).await
+}
+
+#[tauri::command]
+pub async fn device_set_remote(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    allowed: bool,
+) -> Result<crate::devices::DeviceView, String> {
+    let auth = state.auth.clone();
+    crate::devices::set_remote(&auth, &device_id, allowed).await
+}
+
+#[tauri::command]
+pub async fn device_remove(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+) -> Result<(), String> {
+    let auth = state.auth.clone();
+    crate::devices::remove(&auth, &device_id).await
+}
+
+/// Stop one run on another machine. The chat itself may have agents on several
+/// computers; the Stop button asks each of them, because no single process owns
+/// them all.
+#[tauri::command]
+pub async fn stop_remote_agent(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    agent_id: String,
+) -> Result<(), String> {
+    state
+        .relay
+        .rpc(
+            &device_id,
+            "agent.stop",
+            serde_json::json!({ "agentId": agent_id }),
+            std::time::Duration::from_secs(20),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| error.message)
 }
 
 // ── memory ──────────────────────────────────────────────────────────
@@ -274,6 +353,7 @@ fn emit_auth(app: &AppHandle, view: &AuthView) {
 pub(crate) fn revoke_local(state: &AppState) {
     state.agents.kill_all_sync();
     state.preview.stop();
+    state.relay.disconnect();
     for token in lock(&state.streams).values() {
         token.cancel();
     }
@@ -350,6 +430,7 @@ pub async fn auth_login(
                 // probe can finish in the background.
                 emit_auth(&poll_app, &poll_state.auth.view());
                 poll_state.sync.wake();
+                poll_state.relay.wake();
                 refresh_capabilities(&poll_state).await;
             }
             LoginOutcome::Cancelled => {
@@ -400,6 +481,7 @@ pub async fn auth_google(
     emit_auth(&app, &view);
     // A finished sign-in is when the account's conversations start arriving.
     state.sync.wake();
+    state.relay.wake();
     let ready = state.clone();
     tauri::async_runtime::spawn(async move {
         refresh_capabilities(&ready).await;
@@ -419,6 +501,7 @@ pub async fn auth_refresh(
         RefreshOutcome::Valid => {
             refresh_capabilities(&state).await;
             state.sync.wake();
+            state.relay.wake();
             Ok(state.auth.view())
         }
         RefreshOutcome::Revoked(message) => {
@@ -477,11 +560,34 @@ pub fn get_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<Chat
 }
 
 #[tauri::command]
-pub fn rename_chat(
+pub async fn rename_chat(
     state: State<'_, Arc<AppState>>,
     chat_id: String,
     title: String,
 ) -> Result<ChatMeta, String> {
+    let chat = state.store.load(&chat_id)?;
+    if chat.meta.remote {
+        let device = chat
+            .meta
+            .device_id
+            .clone()
+            .ok_or("This conversation does not know which machine owns it.")?;
+        let result = remote_rpc(
+            state.inner(),
+            &device,
+            "coding.rename",
+            serde_json::json!({ "chatId": chat_id, "title": title }),
+            Duration::from_secs(20),
+        )
+        .await?;
+        let remote: ChatMeta = serde_json::from_value(result)
+            .map_err(|error| format!("The machine sent an unreadable title: {error}"))?;
+        let mut local = state.store.load(&chat_id)?;
+        local.meta.title = remote.title;
+        local.meta.updated_at = remote.updated_at;
+        state.store.save_remote(&mut local)?;
+        return Ok(local.meta);
+    }
     let meta = state.store.rename(&chat_id, &title)?;
     state.sync.wake();
     Ok(meta)
@@ -500,6 +606,22 @@ pub fn set_pinned(
 
 #[tauri::command]
 pub fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
+    let meta = state.store.load(&chat_id).ok().map(|chat| chat.meta);
+    if let Some(meta) = &meta {
+        if meta.remote {
+            let machine = meta
+                .device_name
+                .clone()
+                .or_else(|| meta.device_id.clone())
+                .unwrap_or_else(|| "another machine".into());
+            return Err(format!(
+                "This conversation lives on {machine}. Delete it there."
+            ));
+        }
+        if meta.is_owned_coding(&state.agents.device_id()) {
+            state.sync.forget_stub(&chat_id);
+        }
+    }
     for agent in state.agents.list() {
         if agent.chat_id == chat_id && agent.is_live() {
             let _ = state.agents.stop(&agent.id);
@@ -514,6 +636,9 @@ pub fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(
 #[tauri::command]
 pub fn restore_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<ChatMeta, String> {
     let meta = state.store.restore(&chat_id)?;
+    if meta.is_owned_coding(&state.agents.device_id()) {
+        state.sync.revive_stub(&chat_id);
+    }
     state.sync.wake();
     Ok(meta)
 }
@@ -536,12 +661,13 @@ pub struct IncomingImage {
 }
 
 #[tauri::command]
-pub fn send_message(
+pub async fn send_message(
     state: State<'_, Arc<AppState>>,
     chat_id: Option<String>,
     text: String,
     images: Option<Vec<IncomingImage>>,
 ) -> Result<String, String> {
+    let app_state = state.inner().clone();
     let text = text.trim().to_string();
     let images = images.unwrap_or_default();
     if text.is_empty() && images.is_empty() {
@@ -567,9 +693,31 @@ pub fn send_message(
             return Err(coding_needs_plan().into());
         }
         // Pictures are a chat-model feature; the coding agent talks in text.
-        let state = state.inner().clone();
-        crate::coding::send(&state, &mut chat, &text)?;
-        state.sync.wake();
+        // A cached copy's owner is the one that owns the engine: ask it to
+        // append the message and let its records come back over the relay.
+        if chat.meta.remote {
+            let device = chat
+                .meta
+                .device_id
+                .clone()
+                .ok_or("This conversation does not know which machine owns it.")?;
+            let message_id = uuid::Uuid::new_v4().to_string();
+            remote_rpc(
+                &app_state,
+                &device,
+                "coding.send",
+                serde_json::json!({
+                    "chatId": chat.meta.id,
+                    "text": text,
+                    "messageId": message_id,
+                }),
+                Duration::from_secs(30),
+            )
+            .await?;
+            return Ok(chat.meta.id);
+        }
+        crate::coding::send(&app_state, &mut chat, &text)?;
+        app_state.sync.wake();
         return Ok(chat.meta.id);
     }
 
@@ -724,12 +872,29 @@ pub fn edit_message(
 }
 
 #[tauri::command]
-pub fn stop_stream(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
+pub async fn stop_stream(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
     let Ok(chat) = state.store.load(&chat_id) else {
         return Ok(());
     };
     if crate::coding::is_coding(&chat) {
-        crate::coding::stop(state.inner(), &chat_id);
+        if chat.meta.remote {
+            // Close this window's copy first: the spinner must stop even when
+            // the machine that owns the engine is unreachable. The host gets
+            // the stop over the relay.
+            crate::coding::close(state.inner(), &chat_id, "aborted");
+            if let Some(device) = chat.meta.device_id.clone() {
+                let _ = remote_rpc(
+                    state.inner(),
+                    &device,
+                    "coding.stop",
+                    serde_json::json!({ "chatId": chat_id }),
+                    Duration::from_secs(15),
+                )
+                .await;
+            }
+        } else {
+            crate::coding::stop(state.inner(), &chat_id);
+        }
         return Ok(());
     }
     let token = lock(&state.streams).get(&chat_id).cloned();
@@ -758,18 +923,254 @@ pub fn set_coding_chat_folder(
     chat_id: String,
     folder: String,
 ) -> Result<ChatMeta, String> {
+    let chat = state.store.load(&chat_id)?;
+    if chat.meta.remote {
+        let machine = chat
+            .meta
+            .device_name
+            .clone()
+            .or(chat.meta.device_id.clone())
+            .unwrap_or_else(|| "the machine that owns it".into());
+        return Err(format!(
+            "The folder belongs to {machine}. Start a different chat there instead."
+        ));
+    }
     let meta = crate::coding::set_folder(state.inner(), &chat_id, &folder)?;
     Ok(meta)
 }
 
 /// Answer a question a directly-driven coding agent is blocked on.
 #[tauri::command]
-pub fn answer_coding_agent(
+pub async fn answer_coding_agent(
     state: State<'_, Arc<AppState>>,
     chat_id: String,
     answer: String,
 ) -> Result<(), String> {
+    let chat = state.store.load(&chat_id)?;
+    if chat.meta.remote {
+        let device = chat
+            .meta
+            .device_id
+            .clone()
+            .ok_or("This conversation does not know which machine owns it.")?;
+        remote_rpc(
+            state.inner(),
+            &device,
+            "coding.answer",
+            serde_json::json!({ "chatId": chat_id, "answer": answer }),
+            Duration::from_secs(20),
+        )
+        .await?;
+        return Ok(());
+    }
     crate::coding::answer(state.inner(), &chat_id, &answer)
+}
+
+/// Remote control is a paid feature and needs the account-wide sync switch.
+/// The server enforces the same rule on the relay and the preview routes; this
+/// is the sentence a window can show without a round trip.
+fn remote_ready(state: &AppState) -> Result<(), String> {
+    if !state.auth.required() || state.auth.token().is_none() {
+        return Err("Sign in to use another machine.".into());
+    }
+    if state.auth.is_free() {
+        return Err("Remote machines are part of a paid plan.".into());
+    }
+    if state.auth.cloud_sync() == Some(false) {
+        return Err("Turn on cloud sync to use another machine.".into());
+    }
+    Ok(())
+}
+
+/// Check that a device is a host that is accepting work right now. The relay
+/// checks again on the server; this only saves a round trip and gives a clearer
+/// sentence.
+fn require_host(state: &AppState, device_id: &str) -> Result<String, String> {
+    if device_id.trim().is_empty() {
+        return Err("Choose a machine.".into());
+    }
+    let view = state.relay.view();
+    let device = view
+        .devices
+        .iter()
+        .find(|device| device.id == device_id)
+        .ok_or("That machine is not in this account.")?;
+    if !device.can_host {
+        return Err(format!("{} cannot run coding agents.", device.name));
+    }
+    if !device.remote_allowed {
+        return Err(format!(
+            "{} is not accepting remote work. Turn it on in Settings on that machine.",
+            device.name
+        ));
+    }
+    if !device.host_online {
+        return Err(format!("{} is not online.", device.name));
+    }
+    Ok(device.name.clone())
+}
+
+async fn remote_rpc(
+    state: &AppState,
+    device_id: &str,
+    method: &str,
+    params: serde_json::Value,
+    timeout: Duration,
+) -> Result<serde_json::Value, String> {
+    state
+        .relay
+        .rpc(device_id, method, params, timeout)
+        .await
+        .map_err(|failure| failure.message)
+}
+
+/// The projects a host can open a coding chat in. Only account projects: a
+/// controller never supplies an arbitrary path on another machine.
+#[tauri::command]
+pub async fn remote_projects(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    remote_ready(state.inner())?;
+    require_host(state.inner(), &device_id)?;
+    let result = remote_rpc(
+        state.inner(),
+        &device_id,
+        "projects.list",
+        serde_json::json!({}),
+        Duration::from_secs(20),
+    )
+    .await?;
+    Ok(result["projects"].as_array().cloned().unwrap_or_default())
+}
+
+/// Create a project folder on a host. The controller only supplies a name and
+/// a description; the host resolves its own projects folder.
+#[tauri::command]
+pub async fn remote_create_project(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    name: String,
+    description: Option<String>,
+) -> Result<serde_json::Value, String> {
+    remote_ready(state.inner())?;
+    require_host(state.inner(), &device_id)?;
+    remote_rpc(
+        state.inner(),
+        &device_id,
+        "projects.create",
+        serde_json::json!({
+            "name": name,
+            "description": description.unwrap_or_default(),
+        }),
+        Duration::from_secs(30),
+    )
+    .await
+}
+
+/// Create a direct coding chat on another machine. The host keeps the folder,
+/// the engine and the session; this device only stores a cache that is flagged
+/// as remote, so sync can never upload its messages.
+#[tauri::command]
+pub async fn create_remote_coding_chat(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    project: String,
+) -> Result<ChatMeta, String> {
+    remote_ready(state.inner())?;
+    if device_id == state.relay.device_id() {
+        return Err("Use Coding agent… to start a chat on this computer.".into());
+    }
+    let name = require_host(state.inner(), &device_id)?;
+    let result = remote_rpc(
+        state.inner(),
+        &device_id,
+        "coding.create",
+        serde_json::json!({ "project": project }),
+        Duration::from_secs(30),
+    )
+    .await?;
+    let mut meta: ChatMeta = serde_json::from_value(result)
+        .map_err(|error| format!("The machine sent an unreadable chat: {error}"))?;
+    meta.remote = true;
+    meta.device_id = Some(device_id);
+    meta.device_name = Some(meta.device_name.clone().unwrap_or(name));
+    // The host's folder and session are its own; a cache shows neither.
+    meta.project_path = None;
+    meta.session_id = None;
+    meta.stub_state = Some("idle".into());
+    let mut chat = Chat {
+        meta: meta.clone(),
+        messages: Vec::new(),
+    };
+    state.store.save_remote(&mut chat)?;
+    state.relay.subscribe(&meta.id);
+    Ok(meta)
+}
+
+/// Fetch the transcript of a remote chat from its owner. The cache on disk is
+/// the fallback when the machine is offline; a returned chat replaces it.
+#[tauri::command]
+pub async fn fetch_remote_chat(
+    state: State<'_, Arc<AppState>>,
+    chat_id: String,
+) -> Result<Chat, String> {
+    let local = state.store.load(&chat_id)?;
+    if !local.meta.remote {
+        return Ok(local);
+    }
+    let device = local
+        .meta
+        .device_id
+        .clone()
+        .ok_or("This conversation does not know which machine owns it.")?;
+    let result = remote_rpc(
+        state.inner(),
+        &device,
+        "coding.fetch",
+        serde_json::json!({ "chatId": chat_id }),
+        Duration::from_secs(30),
+    )
+    .await?;
+    let mut remote: Chat = serde_json::from_value(
+        result
+            .get("chat")
+            .cloned()
+            .ok_or("The machine did not send the conversation.")?,
+    )
+    .map_err(|error| format!("The machine sent an unreadable conversation: {error}"))?;
+    if remote.meta.id != chat_id {
+        return Err("The machine sent a different conversation.".into());
+    }
+    remote.meta.remote = true;
+    remote.meta.device_id = Some(device);
+    remote.meta.device_name = Some(
+        local
+            .meta
+            .device_name
+            .clone()
+            .or(remote.meta.device_name.clone())
+            .unwrap_or_else(|| "another machine".into()),
+    );
+    remote.meta.project_path = None;
+    remote.meta.session_id = None;
+    remote.meta.pinned = local.meta.pinned;
+    remote.meta.pinned_at = local.meta.pinned_at;
+    remote.meta.stub_state = Some(
+        if remote
+            .messages
+            .iter()
+            .any(|message| message.status == "streaming")
+        {
+            "running"
+        } else {
+            "idle"
+        }
+        .to_string(),
+    );
+    state.store.save_remote(&mut remote)?;
+    state.relay.subscribe(&chat_id);
+    Ok(remote)
 }
 
 #[derive(Serialize)]
@@ -922,6 +1323,11 @@ pub async fn set_cloud_sync(
     let view = state.auth.set_cloud_sync(enabled).await?;
     emit_auth(&app, &view);
     state.sync.wake();
+    if enabled {
+        state.relay.wake();
+    } else {
+        state.relay.disconnect();
+    }
     crate::analytics::track(
         &state,
         if enabled { "sync_enabled" } else { "sync_disabled" },

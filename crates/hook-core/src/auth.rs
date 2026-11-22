@@ -421,6 +421,12 @@ impl AuthStore {
         &self.base_url
     }
 
+    /// The shared HTTP client. Used by the device registry, which is part of
+    /// the account surface rather than a model request.
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.client
+    }
+
     /// The account's opaque subject, when signed in. Sync keys everything by it.
     pub fn subject(&self) -> Option<String> {
         lock(&self.session).as_ref().map(|s| s.subject.clone())

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CloudOff, KeyRound, LogOut, X } from "lucide-react";
+import { MachinesSection } from "@hook/chat";
 
 import { mobile } from "../lib/api";
 import { BACK_LAYER, useBackHandler } from "../lib/back";
@@ -187,6 +188,10 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
   const setAdvanced = useMobileChat((s) => s.setAdvanced);
   const setCloudSync = useMobileChat((s) => s.setCloudSync);
   const refreshSync = useMobileChat((s) => s.refreshSync);
+  const devices = useMobileChat((s) => s.devices);
+  const renameDevice = useMobileChat((s) => s.renameDevice);
+  const setDeviceRemote = useMobileChat((s) => s.setDeviceRemote);
+  const removeDevice = useMobileChat((s) => s.removeDevice);
   const refreshAuth = useMobileChat((s) => s.refreshAuth);
   const signOut = useMobileChat((s) => s.signOut);
   const [version, setVersion] = useState("");
@@ -301,6 +306,28 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
                 </p>
               </>
             )}
+          </div>
+
+          <div className="settings-block">
+            <div className="settings-label">
+              <span>Your machines</span>
+              <span className="settings-tag">
+                {devices?.state === "online" ? "Connected" : "…"}
+              </span>
+            </div>
+            <p className="settings-help">
+              Start coding work on a computer without being at it. Hook on that
+              computer appears here while it is running.
+            </p>
+            <MachinesSection
+              machines={devices?.devices ?? []}
+              selfId={devices?.selfId ?? ""}
+              state={devices?.state ?? "connecting"}
+              message={devices?.message}
+              onRename={(id, name) => renameDevice(id, name)}
+              onSetRemote={(id, allowed) => setDeviceRemote(id, allowed)}
+              onRemove={(id) => removeDevice(id)}
+            />
           </div>
 
           <label className="setting-row">

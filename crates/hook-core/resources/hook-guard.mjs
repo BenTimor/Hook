@@ -42,7 +42,7 @@
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 const MAX_TIMEOUT = Number(process.env.PI_BASH_MAX_TIMEOUT ?? 3600);
 const MIN_TIMEOUT = Number(process.env.PI_BASH_MIN_TIMEOUT ?? 1);
@@ -98,6 +98,7 @@ This project is stored in the user's Hook account and can be worked on from any 
 - Before doing anything else, call \`sync_pull\`. It fetches and applies the latest saved version. If it reports that nothing has been saved yet, that is normal for a new project: carry on.
 - When you finish - and also when you are blocked or stopping early - call \`sync_push\` with a short message describing what changed. Never leave finished work only on this computer.
 - If pulling reports conflicts, edit the listed files to resolve them, then call \`sync_push\`.
+- \`sync_pull\` and \`sync_push\` only work on the folder this run started in. Work in another folder is not part of the Hook project and Hook will not save it. If that folder is a git repository, use git yourself; Hook's credential only covers Hook project remotes.
 - Never force-push, never rewrite history that is already saved, and never delete a branch on the account. The guard blocks those commands.
 - Keep the repository small: do not commit node_modules, virtualenvs, build output, caches or large binaries. Hook rejects projects over its storage limit.`;
 }
@@ -204,19 +205,16 @@ function planGuidance() {
 function normalizePreviewFile(raw) {
   const text = String(raw ?? "").trim().replace(/\\/g, "/");
   if (!text) return { error: "show_preview needs a `file`." };
-  const cwd = process.cwd();
-  const absolute = resolve(cwd, text);
-  const inside = relative(cwd, absolute);
-  if (!inside || inside.startsWith("..") || isAbsolute(inside)) {
-    return { error: "The preview file must stay inside the project." };
-  }
-  if (!/\.html?$/i.test(inside)) {
+  const absolute = resolve(process.cwd(), text);
+  if (!/\.html?$/i.test(absolute)) {
     return { error: "The preview file must be an .html page." };
   }
   if (existsSync(absolute) && statSync(absolute).isDirectory()) {
     return { error: "The preview path must be an HTML file, not a folder." };
   }
-  return { file: inside.replace(/\\/g, "/"), absolute };
+  // Any HTML page on this machine. The panel serves the page's own folder, so
+  // its relative and absolute asset paths still resolve.
+  return { file: absolute, absolute };
 }
 
 /** Tell the coding agent when a preview is worth showing, and how to point it. */
@@ -521,7 +519,7 @@ export default function (pi) {
       name: "show_preview",
       label: "Show preview",
       description:
-        "Show one HTML page from this project in Hook's right-side preview panel. The panel refreshes it whenever the project changes. Optional: use it when the work has something worth looking at, and set it early - the file may not exist yet.",
+        "Show one HTML page on this machine in Hook's right-side preview panel. The panel refreshes it whenever the page's folder changes. Optional: use it when the work has something worth looking at, and set it early - the file may not exist yet.",
       promptGuidelines: [
         "Use `show_preview` for visual work: a frontend page, a UI change, a data analysis with charts, a visual report. Skip it when there is nothing to look at.",
         "Point `file` at the page the user should see, never at a source file such as App.tsx. Keep that page current while you work.",
@@ -534,7 +532,7 @@ export default function (pi) {
           file: {
             type: "string",
             description:
-              "HTML page path relative to the project, e.g. 'index.html' or 'dist/preview.html'.",
+              "HTML page path, relative to the project or absolute, e.g. 'index.html', 'dist/preview.html' or 'C:/reports/summary.html'.",
           },
           title: {
             type: "string",
@@ -571,7 +569,7 @@ export default function (pi) {
           content: [
             {
               type: "text",
-              text: `Preview set to ${checked.file}. ${state} It refreshes by itself as the project changes; call show_preview again only to switch pages.`,
+              text: `Preview set to ${basename(checked.file)}. ${state} It refreshes by itself as the page's folder changes; call show_preview again only to switch pages.`,
             },
           ],
           details: { file: checked.file, title },

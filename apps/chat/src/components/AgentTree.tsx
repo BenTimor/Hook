@@ -160,6 +160,9 @@ export function AgentTree() {
                     <span className="agent-tree-dot" aria-hidden="true" />
                     <span className="agent-tree-title">
                       {agent.title || agent.project}
+                      {agent.deviceName && (
+                        <span className="agent-machine">{agent.deviceName}</span>
+                      )}
                     </span>
                     <span className="agent-tree-state">{stateWord(agent.state)}</span>
                   </button>

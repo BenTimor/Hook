@@ -55,11 +55,10 @@ mod tests {
         assert!(GUARD_SOURCE.contains("[Hook checklist]"));
         assert!(GUARD_SOURCE.contains("without updating the user's checklist"));
         assert!(GUARD_SOURCE.contains("callsSincePlan = 0;"));
-        // The preview panel: the coding agent points it at a page from the
-        // project, and the guard refuses anything outside it or anything that
-        // is not HTML.
+        // The preview panel: any HTML page on the machine, served from its own
+        // folder. A folder is not a page, and a non-HTML file is not a page.
         assert!(GUARD_SOURCE.contains("name: \"show_preview\""));
-        assert!(GUARD_SOURCE.contains("preview file must stay inside the project"));
+        assert!(GUARD_SOURCE.contains("Any HTML page on this machine"));
         assert!(GUARD_SOURCE.contains("must be an .html page"));
         assert!(GUARD_SOURCE.contains("`v-${Date.now()}-${process.pid}.json`"));
         assert!(GUARD_SOURCE.contains("It is optional"));

@@ -20,6 +20,18 @@ export function PaneHead() {
   const preview = useChatStore((s) => s.preview);
   const previewOpen = useChatStore((s) => s.previewOpen);
   const togglePreview = useChatStore((s) => s.togglePreview);
+  const devices = useChatStore((s) => s.devices?.devices);
+  const remoteError = useChatStore((s) =>
+    s.activeId ? s.remoteErrors[s.activeId] : undefined,
+  );
+  const remoteDevice = activeChat?.remote
+    ? devices?.find((device) => device.id === activeChat.deviceId)
+    : undefined;
+  const remoteName =
+    remoteDevice?.name ?? activeChat?.deviceName ?? "another machine";
+  const remoteOffline = Boolean(
+    activeChat?.remote && (remoteError || (remoteDevice && !remoteDevice.hostOnline)),
+  );
 
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
@@ -83,10 +95,20 @@ export function PaneHead() {
       {coding && (
         <span
           className="pane-chip"
-          title={activeChat?.projectPath ?? "Coding agent"}
+          data-remote={activeChat?.remote ? "true" : undefined}
+          data-offline={remoteOffline ? "true" : undefined}
+          title={
+            activeChat?.remote
+              ? `On ${remoteName}${remoteOffline ? " (offline)" : ""}${
+                  remoteError ? ` — ${remoteError}` : ""
+                }`
+              : activeChat?.projectPath ?? "Coding agent"
+          }
         >
           <SquareTerminal strokeWidth={2} />
-          Coding agent
+          {activeChat?.remote
+            ? `On ${remoteName}${remoteOffline ? " · offline" : ""}`
+            : "Coding agent"}
         </span>
       )}
       {preview && (

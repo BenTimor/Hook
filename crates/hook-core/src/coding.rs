@@ -66,7 +66,9 @@ pub fn is_coding(chat: &Chat) -> bool {
 /// left alone costs nothing.
 pub fn create(state: &Arc<AppState>, folder: &str) -> Result<ChatMeta, String> {
     // Advanced mode is the door to everything the coding engine does; the
-    // command refuses even if a stale window still shows the option.
+    // command refuses even if a stale window still shows the option. A remote
+    // create skips this: the controller's paid, sync-enabled account and the
+    // host's accept-remote-work switch are the door on that side.
     if !state.settings.advanced_mode() {
         return Err("Coding agents are part of advanced mode.".into());
     }
@@ -78,6 +80,23 @@ pub fn create(state: &Arc<AppState>, folder: &str) -> Result<ChatMeta, String> {
                 .into(),
         );
     }
+    create_at(state, folder)
+}
+
+/// Create a direct coding chat for a controller. The host owns the folder, the
+/// engine and the session; the caller only names a project it can already see.
+pub fn create_on_host(state: &Arc<AppState>, folder: &str) -> Result<ChatMeta, String> {
+    if state.auth.is_free() && state.settings.custom_provider().is_none() {
+        crate::analytics::track(state, "coding_blocked_free");
+        return Err(
+            "Coding agents are part of a paid plan. Add your own model provider in Settings to use one."
+                .into(),
+        );
+    }
+    create_at(state, folder)
+}
+
+fn create_at(state: &Arc<AppState>, folder: &str) -> Result<ChatMeta, String> {
     let folder = folder.trim();
     if folder.is_empty() {
         return Err("Choose a folder for the coding agent.".into());
@@ -89,7 +108,10 @@ pub fn create(state: &Arc<AppState>, folder: &str) -> Result<ChatMeta, String> {
         return Err(format!("\"{folder}\" is not a folder."));
     }
     let mut chat = Chat::new_coding(&strip_verbatim(path));
+    chat.meta.device_id = Some(state.agents.device_id());
+    chat.meta.device_name = Some(state.agents.device_name());
     state.store.save(&mut chat)?;
+    state.sync.wake();
     Ok(chat.meta)
 }
 
@@ -114,6 +136,7 @@ pub fn set_folder(state: &Arc<AppState>, chat_id: &str, folder: &str) -> Result<
     chat.meta.session_id = None;
     chat.meta.updated_at = now_ms();
     state.store.save(&mut chat)?;
+    state.sync.wake();
     Ok(chat.meta)
 }
 
@@ -153,12 +176,29 @@ pub fn recover(store: &Store) {
 /// The message is written before the engine is touched, so the conversation
 /// always shows what was asked even when the agent cannot start.
 pub fn send(state: &Arc<AppState>, chat: &mut Chat, text: &str) -> Result<(), String> {
+    send_with_id(state, chat, text, None)
+}
+
+/// The same send, with a caller-chosen message id. A controller generates the
+/// id so the user's message looks identical on both sides of the relay.
+pub fn send_with_id(
+    state: &Arc<AppState>,
+    chat: &mut Chat,
+    text: &str,
+    message_id: Option<&str>,
+) -> Result<(), String> {
     let Some(folder) = chat.meta.project_path.clone() else {
         return Err("This coding agent has no folder. Choose one first.".into());
     };
 
-    let message = Message::new("user", text, "complete");
-    chat.messages.push(message);
+    let mut message = Message::new("user", text, "complete");
+    if let Some(id) = message_id.map(str::trim).filter(|id| !id.is_empty()) {
+        message.id = id.to_string();
+    }
+    // A retry after a lost answer must not add the same message twice.
+    if !chat.messages.iter().any(|m| m.id == message.id) {
+        chat.messages.push(message);
+    }
     chat.meta.updated_at = now_ms();
     state.store.save(chat)?;
     emit_started(state, chat);
@@ -177,11 +217,17 @@ pub fn send(state: &Arc<AppState>, chat: &mut Chat, text: &str) -> Result<(), St
 
     match result {
         // The agent's records finish the turn from here.
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            state.sync.wake();
+            Ok(())
+        }
         // The engine closed between the check and the write: resume the session
         // rather than losing what the user typed.
         Err(error) if existing.is_some() => match start(state, chat, text, &folder) {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                state.sync.wake();
+                Ok(())
+            }
             Err(retry) => fail(state, chat, &format!("{error} ({retry})")),
         },
         Err(error) => fail(state, chat, &error),
@@ -255,6 +301,7 @@ pub fn close(state: &Arc<AppState>, chat_id: &str, status: &str) {
         chat.meta.updated_at = now_ms();
         let _ = state.store.save(&mut chat);
     }
+    state.sync.wake();
     turn::emit(state, chat_id, StreamEvent::Activity { label: None });
     turn::emit(
         state,
@@ -272,6 +319,7 @@ fn fail(state: &Arc<AppState>, chat: &mut Chat, error: &str) -> Result<(), Strin
     chat.messages.push(message);
     chat.meta.updated_at = now_ms();
     let _ = state.store.save(chat);
+    state.sync.wake();
     turn::emit(state, &chat.meta.id, StreamEvent::Activity { label: None });
     turn::emit(
         state,

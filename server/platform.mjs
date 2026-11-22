@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { createWaitlistApi } from "./api.mjs";
 import { createAuthRouter } from "./auth.mjs";
+import { createDevicesRouter, createPresence } from "./devices.mjs";
 import { createProxyRouter } from "./deepseek.mjs";
+import { createPreviewTunnel } from "./preview-tunnel.mjs";
 import { createDownloadRouter, publicReleaseInfo } from "./download.mjs";
 import { createEventsRouter } from "./events.mjs";
 import { createGitRouter } from "./git.mjs";
@@ -21,6 +23,8 @@ import { createWorkspaceRouter } from "./workspace.mjs";
  */
 export function createPlatform(env, { verifyGoogle } = {}) {
   const waitlist = createWaitlistApi(env, { verifyGoogle });
+  const presence = createPresence();
+  const previewTunnel = createPreviewTunnel({ db: waitlist.db, presence });
   const router = Router();
 
   router.use((_req, res, next) => {
@@ -33,6 +37,10 @@ export function createPlatform(env, { verifyGoogle } = {}) {
   });
 
   router.use("/waitlist", waitlist.router);
+  // Mints a ticket for a preview on `*.preview.hookcode.io`. The page requests
+  // themselves are handled by the same tunnel's middleware, mounted at the root
+  // by the entry point because they arrive on a different host.
+  router.use("/remote/preview", previewTunnel.router);
 
   // Version history is public: the desktop app checks it before it has a
   // session, and the installer it then asks for still needs an approved
@@ -59,15 +67,23 @@ export function createPlatform(env, { verifyGoogle } = {}) {
     router.use("/auth", unavailable);
     router.use("/download", unavailable);
     router.use("/git", unavailable);
+    router.use("/devices", unavailable);
     router.use("/sync", unavailable);
     router.use("/v1", unavailable);
   } else {
     router.use(
       "/auth",
-      createAuthRouter({ db: waitlist.db, auth: waitlist.auth }),
+      createAuthRouter({ db: waitlist.db, auth: waitlist.auth, presence }),
     );
     // Git is mounted before any JSON body parser: pushes are binary streams.
     router.use("/git", createGitRouter({ env, db: waitlist.db }));
+    // The relay's durable half: which machines this account knows, what they
+    // are called and whether one accepts remote work. The live half is the
+    // WebSocket hub attached to the HTTP server by the entry point.
+    router.use(
+      "/devices",
+      createDevicesRouter({ db: waitlist.db, presence }),
+    );
     router.use(
       "/sync",
       createSyncRouter({ env, db: waitlist.db }),
@@ -107,5 +123,11 @@ export function createPlatform(env, { verifyGoogle } = {}) {
     res.status(500).json({ error: "failed" });
   });
 
-  return { router, close: waitlist.close };
+  return {
+    router,
+    close: waitlist.close,
+    db: waitlist.db,
+    presence,
+    previewTunnel,
+  };
 }

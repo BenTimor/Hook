@@ -10,7 +10,23 @@ use crate::store::truncate;
 /// manage coding agents. A coding agent talking to the user directly has no
 /// subagents, so it must not be offered them either (see
 /// [`direct_bridge_definitions`]).
-pub const AGENT_TOOLS: [&str; 7] = [
+pub const AGENT_TOOLS: [&str; 8] = [
+    "list_machines",
+    "start_coding_agent",
+    "list_agents",
+    "agent_status",
+    "steer_agent",
+    "answer_agent",
+    "stop_agent",
+    "list_coding_sessions",
+];
+
+/// Tools that may have to travel to another machine. They are the only ones
+/// the async dispatcher intercepts; everything else stays a local call.
+pub const MACHINE_TOOLS: [&str; 10] = [
+    "list_machines",
+    "list_projects",
+    "create_project",
     "start_coding_agent",
     "list_agents",
     "agent_status",
@@ -25,9 +41,8 @@ pub const AGENT_TOOLS: [&str; 7] = [
 /// these are removed together with the prompt section that explains them.
 /// `remember_in_project` is here rather than in the memory set because what it
 /// writes is a line in the project's own `AGENTS.md`.
-pub const PROJECT_TOOLS: [&str; 4] = [
+pub const PROJECT_TOOLS: [&str; 3] = [
     "list_projects",
-    "create_project",
     "update_project_description",
     "remember_in_project",
 ];
@@ -41,22 +56,29 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "list_projects",
-                "description": "List every project on the user's account with its description and whether it is a git repo. Call this before deciding where a task belongs.",
-                "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+                "description": "List every project on the user's account with its description and whether it is a git repo. On a phone, name the machine whose projects you want; on a desktop you may omit it. Call this before deciding where a task belongs.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines. Required on a phone; omit on a desktop to use this computer." }
+                    },
+                    "additionalProperties": false
+                }
             }
         },
         {
             "type": "function",
             "function": {
                 "name": "create_project",
-                "description": "Create a new, empty project folder in the projects directory and give it a description. Only use this when the work needs a brand new home.",
+                "description": "Create a new, empty project folder on one of the user's machines and give it a description. Only use this when the work needs a brand new home. Name the machine, even on a desktop; call list_machines first.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "name": { "type": "string", "description": "Folder name, e.g. 'invoice-parser'. Letters, digits, spaces, dots, dashes and underscores." },
-                        "description": { "type": "string", "description": "One or two sentences: what this project is and what belongs in it." }
+                        "description": { "type": "string", "description": "One or two sentences: what this project is and what belongs in it." },
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines. Use 'this computer' on the desktop that will hold the folder." }
                     },
-                    "required": ["name", "description"],
+                    "required": ["name", "description", "machine"],
                     "additionalProperties": false
                 }
             }
@@ -96,12 +118,21 @@ pub fn definitions() -> Value {
         {
             "type": "function",
             "function": {
+                "name": "list_machines",
+                "description": "Which of the user's computers are running Hook right now and which can run coding agents. Call this before choosing a machine when the conversation does not already name one. Every agent tool takes the exact machine name from this list, even when there is only one.",
+                "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "start_coding_agent",
-                "description": "Launch a coding agent in a project folder, only for work the user asked for in their own message. It runs pi with full permissions inside that folder and can read, edit and run code. The agent pulls the latest version from the user's account before it starts (the folder may be empty because the work began on another computer) and saves its work when it finishes. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. When the work has something to look at, tell the agent to build and keep an HTML preview page current and to call its show_preview tool early (see the preview panel instructions). Returns immediately - you are notified when it settles or asks a question. Never start work just because a coding-agent update arrived.",
+                "description": "Launch a coding agent on one of the user's computers, only for work the user asked for in their own message. `machine` is the exact name from list_machines; 'this computer' is allowed on Hook. The agent runs pi with full permissions inside a project folder on that machine and can read, edit and run code. It pulls the latest version from the user's account before it starts (the folder may be empty because the work began on another computer) and saves its work when it finishes. Write a complete brief: what to achieve, constraints, and how to verify. Also pass a short plan in plain, non-technical language - that checklist is shown to the user while the agent works. When the work has something to look at, tell the agent to build and keep an HTML preview page current and to call its show_preview tool early (see the preview panel instructions). Returns immediately - you are notified when it settles or asks a question. Never start work just because a coding-agent update arrived.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "project": { "type": "string", "description": "Project folder name." },
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines, or 'this computer'." },
+                        "project": { "type": "string", "description": "Project folder name on that machine." },
                         "task": { "type": "string", "description": "Self-contained instructions for the coding agent." },
                         "title": { "type": "string", "description": "Short, plain-language name of the work shown at the top of the checklist, e.g. 'Fix the login redirect'." },
                         "plan": {
@@ -113,7 +144,7 @@ pub fn definitions() -> Value {
                         },
                         "resume_session_id": { "type": "string", "description": "Continue an earlier session from list_coding_sessions instead of starting fresh." }
                     },
-                    "required": ["project", "task", "title", "plan"],
+                    "required": ["machine", "project", "task", "title", "plan"],
                     "additionalProperties": false
                 }
             }
@@ -122,19 +153,29 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "list_agents",
-                "description": "List coding agents started from this chat, with state and progress.",
-                "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+                "description": "List coding agents started from this chat on one machine, with state and progress.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines." }
+                    },
+                    "required": ["machine"],
+                    "additionalProperties": false
+                }
             }
         },
         {
             "type": "function",
             "function": {
                 "name": "agent_status",
-                "description": "Detailed status of one coding agent: state, steps, last step, latest message, any question it is waiting on.",
+                "description": "Detailed status of one coding agent on one machine: state, steps, last step, latest message, any question it is waiting on.",
                 "parameters": {
                     "type": "object",
-                    "properties": { "agent_id": { "type": "string" } },
-                    "required": ["agent_id"],
+                    "properties": {
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines." },
+                        "agent_id": { "type": "string" }
+                    },
+                    "required": ["machine", "agent_id"],
                     "additionalProperties": false
                 }
             }
@@ -147,10 +188,11 @@ pub fn definitions() -> Value {
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines." },
                         "agent_id": { "type": "string" },
                         "message": { "type": "string", "description": "What to change or do next." }
                     },
-                    "required": ["agent_id", "message"],
+                    "required": ["machine", "agent_id", "message"],
                     "additionalProperties": false
                 }
             }
@@ -163,10 +205,11 @@ pub fn definitions() -> Value {
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines." },
                         "agent_id": { "type": "string" },
                         "answer": { "type": "string" }
                     },
-                    "required": ["agent_id", "answer"],
+                    "required": ["machine", "agent_id", "answer"],
                     "additionalProperties": false
                 }
             }
@@ -178,8 +221,11 @@ pub fn definitions() -> Value {
                 "description": "Stop a coding agent immediately. Use when it is going the wrong way, or the user asks to stop.",
                 "parameters": {
                     "type": "object",
-                    "properties": { "agent_id": { "type": "string" } },
-                    "required": ["agent_id"],
+                    "properties": {
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines." },
+                        "agent_id": { "type": "string" }
+                    },
+                    "required": ["machine", "agent_id"],
                     "additionalProperties": false
                 }
             }
@@ -188,11 +234,14 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "list_coding_sessions",
-                "description": "Recent coding sessions in a project, newest first, with ids and previews. Use one of these ids with start_coding_agent to continue earlier work.",
+                "description": "Recent coding sessions in a project on one machine, newest first, with ids and previews. Use one of these ids with start_coding_agent to continue earlier work.",
                 "parameters": {
                     "type": "object",
-                    "properties": { "project": { "type": "string", "description": "Project folder name." } },
-                    "required": ["project"],
+                    "properties": {
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines." },
+                        "project": { "type": "string", "description": "Project folder name." }
+                    },
+                    "required": ["machine", "project"],
                     "additionalProperties": false
                 }
             }
@@ -275,6 +324,9 @@ pub struct ToolEnv<'a> {
     /// True only when the user asked for something and has not been answered
     /// yet. A turn woken by a coding-agent note is not user-initiated.
     pub user_initiated: bool,
+    /// The app state, when this is a chat-agent turn. Direct coding agents and
+    /// unit tests have no relay and therefore no machines.
+    pub state: Option<&'a crate::commands::AppState>,
 }
 
 /// Runs one tool call and returns the JSON text handed back to the model.
@@ -283,6 +335,294 @@ pub fn execute(env: &ToolEnv<'_>, name: &str, args: &Value) -> String {
         Ok(value) => value.to_string(),
         Err(message) => json!({ "error": message }).to_string(),
     }
+}
+
+/// Run a tool that may need another machine. Local tools fall through to the
+/// synchronous dispatcher, so their behaviour and tests are unchanged.
+pub async fn execute_async(env: &ToolEnv<'_>, name: &str, args: &Value) -> String {
+    if !MACHINE_TOOLS.contains(&name) {
+        return execute(env, name, args);
+    }
+    match run_machine(env, name, args).await {
+        Ok(value) => value.to_string(),
+        Err(message) => json!({ "error": message }).to_string(),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TargetMachine {
+    id: String,
+    name: String,
+    /// This process can execute the work itself (it is Hook, and the machine is
+    /// this one).
+    local: bool,
+}
+
+pub(crate) fn machine_view(state: &crate::commands::AppState) -> Value {
+    let view = state.relay.view();
+    let machines: Vec<Value> = view
+        .devices
+        .iter()
+        .map(|device| {
+            json!({
+                "machine": device.name,
+                "id": device.id,
+                "kind": device.kind,
+                "platform": device.platform,
+                "online": device.online,
+                "can_run_agents": device.host_online,
+                "this_computer": device.id == view.self_id,
+                "remote_allowed": device.remote_allowed,
+                "projects": device.specs.as_ref().and_then(|specs| specs.get("projects")).cloned(),
+            })
+        })
+        .collect();
+    json!({
+        "machines": machines,
+        "connected": view.state == "online",
+        "message": view.message,
+        "hint": if machines.is_empty() {
+            "No computers are connected. Ask the user to turn one on, or add a cloud machine."
+        } else {
+            "Pass the exact machine name to every agent tool."
+        },
+    })
+}
+
+fn resolve_machine(env: &ToolEnv<'_>, requested: Option<&str>) -> Result<TargetMachine, String> {
+    let state = env
+        .state
+        .ok_or("This build cannot reach other machines.")?;
+    let view = state.relay.view();
+    let requested = requested.map(str::trim).unwrap_or("");
+    let this_computer = matches!(
+        requested.to_ascii_lowercase().as_str(),
+        "this computer" | "this machine" | "this pc" | "local" | "here"
+    );
+    if this_computer {
+        if state.product == crate::Product::Mobile {
+            return Err(
+                "A phone cannot run coding agents. Choose one of the user's computers."
+                    .into(),
+            );
+        }
+        return Ok(TargetMachine {
+            id: view.self_id.clone(),
+            name: view.self_name.clone(),
+            local: state.capabilities.coding_agents,
+        });
+    }
+    if requested.is_empty() {
+        if state.capabilities.coding_agents {
+            return Ok(TargetMachine {
+                id: view.self_id.clone(),
+                name: view.self_name.clone(),
+                local: true,
+            });
+        }
+        return Err(
+            "Choose a computer for this work. Call list_machines to see which ones are on."
+                .into(),
+        );
+    }
+    let exact: Vec<_> = view
+        .devices
+        .iter()
+        .filter(|device| device.id == requested || device.name.eq_ignore_ascii_case(requested))
+        .collect();
+    let candidates: Vec<_> = if exact.is_empty() {
+        let needle = requested.to_ascii_lowercase();
+        view.devices
+            .iter()
+            .filter(|device| device.name.to_ascii_lowercase().contains(&needle))
+            .collect()
+    } else {
+        exact
+    };
+    match candidates.as_slice() {
+        [] => Err(format!(
+            "There is no machine called \"{requested}\". Call list_machines for the current names."
+        )),
+        [one] => {
+            if !one.can_host {
+                return Err(format!(
+                    "\"{}\" cannot run coding agents. Choose a computer running Hook.",
+                    one.name
+                ));
+            }
+            if !one.host_online {
+                return Err(format!(
+                    "\"{}\" is not running Hook right now. Turn it on, then ask again.",
+                    one.name
+                ));
+            }
+            Ok(TargetMachine {
+                id: one.id.clone(),
+                name: one.name.clone(),
+                local: one.id == view.self_id && state.capabilities.coding_agents,
+            })
+        }
+        many => Err(format!(
+            "Which machine? {}",
+            many.iter()
+                .map(|device| device.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+async fn run_machine(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
+    if name == "list_machines" {
+        let Some(state) = env.state else {
+            return Ok(json!({ "machines": [], "connected": false }));
+        };
+        return Ok(machine_view(state));
+    }
+
+    // `list_projects` is optional on the machine: a desktop with a projects
+    // folder can keep using it as before. A phone must name the machine whose
+    // folders it wants, because it has none of its own.
+    if name == "list_projects" && args.get("machine").is_none() {
+        if env
+            .state
+            .map(|state| state.capabilities.projects)
+            .unwrap_or(true)
+        {
+            return run(env, name, args);
+        }
+        return Err("Name the machine whose projects you want. Call list_machines first.".into());
+    }
+
+    let requested = args.get("machine").and_then(Value::as_str);
+    let target = resolve_machine(env, requested)?;
+    if target.local {
+        return run(env, name, args);
+    }
+    let state = env
+        .state
+        .ok_or("This build cannot reach other machines.")?;
+    if !state.capabilities.remote_agents {
+        return Err("This product cannot control other machines.".into());
+    }
+
+    let (method, params, timeout) = match name {
+        "list_projects" => (
+            "projects.list",
+            json!({}),
+            std::time::Duration::from_secs(20),
+        ),
+        "create_project" => (
+            "projects.create",
+            json!({
+                "name": arg_str(args, "name")?,
+                "description": arg_str(args, "description")?,
+            }),
+            std::time::Duration::from_secs(30),
+        ),
+        "list_agents" => (
+            "agent.list",
+            json!({ "chatId": env.chat_id }),
+            std::time::Duration::from_secs(20),
+        ),
+        "agent_status" => (
+            "agent.status",
+            json!({ "agentId": arg_str(args, "agent_id")? }),
+            std::time::Duration::from_secs(20),
+        ),
+        "steer_agent" => (
+            "agent.steer",
+            json!({
+                "agentId": arg_str(args, "agent_id")?,
+                "text": arg_str(args, "message")?,
+            }),
+            std::time::Duration::from_secs(30),
+        ),
+        "answer_agent" => (
+            "agent.answer",
+            json!({
+                "agentId": arg_str(args, "agent_id")?,
+                "answer": arg_str(args, "answer")?,
+            }),
+            std::time::Duration::from_secs(30),
+        ),
+        "stop_agent" => (
+            "agent.stop",
+            json!({ "agentId": arg_str(args, "agent_id")? }),
+            std::time::Duration::from_secs(20),
+        ),
+        "start_coding_agent" => {
+            let mut chat = state.store.load(env.chat_id)?;
+            chat.refresh_meta();
+            let project = arg_str(args, "project")?;
+            let task = arg_str(args, "task")?;
+            let title = arg_str(args, "title")?;
+            let plan: Vec<String> = args
+                .get("plan")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::trim))
+                        .filter(|item| !item.is_empty())
+                        .take(crate::agent::MAX_PLAN_STEPS)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if plan.len() < 2 {
+                return Err("Give the user at least two plain-language steps in \"plan\".".into());
+            }
+            (
+                "agent.start",
+                json!({
+                    "chatId": env.chat_id,
+                    "chat": chat,
+                    "project": project,
+                    "task": task,
+                    "title": title,
+                    "plan": plan,
+                    "resumeSession": args.get("resume_session_id").and_then(Value::as_str),
+                }),
+                std::time::Duration::from_secs(60),
+            )
+        }
+        "list_coding_sessions" => (
+            "sessions.list",
+            json!({ "project": arg_str(args, "project")? }),
+            std::time::Duration::from_secs(20),
+        ),
+        other => return Err(format!("Unknown machine tool: {other}")),
+    };
+
+    let mut value = state
+        .relay
+        .rpc(&target.id, method, params, timeout)
+        .await
+        .map_err(|error| {
+            if error.code == "device_offline" {
+                format!(
+                    "{} is not running Hook right now. Turn it on, then ask again.",
+                    target.name
+                )
+            } else {
+                error.message
+            }
+        })?;
+    if let Some(object) = value.as_object_mut() {
+        object
+            .entry("machine")
+            .or_insert_with(|| Value::String(target.name.clone()));
+        if name == "start_coding_agent" {
+            object.entry("note").or_insert_with(|| {
+                Value::String(format!(
+                    "Running on {}. The user can see the plan and stop it from this chat. You may end your turn; you will be woken when it settles, fails, or asks a question.",
+                    target.name
+                ))
+            });
+        }
+    }
+    Ok(value)
 }
 
 fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -604,6 +944,8 @@ mod tests {
             question: None,
             plan: Vec::new(),
             direct: false,
+            device_id: String::new(),
+            device_name: String::new(),
         }
     }
 
@@ -661,6 +1003,41 @@ mod tests {
         ] {
             assert!(names.contains(&expected), "{expected} missing");
         }
+    }
+
+    #[test]
+    fn every_agent_tool_names_a_machine() {
+        let defs = definitions();
+        for name in [
+            "create_project",
+            "start_coding_agent",
+            "list_agents",
+            "agent_status",
+            "steer_agent",
+            "answer_agent",
+            "stop_agent",
+            "list_coding_sessions",
+        ] {
+            let tool = defs
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["function"]["name"] == name)
+                .unwrap_or_else(|| panic!("{name} is defined"));
+            let required = tool["function"]["parameters"]["required"]
+                .as_array()
+                .unwrap();
+            assert!(
+                required.contains(&json!("machine")),
+                "{name} must require a machine"
+            );
+        }
+        let machines = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["function"]["name"] == "list_machines");
+        assert!(machines.is_some(), "list_machines is advertised");
     }
 
     #[test]
@@ -731,6 +1108,7 @@ mod tests {
                 preview_pages: false,
                 preview_workspace: false,
                 coding_agents: true,
+                remote_agents: true,
                 workspace_tools: false,
                 projects: true,
             },
@@ -771,6 +1149,7 @@ mod tests {
             settings: &settings,
             chat_id: "c1",
             user_initiated: true,
+            state: None,
         };
         let out = execute(&env, "nope", &json!({}));
         assert!(out.contains("Unknown tool"));
@@ -802,6 +1181,7 @@ mod tests {
             settings: &settings,
             chat_id: "c1",
             user_initiated: true,
+            state: None,
         };
         let out = execute(&env, "create_project", &json!({}));
         assert!(out.contains("Missing"));
@@ -833,6 +1213,7 @@ mod tests {
             settings: &settings,
             chat_id: "c1",
             user_initiated: false,
+            state: None,
         };
         for tool in ["start_coding_agent", "steer_agent"] {
             let out = execute(&env, tool, &json!({}));

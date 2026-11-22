@@ -111,7 +111,9 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     assert_eq!(plan["written"][1]["status"], "active");
 
     // The preview panel: the tool is offered, the guidance says it is optional,
-    // and a page is only accepted inside the project and as HTML.
+    // and any HTML page on the machine is accepted while a non-HTML file is
+    // still refused. The guard records an absolute path now; the panel serves
+    // the page's own folder.
     let preview = &value["preview"];
     assert_eq!(preview["toolsRegistered"], true, "show_preview must be offered");
     assert_eq!(
@@ -119,8 +121,17 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
         "the coding agent must be told the preview is optional"
     );
     assert_eq!(preview["resultOk"], true);
-    assert_eq!(preview["outsideRejected"], true, "../evil.html must be refused");
+    assert_eq!(
+        preview["outsideNonHtmlRejected"], true,
+        "../evil.tsx must be refused because it is not HTML"
+    );
     assert_eq!(preview["nonHtmlRejected"], true, "a .tsx file must be refused");
-    assert_eq!(preview["written"]["file"], "preview.html");
+    let written = preview["written"]["file"].as_str().unwrap_or("");
+    assert_eq!(
+        std::path::Path::new(written)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("preview.html")
+    );
     assert_eq!(preview["written"]["title"], "Insights");
 }

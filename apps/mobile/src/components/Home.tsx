@@ -1,8 +1,11 @@
-import { Code2, FileText, History, Lightbulb, Settings } from "lucide-react";
+import { useState } from "react";
+import { Code2, FileText, History, Lightbulb, Settings, SquareTerminal } from "lucide-react";
 
-import { greeting } from "@hook/chat";
+import { greeting, RemoteChatDialog } from "@hook/chat";
 import { HookMark } from "@hook/ui";
 
+import { mobile } from "../lib/api";
+import { BACK_LAYER, useBackHandler } from "../lib/back";
 import { useMobileChat } from "../store/useMobileChat";
 import { ChatComposer } from "./ChatComposer";
 
@@ -27,6 +30,19 @@ export function Home({
   onSettings: () => void;
 }) {
   const setDraft = useMobileChat((s) => s.setDraft);
+  const devices = useMobileChat((s) => s.devices);
+  const newRemoteCodingChat = useMobileChat((s) => s.newRemoteCodingChat);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  // The Android back gesture closes the picker before it leaves the screen.
+  useBackHandler(BACK_LAYER.dialog, remoteOpen, () => setRemoteOpen(false));
+  const hosts =
+    devices?.devices.filter(
+      (device) =>
+        device.id !== devices.selfId &&
+        device.canHost &&
+        device.hostOnline &&
+        device.remoteAllowed,
+    ) ?? [];
 
   return (
     <section className="screen home" aria-label="New chat">
@@ -61,6 +77,15 @@ export function Home({
           <p>Ask anything. Nothing leaves this phone unless your plan syncs it.</p>
           <ChatComposer className="mobile-composer" />
           <div className="chips">
+            {hosts.length > 0 && (
+              <button
+                className="chip chip-machine"
+                onClick={() => setRemoteOpen(true)}
+              >
+                <SquareTerminal strokeWidth={1.7} />
+                Code on {hosts[0].name}
+              </button>
+            )}
             {SUGGESTIONS.map(({ icon: Icon, label }) => (
               <button
                 key={label}
@@ -74,6 +99,19 @@ export function Home({
           </div>
         </div>
       </div>
+
+      {remoteOpen && (
+        <RemoteChatDialog
+          devices={devices?.devices ?? []}
+          selfId={devices?.selfId ?? ""}
+          onClose={() => setRemoteOpen(false)}
+          loadProjects={mobile.remoteProjects}
+          createProject={mobile.createRemoteProject}
+          onCreate={(deviceId, project) =>
+            newRemoteCodingChat(deviceId, project)
+          }
+        />
+      )}
     </section>
   );
 }

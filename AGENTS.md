@@ -138,13 +138,21 @@ bash.
   sync; otherwise `HOOK_SYNC=0` and the guard leaves the git tools out. `transcript()` reads a
   run's pi session file (plus an in-memory tail from `message_update`) for the
   advanced inspector; it is read-only.
+- `crates/hook-core/src/{relay,remote,devices}.rs` — the account relay client
+  (presence, RPC, subscriptions, reconnect), the commands a controller sends to
+  a host (`agent.start/steer/stop`, `projects.list`, `sessions.list`) and the
+  description this machine registers. `docs/relay-protocol.md` is the contract;
+  `docs/remote-control-status.md` is the handoff (what exists, what is left).
 - `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
   builder every product calls. A capability trims the prompt and the toolset; it
-  must never change the data model. The five fields are places an answer can
+  must never change the data model. The six fields are places an answer can
   appear or things a device can reach: `preview_pages` (an HTML file served from
   a project), `preview_workspace` (a board, task or document — just account
-  data), `coding_agents`, `workspace_tools`, `projects` (a folder on this
-  machine). `Capabilities::mobile()` is the phone: Workspace yes, folder no.
+  data), `coding_agents` (this process can run `pi`), `remote_agents` (it can
+  drive a Hook host on another machine), `workspace_tools`, `projects` (a folder
+  on this machine). `Capabilities::mobile()` is the phone: Workspace and the
+  other machines, no local folder and no local engine. `Capabilities::workspace()`
+  is a controller too: Hook on the same computer hosts the agent.
 - `crates/hook-core/src/auth.rs` — device flow, the shared
   `%APPDATA%\app.hook\account.json`, per-product mirrors, git-token rotation,
   and the account side of entitlements: the plan, the account-wide cloud-sync
@@ -165,7 +173,10 @@ bash.
   the network, and the loop re-checks `/api/auth/me` so a change made in another
   product arrives without a restart.
   `ChatMeta.kind = "coding"` marks a chat the user has with a coding agent
-  directly: it carries `projectPath` and `sessionId`, and it is never uploaded.
+  directly: it carries `projectPath` and `sessionId`, and its content is never
+  uploaded. Its **stub** (id, title, owning device, state, count) travels via
+  `push_remote_stubs`/the `remoteChat` change; a viewer's cached copy is marked
+  `remote` and is local-only too.
 - `crates/hook-core/src/coding.rs` — that chat's turn driver: start / steer /
   answer / stop the engine, and turn its RPC records (`message_start`,
   `message_update`, `message_end`, `tool_execution_end`, `agent_settled`,
@@ -206,6 +217,11 @@ bash.
   nothing about which app it is running in; a `DockChat.unsynced` flag draws the
   "not in the cloud" mark in its history, and the product supplies it;
   `apps/workspace/src/lib/chatTransport.ts` is that adapter.
+- `packages/chat/src/RemoteChatDialog.tsx` — the host/project picker for a direct
+  coding chat. It asks the chosen host for its projects (`remote_projects`), so
+  it never types a path; the desktop's New chat menu and the phone's home screen
+  open the same dialog. The chat itself stays on the host; `ChatMeta.remote`
+  marks the local cache.
 - `packages/chat/src/preview/` — `WorkspacePreview` and its three renderers,
   `reportableFrom` and `ReportContentDialog`. The JSON is what
   `workspace_preview` returned; the components own no frame, so `PreviewPanel`
@@ -224,9 +240,10 @@ bash.
   behind the history button on the home screen and in the conversation header.
   `src/lib/back.ts` routes the Android back gesture
   to that navigation and closes a sheet or dialog before leaving a screen.
-  `src-tauri` passes `Product::Mobile` + `Capabilities::mobile()`; there are no
-  agents, no folder picker and no installer, and `scripts/release.sh` does not
-  build it.
+  `src-tauri` passes `Product::Mobile` + `Capabilities::mobile()`; it can drive
+  agents on the account's computers (`remote_agents`) but has no local engine
+  and no folder picker. It ships through the stores, and `scripts/release.sh`
+  does not build it.
 - `browser/` — Hook Browser's build environment, and the only part of the browser
   that is in this repository. `VERSION` is the one pinned Chromium tag,
   `args.gn` the dev GN args, `overlay/src/hook/` the new paths that are
@@ -252,9 +269,17 @@ bash.
   window chrome, prose, buttons/inputs). Both products import it first.
 - `waitlist/content.json` — all landing-page copy and interest definitions.
 - `server/platform.mjs` — mounts waitlist, device login, download, sync, git,
-  events and the model proxy under `/api`.
+  events, devices, the preview ticket route and the model proxy under `/api`.
+- `server/devices.mjs` — the account's machine registry (`GET/PATCH/DELETE
+  /api/devices`) and the in-memory presence map.
+- `server/relay.mjs` — the WebSocket hub at `/api/relay`: host/controller
+  connections, presence, RPC routing, per-chat fan-out, preview frames.
+- `server/preview-tunnel.mjs` — `*.preview.hookcode.io`: mints a ticket and
+  tunnels each HTTP request over the machine's outbound socket.
 - `server/workspace.mjs` — Workspace projects/boards/tasks/documents/members.
 - `infra/` — reference server config, uploaded by `scripts/deploy-waitlist.sh`.
+  `preview.caddy` is the per-preview site block; `hook-preview-cert.cron` renews
+  its wildcard certificate. The Cloudflare API token lives only on the VPS.
 - `release.config.json` — per-product minimum versions and the Store channel:
   the listing id (`store.productId`), the certified Store version and its floor.
 - `msix/<product>/` — Partner Center identity + manifest template per product.
@@ -320,11 +345,12 @@ Changing one side of a boundary is the most common way to break this repo.
   that is already open (the simple view cannot fold its per-tool turns), and
   `AgentTree` skips `direct` runs; `apps/workspace`'s chat transport always
   filters them out.
-  One trap: a direct run starts from `send_message`, a **synchronous** command,
-  so everything on that path must use `tauri::async_runtime` (the driver spawn
-  in `agent.rs` included) — a `tokio::spawn` there panics with "there is no
-  reactor running" and aborts the window, because a panic in a command thread
-  cannot unwind.
+  One trap: a direct run starts from `send_message`. It is now async so the
+  remote path can wait for an RPC, but the agent driver and the turn still use
+  `tauri::async_runtime` (the driver spawn in `agent.rs` included). A
+  `tokio::spawn` from a context with no reactor panics with "there is no reactor
+  running" and aborts the window, because a panic in a command thread cannot
+  unwind.
 - **Free-plan / entitlement change:** `server/plans.mjs` (the rule and the 24-hour
   window) → `server/deepseek.mjs` (refusals, `plan`/`message_id` on
   `usage_events`) → `server/sync.mjs` (the gate) → `auth.rs` (`plan`,
@@ -357,6 +383,35 @@ Changing one side of a boundary is the most common way to break this repo.
   (`/memory`, the `/changes` union) → `server/api.mjs` (`sync_memory`) →
   `server/sync.test.mjs`. Keep the frames append-only and the caps enforced;
   `pinned_budget_chars` is what stops memory from eating the prompt.
+- **Remote control / a new machine operation:** `docs/relay-protocol.md` →
+  `server/{devices,relay}.mjs` (+ `server/api.mjs` migrations) →
+  `crates/hook-core/src/{devices,relay,remote}.rs` → `tools.rs` (a required
+  `machine` argument) and the prompt's **Coding agents** section → `commands.rs`
+  + `generate_handler!` → `bridge.ts` / `types.ts` / `mock.ts` →
+  `MachinesSection` and the agent board. A controller sends an RPC; the host
+  executes it. Never let a controller run a local `AgentManager`. Project
+  creation is a host RPC too (`projects.create`); the caller supplies a name,
+  never a path.
+- **Remote direct coding chat:** the host keeps the folder, engine and session;
+  only a stub travels. `store.rs` (`deviceId`, `deviceName`, `remote`,
+  `stubState`, `is_owned_coding`, `apply_stub`) → `sync.rs`
+  (`push_remote_stubs`, `pending_stub_deletes`, the `remoteChat` pull arm) →
+  `server/api.mjs` (`sync_remote_chats`) and `server/sync.mjs`
+  (`/remote-chats`, the `/changes` union; a full `kind: "coding"` chat is
+  refused) → `remote.rs` (`coding.create/fetch/send/stop/answer/rename`,
+  `projects.create`) →
+  `commands.rs` (`create_remote_coding_chat`, `fetch_remote_chat`,
+  `remote_projects`, remote branches in `send_message`/`stop_stream`/
+  `rename_chat`/`answer_coding_agent`) → `bridge.ts` / `types.ts` / `mock.ts` →
+  `RemoteChatDialog` (`packages/chat`) → the Sidebar's New chat menu and the
+  phone's Home. The viewer's cache is `remote: true` and `is_local_only`, so
+  `push_chats` never uploads it; the owner's delete queues a tombstone. Do not
+  let a viewer delete or change the folder: those belong to the host.
+- **Remote preview:** the host publishes a `preview` event (the same
+  `PreviewView`); `relay.rs` mints a ticket through `POST
+  /api/remote/preview/ticket`, `server/preview-tunnel.mjs` serves the subdomain,
+  and `preview.rs::fetch` answers the tunneled request from the active preview's
+  folder. The page's own folder is the root; keep `fetch` path-contained.
 - **Project instructions for coding agents:** `projects.rs`
   (`append_agent_note` / `agent_notes`, the marked block in `AGENTS.md`) → the
   `remember_in_project` tool in `tools.rs` → the prompt's **Projects** section.
@@ -552,10 +607,12 @@ Changing one side of a boundary is the most common way to break this repo.
   never the client. A chat that is streaming is never uploaded or overwritten. A
   different account on the same machine quarantines the previous chats under
   `accounts/<id>/`; never
-  upload one account's history to another. A `coding` chat is local-only on
-  purpose: its folder, its engine process and its session file live on one
-  computer, so `push_chats` skips it (and clears it from the queue). Never
-  "fix" that by uploading one half.
+  upload one account's history to another. A `coding` chat's **content** is
+  local-only on purpose: its folder, its engine process and its session file
+  live on one computer, so `push_chats` skips it (and clears it from the queue).
+  Its **stub** is the one exception: `push_remote_stubs` sends the id, title,
+  owner, state and count, and never a message, path or session. A viewer's cache
+  is local-only too. Never "fix" either half by uploading the transcript.
 - **A direct coding agent is the signed-in user.** It gets the chat agent's own
   tools through `bridge.rs`, whose token is minted per chat and only grants the
   names in that agent's `tools.json`; the endpoint is loopback-only. Creating
@@ -614,7 +671,9 @@ Changing one side of a boundary is the most common way to break this repo.
   secrets.
 - Persistence is atomic on purpose (temp file + rename). Go through `store.rs`.
 - Preview serving is loopback-only and path-contained (`preview.rs`); keep that
-  when adding routes or file kinds.
+  when adding routes or file kinds. The remote tunnel is the only other way in:
+  it reads through `PreviewManager::fetch` under the same root, never a second
+  file server.
 - **The Chromium overlay is new paths only.** `browser/overlay/src/hook/` must not
   contain a copy of an upstream file — `pnpm browser:verify` fails if it does,
   because a copy silently recreates the merged fork one stale file at a time.

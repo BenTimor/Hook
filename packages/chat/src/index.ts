@@ -31,6 +31,8 @@ export type {
   WorkspaceTask,
 } from "./preview";
 export { ChatDock } from "./ChatDock";
+export { MachinesSection } from "./MachinesSection";
+export type { Machine, MachinesSectionProps } from "./MachinesSection";
 export { greeting } from "./greeting";
 export type { MessageItemProps } from "./MessageItem";
 export type { ThreadProps } from "./Thread";
@@ -46,6 +48,11 @@ export type {
   ThreadBlock,
 } from "./turns";
 export type { ComposerProps } from "./Composer";
+export { RemoteChatDialog } from "./RemoteChatDialog";
+export type {
+  RemoteMachine,
+  RemoteProjectOption,
+} from "./RemoteChatDialog";
 export type { ReportInput, ReportReason, TranscriptMessage } from "./ReportDialog";
 export type {
   ChatTransport,

@@ -4,8 +4,11 @@ import type {
   Chat,
   ChatMeta,
   CustomProvider,
+  DeviceView,
+  DevicesView,
   Message,
   PreviewEvent,
+  RemoteProject,
   SettingsView,
   StreamEvent,
   SyncView,
@@ -21,6 +24,67 @@ import type {
  */
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const DEMO_PHONE_ID = "demo-phone";
+
+const DEMO_REMOTE_PROJECTS: RemoteProject[] = [
+  { project: "hook", description: "The desktop and phone products", git: true },
+  { project: "website", description: "Landing page", git: true },
+];
+
+const demoDevices: DeviceView[] = [
+  {
+    id: DEMO_PHONE_ID,
+    name: "This phone",
+    kind: "mobile",
+    platform: "android",
+    arch: "aarch64",
+    appVersion: "0.1.3",
+    product: "mobile",
+    canHost: false,
+    online: true,
+    hostOnline: false,
+    role: "controller",
+    remoteAllowed: false,
+    lastSeen: new Date().toISOString(),
+    capabilities: { codingAgents: false },
+    specs: null,
+  },
+  {
+    id: "demo-desktop",
+    name: "Ben's PC",
+    kind: "desktop",
+    platform: "windows",
+    arch: "x86_64",
+    appVersion: "0.4.0",
+    product: "chat",
+    canHost: true,
+    online: true,
+    hostOnline: true,
+    role: "host",
+    remoteAllowed: true,
+    lastSeen: new Date().toISOString(),
+    capabilities: { codingAgents: true },
+    specs: { cpuCores: 16, projects: 3 },
+  },
+  {
+    id: "demo-cloud",
+    name: "Cloud Linux",
+    kind: "headless",
+    platform: "linux",
+    arch: "x86_64",
+    appVersion: "0.1.0",
+    product: "headless",
+    canHost: true,
+    online: false,
+    hostOnline: false,
+    role: "controller",
+    remoteAllowed: true,
+    lastSeen: new Date(Date.now() - 90 * 60_000).toISOString(),
+    capabilities: { codingAgents: true },
+    specs: { cpuCores: 4, projects: 1 },
+  },
+];
 
 const listeners = new Set<(chatId: string, event: StreamEvent) => void>();
 const previewListeners = new Set<(event: PreviewEvent) => void>();
@@ -220,6 +284,73 @@ export const demo = {
     return chat ? structuredClone(chat) : { meta: listMeta()[0], messages: [] };
   },
 
+  async fetchRemoteChat(chatId: string): Promise<Chat> {
+    const chat = chats.find((item) => item.meta.id === chatId);
+    if (!chat) throw new Error("Chat not found");
+    if (chat.meta.remote && chat.messages.length === 0) {
+      chat.messages = [
+        {
+          id: `m_${(seq += 1)}`,
+          role: "assistant",
+          content:
+            "I am on the desktop, in that project. This transcript was fetched over the relay and cached here; the folder and the engine stay there.",
+          createdAt: Date.now(),
+          status: "complete",
+        },
+      ];
+      chat.meta.messageCount = 1;
+      chat.meta.updatedAt = Date.now();
+    }
+    return structuredClone(chat);
+  },
+
+  async createRemoteCodingChat(
+    deviceId: string,
+    project: string,
+  ): Promise<ChatMeta> {
+    const device = demoDevices.find((entry) => entry.id === deviceId);
+    if (!device) throw new Error("That machine is no longer on this account.");
+    const meta: ChatMeta = {
+      id: `chat_${(seq += 1)}`,
+      title: project,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      pinned: false,
+      messageCount: 0,
+      preview: "",
+      kind: "coding",
+      deviceId,
+      deviceName: device.name,
+      remote: true,
+      stubState: "idle",
+    };
+    chats = [{ meta, messages: [] }, ...chats];
+    return structuredClone(meta);
+  },
+
+  async remoteProjects(_deviceId: string): Promise<RemoteProject[]> {
+    return structuredClone(DEMO_REMOTE_PROJECTS);
+  },
+
+  async createRemoteProject(
+    _deviceId: string,
+    name: string,
+    description: string,
+  ): Promise<RemoteProject> {
+    const clean = name.trim();
+    if (!clean) throw new Error("Write a project name first.");
+    if (DEMO_REMOTE_PROJECTS.some((entry) => entry.project === clean)) {
+      throw new Error(`A project named "${clean}" already exists.`);
+    }
+    const project: RemoteProject = {
+      project: clean,
+      description: description.trim(),
+      git: false,
+    };
+    DEMO_REMOTE_PROJECTS.push(project);
+    return structuredClone(project);
+  },
+
   async renameChat(): Promise<void> {},
   async setPinned(): Promise<void> {},
   async deleteChat(): Promise<void> {},
@@ -366,6 +497,36 @@ export const demo = {
       lastSyncAt: enabled ? Date.now() - 40_000 : 0,
       message: null,
     };
+  },
+
+  async devices(): Promise<DevicesView> {
+    return {
+      state: "online",
+      message: null,
+      error: null,
+      selfId: DEMO_PHONE_ID,
+      selfName: "This phone",
+      devices: demoDevices.map((device) => ({ ...device })),
+    };
+  },
+
+  async renameDevice(deviceId: string, name: string): Promise<DeviceView> {
+    const device = demoDevices.find((entry) => entry.id === deviceId);
+    if (!device) throw new Error("That machine is no longer on this account.");
+    device.name = name.trim().slice(0, 60) || device.name;
+    return { ...device };
+  },
+
+  async setDeviceRemote(deviceId: string, allowed: boolean): Promise<DeviceView> {
+    const device = demoDevices.find((entry) => entry.id === deviceId);
+    if (!device) throw new Error("That machine is no longer on this account.");
+    device.remoteAllowed = allowed;
+    return { ...device };
+  },
+
+  async removeDevice(deviceId: string): Promise<void> {
+    const at = demoDevices.findIndex((entry) => entry.id === deviceId);
+    if (at >= 0) demoDevices.splice(at, 1);
   },
 
   async previewState(): Promise<PreviewEvent | null> {

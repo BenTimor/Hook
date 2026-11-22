@@ -1,0 +1,10 @@
+# Renew the wildcard certificate used by *.preview.hookcode.io and make Caddy
+# pick it up. The certificate is issued outside Caddy because the stock caddy
+# image has no DNS provider module; certbot's Cloudflare plugin does the
+# DNS-01 challenge against the same /opt/hook-web volume.
+#
+# Installed by scripts/deploy-waitlist.sh as /etc/cron.d/hook-preview-cert.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+17 3 * * * root docker run --rm -v /opt/hook-web/preview:/etc/letsencrypt -v /opt/hook-web/cloudflare.ini:/cloudflare.ini:ro certbot/dns-cloudflare renew --quiet && docker exec scout-caddy-1 caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1

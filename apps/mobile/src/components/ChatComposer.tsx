@@ -20,6 +20,9 @@ export function ChatComposer({ className }: { className?: string }) {
   const removeDraftImage = useMobileChat((s) => s.removeDraftImage);
   const send = useMobileChat((s) => s.send);
   const stop = useMobileChat((s) => s.stop);
+  const coding = useMobileChat(
+    (s) => s.chats.find((chat) => chat.id === s.activeId)?.kind === "coding",
+  );
 
   const busy = Boolean(
     activeId && (streams[activeId] || activity[activeId]),
@@ -32,12 +35,16 @@ export function ChatComposer({ className }: { className?: string }) {
       onSend={() => void send()}
       onStop={() => void stop()}
       busy={busy}
+      // A coding chat accepts a message while the engine works: it steers the
+      // run instead of waiting.
+      steer={coding}
       images={draftImages}
       // The WebView's own file input opens the camera or the photo library,
-      // so attaching a screenshot needs no plugin and no permission string.
-      onAddImages={addDraftImages}
+      // so attaching a screenshot needs no plugin and no permission string. A
+      // coding agent talks in text.
+      onAddImages={coding ? undefined : addDraftImages}
       onRemoveImage={removeDraftImage}
-      placeholder="Ask anything…"
+      placeholder={coding ? "Message the coding agent…" : "Ask anything…"}
       className={className}
     />
   );

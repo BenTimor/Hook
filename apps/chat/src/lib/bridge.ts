@@ -11,12 +11,15 @@ import type {
   ChatEvent,
   ChatMeta,
   ContentReport,
+  DeviceView,
+  DevicesView,
   ImportPreview,
   ImportProgress,
   ImportSummary,
   MemoryView,
   PreviewEvent,
   PreviewView,
+  RemoteProject,
   ReportRequest,
   SearchHit,
   SettingsView,
@@ -37,6 +40,7 @@ type PreviewListener = (preview: PreviewEvent) => void;
 type AuthListener = (view: AuthView) => void;
 type UpdateListener = (event: UpdateEvent) => void;
 type SyncListener = (event: SyncEvent) => void;
+type DevicesListener = (view: DevicesView) => void;
 type ImportListener = (event: ImportProgress) => void;
 
 const chatListeners = new Set<ChatListener>();
@@ -45,6 +49,7 @@ const previewListeners = new Set<PreviewListener>();
 const authListeners = new Set<AuthListener>();
 const updateListeners = new Set<UpdateListener>();
 const syncListeners = new Set<SyncListener>();
+const devicesListeners = new Set<DevicesListener>();
 const importListeners = new Set<ImportListener>();
 
 function dispatch(chatId: string, event: StreamEvent) {
@@ -134,6 +139,29 @@ export function onAuthEvent(listener: AuthListener): () => void {
       else off = unlisten;
     },
   );
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
+/**
+ * The relay's view changed: a machine connected or went away, or this device
+ * lost its own connection. The Settings sheet and the machine picker read it.
+ */
+export function onDevicesEvent(listener: DevicesListener): () => void {
+  if (!isTauri()) {
+    devicesListeners.add(listener);
+    return () => devicesListeners.delete(listener);
+  }
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void listen<DevicesView>("hook://devices", (event) =>
+    listener(event.payload),
+  ).then((unlisten) => {
+    if (cancelled) unlisten();
+    else off = unlisten;
+  });
   return () => {
     cancelled = true;
     off?.();
@@ -428,6 +456,31 @@ export const api = {
   syncStatus: (): Promise<SyncView> =>
     isTauri() ? invoke<SyncView>("sync_status") : mock.syncStatus(),
 
+  /** The account's machines and this device's relay state. */
+  devices: (): Promise<DevicesView> =>
+    isTauri() ? invoke<DevicesView>("devices_list") : mock.devices(),
+
+  subscribeChat: (chatId: string): Promise<void> =>
+    isTauri() ? invoke<void>("subscribe_chat", { chatId }) : Promise.resolve(),
+
+  unsubscribeChat: (chatId: string): Promise<void> =>
+    isTauri() ? invoke<void>("unsubscribe_chat", { chatId }) : Promise.resolve(),
+
+  renameDevice: (deviceId: string, name: string): Promise<DeviceView> =>
+    isTauri()
+      ? invoke<DeviceView>("device_rename", { deviceId, name })
+      : mock.renameDevice(deviceId, name),
+
+  setDeviceRemote: (deviceId: string, allowed: boolean): Promise<DeviceView> =>
+    isTauri()
+      ? invoke<DeviceView>("device_set_remote", { deviceId, allowed })
+      : mock.setDeviceRemote(deviceId, allowed),
+
+  removeDevice: (deviceId: string): Promise<void> =>
+    isTauri()
+      ? invoke<void>("device_remove", { deviceId })
+      : mock.removeDevice(deviceId),
+
   syncNow: (): Promise<void> =>
     isTauri() ? invoke<void>("sync_now") : mock.syncNow(),
 
@@ -436,6 +489,11 @@ export const api = {
     isTauri()
       ? invoke<AgentsOverview>("stop_chat_agents", { chatId })
       : mock.stopChatAgents(),
+
+  stopRemoteAgent: (deviceId: string, agentId: string): Promise<void> =>
+    isTauri()
+      ? invoke<void>("stop_remote_agent", { deviceId, agentId })
+      : Promise.resolve(),
 
   /** Start a conversation with a coding agent in a folder the user picked. */
   createCodingChat: (folder: string): Promise<ChatMeta> =>
@@ -448,6 +506,41 @@ export const api = {
     isTauri()
       ? invoke<ChatMeta>("set_coding_chat_folder", { chatId, folder })
       : mock.setCodingChatFolder(chatId, folder),
+
+  /** Create a direct coding chat on another machine. */
+  createRemoteCodingChat: (
+    deviceId: string,
+    project: string,
+  ): Promise<ChatMeta> =>
+    isTauri()
+      ? invoke<ChatMeta>("create_remote_coding_chat", { deviceId, project })
+      : mock.createRemoteCodingChat(deviceId, project),
+
+  /** Read the transcript from the machine that owns a cached chat. */
+  fetchRemoteChat: (chatId: string): Promise<Chat> =>
+    isTauri()
+      ? invoke<Chat>("fetch_remote_chat", { chatId })
+      : mock.fetchRemoteChat(chatId),
+
+  /** The projects a machine offers for a direct coding chat. */
+  remoteProjects: (deviceId: string): Promise<RemoteProject[]> =>
+    isTauri()
+      ? invoke<RemoteProject[]>("remote_projects", { deviceId })
+      : mock.remoteProjects(deviceId),
+
+  /** Create a project folder on another machine. */
+  createRemoteProject: (
+    deviceId: string,
+    name: string,
+    description = "",
+  ): Promise<RemoteProject> =>
+    isTauri()
+      ? invoke<RemoteProject>("remote_create_project", {
+          deviceId,
+          name,
+          description,
+        })
+      : mock.createRemoteProject(deviceId, name, description),
 
   /** Answer a question a directly-driven coding agent is blocked on. */
   answerCodingAgent: (chatId: string, answer: string): Promise<void> =>

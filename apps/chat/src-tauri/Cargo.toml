@@ -20,7 +20,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-hook-core = { path = "../../../crates/hook-core" }
+hook-core = { path = "../../../crates/hook-core", features = ["tray"] }
 # Declared here as well as in hook-core: tauri-build discovers the plugin
 # permission sets (`opener:default`, `dialog:default`) from this crate's
 # dependency graph, and capabilities/default.json asks for them.

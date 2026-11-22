@@ -124,7 +124,13 @@ function AgentTask({
     wasLive.current = live;
   }, [live, allDone]);
 
-  const meta = total ? `${stateLabel(agent)} · ${done}/${total}` : stateLabel(agent);
+  const meta = [
+    stateLabel(agent),
+    total ? `${done}/${total}` : "",
+    agent.deviceName || "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <section className="agent-card" data-state={agent.state}>

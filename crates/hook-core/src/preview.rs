@@ -80,6 +80,14 @@ pub struct PreviewView {
     pub live: bool,
 }
 
+/// One file the remote tunnel asked for.
+#[derive(Debug, Clone)]
+pub struct PreviewPage {
+    pub status: u16,
+    pub content_type: String,
+    pub body: Vec<u8>,
+}
+
 /// Sent when the preview ends: the chat was deleted, another preview replaced
 /// it, or the app is quitting. A settled coding-agent run no longer closes the
 /// panel.
@@ -128,6 +136,9 @@ struct Active {
     url: String,
     /// Absolute path of the shown HTML file.
     path: PathBuf,
+    /// The folder the loopback server serves. The remote tunnel uses the same
+    /// root, so absolute and relative asset paths behave identically.
+    root: PathBuf,
     version: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     /// Set when the coding-agent run settles. The server keeps serving the
@@ -193,10 +204,31 @@ impl PreviewManager {
         raw_file: &str,
         raw_title: &str,
     ) -> Result<PreviewView, String> {
-        let file = normalize_file(raw_file)?;
+        // A relative path is a project page; an absolute path is a page
+        // anywhere on this machine, served from its own folder. Both end up
+        // with a root and a file name, so the loopback server and the remote
+        // tunnel share one containment rule.
+        let (root, file) = if Path::new(raw_file).is_absolute() {
+            let absolute = PathBuf::from(raw_file);
+            let parent = absolute
+                .parent()
+                .ok_or("The preview file has no folder.")?
+                .to_path_buf();
+            let name = absolute
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .ok_or("The preview file has no name.")?;
+            let lower = name.to_ascii_lowercase();
+            if !lower.ends_with(".html") && !lower.ends_with(".htm") {
+                return Err("The preview file must be an .html page.".into());
+            }
+            (parent, name)
+        } else {
+            (root.to_path_buf(), normalize_file(raw_file)?)
+        };
         let root = root
             .canonicalize()
-            .map_err(|e| format!("Project folder is unavailable: {e}"))?;
+            .map_err(|e| format!("Preview folder is unavailable: {e}"))?;
         let root = crate::store::strip_verbatim(root);
         let path = root.join(&file);
 
@@ -231,7 +263,7 @@ impl PreviewManager {
         let settled = Arc::new(AtomicBool::new(false));
         let thread = start_watch(
             self.emit.clone(),
-            root,
+            root.clone(),
             path.clone(),
             chat_id.to_string(),
             project.to_string(),
@@ -259,6 +291,7 @@ impl PreviewManager {
             title,
             url,
             path,
+            root,
             version,
             stop,
             settled,
@@ -304,6 +337,7 @@ impl PreviewManager {
             title: title.to_string(),
             url: String::new(),
             path: PathBuf::new(),
+            root: PathBuf::new(),
             version: Arc::new(AtomicU64::new(0)),
             stop: Arc::new(AtomicBool::new(false)),
             settled: Arc::new(AtomicBool::new(true)),
@@ -314,6 +348,60 @@ impl PreviewManager {
         *lock(&self.active) = Some(active);
         (self.emit)(PreviewEvent::Open(view.clone()));
         view
+    }
+
+    /// One file from the active preview, for the remote tunnel. The path is
+    /// the URL path under the preview root; `None`/empty means the page the
+    /// panel is showing. This is the same containment rule as the loopback
+    /// server, so a tunnel cannot read outside the folder the agent chose.
+    pub fn fetch(&self, chat_id: &str, raw_path: &str) -> Result<PreviewPage, String> {
+        let guard = lock(&self.active);
+        let Some(active) = guard.as_ref() else {
+            return Err("No preview is open.".into());
+        };
+        if active.kind != "page" || active.chat_id != chat_id {
+            return Err("No preview is open for this conversation.".into());
+        }
+        let root = active
+            .root
+            .canonicalize()
+            .map_err(|_| "The preview folder is unavailable.".to_string())?;
+        let root = crate::store::strip_verbatim(root);
+        let decoded = percent_decode(raw_path.trim_start_matches('/'))
+            .ok_or("That preview path is not valid.")?;
+        if std::path::Path::new(&decoded)
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err("That preview path is not valid.".into());
+        }
+        let relative = if decoded.trim().is_empty() {
+            active.file.clone()
+        } else {
+            decoded
+        };
+        let candidate = root.join(&relative);
+        let candidate = candidate
+            .canonicalize()
+            .map_err(|_| "Not found.".to_string())?;
+        let candidate = crate::store::strip_verbatim(candidate);
+        if !candidate.starts_with(&root) {
+            return Err("Not found.".into());
+        }
+        let candidate = if candidate.is_dir() {
+            candidate.join("index.html")
+        } else {
+            candidate
+        };
+        if !candidate.is_file() {
+            return Err("Not found.".into());
+        }
+        let body = std::fs::read(&candidate).map_err(|_| "Could not read the page.".to_string())?;
+        Ok(PreviewPage {
+            status: 200,
+            content_type: content_type(&candidate).to_string(),
+            body,
+        })
     }
 
     /// The panel as it stands now, or `None` when nothing is open. Restored by
@@ -928,6 +1016,35 @@ mod tests {
     }
 
     #[test]
+    fn an_external_html_page_is_served_from_its_own_folder() {
+        let dir = std::env::temp_dir().join(format!("hook-preview-root-{}", uuid::Uuid::new_v4()));
+        let outside = std::env::temp_dir().join(format!("hook-preview-out-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let page = outside.join("report.html");
+        std::fs::write(&page, "<h1>outside</h1>").unwrap();
+
+        let manager = PreviewManager::new(Arc::new(|_event: PreviewEvent| {}));
+        let view = manager
+            .show(
+                "chat-1",
+                "agent-1",
+                "demo",
+                &dir,
+                page.to_str().unwrap(),
+                "Report",
+            )
+            .unwrap();
+        assert_eq!(view.file, "report.html");
+        let fetched = manager.fetch("chat-1", "/report.html").unwrap();
+        assert!(String::from_utf8_lossy(&fetched.body).contains("outside"));
+        assert!(manager.fetch("chat-1", "/../secret").is_err());
+        manager.stop();
+        let _ = std::fs::remove_dir_all(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_preview_serves_the_page_and_announces_changes() {
         use std::io::{Read, Write};
 
@@ -964,6 +1081,15 @@ mod tests {
         assert!(response.contains("200 OK"), "{response}");
         assert!(response.contains("Content-Type: text/html"), "{response}");
         assert!(response.contains("<h1>one</h1>"), "{response}");
+
+        // The remote tunnel reads the same file through the same containment
+        // rule: the active chat only, and never a path outside the root.
+        let fetched = manager.fetch("chat-1", "/index.html").unwrap();
+        assert_eq!(fetched.status, 200);
+        assert_eq!(fetched.content_type, "text/html; charset=utf-8");
+        assert!(String::from_utf8_lossy(&fetched.body).contains("one"));
+        assert!(manager.fetch("chat-2", "/index.html").is_err());
+        assert!(manager.fetch("chat-1", "/../secret").is_err());
 
         // A file write bumps the version, which is what makes the frame reload.
         std::fs::write(dir.join("index.html"), "<h1>two</h1>").unwrap();

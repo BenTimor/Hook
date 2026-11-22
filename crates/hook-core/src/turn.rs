@@ -19,11 +19,11 @@ use crate::tools::{self, ToolEnv};
 const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk with the user in a chat window and put real coding work in motion for them.
 
 ## Projects
-- A project is a folder in the user-s projects directory. Every chat can use every project.
+- A project is a folder on one of the user-s computers. Every chat can use every project, on every machine. On a phone, call `list_machines` and then `list_projects` with the machine whose folders you need; create_project also names the machine it should create the folder on.
 - Projects are saved to the user-s account and can be worked on from several computers. The folder a coding agent starts in may be empty because the work so far lives on another computer; the agent pulls the latest version first and saves its own work at the end. Never tell the user files are missing before the agent has had that chance.
 - Each project carries a short description that you maintain. Call list_projects whenever the task might match existing work; those descriptions are your index.
 - remember_in_project writes a line into the project's own AGENTS.md, which every coding agent in that folder reads on every run. Use it when the user tells you how the project is built, tested or deployed and it should hold for all future work there. That file travels with the code, so do not use it for anything private.
-- You cannot read or edit project files yourself. create_project, update_project_description and remember_in_project are your only direct project tools; anything about a project-s contents comes from a coding agent.
+- You cannot read or edit project files yourself. create_project can create a folder on any of the user-s machines; update_project_description and remember_in_project act on this computer-s copy and are not offered on a phone. Anything about a project-s contents comes from a coding agent.
 
 ## Memory
 - You remember this person between conversations. Pinned memories are already in front of you; `memory_search` finds the rest. Search when an earlier preference, decision or fact could change the answer - most turns need no lookup.
@@ -40,10 +40,13 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - Search more than once when the question genuinely needs different angles, but keep it to what the question asks.
 
 ## Coding agents
-- start_coding_agent runs pi inside a project folder with full permissions, sandboxed to that folder. Write a complete brief: the goal, the constraints, anything the user said that matters, and how to verify success. The agent pulls the latest saved work before it starts and saves (pushes) when it finishes; do not describe that mechanics to the user.
+- Work runs on one of the user-s computers. Call `list_machines` when you do not already know which machines are on. Every agent tool takes a `machine`, and you must always pass one - the exact name from that list, or `this computer` on Hook. Do this even when there is only one machine: the conversation-s history has to say where each run happened.
+- Choose the machine the user named. Otherwise use the machine this project ran on last (check the conversation). Otherwise use the only one that is online. If none are on, say so plainly and do not start anything. If several are possible and the history does not decide, ask one short question with the machine names and nothing technical.
+- Say the machine-s name once when a run starts ('Running this on your MacBook.'). Never mention ids, paths, ports or protocols. A phone cannot run agents; its machines are the computers running Hook.
+- start_coding_agent runs pi inside a project folder on that machine with full permissions, sandboxed to that folder. Write a complete brief: the goal, the constraints, anything the user said that matters, and how to verify success. The agent pulls the latest saved work before it starts and saves (pushes) when it finishes; do not describe that mechanics to the user.
 - Always pass a `plan`: three to six short steps in plain, everyday language, in the order they will happen. This is the checklist the user watches at the bottom of the chat while the agent works, so it must read like 'Setting things up', 'Designing the front page', 'Integrating the real service' - never file names, tool names, package names or jargon. Same language the user writes in.
 - Runs are asynchronous. After starting one you may end your turn. You will be woken with a note when it settles, fails, or asks a question.
-- agent_status shows progress, steer_agent redirects a live run, answer_agent unblocks a question it is stuck on, stop_agent kills it, and start_coding_agent with resume_session_id continues earlier work (see list_coding_sessions).
+- agent_status shows progress, steer_agent redirects a live run, answer_agent unblocks a question it is stuck on, stop_agent kills it, and start_coding_agent with resume_session_id continues earlier work (see list_coding_sessions). All of them take the same `machine` as the run they refer to; never assume a run is on this computer.
 - When you are woken and there is something to report, say what actually happened in plain language: what changed, whether it worked, what is left. Never mention agent ids, session ids, tool names, or raw logs.
 - If a coding agent asks a question, answer it yourself when the user-s instructions already determine the answer; otherwise ask the user, then answer the agent.
 
@@ -148,6 +151,13 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 pub(crate) fn emit(state: &AppState, chat_id: &str, event: StreamEvent) {
+    // A controller watching this chat gets the same stream the local window
+    // gets. The relay is per chat and drops the frame when nobody is watching.
+    let mirror = if crate::remote::is_remote(state, chat_id) {
+        serde_json::to_value(&event).ok()
+    } else {
+        None
+    };
     let _ = state.app.emit(
         "hook://chat",
         ChatEvent {
@@ -155,6 +165,9 @@ pub(crate) fn emit(state: &AppState, chat_id: &str, event: StreamEvent) {
             event,
         },
     );
+    if let Some(payload) = mirror {
+        let _ = state.relay.publish(chat_id, payload);
+    }
 }
 
 /// Tracks which chats are mid-turn and which have a pending wake.
@@ -348,8 +361,10 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         // Only advertise tools this product can actually honour. A free account
         // without its own model endpoint cannot start a coding agent, so the
         // agent tools are absent rather than failing once called; the engine
-        // refuses independently.
-        let coding_available = state.capabilities.coding_agents
+        // refuses independently. A controller (Workspace, the phone) has the
+        // tools without a local engine: they travel to a Hook host.
+        let coding_available = (state.capabilities.coding_agents
+            || state.capabilities.remote_agents)
             && (!state.auth.is_free() || state.settings.custom_provider().is_some());
         if let Some(list) = set.as_array_mut() {
             if !coding_available {
@@ -357,12 +372,14 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     !tools::AGENT_TOOLS.contains(&tool["function"]["name"].as_str().unwrap_or(""))
                 });
             }
-            // A project is a folder on this computer. A device without one has
-            // nothing to list, create or remember in, so the tools would only
-            // produce errors the model has to explain away.
+            // A project is a folder on one of the user's computers. A phone has
+            // no folder of its own, but list_projects and create_project can
+            // name a machine; describing or remembering one stays local.
             if !state.capabilities.projects {
                 list.retain(|tool| {
-                    !tools::PROJECT_TOOLS.contains(&tool["function"]["name"].as_str().unwrap_or(""))
+                    let name = tool["function"]["name"].as_str().unwrap_or("");
+                    !tools::PROJECT_TOOLS.contains(&name)
+                        || (name == "list_projects" && state.capabilities.remote_agents)
                 });
             }
         }
@@ -919,14 +936,26 @@ fn system_prompt(cfg: &config::HarnessConfig, caps: crate::Capabilities, memory:
     if !caps.preview_pages {
         text = without_section(text, "## Preview panel");
     }
-    if !caps.coding_agents {
+    if !(caps.coding_agents || caps.remote_agents) {
         text = without_section(text, "## Coding agents");
         text = without_section(text, "## Steering a running agent");
         text = without_section(text, "## Progress");
+    } else if caps.remote_agents && !caps.coding_agents {
+        // A controller can start work on a computer, but it never runs an
+        // agent itself. Saying so once keeps the model from promising a local
+        // run on a phone.
+        text = text.replace(
+            "## Coding agents
+",
+            "## Coding agents
+- This device is a controller: it can start and steer work on a computer, but it cannot run a coding agent itself.
+",
+        );
     }
-    // A project is a folder on this machine. Without a projects directory the
-    // tools are gone, so telling the agent how to use them would be a lie.
-    if !caps.projects {
+    // A project is a folder on the user's computers. A phone can still ask a
+    // machine which projects it has, so the section survives without a local
+    // projects directory.
+    if !caps.projects && !caps.remote_agents {
         text = without_section(text, "## Projects");
     }
     // Workspace entities are account data, so a phone keeps the preview; it just
@@ -1060,6 +1089,7 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
             None => "Searching the web…".into(),
         },
         "list_projects" => "Looking at your projects…".into(),
+        "list_machines" => "Checking which computers are on…".into(),
         "remember" => match text("text") {
             Some(value) => format!("Remembering “{}”…", short(value, 42)),
             None => "Remembering something…".into(),
@@ -1076,9 +1106,15 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
         "remember_in_project" => titled("Noting how", "project", "Noting how the project works…"),
         "create_project" => titled("Creating", "name", "Creating a project…"),
         "update_project_description" => "Updating a project…".into(),
-        "start_coding_agent" => "Starting a coding agent…".into(),
+        "start_coding_agent" => match text("machine") {
+            Some(machine) => format!("Starting work on {}…", short(machine, 32)),
+            None => "Starting a coding agent…".into(),
+        },
         "list_agents" => "Checking on the agents…".into(),
-        "agent_status" => "Checking on the agent…".into(),
+        "agent_status" => match text("machine") {
+            Some(machine) => format!("Checking on {}…", short(machine, 32)),
+            None => "Checking on the agent…".into(),
+        },
         "steer_agent" => "Redirecting the agent…".into(),
         "answer_agent" => "Answering the agent…".into(),
         "stop_agent" => "Stopping the agent…".into(),
@@ -1212,17 +1248,19 @@ async fn run_tool(
     if call.name.starts_with("workspace_") {
         return run_workspace_tool(state, chat_id, &call.name, &args).await;
     }
-    tools::execute(
+    tools::execute_async(
         &ToolEnv {
             agents: &state.agents,
             projects: &state.projects,
             settings: &state.settings,
             chat_id,
             user_initiated,
+            state: Some(state),
         },
         &call.name,
         &args,
     )
+    .await
 }
 
 /// Earlier conversations on this machine. The search is the one the chat list
@@ -2303,6 +2341,7 @@ mod capability_tests {
                 preview_pages: false,
                 preview_workspace: false,
                 coding_agents: false,
+                remote_agents: false,
                 workspace_tools: false,
                 projects: false,
             },
@@ -2331,7 +2370,10 @@ mod capability_tests {
         let phone = system_prompt(&cfg, crate::Capabilities::mobile(), false);
         assert!(phone.contains("## Hook Workspace"));
         assert!(!phone.contains("## Preview panel"));
-        assert!(!phone.contains("## Projects"));
+        // A phone has no folder, but it can ask a machine which projects it
+        // has, so the section (and the machine-aware project tools) stay.
+        assert!(phone.contains("## Projects"));
+        assert!(phone.contains("This device is a controller"));
         assert!(phone.contains("workspace_preview puts a task, board or document"));
         // ...and a product without the Workspace preview keeps the section but
         // loses that one line, without touching the ones around it.

@@ -20,6 +20,7 @@ import { useUpdateStore } from "../store/useUpdateStore";
 import { ImportSection } from "./ImportSection";
 import { MemorySection } from "./MemorySection";
 import { AboutSection } from "./AboutSection";
+import { MachinesSection } from "@hook/chat";
 
 function textOf(error: unknown): string {
   if (typeof error === "string") return error;
@@ -418,6 +419,10 @@ export function SettingsSheet() {
   const settings = useChatStore((s) => s.settings);
   const chooseProjectsDir = useChatStore((s) => s.chooseProjectsDir);
   const setAdvancedMode = useChatStore((s) => s.setAdvancedMode);
+  const devices = useChatStore((s) => s.devices);
+  const renameDevice = useChatStore((s) => s.renameDevice);
+  const setDeviceRemote = useChatStore((s) => s.setDeviceRemote);
+  const removeDevice = useChatStore((s) => s.removeDevice);
   const auth = useChatStore((s) => s.auth);
   const authBusy = useChatStore((s) => s.authBusy);
   const signOut = useChatStore((s) => s.signOut);
@@ -527,6 +532,31 @@ export function SettingsSheet() {
             </div>
             <SyncControl />
           </section>
+
+          {auth?.signedIn && (
+            <section className="sheet-section">
+              <div className="sheet-label">
+                <span>Your machines</span>
+                <span className="status" data-on={devices?.state === "online"}>
+                  {devices?.state === "online" ? "Connected" : "…"}
+                </span>
+              </div>
+              <p className="sheet-help">
+                Run coding agents on a computer without being at it. Hook on
+                another computer appears here while it is running; a phone or
+                Hook Workspace can start work on any of them.
+              </p>
+              <MachinesSection
+                machines={devices?.devices ?? []}
+                selfId={devices?.selfId ?? ""}
+                state={devices?.state ?? "connecting"}
+                message={devices?.message}
+                onRename={(id, name) => renameDevice(id, name)}
+                onSetRemote={(id, allowed) => setDeviceRemote(id, allowed)}
+                onRemove={(id) => removeDevice(id)}
+              />
+            </section>
+          )}
 
           <MemorySection />
 

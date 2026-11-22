@@ -341,6 +341,7 @@ async fn dispatch(state: Arc<AppState>, chat_id: String, name: String, args: Val
             // The user typed the message that led here; a coding agent talking
             // to them directly is never woken by a note.
             user_initiated: true,
+            state: None,
         };
         crate::tools::execute(&env, &name, &args)
     })

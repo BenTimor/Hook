@@ -66,6 +66,21 @@ export interface ChatMeta {
   projectPath?: string;
   /** The engine session this coding chat continues. */
   sessionId?: string;
+  /** The machine that owns a direct coding chat. */
+  deviceId?: string;
+  /** The account's display name for that machine. */
+  deviceName?: string;
+  /** True on a cached copy: the original is on `deviceId`, not here. */
+  remote?: boolean;
+  /** The owner's last state, for a cached copy. */
+  stubState?: "idle" | "running" | "needs_input" | "error" | string;
+}
+
+/** What a host offers as a place to start a direct coding chat. */
+export interface RemoteProject {
+  project: string;
+  description?: string | null;
+  git?: boolean;
 }
 
 export interface Chat {
@@ -163,6 +178,35 @@ export interface SyncEvent {
   /** Memories arrived from another computer. */
   memory?: boolean;
   at: number;
+}
+
+/** One machine the account knows, merged with its live connection state. */
+export interface DeviceView {
+  id: string;
+  name: string;
+  kind: "desktop" | "headless" | "mobile" | string;
+  platform: string | null;
+  arch: string | null;
+  appVersion: string | null;
+  product: string | null;
+  canHost: boolean;
+  online: boolean;
+  hostOnline: boolean;
+  role: string;
+  remoteAllowed: boolean;
+  lastSeen: string | null;
+  capabilities: Record<string, unknown> | null;
+  specs: { cpuCores?: number; projects?: number } | null;
+}
+
+/** The relay's view: whether this device is connected, and the account's machines. */
+export interface DevicesView {
+  state: "signedOut" | "connecting" | "online" | "refused" | "offline";
+  message: string | null;
+  error: string | null;
+  selfId: string;
+  selfName: string;
+  devices: DeviceView[];
 }
 
 /** Download progress for an in-app update. */
@@ -289,6 +333,9 @@ export interface AgentSummary {
   direct: boolean;
   /** What a direct agent is blocked on, when it is waiting for a person. */
   question?: AgentQuestion;
+  /** The machine that owns the run. */
+  deviceId?: string;
+  deviceName?: string;
 }
 
 /** A dialog a coding agent is blocked on. */
@@ -376,6 +423,10 @@ export interface PreviewView {
   waiting: boolean;
   /** The run is still working, so the page refreshes itself as files change. */
   live: boolean;
+  /** The machine that owns a remote page. Absent on a local preview. */
+  deviceId?: string;
+  deviceName?: string;
+  remote?: boolean;
 }
 
 /** The preview ended: the chat was deleted, another page replaced this one, or

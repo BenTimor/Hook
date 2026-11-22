@@ -189,6 +189,24 @@ pub struct ChatMeta {
     /// Also local: the session file lives in the app's data folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// The machine that owns a direct coding chat. Set on the host that created
+    /// it and on a viewer's cached copy; absent on ordinary chats and on coding
+    /// chats written before machines existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    /// The account's name for that machine at the time the copy was made. A
+    /// display hint; the account service's registry is authoritative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    /// This device holds a cached copy of a chat owned by `device_id`, not the
+    /// original. Its messages and folder never upload; only the owner's stub
+    /// travels through the account.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remote: bool,
+    /// The last live state the owner reported (`idle`, `running`,
+    /// `needs_input`, `error`) for a remote stub. Absent on the owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stub_state: Option<String>,
 }
 
 impl ChatMeta {
@@ -197,10 +215,19 @@ impl ChatMeta {
         self.kind.as_deref() == Some(KIND_CODING)
     }
 
-    /// Chats that belong to this computer only. The account never learns about
-    /// them: see `SyncEngine::push_chats`.
-    pub fn is_local_only(&self) -> bool {
+    /// This machine is the original of a direct coding chat, so it is the one
+    /// that pushes the stub the account sees.
+    pub fn is_owned_coding(&self, device_id: &str) -> bool {
         self.is_coding()
+            && !self.remote
+            && self.device_id.as_deref() == Some(device_id)
+    }
+
+    /// Chats that belong to this computer only. The account never learns about
+    /// their content: see `SyncEngine::push_chats`. A cached remote copy is just
+    /// as local — the owner's stub is what the account holds.
+    pub fn is_local_only(&self) -> bool {
+        self.is_coding() || self.remote
     }
 }
 
@@ -237,6 +264,10 @@ impl Chat {
                 kind: None,
                 project_path: None,
                 session_id: None,
+                device_id: None,
+                device_name: None,
+                remote: false,
+                stub_state: None,
             },
             messages: Vec::new(),
         }
@@ -260,11 +291,16 @@ impl Chat {
 
     /// Recompute derived metadata from the message list.
     pub fn refresh_meta(&mut self) {
-        self.meta.message_count = self
-            .messages
-            .iter()
-            .filter(|m| !m.hidden && m.role != "tool")
-            .count();
+        // A remote copy keeps the owner's count: a stub has no messages, and a
+        // partial cache still knows how many the host has. The preview is ours
+        // to compute when there is something to summarise.
+        if !self.meta.remote {
+            self.meta.message_count = self
+                .messages
+                .iter()
+                .filter(|m| !m.hidden && m.role != "tool")
+                .count();
+        }
         self.meta.preview = self
             .messages
             .iter()
@@ -415,6 +451,27 @@ impl Store {
         }
     }
 
+    /// Give coding chats written before machines existed an owner. The host is
+    /// this device; a chat that is not a remote cache was created here. Called
+    /// once at startup, after the account's device id is known.
+    pub fn own_coding(&self, device_id: &str, device_name: &str) {
+        let Ok(metas) = self.list() else {
+            return;
+        };
+        for meta in metas.into_iter().filter(|meta| {
+            meta.is_coding() && !meta.remote && meta.device_id.is_none()
+        }) {
+            let Ok(mut chat) = self.load(&meta.id) else {
+                continue;
+            };
+            chat.meta.device_id = Some(device_id.to_string());
+            chat.meta.device_name = Some(device_name.to_string());
+            // A coding chat is local-only, so this does not enter the upload
+            // queue; the stub path in `sync.rs` handles it instead.
+            let _ = self.save(&mut chat);
+        }
+    }
+
     /// Number of chats waiting to upload (used by the status line).
     pub fn dirty_count(&self) -> usize {
         self.dirty
@@ -476,6 +533,36 @@ impl Store {
     /// canonical one, so it must not be queued for upload again.
     pub fn save_remote(&self, chat: &mut Chat) -> Result<(), String> {
         self.save_inner(chat, false)
+    }
+
+    /// Apply a remote coding-chat stub. The owner's row is the only copy the
+    /// account holds; this device keeps its messages, if it has any, and only
+    /// takes the label, the count and the live state. A stub for a chat this
+    /// device owns is ignored — the owner is authoritative.
+    pub fn apply_stub(&self, stub: ChatMeta) -> Result<bool, String> {
+        match self.load(&stub.id) {
+            Ok(mut local) => {
+                if !local.meta.remote {
+                    return Ok(false);
+                }
+                local.meta.title = stub.title;
+                local.meta.message_count = stub.message_count;
+                local.meta.stub_state = stub.stub_state;
+                local.meta.device_id = stub.device_id;
+                local.meta.device_name = stub.device_name;
+                local.meta.updated_at = stub.updated_at;
+                self.save_remote(&mut local)?;
+                Ok(true)
+            }
+            Err(_) => {
+                let mut chat = Chat {
+                    meta: stub,
+                    messages: Vec::new(),
+                };
+                self.save_remote(&mut chat)?;
+                Ok(true)
+            }
+        }
     }
 
     fn save_inner(&self, chat: &mut Chat, dirty: bool) -> Result<(), String> {
@@ -1034,6 +1121,80 @@ mod tests {
         let mut ordinary = Chat::new();
         store.save(&mut ordinary).unwrap();
         assert_eq!(store.dirty_ids(), vec![ordinary.meta.id.clone()]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_remote_stub_lists_a_chat_without_its_messages() {
+        let root = std::env::temp_dir().join(format!("hook-stub-{}", uuid::Uuid::new_v4()));
+        let store = Store::new(root.clone()).unwrap();
+        let stub = ChatMeta {
+            id: "remote-1".into(),
+            title: "Fix the parser".into(),
+            created_at: 1000,
+            updated_at: 2000,
+            pinned: false,
+            pinned_at: None,
+            message_count: 7,
+            preview: String::new(),
+            source: None,
+            source_id: None,
+            source_updated_at: None,
+            kind: Some(KIND_CODING.into()),
+            project_path: None,
+            session_id: None,
+            device_id: Some("studio".into()),
+            device_name: Some("Studio Mac".into()),
+            remote: true,
+            stub_state: Some("running".into()),
+        };
+
+        assert!(store.apply_stub(stub.clone()).unwrap());
+        let chat = store.load("remote-1").unwrap();
+        assert!(chat.messages.is_empty());
+        assert_eq!(chat.meta.message_count, 7, "the stub keeps the host's count");
+        assert!(chat.meta.remote);
+        assert!(chat.meta.is_local_only());
+        assert!(store.dirty_ids().is_empty(), "a cache never uploads");
+
+        // A later stub updates the label and the state but keeps the messages
+        // this device already fetched.
+        let mut cache = chat;
+        cache.messages.push(Message::new("user", "hello", "complete"));
+        store.save_remote(&mut cache).unwrap();
+        let mut next = stub;
+        next.title = "Fix the parser again".into();
+        next.message_count = 8;
+        next.stub_state = Some("idle".into());
+        assert!(store.apply_stub(next).unwrap());
+        let after = store.load("remote-1").unwrap();
+        assert_eq!(after.messages.len(), 1);
+        assert_eq!(after.meta.title, "Fix the parser again");
+        assert_eq!(after.meta.message_count, 8);
+        assert_eq!(after.meta.stub_state.as_deref(), Some("idle"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_local_coding_chat_is_never_turned_into_a_cache() {
+        let root = std::env::temp_dir().join(format!("hook-stub-{}", uuid::Uuid::new_v4()));
+        let store = Store::new(root.clone()).unwrap();
+        let path = root.join("project");
+        std::fs::create_dir_all(&path).unwrap();
+        let mut own = Chat::new_coding(&path);
+        own.meta.device_id = Some("this".into());
+        own.meta.device_name = Some("This computer".into());
+        assert!(own.meta.is_owned_coding("this"));
+        assert!(!own.meta.is_owned_coding("other"));
+        store.save(&mut own).unwrap();
+
+        let mut stub = own.meta.clone();
+        stub.remote = true;
+        stub.device_id = Some("other".into());
+        assert!(!store.apply_stub(stub).unwrap());
+        assert!(!store.load(&own.meta.id).unwrap().meta.remote);
 
         let _ = std::fs::remove_dir_all(&root);
     }

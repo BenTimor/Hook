@@ -939,6 +939,10 @@ fn build_chat(conversation: &Parsed) -> Chat {
         kind: None,
         project_path: None,
         session_id: None,
+        device_id: None,
+        device_name: None,
+        remote: false,
+        stub_state: None,
     };
     if meta.created_at <= 0 {
         meta.created_at = meta.updated_at;

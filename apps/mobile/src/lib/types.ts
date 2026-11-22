@@ -27,6 +27,23 @@ export interface ChatMeta {
   pinnedAt?: number;
   messageCount: number;
   preview: string;
+  /** "coding" for a conversation with a directly-driven agent. */
+  kind?: "coding";
+  /** The folder and session on the owner; absent on a cached copy. */
+  projectPath?: string;
+  sessionId?: string;
+  /** The machine that owns the chat; `remote` marks a cached copy. */
+  deviceId?: string;
+  deviceName?: string;
+  remote?: boolean;
+  stubState?: "idle" | "running" | "needs_input" | "error" | string;
+}
+
+/** What a host offers as a place to start a direct coding chat. */
+export interface RemoteProject {
+  project: string;
+  description?: string | null;
+  git?: boolean;
 }
 
 export interface Chat {
@@ -97,6 +114,35 @@ export interface SyncEvent {
   at: number;
 }
 
+/** One machine the account knows, merged with its live connection state. */
+export interface DeviceView {
+  id: string;
+  name: string;
+  kind: "desktop" | "headless" | "mobile" | string;
+  platform: string | null;
+  arch: string | null;
+  appVersion: string | null;
+  product: string | null;
+  canHost: boolean;
+  online: boolean;
+  hostOnline: boolean;
+  role: string;
+  remoteAllowed: boolean;
+  lastSeen: string | null;
+  capabilities: Record<string, unknown> | null;
+  specs: { cpuCores?: number; projects?: number } | null;
+}
+
+/** The relay's view: whether this phone is connected, and the account's machines. */
+export interface DevicesView {
+  state: "signedOut" | "connecting" | "online" | "refused" | "offline";
+  message: string | null;
+  error: string | null;
+  selfId: string;
+  selfName: string;
+  devices: DeviceView[];
+}
+
 export type StreamEvent =
   | { kind: "started"; messages: Message[]; meta: ChatMeta }
   | { kind: "delta"; text: string }
@@ -114,13 +160,24 @@ export type WorkspacePreviewKind = "document" | "task" | "board";
 export interface PreviewView {
   active: true;
   chatId: string;
-  kind?: WorkspacePreviewKind;
+  /** "page" is an HTML file on a machine; the rest are Workspace data. */
+  kind?: "page" | WorkspacePreviewKind;
   document?: import("@hook/chat").WorkspaceDocument;
   task?: import("@hook/chat").WorkspaceTask;
   comments?: import("@hook/chat").WorkspaceComment[];
   board?: import("@hook/chat").WorkspaceBoard;
   tasks?: import("@hook/chat").WorkspaceTask[];
   title?: string;
+  /** The remote ticket URL for a page the machine is serving. */
+  url?: string;
+  file?: string;
+  version?: number;
+  waiting?: boolean;
+  live?: boolean;
+  /** The machine that owns the page, when this view came over the relay. */
+  deviceId?: string;
+  deviceName?: string;
+  remote?: boolean;
   open: boolean;
 }
 

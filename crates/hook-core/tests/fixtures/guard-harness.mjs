@@ -54,7 +54,7 @@ const previewOk = await tools.show_preview?.execute("call_preview", {
   title: "Insights",
 });
 const previewOutside = await tools.show_preview?.execute("call_preview_bad", {
-  file: "../evil.html",
+  file: "../evil.tsx",
   title: "Nope",
 });
 const previewNotHtml = await tools.show_preview?.execute("call_preview_tsx", {
@@ -94,7 +94,7 @@ const results = {
     toolsRegistered: Boolean(tools.show_preview),
     guidanceExplainsOptional: /optional/i.test(before?.systemPrompt ?? ""),
     resultOk: previewOk?.isError !== true,
-    outsideRejected: previewOutside?.isError === true,
+    outsideNonHtmlRejected: previewOutside?.isError === true,
     nonHtmlRejected: previewNotHtml?.isError === true,
     written: previewWritten
       ? { file: previewWritten.file, title: previewWritten.title }

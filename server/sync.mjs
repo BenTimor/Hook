@@ -113,7 +113,7 @@ function nameKey(name) {
   return name.toLowerCase();
 }
 
-function bumpSeq(db, subject) {
+export function bumpSeq(db, subject) {
   db.prepare(
     `INSERT INTO sync_state (google_subject, next_seq) VALUES (?, 1)
      ON CONFLICT(google_subject) DO UPDATE SET next_seq = next_seq + 1`,
@@ -531,7 +531,15 @@ export function createSyncRouter({ env, db }) {
       });
     next();
   };
-  for (const path of ["/status", "/changes", "/chats", "/projects", "/memory", "/media"])
+  for (const path of [
+    "/status",
+    "/changes",
+    "/chats",
+    "/projects",
+    "/memory",
+    "/media",
+    "/remote-chats",
+  ])
     router.use(path, gate);
 
   router.get("/status", (req, res) => {
@@ -602,11 +610,29 @@ export function createSyncRouter({ env, db }) {
                     'deleted', json(CASE WHEN deleted = 1 THEN 'true' ELSE 'false' END)
                   ) AS payload
            FROM sync_memory WHERE google_subject = ? AND seq > ?
+           UNION ALL
+           SELECT 'remoteChat' AS kind, r.chat_id AS id, r.seq, r.updated_at,
+                  r.deleted, NULL AS hash, NULL AS body, NULL AS name,
+                  NULL AS description, r.created_at,
+                  json_object(
+                    'id', r.chat_id,
+                    'title', r.title,
+                    'deviceId', r.device_id,
+                    'deviceName', COALESCE(d.name, r.device_id),
+                    'state', r.state,
+                    'messageCount', r.message_count,
+                    'createdAt', r.created_at,
+                    'updatedAt', r.updated_at
+                  ) AS payload
+           FROM sync_remote_chats r
+           LEFT JOIN devices d
+             ON d.google_subject = r.google_subject AND d.device_id = r.device_id
+           WHERE r.google_subject = ? AND r.seq > ?
          )
          ORDER BY seq ASC
          LIMIT ?`,
       )
-      .all(subject, since, subject, since, subject, since, limit + 1);
+      .all(subject, since, subject, since, subject, since, subject, since, limit + 1);
 
     const hasMoreRows = rows.length > limit;
     const page = hasMoreRows ? rows.slice(0, limit) : rows;
@@ -625,6 +651,15 @@ export function createSyncRouter({ env, db }) {
               ? {}
               : { chat: JSON.parse(gunzipSync(row.body).toString("utf8")) }),
           }
+        : row.kind === "remoteChat"
+          ? {
+              kind: "remoteChat",
+              id: row.id,
+              seq: row.seq,
+              deleted: row.deleted === 1,
+              updatedAt: row.updated_at,
+              ...JSON.parse(row.payload),
+            }
         : row.kind === "memory"
           ? {
               kind: "memory",
@@ -699,6 +734,15 @@ export function createSyncRouter({ env, db }) {
         if (!chat) {
           db.exec("ROLLBACK");
           return badRequest(res, "A chat is not shaped like a Hook conversation.");
+        }
+        // A direct coding chat has a folder and a session on one machine. Only
+        // its stub belongs here; a full copy must never reach the account.
+        if (chat.meta.kind === "coding") {
+          db.exec("ROLLBACK");
+          return badRequest(
+            res,
+            "A direct coding chat belongs to one machine; only its stub can sync.",
+          );
         }
         const body = JSON.stringify(chat);
         if (Buffer.byteLength(body, "utf8") > caps.chatBytes) {
@@ -968,6 +1012,111 @@ export function createSyncRouter({ env, db }) {
     }
   });
 
+  router.post("/remote-chats", json({ limit: "128kb" }), (req, res) => {
+    const result = apiUser(db, req);
+    if (!result.row) return authError(res, result);
+    const subject = result.row.google_subject;
+    const device = result.row.token_device_id ?? "";
+    if (!device) return badRequest(res, "This token does not name a machine.");
+    // Only a machine that can host owns direct chats. The row may be absent
+    // before this host's first relay hello; that bootstrap is allowed.
+    const known = db
+      .prepare(
+        "SELECT can_host FROM devices WHERE google_subject = ? AND device_id = ?",
+      )
+      .get(subject, device);
+    if (known && known.can_host !== 1)
+      return res.status(403).json({
+        error: {
+          message: "This machine cannot host a coding agent.",
+          type: "invalid_request_error",
+          code: "not_a_host",
+        },
+      });
+    const incoming = req.body?.chats;
+    if (!Array.isArray(incoming) || incoming.length < 1 || incoming.length > MAX_BATCH)
+      return badRequest(res, `Send between 1 and ${MAX_BATCH} stubs.`);
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const out = [];
+      for (const raw of incoming) {
+        const id = typeof raw?.id === "string" ? raw.id : "";
+        if (!SAFE_ID.test(id)) {
+          db.exec("ROLLBACK");
+          return badRequest(res, "A remote chat has an invalid id.");
+        }
+        const existing = db
+          .prepare(
+            "SELECT * FROM sync_remote_chats WHERE google_subject = ? AND chat_id = ?",
+          )
+          .get(subject, id);
+        // The owner of a stub is fixed for its life. A viewer never pushes one;
+        // this check makes sure a bug cannot let it try.
+        if (existing && existing.device_id !== device) {
+          out.push({ id, ok: false, code: "not_owner" });
+          continue;
+        }
+        if (!existing) {
+          const total = db
+            .prepare(
+              "SELECT COUNT(*) AS total FROM sync_remote_chats WHERE google_subject = ? AND deleted = 0",
+            )
+            .get(subject).total;
+          if (total >= caps.chats) {
+            db.exec("ROLLBACK");
+            return res.status(413).json({
+              error: {
+                message: "This account has reached its remote-chat limit.",
+                type: "invalid_request_error",
+                code: "remote_chat_quota",
+              },
+            });
+          }
+        }
+        const updatedAt = Math.max(0, Number(raw.updatedAt) || 0);
+        const createdAt = Math.max(0, Number(raw.createdAt) || updatedAt);
+        const title = String(raw.title ?? "").trim().slice(0, 200);
+        const state = ["idle", "running", "needs_input", "error"].includes(raw.state)
+          ? raw.state
+          : "idle";
+        const messageCount = Math.max(0, Math.min(1_000_000, Number(raw.messageCount) || 0));
+        const deleted = raw.deleted === true;
+        const same = existing
+          && existing.updated_at === updatedAt
+          && existing.deleted === (deleted ? 1 : 0)
+          && existing.title === title
+          && existing.state === state
+          && existing.message_count === messageCount;
+        if (same) {
+          out.push({ id, ok: true, unchanged: true });
+          continue;
+        }
+        const seq = bumpSeq(db, subject);
+        db.prepare(
+          `INSERT INTO sync_remote_chats
+             (google_subject, chat_id, device_id, seq, updated_at, deleted,
+              title, state, message_count, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(google_subject, chat_id) DO UPDATE SET
+             seq = excluded.seq, updated_at = excluded.updated_at,
+             deleted = excluded.deleted, title = excluded.title,
+             state = excluded.state, message_count = excluded.message_count`,
+        ).run(subject, id, device, seq, updatedAt, deleted ? 1 : 0, title, state, messageCount, createdAt);
+        out.push({ id, ok: true, deleted, state });
+      }
+      db.exec("COMMIT");
+      reply(res, { cursor: currentSeq(db, subject), chats: out });
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        /* already rolled back */
+      }
+      throw error;
+    }
+  });
+
   router.put(
     "/media/:sha256",
     raw({ type: "*/*", limit: `${Math.ceil(caps.mediaBytes / (1024 * 1024)) + 1}mb` }),
@@ -1059,6 +1208,7 @@ export function createSyncRouter({ env, db }) {
       db.prepare("DELETE FROM sync_chats WHERE google_subject = ?").run(subject);
       db.prepare("DELETE FROM sync_projects WHERE google_subject = ?").run(subject);
       db.prepare("DELETE FROM sync_memory WHERE google_subject = ?").run(subject);
+      db.prepare("DELETE FROM sync_remote_chats WHERE google_subject = ?").run(subject);
       db.prepare("DELETE FROM sync_media WHERE google_subject = ?").run(subject);
       db.prepare("UPDATE sync_state SET next_seq = 0 WHERE google_subject = ?").run(subject);
       // Hook Workspace belongs to the same account. The projects this account

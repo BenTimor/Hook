@@ -577,6 +577,14 @@ test("a free account never syncs, but can still delete what is stored", async (t
   assert.equal(push.status, 403);
   assert.equal(push.body.error.code, "sync_not_included");
 
+  const stub = await request("/sync/remote-chats", {
+    method: "POST",
+    token: FREE_TOKEN,
+    body: { chats: [{ id: "free-stub", title: "Nope", updatedAt: 1 }] },
+  });
+  assert.equal(stub.status, 403);
+  assert.equal(stub.body.error.code, "sync_not_included");
+
   // Deleting data is always allowed: an account that went free must be able to
   // take its old cloud copy with it.
   const removed = await request("/sync/account", { method: "DELETE", token: FREE_TOKEN });
@@ -598,4 +606,71 @@ test("deleting the account clears chats, projects, memory and media", async (t) 
   assert.equal(status.body.chats, 0);
   assert.equal(status.body.projects, 0);
   assert.equal(status.body.memory, 0);
+});
+
+test("a direct coding chat syncs as a stub, never as its messages", async (t) => {
+  const { request } = await setup(t);
+  const pushed = await request("/sync/remote-chats", {
+    method: "POST",
+    body: {
+      chats: [
+        {
+          id: "remote-code",
+          title: "Fix the parser",
+          createdAt: 1000,
+          updatedAt: 2000,
+          state: "running",
+          messageCount: 4,
+          deleted: false,
+        },
+      ],
+    },
+  });
+  assert.equal(pushed.status, 200);
+  assert.equal(pushed.body.chats[0].ok, true);
+
+  const pulled = await request("/sync/changes?since=0", { token: SECOND_TOKEN });
+  const change = pulled.body.changes.find((entry) => entry.id === "remote-code");
+  assert.equal(change.kind, "remoteChat");
+  assert.equal(change.deviceId, "device-one");
+  assert.equal(change.title, "Fix the parser");
+  assert.equal(change.state, "running");
+  assert.equal(change.messageCount, 4);
+  assert.equal(change.chat, undefined, "the stub carries no conversation");
+  assert.equal(change.messages, undefined, "the stub carries no messages");
+
+  // A different machine may not take the stub over by guessing its id.
+  const stolen = await request("/sync/remote-chats", {
+    method: "POST",
+    token: SECOND_TOKEN,
+    body: { chats: [{ id: "remote-code", title: "Mine now", updatedAt: 3000 }] },
+  });
+  assert.equal(stolen.status, 200);
+  assert.equal(stolen.body.chats[0].ok, false);
+  assert.equal(stolen.body.chats[0].code, "not_owner");
+
+  const deleted = await request("/sync/remote-chats", {
+    method: "POST",
+    body: { chats: [{ id: "remote-code", deleted: true, updatedAt: 3001 }] },
+  });
+  assert.equal(deleted.status, 200);
+  const after = await request(`/sync/changes?since=${pushed.body.cursor}`, {
+    token: SECOND_TOKEN,
+  });
+  const gone = after.body.changes.find((entry) => entry.id === "remote-code");
+  assert.equal(gone.deleted, true);
+
+  // The conversation was never stored anywhere in the sync tree.
+  const all = await request("/sync/changes?since=0", { token: SECOND_TOKEN });
+  assert.equal(all.body.changes.some((entry) => entry.chat?.meta?.id === "remote-code"), false);
+
+  // A full direct-coding chat is refused outright: only the stub may travel.
+  const full = chat("remote-full");
+  full.meta.kind = "coding";
+  const refused = await request("/sync/chats", {
+    method: "POST",
+    body: { chats: [full] },
+  });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error.message, /direct coding chat/i);
 });
