@@ -7,6 +7,7 @@
  *   node browser/tools/smoke.mjs --side-panel          # also the side panel
  *   node browser/tools/smoke.mjs --signin-state out    # the sign-in gate refuses
  *   node browser/tools/smoke.mjs --channel             # needs Hook running
+ *   node browser/tools/smoke.mjs --codecs              # H.264 and AAC decode
  *   node browser/tools/smoke.mjs --shot hook.png       # screenshots too
  *   node browser/tools/smoke.mjs --chrome <path to chrome.exe>
  *
@@ -177,6 +178,7 @@ export async function main(argv) {
   const shot = typeof flags.get("shot") === "string" ? resolve(flags.get("shot")) : null;
   const sidePanel = flags.get("side-panel") === true;
   const channelCheck = flags.get("channel") === true;
+  const codecCheck = flags.get("codecs") === true;
   const signin = flags.get("signin-state");
   if (signin !== undefined && signin !== "in" && signin !== "out") {
     console.error(fail("--signin-state takes in or out"));
@@ -348,6 +350,28 @@ export async function main(argv) {
           panel.close();
         }
       }
+    }
+
+    // ---- the codecs the build has to carry -----------------------------------
+    //
+    // `args.gn` turns on `proprietary_codecs` and `ffmpeg_branding = "Chrome"`.
+    // Both are easy to lose in a merge and invisible until a page shows a black
+    // box, so the build says so out loud here: with them off, every MP4 on the
+    // web is undecodable and only VP9/AV1 content plays.
+    if (codecCheck) {
+      const codecs = await client.evaluate(`(() => {
+        const video = document.createElement("video");
+        const audio = document.createElement("audio");
+        return {
+          h264: video.canPlayType('video/mp4; codecs="avc1.42E01E"'),
+          aac: audio.canPlayType('audio/mp4; codecs="mp4a.40.2"'),
+          vp9: video.canPlayType('video/webm; codecs="vp9"'),
+        };
+      })()`);
+      console.log(`    codecs: ${JSON.stringify(codecs)}`);
+      if (!codecs?.h264) failures.push("H.264 does not decode: args.gn needs proprietary_codecs");
+      if (!codecs?.aac) failures.push('AAC does not decode: args.gn needs ffmpeg_branding = "Chrome"');
+      if (!codecs?.vp9) failures.push("VP9 does not decode, which is wider than the codec flags");
     }
 
     // ---- the real backend, when a Hook app is running ------------------------

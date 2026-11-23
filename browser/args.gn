@@ -19,3 +19,14 @@ is_component_build = true
 symbol_level = 0
 blink_symbol_level = 0
 v8_symbol_level = 0
+
+# Video and audio for the web. Chromium ships without them because the codecs are
+# not free to redistribute, not because they are not wanted: with these off,
+# H.264 and AAC do not decode, which is every MP4 on the web (X, Instagram,
+# TikTok, Vimeo, Teams, most .mp4 links). The H.264 pool charges nothing below
+# 100,000 units a year; AAC charges per unit. Both are owed by whoever distributes
+# a build, which is why this is dev-facing and the licence decision is tracked in
+# docs/browser-poc-plan.md ("What shipping needs"). A release build must keep
+# `is_component_ffmpeg = true` so FFmpeg stays a separate DLL (LGPL-2.1+).
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"

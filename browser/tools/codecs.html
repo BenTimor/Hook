@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Hook Browser — codec probe</title>
+    <style>
+      body {
+        background: #f5efe5;
+        color: #24241e;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, monospace;
+        padding: 24px;
+      }
+
+      h1 {
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      td {
+        padding: 2px 18px 2px 0;
+        white-space: nowrap;
+      }
+
+      .no {
+        color: #8f3b31;
+      }
+
+      .yes {
+        color: #526457;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>What this build can decode</h1>
+    <p id="build"></p>
+    <table>
+      <thead>
+        <tr><th align="left">codec</th><th align="left">canPlayType</th><th align="left">MSE</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <script type="module">
+      // The matrix the codec decision was made on, and the one
+      // `docs/browser-os-decoders.md` verifies each stage against. No build, no
+      // server: point a built browser at this file.
+      //
+      //   out/Dev/chrome.exe --headless=new --disable-gpu --no-first-run \
+      //     --user-data-dir=%TEMP%\hook-codecs --virtual-time-budget=8000 \
+      //     --dump-dom file:///<repo>/browser/tools/codecs.html
+      const TYPES = [
+        ["H.264 baseline", "video/mp4", 'avc1.42E01E'],
+        ["H.264 high", "video/mp4", 'avc1.640028'],
+        ["HEVC", "video/mp4", 'hvc1.1.6.L93.B0'],
+        ["VP9", "video/webm", "vp9"],
+        ["VP8", "video/webm", "vp8"],
+        ["AV1", "video/mp4", "av01.0.05M.08"],
+        ["Theora", "video/ogg", "theora"],
+        ["AAC-LC", "audio/mp4", "mp4a.40.2"],
+        ["HE-AAC", "audio/mp4", "mp4a.40.5"],
+        ["MP3", "audio/mpeg", null],
+        ["Opus", "audio/webm", "opus"],
+        ["Vorbis", "audio/ogg", "vorbis"],
+        ["FLAC", "audio/flac", null],
+        ["WAV", "audio/wav", null],
+      ];
+
+      const video = document.createElement("video");
+      const audio = document.createElement("audio");
+      const body = document.getElementById("rows");
+
+      for (const [name, mime, codec] of TYPES) {
+        const type = codec ? `${mime}; codecs="${codec}"` : mime;
+        const element = mime.startsWith("audio/") ? audio : video;
+        const playable = element.canPlayType(type) || "no";
+        let mse = "—";
+        try {
+          mse = MediaSource.isTypeSupported(type) ? "yes" : "no";
+        } catch {
+          mse = "n/a";
+        }
+        const row = document.createElement("tr");
+        row.innerHTML =
+          `<td>${name}</td>` +
+          `<td class="${playable === "no" ? "no" : "yes"}">${playable}</td>` +
+          `<td class="${mse === "no" ? "no" : "yes"}">${mse}</td>`;
+        body.append(row);
+      }
+
+      document.getElementById("build").textContent = navigator.userAgent;
+      document.title = "probe done";
+    </script>
+  </body>
+</html>

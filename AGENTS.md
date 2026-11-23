@@ -284,7 +284,10 @@ bash.
   does not build it.
 - `browser/` — Hook Browser's build environment, and the only part of the browser
   that is in this repository. `VERSION` is the one pinned Chromium tag,
-  `args.gn` the dev GN args, `overlay/src/hook/` the new paths that are
+  `args.gn` the dev GN args (`proprietary_codecs` and `ffmpeg_branding="Chrome"`
+  are on: H.264 and AAC are what the web's MP4s are made of, and the pool licence
+  for them is a shipping item, not a dev one — `pnpm browser:smoke --codecs` fails
+  if the flags are lost), `overlay/src/hook/` the new paths that are
   junctioned into the checkout as `src/hook`, `patches/series` the small edits to
   upstream files that survive a rebase, and `tools/{sync,build,verify,patch,smoke}.mjs`
   the whole interface. `browser/ui/` is the dock's own Vite project: it builds
@@ -565,7 +568,7 @@ Changing one side of a boundary is the most common way to break this repo.
   logged — never allowed to 400 the batch.
 - **A turn that seems to never answer:** run the app with `HOOK_DEBUG_TURN=1`
   and watch stderr — every step (placeholder saved, calling the model, model
-  returned) is logged. `%APPDATA%pp.hook.chat\panic.log` catches panics.
+  returned) is logged. `%APPDATA%\app.hook.chat\panic.log` catches panics.
   `finish()` converts any message still marked `streaming` into an error, so a
   dead turn can no longer leave the window spinning.
 - **Git/sync behavior:** `server/sync.mjs` + `server/git.mjs` (limits, merge
@@ -830,7 +833,8 @@ Changing one side of a boundary is the most common way to break this repo.
 - Landing page, OAuth, model proxy → **Web waitlist** + `infra/README.md`
 - Coverage → **Tests**
 - Hook Browser (designed, not built) → `docs/browser-architecture.md`,
-  `docs/browser-poc-plan.md`
+  `docs/browser-poc-plan.md`, `docs/browser-os-decoders.md` (the OS decoder path:
+  designed, sized, not started)
 - License, what a fork may do, bundled third-party terms → **License** in
   `README.md`, plus `LICENSE`, `TRADEMARK.md`, `THIRD_PARTY_NOTICES.md`,
   `CONTRIBUTING.md` and `CLA.md`

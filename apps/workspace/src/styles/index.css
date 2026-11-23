@@ -695,60 +695,6 @@
   padding: 24px;
 }
 
-.ws-signin-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  width: 380px;
-  padding: 32px 28px;
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background: var(--ivory);
-  box-shadow: var(--shadow-md);
-  text-align: center;
-}
-
-.ws-signin-mark {
-  width: 46px;
-  height: 46px;
-  border-radius: 12px;
-}
-
-.ws-signin-card h1 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.ws-signin-card p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--ink-3);
-}
-
-.ws-code {
-  padding: 10px 16px;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 19px;
-  letter-spacing: 0.16em;
-}
-
-.ws-hint {
-  font-size: 12px !important;
-  color: var(--ink-4) !important;
-}
-
-.ws-signin-actions {
-  display: flex;
-  gap: 6px;
-}
-
 /* A narrow window cannot hold a rail, a board and the dock at once. */
 @media (max-width: 1080px) {
   .ws-dock {

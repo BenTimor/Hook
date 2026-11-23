@@ -1051,3 +1051,286 @@ textarea {
   width: 100%;
   height: 36px;
 }
+
+/* ---------------------------------------------------------------------------
+ * Signing in
+ *
+ * One card, four hosts: the chat window, Hook Workspace, HookCode on a phone and
+ * Hook Browser. `SignInCard.tsx` renders it and this is what it looks like.
+ *
+ * Without `data-surface` it is a column on a page the host already painted — the
+ * chat window's sign-in, where the whole window is the card. With it, the card
+ * draws its own panel, which is what a host with a page behind it (a browser tab,
+ * the Workspace window, the phone) needs.
+ * ------------------------------------------------------------------------- */
+
+.signin-card {
+  display: flex;
+  width: min(100%, 440px);
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.signin-card[data-surface="true"] {
+  width: min(100%, 392px);
+  padding: 34px 30px 28px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--ivory);
+  box-shadow: var(--shadow-md);
+}
+
+.signin-mark {
+  display: grid;
+  width: 76px;
+  height: 76px;
+  flex: none;
+  place-items: center;
+  margin-bottom: 26px;
+  border: 1px solid rgba(var(--ink-rgb), 0.08);
+  border-radius: 24px;
+  background: rgba(255, 253, 249, 0.7);
+  box-shadow:
+    0 1px 2px rgba(var(--ink-rgb), 0.04),
+    0 18px 44px -26px rgba(var(--accent-rgb), 0.5);
+  backdrop-filter: blur(16px);
+}
+
+.signin-mark svg {
+  width: 44px;
+  height: 44px;
+}
+
+.signin-card[data-surface="true"] .signin-mark {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 18px;
+  border-radius: 17px;
+}
+
+.signin-card[data-surface="true"] .signin-mark svg {
+  width: 32px;
+  height: 32px;
+}
+
+.signin-kicker {
+  margin: 0 0 12px;
+  color: var(--sage);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.signin-title {
+  margin: 0 0 14px;
+  color: var(--ink);
+  font-size: clamp(29px, 3.4vw, 40px);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.signin-card[data-surface="true"] .signin-title {
+  margin-bottom: 10px;
+  font-size: 23px;
+  line-height: 1.18;
+  letter-spacing: -0.03em;
+}
+
+.signin-copy {
+  max-width: 38ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.signin-card[data-surface="true"] .signin-copy {
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.signin-code {
+  margin: 24px 0 10px;
+  padding: 14px 24px;
+  border: 1px solid rgba(var(--ink-rgb), 0.1);
+  border-radius: 14px;
+  background: rgba(255, 253, 249, 0.72);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 29px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  box-shadow: var(--shadow-xs);
+}
+
+.signin-card[data-surface="true"] .signin-code {
+  margin: 18px 0 8px;
+  padding: 11px 20px;
+  font-size: 24px;
+}
+
+.signin-hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.signin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.signin-primary {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 24px;
+  padding: 0 20px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fffdf9;
+  font-size: 13px;
+  font-weight: 630;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.14),
+    0 6px 16px -10px rgba(var(--accent-rgb), 0.7);
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.signin-primary:not(:disabled):hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.signin-primary:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.signin-card[data-surface="true"] .signin-primary {
+  margin-top: 18px;
+}
+
+.signin-secondary {
+  min-height: 44px;
+  margin-top: 24px;
+  padding: 0 16px;
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.signin-secondary:hover {
+  background: rgba(var(--ink-rgb), 0.05);
+  color: var(--ink);
+}
+
+.signin-card[data-surface="true"] .signin-secondary {
+  margin-top: 18px;
+}
+
+.signin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.signin-link:hover {
+  color: var(--accent);
+}
+
+.signin-privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  max-width: 36ch;
+  margin: 26px 0 0;
+  color: var(--ink-4);
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.signin-card[data-surface="true"] .signin-privacy {
+  margin-top: 20px;
+  font-size: 11px;
+}
+
+.signin-privacy svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.signin-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+
+.signin-waiting i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sage);
+  box-shadow: 0 0 0 4px rgba(82, 100, 87, 0.12);
+  animation: signin-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes signin-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.signin-spinner {
+  width: 18px;
+  height: 18px;
+  margin-top: 22px;
+  border: 2px solid rgba(var(--ink-rgb), 0.12);
+  border-top-color: var(--sage);
+  border-radius: 50%;
+  animation: signin-spin 0.8s linear infinite;
+}
+
+@keyframes signin-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.signin-error {
+  max-width: 38ch;
+  margin: 20px 0 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(192, 57, 43, 0.08);
+  color: #8f3b31;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+}

@@ -4,3 +4,5 @@ export { HookMark } from "./HookMark";
 export { WindowControls } from "./WindowControls";
 export { isTauri, useWindowState, win } from "./window";
 export { Dialog, TextFieldDialog } from "./Dialog";
+export { SignInCard } from "./SignInCard";
+export type { SignInCardProps, SignInState } from "./SignInCard";

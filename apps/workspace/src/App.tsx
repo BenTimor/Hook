@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlignLeft, AlignRight, ArrowLeft, Check, Code2, MessageCircleMore, MoreHorizontal, Trash2, X } from "lucide-react";
-import { HookMark, TextFieldDialog, WindowControls, useWindowState } from "@hook/ui";
+import {
+  SignInCard,
+  TextFieldDialog,
+  WindowControls,
+  useWindowState,
+} from "@hook/ui";
 import { ChatDock } from "@hook/chat";
 
 import { api, onAuthEvent, openExternal, type AuthView } from "./lib/bridge";
@@ -589,45 +594,22 @@ function SignIn({
         <WindowControls />
       </header>
       <main className="ws-signin">
-        <div className="ws-signin-card">
-          <HookMark className="ws-signin-mark" />
-          <h1>Hook Workspace</h1>
-          <p>
-            Projects, boards, tasks and documents — shared with the same account
-            as Hook, and synced between your computers.
-          </p>
-
-          {auth.state === "pending" && auth.userCode ? (
-            <>
-              <div className="ws-code">{auth.userCode}</div>
-              <p className="ws-hint">
-                Enter this code in the browser window that just opened.
-              </p>
-              <div className="ws-signin-actions">
-                {auth.verificationUrl ? (
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => void openExternal(auth.verificationUrl!)}
-                  >
-                    Open the page again
-                  </button>
-                ) : null}
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => void api.authCancelLogin().then(setAuth)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </>
-          ) : (
-            <button className="btn btn-primary" onClick={() => void api.authLogin().then(setAuth)}>
-              Sign in with your Hook account
-            </button>
-          )}
-
-          {auth.message ? <p className="ws-hint">{auth.message}</p> : null}
-        </div>
+        <SignInCard
+          title="Hook Workspace"
+          copy="Projects, boards, tasks and documents — shared with the same account as Hook, and synced between your computers."
+          signInLabel="Sign in with your Hook account"
+          state={auth.state === "pending" && auth.userCode ? "pending" : "idle"}
+          code={auth.userCode ?? undefined}
+          error={auth.message ?? undefined}
+          hint="Enter this code in the browser window that just opened."
+          onSignIn={() => void api.authLogin().then(setAuth)}
+          onOpenPage={
+            auth.verificationUrl
+              ? () => void openExternal(auth.verificationUrl!)
+              : undefined
+          }
+          onCancel={() => void api.authCancelLogin().then(setAuth)}
+        />
       </main>
     </div>
   );

@@ -51,6 +51,7 @@ not the product surface — it is the seam.
 | Precursor shell | **No** | A WebView2/Electron shell that browses today would diverge from the fork and pull Tauri into a UI that must not have it. The UX questions are cheap to answer after the seam works, and expensive to answer twice. |
 | Order of work | **Seam first, UI second** | The risky part is the overlay reaching the browser (GN wiring, WebUI resources, mojom, a navigation throttle). Components written against a mock contract are written against a guess. |
 | Surface prototypes | **No** | A panel prototyped against mocked mojo, auth and chat is written twice: once against the mock, then again against the real host. The one-time rebuild is the smaller cost, so the panel and its host are built once. |
+| Codecs | **On in the dev build** | H.264 and AAC are what the web's MP4s are made of; without them only VP9/AV1 content plays. Both pools are owed by whoever distributes a build, so the flags are on for testing and the licence sits in "What shipping needs". `pnpm browser:smoke --codecs` keeps them from being lost in a merge. |
 | Panel UI build | **Vite bundle served from the overlay** | `packages/chat` is React; Chromium's WebUI pipeline is Lit/TypeScript and ships no React. The browser builds the shared packages with Vite and packs the output as a static resource. Rewriting `ChatDock` in Lit would fork the surface all three products share. For the POC the bundle is committed (`browser/ui/` → `overlay/src/hook/resources/panel.mjs`); a build-time action is the follow-up. |
 | Where the tree lives | **Outside the repo**, overlay junctioned in | See "Where things live". |
 | Sign-in gate | **Blocks the whole browser** | Matches Hook and Hook Workspace: signed out means the window is the sign-in card and navigation is refused. Implemented as a `ContentBrowserClient` throttle, not a `//content` patch. |
@@ -181,7 +182,9 @@ reachable, and is provable with `--hook-signin-state=out`.
   the sixth and seventh patches: the entry's id and the action item the pinning
   controller insists on). `--hook-side-panel` opens it; the toolbar's pin makes
   it stick.
-- Sign-in becomes the shared card. **Left.** `chrome://hook` still draws its own
+- Sign-in becomes the shared card. **Started.** The card is one component now
+  (`packages/ui/src/SignInCard.tsx`): three states, one voice, the chat window and
+  Hook Workspace already draw it, and `chrome://hook` is next — it still shows its
   placeholder while signed out.
 - New Tab page becomes Hook's. **Left.**
 
@@ -205,7 +208,7 @@ is C++, and it is the most expensive and least informative part.
 **The cheap proof is in.** `crates/hook-core/src/channel.rs` publishes a loopback
 HTTP surface from a running Hook app — `/health`, the chat list, one conversation,
 create, send, stop — guarded by a per-process token it writes beside the account
-file (`%APPDATA%pp.hookrowser-channel.json`). The browser process reads that
+file (`%APPDATA%\app.hook\browser-channel.json`). The browser process reads that
 descriptor on a thread pool and calls the channel with `SimpleURLLoader`; the page
 sees the answers over mojom (`hook_channel.{h,cc}`, `hook_page_handler.cc`).
 
@@ -340,8 +343,13 @@ the POC and a browser someone installs, split by what only a decision can unbloc
 
 **Decisions (yours, not the code's):**
 
-- **Codecs.** `proprietary_codecs` / `ffmpeg_branding` are off in the dev args;
-  without them H.264 and AAC do not play anywhere.
+- **Codecs.** On for the dev build (`args.gn`), and a licence to acquire before a
+  public one: H.264 is free under 100,000 units a year, AAC is not, and AAC's
+  small-entity entry fee is $1,000. A release build also keeps
+  `is_component_ffmpeg = true` so FFmpeg stays a separate DLL for LGPL.
+  **The alternative is designed but not built:** decoding through Windows' own
+  Media Foundation decoders, the way Firefox does, which is `docs/browser-os-decoders.md`
+  — staged, sized, and worth revisiting at volume.
 - **Widevine.** A separate licence from Google. Without it, Netflix, Disney+ and
   Spotify web do not work; licensing it is a contract, not a patch.
 - **The vault.** Local-only with the OS keychain, or synced — and if synced, on

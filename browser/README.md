@@ -76,6 +76,7 @@ round trip.
 | `--side-panel` | opens the dock's side panel (`--hook-side-panel`) and asserts `chrome://hook-panel` drew it |
 | `--signin-state in\|out` | forces the sign-in gate's answer and asserts the matching behaviour — refused and redirected, or committed |
 | `--channel` | asserts the real backend: the page's mojom sees a running Hook app's channel, lists its chats, reads one transcript, and the backend refuses an empty message |
+| `--codecs` | asserts the build decodes H.264, AAC and VP9 — the first two come from `args.gn`, and losing them is invisible until a page shows a black box |
 | `--shot <png>` | saves a screenshot (`-panel.png` for the side panel) |
 | `--chrome <path>` | points it at another binary |
 
@@ -107,6 +108,28 @@ file is generated but **committed**, and both halves of that are deliberate:
 the panel silently shows the old surface. A build-time `action()` that runs
 Vite into `$root_gen_dir` is the cleaner shape and the follow-up; it needs the
 repository's `node_modules` as a declared input, which GN cannot see.
+
+## Codecs
+
+`args.gn` sets `proprietary_codecs = true` and `ffmpeg_branding = "Chrome"`.
+Without them Chromium decodes only the open codecs (VP8, VP9, AV1, Opus, MP3),
+which is YouTube and very little else: H.264 and AAC are how nearly every MP4 on
+the web is encoded, so X, Instagram, TikTok, Vimeo, Teams and every `.mp4` link
+draw a black box. Turning them on rebuilds FFmpeg into `ffmpeg.dll` (1.8 MB →
+3.8 MB here) and recompiles everything that includes the codec tables — about
+6,600 steps, roughly 80 minutes on this machine, not a full tree rebuild.
+
+They are not free to redistribute: the H.264 pool charges nothing below 100,000
+units a year and AAC charges per unit, which is why `docs/browser-poc-plan.md`
+keeps the licence under "What shipping needs" and this is the dev build. A
+release build must also keep `is_component_ffmpeg = true` (dev gets it from
+`is_component_build`) so FFmpeg stays a separate, relinkable DLL — LGPL-2.1+.
+
+`pnpm browser:smoke --codecs` fails if either half is missing.
+`browser/tools/codecs.html` is the fuller matrix — point any built browser at the
+file and read what it prints; `docs/browser-os-decoders.md` is the design for
+decoding through Windows' own Media Foundation decoders instead, the way Firefox
+does, if the licence ever outweighs the work.
 
 ## Switching from a siso build directory
 
@@ -234,7 +257,7 @@ yes.
 
 The dock's real backend is a *running* Hook app, not a server: `hook-core`'s
 `channel.rs` binds an ephemeral loopback port and writes
-`%APPDATA%pp.hookrowser-channel.json` (`port`, `token`, `pid`, `product`,
+`%APPDATA%\app.hook\browser-channel.json` (`port`, `token`, `pid`, `product`,
 `version`) beside the shared account file, atomically and `0600` on unix. Quitting
 Hook removes it; a killed process leaves it behind, which is why "available" means
 **`/health` answered**, not "a file exists".
