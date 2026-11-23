@@ -112,12 +112,23 @@ export interface Comment {
   seq: number;
 }
 
+export interface Roadmap {
+  id: string;
+  projectId: string;
+  folderId: string | null;
+  name: string;
+  description: string;
+  position: number;
+  updatedAt: number;
+  seq: number;
+}
+
 export type MilestoneStatus = "planned" | "active" | "done";
 
 export interface Milestone {
   id: string;
   projectId: string;
-  folderId: string | null;
+  roadmapId: string;
   title: string;
   description: string;
   dueDate: string | null;
@@ -176,6 +187,7 @@ export type ChangeKind =
   | "task"
   | "comment"
   | "document"
+  | "roadmap"
   | "milestone"
   | "member"
   | "invite";

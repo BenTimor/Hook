@@ -805,8 +805,8 @@ in a keyword field - leave it out unless you want to argue about it.)
 ## Hook Workspace
 
 The second product. A project holds boards of tasks, Markdown documents,
-milestones and the people they are shared with; folders organize them, and can
-nest. It is its own installer
+roadmaps of milestones and the people they are shared with; folders organize
+them, and can nest. It is its own installer
 (`apps/workspace`, identifier `app.hook.workspace`) with the same window chrome,
 the same account and the same chat beside it.
 
@@ -937,11 +937,14 @@ rows written before this rule are adopted when the service starts.
   A write carries the revision it was based
   on; a stale one is refused with the current copy rather than silently overwriting
   someone else's paragraph.
-- **Milestones are project items with their own page.** A milestone carries a
-  title, a target date, a status (planned, in progress or done) and a
-  description. It sits in the tree and the project overview like a board or
-  document, and opening one lays its fields out in a horizontal, scrollable rail
-  so the page reads left to right instead of stacking vertically.
+- **A roadmap is a project item; milestones live inside it.** A roadmap sits in
+  the tree and the project overview like a board or document. It opens as a
+  horizontal timeline where each milestone is a large circle carrying its date,
+  status, title and description preview, connected by a line and scrolling left
+  to right; the page can also be dragged sideways. Clicking a circle opens a
+  Motion-animated drawer for editing that milestone, and the New milestone
+  button or dashed circle at the end adds another one. Milestones themselves
+  are not tree items.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,
   and an agent comment carries the conversation it came from, so a teammate sees
   "via Hook agent" instead of mistaking it for something the user typed. The
@@ -950,8 +953,8 @@ rows written before this rule are adopted when the service starts.
 - **The chat agent can do everything a person can, except transfer ownership.**
   `workspace_projects`, `workspace_folders`, `workspace_boards`,
   `workspace_tasks`, `workspace_comments`, `workspace_documents`,
-  `workspace_milestones`, `workspace_members`, `workspace_invites` and
-  `workspace_preview` are ordinary
+  `workspace_roadmaps`, `workspace_milestones`, `workspace_members`,
+  `workspace_invites` and `workspace_preview` are ordinary
   chat tools (`crates/hook-core/src/workspace.rs`) that call the account API with
   the user's token, so the server checks the user's real role. `document_markdown`
   is the one that answers from the binary: the dialect's reference, so a style it
@@ -960,9 +963,9 @@ rows written before this rule are adopted when the service starts.
   panel. It is a second kind of preview next to the HTML page a coding agent can
   show, and the panel renders it directly instead of in an iframe.
 - **Folders are rows, not a client feature.** A folder carries a name, an
-  optional parent and a position; a board, a document or a milestone carries a
+  optional parent and a position; a board, a document or a roadmap carries a
   `folderId`. Deleting a folder deletes what it holds — nested folders, boards with their
-  tasks and comments, documents and milestones — each row a tombstone of its own, and the
+  tasks and comments, documents, roadmaps and their milestones — each row a tombstone of its own, and the
   dialog counts what goes before it happens. Two people see the same tree
   because it is the project's, not theirs.
 - **The window is online-first.** The server is the source of truth, so the app

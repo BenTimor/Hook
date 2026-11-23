@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { BoardTemplateDialog } from "./BoardTemplateDialog";
 
 export type CreateRequest = {
-  kind: "folder" | "board" | "document" | "milestone";
+  kind: "folder" | "board" | "document" | "roadmap";
   projectId: string;
   folderId: string | null;
 };
@@ -32,12 +32,12 @@ const COPY = {
     placeholder: "Roadmap",
     confirm: "Create document",
   },
-  milestone: {
-    title: "New milestone",
+  roadmap: {
+    title: "New roadmap",
     description:
-      "A milestone has a target date, a status and a description. Its project overview lays milestones out left to right.",
-    placeholder: "Public beta",
-    confirm: "Create milestone",
+      "A roadmap is a horizontal timeline of milestones. Create the roadmap now; add its milestone circles inside.",
+    placeholder: "Release roadmap",
+    confirm: "Create roadmap",
   },
 } as const;
 
@@ -45,8 +45,8 @@ const COPY = {
  * One dialog for the four things a project holds.
  *
  * The tree, the overview and the empty states all create the same way, so the
- * flow (and its copy) lives in one place, and a new board or document is open
- * the moment it exists.
+ * flow (and its copy) lives in one place, and a new board, document or roadmap
+ * is open the moment it exists.
  */
 export function CreateItemDialog({
   request,
@@ -57,10 +57,10 @@ export function CreateItemDialog({
 }) {
   const [name, setName] = useState("");
   const createDocument = useWorkspaceStore((state) => state.createDocument);
-  const createMilestone = useWorkspaceStore((state) => state.createMilestone);
+  const createRoadmap = useWorkspaceStore((state) => state.createRoadmap);
   const createFolder = useWorkspaceStore((state) => state.createFolder);
   const openDocument = useWorkspaceStore((state) => state.openDocument);
-  const openMilestone = useWorkspaceStore((state) => state.openMilestone);
+  const openRoadmap = useWorkspaceStore((state) => state.openRoadmap);
 
   useEffect(() => {
     if (request) setName("");
@@ -77,7 +77,7 @@ export function CreateItemDialog({
       open={request !== null}
       title={copy.title}
       description={copy.description}
-      label={request?.kind === "document" || request?.kind === "milestone" ? "Title" : "Name"}
+      label={request?.kind === "document" ? "Title" : "Name"}
       placeholder={copy.placeholder}
       value={name}
       onChange={setName}
@@ -91,9 +91,9 @@ export function CreateItemDialog({
           void createFolder(request.projectId, value, request.folderId);
           return;
         }
-        if (request.kind === "milestone") {
-          void createMilestone(request.projectId, value, request.folderId).then((milestone) => {
-            if (milestone) void openMilestone(milestone.id, request.projectId);
+        if (request.kind === "roadmap") {
+          void createRoadmap(request.projectId, value, request.folderId).then((roadmap) => {
+            if (roadmap) void openRoadmap(roadmap.id, request.projectId);
           });
           return;
         }

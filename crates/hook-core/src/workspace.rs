@@ -227,19 +227,35 @@ pub fn definitions() -> Vec<Value> {
             }),
         ),
         tool(
-            "workspace_milestones",
-            "Project milestones: a title, a target date (YYYY-MM-DD), a status (planned, active or done) and a description. They are project items like documents and boards, and each has its own page.",
+            "workspace_roadmaps",
+            "Roadmaps are project items like documents and boards: a horizontal timeline that holds milestones. Create the roadmap first, then add milestones to it.",
             json!({
                 "type": "object",
                 "properties": {
                     "action": { "type": "string", "enum": ["list", "get", "create", "update", "delete"] },
                     "project": { "type": "string" },
+                    "roadmap": { "type": "string", "description": "Roadmap id (rm_…)." },
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "folder": { "type": "string" }
+                },
+                "required": ["action"]
+            }),
+        ),
+        tool(
+            "workspace_milestones",
+            "Milestones inside a roadmap: a title, a target date (YYYY-MM-DD), a status (planned, active or done) and a description. Use workspace_roadmaps first when the roadmap does not exist yet.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "get", "create", "update", "delete"] },
+                    "project": { "type": "string" },
+                    "roadmap": { "type": "string", "description": "Roadmap id (rm_…), required to create and useful to list." },
                     "milestone": { "type": "string", "description": "Milestone id (ms_…)." },
                     "title": { "type": "string" },
                     "dueDate": { "type": "string", "description": "YYYY-MM-DD, or null to clear." },
                     "status": { "type": "string", "enum": ["planned", "active", "done"] },
-                    "description": { "type": "string" },
-                    "folder": { "type": "string" }
+                    "description": { "type": "string" }
                 },
                 "required": ["action"]
             }),
@@ -337,6 +353,7 @@ pub async fn execute(
         "workspace_tasks" => tasks(client, args).await,
         "workspace_comments" => comments(client, chat_id, args).await,
         "workspace_documents" => documents(client, args).await,
+        "workspace_roadmaps" => roadmaps(client, args).await,
         "workspace_milestones" => milestones(client, args).await,
         "workspace_members" => members(client, args).await,
         "workspace_invites" => invites(client, args).await,
@@ -561,17 +578,58 @@ fn document_fields(args: &Value) -> Value {
     body
 }
 
-async fn milestones(client: &WorkspaceClient, args: &Value) -> ToolResult {
+async fn roadmaps(client: &WorkspaceClient, args: &Value) -> ToolResult {
     match action(args)?.as_str() {
-        "list" => client.get(&format!("/projects/{}/milestones", required(args, "project")?)).await,
-        "get" => client.get(&format!("/milestones/{}", required(args, "milestone")?)).await,
+        "list" => client.get(&format!("/projects/{}/roadmaps", required(args, "project")?)).await,
+        "get" => client.get(&format!("/roadmaps/{}", required(args, "roadmap")?)).await,
         "create" => {
             let project = required(args, "project")?;
+            let mut body = roadmap_fields(args);
+            if body.get("name").is_none() {
+                body["name"] = json!("Roadmap");
+            }
+            client.post(&format!("/projects/{project}/roadmaps"), body).await
+        }
+        "update" => {
+            let roadmap = required(args, "roadmap")?;
+            client.patch(&format!("/roadmaps/{roadmap}"), roadmap_fields(args)).await
+        }
+        "delete" => client.delete(&format!("/roadmaps/{}", required(args, "roadmap")?)).await,
+        other => Err(format!("Unknown action: {other}")),
+    }
+}
+
+/// Only the roadmap fields the call named; an absent field is left unchanged.
+fn roadmap_fields(args: &Value) -> Value {
+    let mut body = json!({});
+    for (key, field) in [("name", "name"), ("description", "description")] {
+        if let Some(value) = string(args, key) {
+            body[field] = json!(value);
+        }
+    }
+    if let Some(folder) = string(args, "folder") {
+        body["folderId"] = json!(folder);
+    }
+    body
+}
+
+async fn milestones(client: &WorkspaceClient, args: &Value) -> ToolResult {
+    match action(args)?.as_str() {
+        "list" => {
+            if let Some(roadmap) = string(args, "roadmap") {
+                client.get(&format!("/roadmaps/{roadmap}/milestones")).await
+            } else {
+                client.get(&format!("/projects/{}/milestones", required(args, "project")?)).await
+            }
+        }
+        "get" => client.get(&format!("/milestones/{}", required(args, "milestone")?)).await,
+        "create" => {
+            let roadmap = required(args, "roadmap")?;
             let mut body = milestone_fields(args);
             if body.get("title").is_none() {
                 body["title"] = json!("Milestone");
             }
-            client.post(&format!("/projects/{project}/milestones"), body).await
+            client.post(&format!("/roadmaps/{roadmap}/milestones"), body).await
         }
         "update" => {
             let milestone = required(args, "milestone")?;
@@ -598,9 +656,6 @@ fn milestone_fields(args: &Value) -> Value {
         if due.is_null() || due.is_string() {
             body["dueDate"] = due.clone();
         }
-    }
-    if let Some(folder) = string(args, "folder") {
-        body["folderId"] = json!(folder);
     }
     body
 }
@@ -721,6 +776,7 @@ mod tests {
             "workspace_tasks",
             "workspace_comments",
             "workspace_documents",
+            "workspace_roadmaps",
             "workspace_milestones",
             "workspace_members",
             "workspace_invites",

@@ -13,6 +13,7 @@ import type {
   Member,
   Milestone,
   Project,
+  Roadmap,
   Task,
   TextDirection,
 } from "./types";
@@ -176,11 +177,23 @@ const demo = {
       seq: 7,
     },
   ] as DocumentMeta[],
+  roadmaps: [
+    {
+      id: "rm_demo",
+      projectId: DEMO_PROJECT.id,
+      folderId: "fd_demo",
+      name: "Release roadmap",
+      description: "The path to the first public build.",
+      position: 0,
+      updatedAt: demoNow(),
+      seq: 8,
+    },
+  ] as Roadmap[],
   milestones: [
     {
       id: "ms_demo",
       projectId: DEMO_PROJECT.id,
-      folderId: null,
+      roadmapId: "rm_demo",
       title: "First release",
       description: "Ship the first public build.",
       dueDate: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
@@ -188,7 +201,7 @@ const demo = {
       position: 0,
       createdAt: demoNow(),
       updatedAt: demoNow(),
-      seq: 8,
+      seq: 9,
     },
   ] as Milestone[],
   folders: [
@@ -283,6 +296,10 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
           return {
             milestones: demo.milestones.filter((milestone) => milestone.projectId === id),
           };
+        case "roadmaps":
+          return {
+            roadmaps: demo.roadmaps.filter((roadmap) => roadmap.projectId === id),
+          };
         case "folders":
           return { folders: demo.folders.filter((folder) => folder.projectId === id) };
         case "members":
@@ -344,22 +361,19 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       demo.documents = [document, ...demo.documents];
       return { document };
     }
-    if (resource === "milestones") {
-      const milestone: Milestone = {
-        id: demoId("ms"),
+    if (resource === "roadmaps") {
+      const roadmap: Roadmap = {
+        id: demoId("rm"),
         projectId: id,
         folderId: (payload.folderId as string | null) ?? null,
-        title: String(payload.title ?? "Milestone"),
+        name: String(payload.name ?? "Roadmap"),
         description: String(payload.description ?? ""),
-        dueDate: typeof payload.dueDate === "string" ? payload.dueDate : null,
-        status: payload.status === "done" || payload.status === "active" ? payload.status : "planned",
         position: demoSeq,
-        createdAt: demoNow(),
         updatedAt: demoNow(),
         seq: demoSeq,
       };
-      demo.milestones = [milestone, ...demo.milestones];
-      return { milestone };
+      demo.roadmaps = [...demo.roadmaps, roadmap];
+      return { roadmap };
     }
     return { ok: true };
   }
@@ -530,6 +544,45 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       return { ok: true };
     }
     return { document: demo.documents.find((document) => document.id === id) };
+  }
+
+  if (root === "roadmaps") {
+    const roadmap = demo.roadmaps.find((candidate) => candidate.id === id);
+    if (!roadmap) return { ok: true };
+    if (resource === "milestones") {
+      if (method === "GET") {
+        return { milestones: demo.milestones.filter((milestone) => milestone.roadmapId === id) };
+      }
+      if (method === "POST") {
+        const milestone: Milestone = {
+          id: demoId("ms"),
+          projectId: roadmap.projectId,
+          roadmapId: roadmap.id,
+          title: String(payload.title ?? "Milestone"),
+          description: String(payload.description ?? ""),
+          dueDate: typeof payload.dueDate === "string" ? payload.dueDate : null,
+          status: payload.status === "done" || payload.status === "active" ? payload.status : "planned",
+          position: demoSeq,
+          createdAt: demoNow(),
+          updatedAt: demoNow(),
+          seq: demoSeq,
+        };
+        demo.milestones = [milestone, ...demo.milestones];
+        return { milestone };
+      }
+    }
+    if (method === "PATCH") {
+      demo.roadmaps = demo.roadmaps.map((candidate) =>
+        candidate.id === id ? { ...candidate, ...payload, updatedAt: demoNow() } : candidate,
+      );
+      return { roadmap: demo.roadmaps.find((candidate) => candidate.id === id) };
+    }
+    if (method === "DELETE") {
+      demo.roadmaps = demo.roadmaps.filter((candidate) => candidate.id !== id);
+      demo.milestones = demo.milestones.filter((milestone) => milestone.roadmapId !== id);
+      return { ok: true };
+    }
+    return { roadmap };
   }
 
   if (root === "milestones") {
@@ -793,19 +846,30 @@ export const api = {
   },
   deleteDocument: (id: string) => call<{ ok: true }>("DELETE", `/documents/${id}`),
 
+  roadmaps: (projectId: string) =>
+    call<{ roadmaps: Roadmap[] }>("GET", `/projects/${projectId}/roadmaps`),
+  roadmap: (id: string) => call<{ roadmap: Roadmap }>("GET", `/roadmaps/${id}`),
+  createRoadmap: (
+    projectId: string,
+    roadmap: { name: string; description?: string; folderId?: string | null },
+  ) => call<{ roadmap: Roadmap }>("POST", `/projects/${projectId}/roadmaps`, roadmap),
+  updateRoadmap: (id: string, patch: Partial<Roadmap>) =>
+    call<{ roadmap: Roadmap }>("PATCH", `/roadmaps/${id}`, patch),
+  deleteRoadmap: (id: string) => call<{ ok: true }>("DELETE", `/roadmaps/${id}`),
   milestones: (projectId: string) =>
     call<{ milestones: Milestone[] }>("GET", `/projects/${projectId}/milestones`),
   milestone: (id: string) => call<{ milestone: Milestone }>("GET", `/milestones/${id}`),
+  roadmapsMilestones: (roadmapId: string) =>
+    call<{ milestones: Milestone[] }>("GET", `/roadmaps/${roadmapId}/milestones`),
   createMilestone: (
-    projectId: string,
+    roadmapId: string,
     milestone: {
       title: string;
       description?: string;
       dueDate?: string | null;
       status?: Milestone["status"];
-      folderId?: string | null;
     },
-  ) => call<{ milestone: Milestone }>("POST", `/projects/${projectId}/milestones`, milestone),
+  ) => call<{ milestone: Milestone }>("POST", `/roadmaps/${roadmapId}/milestones`, milestone),
   updateMilestone: (id: string, patch: Partial<Milestone>) =>
     call<{ milestone: Milestone }>("PATCH", `/milestones/${id}`, patch),
   deleteMilestone: (id: string) => call<{ ok: true }>("DELETE", `/milestones/${id}`),

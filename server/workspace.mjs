@@ -26,7 +26,8 @@ import { requireApiUser } from "./tokens.mjs";
  *                 `fields` holds the rest
  *   ws_comments   `author_kind` says whether a person or their Hook agent wrote
  *   ws_documents  Markdown is the source of truth; `rev` catches stale writes
- *   ws_milestones a project item with a date, status and description
+ *   ws_roadmaps   a project item; its milestones are circles on the timeline
+ *   ws_milestones a roadmap child with a date, status and description
  *
  * Every row carries `seq` from one global counter. Clients pull
  * `/api/ws/changes?since=N` and get only rows in projects they belong to, so a
@@ -44,6 +45,7 @@ export const LIMITS = {
   tasksPerProject: 20_000,
   assigneesPerTask: 20,
   documentsPerProject: 5_000,
+  roadmapsPerProject: 500,
   milestonesPerProject: 5_000,
   documentBytes: 512 * 1024,
   commentBytes: 16 * 1024,
@@ -186,10 +188,23 @@ function migrate(db) {
       seq INTEGER NOT NULL
     ) STRICT;
 
-    CREATE TABLE IF NOT EXISTS ws_milestones (
+    CREATE TABLE IF NOT EXISTS ws_roadmaps (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
       folder_id TEXT,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER,
+      seq INTEGER NOT NULL
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS ws_milestones (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      roadmap_id TEXT,
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       due_date TEXT,
@@ -200,6 +215,8 @@ function migrate(db) {
       deleted_at INTEGER,
       seq INTEGER NOT NULL
     ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS ws_roadmaps_project ON ws_roadmaps (project_id, position);
 
     CREATE INDEX IF NOT EXISTS ws_milestones_project ON ws_milestones (project_id, due_date);
     CREATE INDEX IF NOT EXISTS ws_members_subject ON ws_members (subject);
@@ -223,7 +240,31 @@ function migrate(db) {
   if (!documentColumns.some((column) => column.name === "direction")) {
     db.exec("ALTER TABLE ws_documents ADD COLUMN direction TEXT NOT NULL DEFAULT 'ltr'");
   }
+  const milestoneColumns = db.prepare("PRAGMA table_info(ws_milestones)").all();
+  if (!milestoneColumns.some((column) => column.name === "roadmap_id")) {
+    db.exec("ALTER TABLE ws_milestones ADD COLUMN roadmap_id TEXT");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS ws_milestones_roadmap ON ws_milestones (roadmap_id, position)");
   db.prepare("INSERT OR IGNORE INTO ws_seq (id, next) VALUES (1, 0)").run();
+  // Milestones used to be project items; adopt the old rows into one roadmap
+  // per project so their timeline survives the model change.
+  const stranded = db
+    .prepare(
+      "SELECT DISTINCT project_id FROM ws_milestones WHERE roadmap_id IS NULL AND deleted_at IS NULL",
+    )
+    .all();
+  for (const row of stranded) {
+    const id = newId("rm");
+    const at = now();
+    db.prepare(
+      `INSERT INTO ws_roadmaps
+        (id, project_id, folder_id, name, description, position, created_at, updated_at, seq)
+       VALUES (?, ?, NULL, 'Roadmap', '', 0, ?, ?, ?)`,
+    ).run(id, row.project_id, at, at, nextSeq(db));
+    db.prepare(
+      "UPDATE ws_milestones SET roadmap_id = ? WHERE project_id = ? AND roadmap_id IS NULL",
+    ).run(id, row.project_id);
+  }
 }
 
 export const SCHEMA = "workspace-v1";
@@ -858,7 +899,15 @@ export function createWorkspaceRouter({ db, env = {} }) {
         }
       }
       tombstone(db, "ws_documents", `folder_id IN (${marks})`, ids);
-      tombstone(db, "ws_milestones", `folder_id IN (${marks})`, ids);
+      const roadmapIds = tombstone(db, "ws_roadmaps", `folder_id IN (${marks})`, ids);
+      if (roadmapIds.length > 0) {
+        tombstone(
+          db,
+          "ws_milestones",
+          `roadmap_id IN (${roadmapIds.map(() => "?").join(",")})`,
+          roadmapIds,
+        );
+      }
       tombstone(db, "ws_folders", `id IN (${marks})`, ids);
     });
     res.json({ ok: true });
@@ -1261,29 +1310,107 @@ export function createWorkspaceRouter({ db, env = {} }) {
 
   // ── Milestones ────────────────────────────────────────────────────────────
 
+  // ── Roadmaps & milestones ─────────────────────────────────────────────────
+
   router.get("/projects/:id/milestones", (req, res) => {
     const id = req.params.id;
     if (!actor(req, res, id, "read")) return;
     res.json({ milestones: list(db, "milestones", id) });
   });
 
-  router.get("/milestones/:id", (req, res) => {
-    const projectId = projectIdOf(req, res, "ws_milestones", req.params.id);
-    if (!projectId) return;
-    if (!actor(req, res, projectId, "read")) return;
-    const row = db.prepare("SELECT * FROM ws_milestones WHERE id = ?").get(req.params.id);
-    res.json({ milestone: shapeMilestone(row) });
+  router.get("/projects/:id/roadmaps", (req, res) => {
+    const id = req.params.id;
+    if (!actor(req, res, id, "read")) return;
+    res.json({ roadmaps: list(db, "roadmaps", id) });
   });
 
-  router.post("/projects/:id/milestones", (req, res) => {
+  router.get("/roadmaps/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_roadmaps", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "read")) return;
+    const row = db.prepare("SELECT * FROM ws_roadmaps WHERE id = ?").get(req.params.id);
+    res.json({ roadmap: shapeRoadmap(row) });
+  });
+
+  router.post("/projects/:id/roadmaps", (req, res) => {
     const id = req.params.id;
     const who = actor(req, res, id, "write");
     if (!who) return;
     const total = db
-      .prepare("SELECT COUNT(*) AS total FROM ws_milestones WHERE project_id = ? AND deleted_at IS NULL")
+      .prepare("SELECT COUNT(*) AS total FROM ws_roadmaps WHERE project_id = ? AND deleted_at IS NULL")
       .get(id).total;
+    if (total >= limit.roadmapsPerProject) {
+      return badRequest(res, "This project has reached its roadmap limit.", "roadmap_quota");
+    }
+    const name = text(req.body?.name, 200) ?? "Roadmap";
+    const description = text(req.body?.description ?? "", 2000);
+    if (description === null) return badRequest(res, "That description is too long.");
+    const row = insert(db, "roadmaps", {
+      project_id: id,
+      folder_id: req.body?.folderId ?? null,
+      name,
+      description,
+      position: Number.isSafeInteger(req.body?.position) ? req.body.position : 0,
+      created_at: now(),
+    });
+    res.status(201).json({ roadmap: shapeRoadmap(row) });
+  });
+
+  router.patch("/roadmaps/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_roadmaps", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    const current = db.prepare("SELECT * FROM ws_roadmaps WHERE id = ?").get(req.params.id);
+    const fields = {};
+    if (req.body?.name !== undefined) {
+      const name = text(req.body.name, 200);
+      if (!name) return badRequest(res, "Give the roadmap a name.");
+      fields.name = name;
+    }
+    if (req.body?.description !== undefined) {
+      const description = text(req.body.description, 2000);
+      if (description === null) return badRequest(res, "That description is too long.");
+      fields.description = description;
+    }
+    if (req.body?.folderId !== undefined) fields.folder_id = req.body.folderId ?? null;
+    if (Number.isSafeInteger(req.body?.position)) fields.position = req.body.position;
+    res.json({ roadmap: shapeRoadmap(update(db, "roadmaps", current.id, fields)) });
+  });
+
+  router.delete("/roadmaps/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_roadmaps", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    transaction(db, () => {
+      tombstone(db, "ws_milestones", "roadmap_id = ?", [req.params.id]);
+      tombstone(db, "ws_roadmaps", "id = ?", [req.params.id]);
+    });
+    res.json({ ok: true });
+  });
+
+  router.get("/roadmaps/:id/milestones", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_roadmaps", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "read")) return;
+    const rows = db
+      .prepare(
+        "SELECT * FROM ws_milestones WHERE roadmap_id = ? AND deleted_at IS NULL ORDER BY position, due_date, updated_at",
+      )
+      .all(req.params.id);
+    res.json({ milestones: rows.map(shapeMilestone) });
+  });
+
+  router.post("/roadmaps/:id/milestones", (req, res) => {
+    const roadmapId = req.params.id;
+    const projectId = projectIdOf(req, res, "ws_roadmaps", roadmapId);
+    if (!projectId) return;
+    const who = actor(req, res, projectId, "write");
+    if (!who) return;
+    const total = db
+      .prepare("SELECT COUNT(*) AS total FROM ws_milestones WHERE roadmap_id = ? AND deleted_at IS NULL")
+      .get(roadmapId).total;
     if (total >= limit.milestonesPerProject) {
-      return badRequest(res, "This project has reached its milestone limit.", "milestone_quota");
+      return badRequest(res, "This roadmap has reached its milestone limit.", "milestone_quota");
     }
     const title = text(req.body?.title, 200) ?? "Milestone";
     const description = text(req.body?.description ?? "", limit.documentBytes);
@@ -1295,8 +1422,8 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const status = req.body?.status ?? "planned";
     if (!MILESTONE_STATUSES.has(status)) return badRequest(res, "That milestone status is not valid.");
     const row = insert(db, "milestones", {
-      project_id: id,
-      folder_id: req.body?.folderId ?? null,
+      project_id: projectId,
+      roadmap_id: roadmapId,
       title,
       description,
       due_date: dueDate,
@@ -1305,6 +1432,14 @@ export function createWorkspaceRouter({ db, env = {} }) {
       created_at: now(),
     });
     res.status(201).json({ milestone: shapeMilestone(row) });
+  });
+
+  router.get("/milestones/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_milestones", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "read")) return;
+    const row = db.prepare("SELECT * FROM ws_milestones WHERE id = ?").get(req.params.id);
+    res.json({ milestone: shapeMilestone(row) });
   });
 
   router.patch("/milestones/:id", (req, res) => {
@@ -1336,7 +1471,6 @@ export function createWorkspaceRouter({ db, env = {} }) {
       }
       fields.status = req.body.status;
     }
-    if (req.body?.folderId !== undefined) fields.folder_id = req.body.folderId ?? null;
     if (Number.isSafeInteger(req.body?.position)) fields.position = req.body.position;
     res.json({ milestone: shapeMilestone(update(db, "milestones", current.id, fields)) });
   });
@@ -1348,16 +1482,6 @@ export function createWorkspaceRouter({ db, env = {} }) {
     remove(db, "milestones", req.params.id);
     res.json({ ok: true });
   });
-
-  // ── Changes feed ──────────────────────────────────────────────────────────
-
-  /**
-   * Everything that changed in the projects I belong to, after `since`.
-   *
-   * One cursor for the whole account, like the chat sync: the server filters by
-   * membership at query time, so a cursor may skip rows that were never mine,
-   * and that is fine — gaps are not meaningful.
-   */
   router.get("/changes", (req, res) => {
     const result = requireApiUser(db, req, res);
     if (!result) return;
@@ -1411,6 +1535,10 @@ export function createWorkspaceRouter({ db, env = {} }) {
         .prepare(`SELECT * FROM ws_documents WHERE seq > ? AND project_id IN (${mine})`)
         .all(since, subject)
         .map((row) => ({ kind: "document", ...row })),
+      ...db
+        .prepare(`SELECT * FROM ws_roadmaps WHERE seq > ? AND project_id IN (${mine})`)
+        .all(since, subject)
+        .map((row) => ({ kind: "roadmap", ...row })),
       ...db
         .prepare(`SELECT * FROM ws_milestones WHERE seq > ? AND project_id IN (${mine})`)
         .all(since, subject)
@@ -1478,6 +1606,7 @@ function list(db, kind, projectId) {
     .prepare(`SELECT * FROM ws_${kind} WHERE project_id = ? AND deleted_at IS NULL ORDER BY ${order}`)
     .all(projectId);
   if (kind === "folders") return rows.map(shapeFolder);
+  if (kind === "roadmaps") return rows.map(shapeRoadmap);
   if (kind === "milestones") return rows.map(shapeMilestone);
   return kind === "documents" ? rows.map(shapeDocumentMeta) : rows;
 }
@@ -1488,6 +1617,7 @@ const PREFIX = {
   tasks: "tk",
   comments: "cm",
   documents: "dc",
+  roadmaps: "rm",
   milestones: "ms",
 };
 
@@ -1820,11 +1950,24 @@ function shapeDocument(row) {
   };
 }
 
-function shapeMilestone(row) {
+function shapeRoadmap(row) {
   return {
     id: row.id,
     projectId: row.project_id,
     folderId: row.folder_id,
+    name: row.name,
+    description: row.description,
+    position: row.position,
+    updatedAt: row.updated_at,
+    seq: row.seq,
+  };
+}
+
+function shapeMilestone(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    roadmapId: row.roadmap_id,
     title: row.title,
     description: row.description,
     dueDate: row.due_date,
@@ -1918,9 +2061,17 @@ function shapeChange(row) {
         updatedBy: row.updated_by,
       });
       break;
-    case "milestone":
+    case "roadmap":
       Object.assign(change, {
         folderId: row.folder_id,
+        name: row.name,
+        description: row.description,
+        position: row.position,
+      });
+      break;
+    case "milestone":
+      Object.assign(change, {
+        roadmapId: row.roadmap_id,
         title: row.title,
         description: row.description,
         dueDate: row.due_date,

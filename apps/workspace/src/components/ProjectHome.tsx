@@ -1,9 +1,9 @@
 import {
   FileText,
-  Flag,
   FolderPlus,
   KanbanSquare,
   Plus,
+  Route,
   Star,
   Users,
 } from "lucide-react";
@@ -24,33 +24,35 @@ import {
 
 const EMPTY: never[] = [];
 const WRITE_ROLES = ["owner", "manager", "editor"];
-const MILESTONE_LABEL = { planned: "Planned", active: "In progress", done: "Done" } as const;
 
 /**
  * A project, before you pick something inside it.
  *
  * The tree on the left is the navigation now, so this page is the overview:
  * what the project is, who is in it, and what was touched last. Boards,
- * documents and milestones are opened from the tree or from these cards.
+ * documents and roadmaps are opened from the tree or from these cards.
  */
 export function ProjectHome({
   project,
   accountEmail,
   onOpenBoard,
   onOpenDocument,
-  onOpenMilestone,
+  onOpenRoadmap,
 }: {
   project: Project;
   accountEmail: string | null;
   onOpenBoard: (id: string) => void;
   onOpenDocument: (id: string) => void;
-  onOpenMilestone: (id: string) => void;
+  onOpenRoadmap: (id: string) => void;
 }) {
   const boards = useWorkspaceStore(
     (state) => state.boards[project.id] ?? EMPTY,
   );
   const documents = useWorkspaceStore(
     (state) => state.documents[project.id] ?? EMPTY,
+  );
+  const roadmaps = useWorkspaceStore(
+    (state) => state.roadmaps[project.id] ?? EMPTY,
   );
   const milestones = useWorkspaceStore(
     (state) => state.milestones[project.id] ?? EMPTY,
@@ -72,12 +74,9 @@ export function ProjectHome({
   const recentDocuments = [...documents]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, 4);
-  const recentMilestones = [...milestones].sort((left, right) => {
-    if (left.dueDate && right.dueDate) return left.dueDate.localeCompare(right.dueDate);
-    if (left.dueDate) return -1;
-    if (right.dueDate) return 1;
-    return right.updatedAt - left.updatedAt;
-  });
+  const recentRoadmaps = [...roadmaps]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, 4);
 
   const items = [
     ...boards.map((board) => ({
@@ -378,16 +377,16 @@ export function ProjectHome({
 
       <section className="ws-overview-section ws-milestone-overview">
         <header>
-          <h2>Milestones</h2>
-          <span>{milestones.length}</span>
+          <h2>Roadmaps</h2>
+          <span>{roadmaps.length}</span>
           {canWrite && (
             <button
               className="ws-section-add"
-              aria-label="Create milestone"
-              title="Create milestone"
+              aria-label="Create roadmap"
+              title="Create roadmap"
               onClick={() =>
                 setCreating({
-                  kind: "milestone",
+                  kind: "roadmap",
                   projectId: project.id,
                   folderId: null,
                 })
@@ -397,24 +396,21 @@ export function ProjectHome({
             </button>
           )}
         </header>
-        {recentMilestones.length === 0 ? (
-          <p className="ws-overview-empty">No milestones yet.</p>
+        {recentRoadmaps.length === 0 ? (
+          <p className="ws-overview-empty">No roadmaps yet.</p>
         ) : (
           <div className="ws-milestone-cards">
-            {recentMilestones.map((milestone) => (
+            {recentRoadmaps.map((roadmap) => (
               <button
                 className="ws-milestone-card-link"
-                key={milestone.id}
-                onClick={() => onOpenMilestone(milestone.id)}
+                key={roadmap.id}
+                onClick={() => onOpenRoadmap(roadmap.id)}
               >
-                <span className="ws-milestone-card-icon"><Flag /></span>
+                <span className="ws-milestone-card-icon"><Route /></span>
                 <span className="ws-milestone-card-main">
-                  <strong>{milestone.title || "Untitled"}</strong>
+                  <strong>{roadmap.name || "Untitled"}</strong>
                   <small>
-                    {milestone.dueDate
-                      ? milestone.dueDate.split("-").reverse().join("/")
-                      : "No date"}{" "}
-                    · {MILESTONE_LABEL[milestone.status]}
+                    {milestones.filter((milestone) => milestone.roadmapId === roadmap.id).length} milestones
                   </small>
                 </span>
               </button>

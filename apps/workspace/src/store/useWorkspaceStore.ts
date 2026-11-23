@@ -12,6 +12,7 @@ import type {
   Member,
   Milestone,
   Project,
+  Roadmap,
   Task,
   TextDirection,
 } from "../lib/types";
@@ -31,12 +32,13 @@ interface WorkspaceState {
   activeBoardId: string | null;
   activeTaskId: string | null;
   activeDocumentId: string | null;
-  activeMilestoneId: string | null;
+  activeRoadmapId: string | null;
 
   boards: ById<Board[]>;
   tasks: ById<Task[]>;
   comments: ById<Comment[]>;
   documents: ById<DocumentMeta[]>;
+  roadmaps: ById<Roadmap[]>;
   milestones: ById<Milestone[]>;
   members: ById<Member[]>;
   /** Invitations nobody answered yet: the address is the only handle on them. */
@@ -109,16 +111,21 @@ interface WorkspaceState {
   ) => Promise<{ document: DocumentMeta | null; conflict: DocumentMeta | null }>;
   deleteDocument: (id: string) => Promise<void>;
 
-  openMilestone: (id: string | null, projectId?: string) => Promise<void>;
-  loadMilestone: (id: string) => Promise<Milestone | null>;
-  createMilestone: (
+  openRoadmap: (id: string | null, projectId?: string) => Promise<void>;
+  loadRoadmap: (id: string) => Promise<Roadmap | null>;
+  createRoadmap: (
     projectId: string,
-    title: string,
+    name: string,
     folderId?: string | null,
-  ) => Promise<Milestone | null>;
+  ) => Promise<Roadmap | null>;
+  updateRoadmap: (id: string, patch: Partial<Roadmap>) => Promise<boolean>;
+  moveRoadmap: (id: string, folderId: string | null) => Promise<void>;
+  renameRoadmap: (id: string, name: string) => Promise<void>;
+  deleteRoadmap: (id: string) => Promise<void>;
+
+  createMilestone: (roadmapId: string, title: string) => Promise<Milestone | null>;
+  loadMilestone: (id: string) => Promise<Milestone | null>;
   updateMilestone: (id: string, patch: Partial<Milestone>) => Promise<boolean>;
-  moveMilestone: (id: string, folderId: string | null) => Promise<void>;
-  renameMilestone: (id: string, title: string) => Promise<void>;
   deleteMilestone: (id: string) => Promise<void>;
 
   createFolder: (
@@ -161,11 +168,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeBoardId: null,
   activeTaskId: null,
   activeDocumentId: null,
-  activeMilestoneId: null,
+  activeRoadmapId: null,
   boards: {},
   tasks: {},
   comments: {},
   documents: {},
+  roadmaps: {},
   milestones: {},
   members: {},
   pending: {},
@@ -224,7 +232,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeBoardId: null,
       activeTaskId: null,
       activeDocumentId: null,
-      activeMilestoneId: null,
+      activeRoadmapId: null,
     });
     if (!id) return;
     await get().loadProjectContents(id);
@@ -232,11 +240,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   async loadProjectContents(projectId) {
     try {
-      const [boards, documents, milestones, members, folders] = await Promise.all([
+      const [boards, documents, roadmaps, milestones, members, folders] = await Promise.all([
         api.boards(projectId),
         api.documents(projectId),
-        // An older service has no milestones; an empty list keeps the rest of
+        // An older service has no roadmaps; an empty list keeps the rest of
         // the project usable while the client is newer than the deployment.
+        api.roadmaps(projectId).catch((error) => {
+          if (error instanceof ApiError && error.status === 404) return { roadmaps: [] };
+          throw error;
+        }),
         api.milestones(projectId).catch((error) => {
           if (error instanceof ApiError && error.status === 404) return { milestones: [] };
           throw error;
@@ -259,6 +271,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
                 "ltr",
             })),
           },
+          roadmaps: { ...state.roadmaps, [projectId]: roadmaps.roadmaps },
           milestones: { ...state.milestones, [projectId]: milestones.milestones },
           members: { ...state.members, [projectId]: members.members },
           // An older service has no pending list; a project without one simply
@@ -317,7 +330,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeBoardId: id,
       activeTaskId: null,
       activeDocumentId: null,
-      activeMilestoneId: null,
+      activeRoadmapId: null,
       ...(owner ? { activeProjectId: owner } : {}),
     });
     if (!id) return;
@@ -573,7 +586,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeDocumentId: id,
       activeBoardId: null,
       activeTaskId: null,
-      activeMilestoneId: null,
+      activeRoadmapId: null,
       ...(projectId ? { activeProjectId: projectId } : {}),
     });
     if (!id) return;
@@ -696,18 +709,120 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async openMilestone(id, projectId) {
+  async openRoadmap(id, projectId) {
     set({
-      activeMilestoneId: id,
+      activeRoadmapId: id,
       activeDocumentId: null,
       activeBoardId: null,
       activeTaskId: null,
       ...(projectId ? { activeProjectId: projectId } : {}),
     });
     if (!id) return;
-    const milestone = await get().loadMilestone(id);
-    const owner = projectId ?? milestone?.projectId;
-    if (owner && milestone && !get().members[owner]) await get().loadProjectContents(owner);
+    const roadmap = await get().loadRoadmap(id);
+    const owner = projectId ?? roadmap?.projectId;
+    if (owner && roadmap && !get().members[owner]) await get().loadProjectContents(owner);
+  },
+
+  async loadRoadmap(id) {
+    try {
+      const result = await api.roadmap(id);
+      const projectId = result.roadmap.projectId;
+      set((state) => ({
+        roadmaps: {
+          ...state.roadmaps,
+          [projectId]: sortByPosition(upsert(state.roadmaps[projectId] ?? [], result.roadmap)),
+        },
+      }));
+      return result.roadmap;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async createRoadmap(projectId, name, folderId = null) {
+    try {
+      const created = await api.createRoadmap(projectId, { name, folderId });
+      set((state) => ({
+        roadmaps: {
+          ...state.roadmaps,
+          [projectId]: sortByPosition([...(state.roadmaps[projectId] ?? []), created.roadmap]),
+        },
+        activeRoadmapId: created.roadmap.id,
+        activeBoardId: null,
+        activeTaskId: null,
+        activeDocumentId: null,
+      }));
+      return created.roadmap;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async updateRoadmap(id, patch) {
+    try {
+      const result = await api.updateRoadmap(id, patch);
+      const projectId = result.roadmap.projectId;
+      set((state) => ({
+        roadmaps: {
+          ...state.roadmaps,
+          [projectId]: sortByPosition(upsert(state.roadmaps[projectId] ?? [], result.roadmap)),
+        },
+      }));
+      return true;
+    } catch (error) {
+      set({ error: message(error) });
+      return false;
+    }
+  },
+
+  async moveRoadmap(id, folderId) {
+    await get().updateRoadmap(id, { folderId });
+  },
+
+  async renameRoadmap(id, name) {
+    await get().updateRoadmap(id, { name });
+  },
+
+  async deleteRoadmap(id) {
+    try {
+      await api.deleteRoadmap(id);
+      set((state) => ({
+        roadmaps: Object.fromEntries(
+          Object.entries(state.roadmaps).map(([project, roadmaps]) => [
+            project,
+            roadmaps.filter((roadmap) => roadmap.id !== id),
+          ]),
+        ),
+        milestones: Object.fromEntries(
+          Object.entries(state.milestones).map(([project, milestones]) => [
+            project,
+            milestones.filter((milestone) => milestone.roadmapId !== id),
+          ]),
+        ),
+        activeRoadmapId: state.activeRoadmapId === id ? null : state.activeRoadmapId,
+      }));
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  async createMilestone(roadmapId, title) {
+    try {
+      const created = await api.createMilestone(roadmapId, { title });
+      const projectId = created.milestone.projectId;
+      set((state) => ({
+        milestones: {
+          ...state.milestones,
+          [projectId]: [created.milestone, ...(state.milestones[projectId] ?? [])],
+        },
+      }));
+      return created.milestone;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
   },
 
   async loadMilestone(id) {
@@ -721,26 +836,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         },
       }));
       return result.milestone;
-    } catch (error) {
-      set({ error: message(error) });
-      return null;
-    }
-  },
-
-  async createMilestone(projectId, title, folderId = null) {
-    try {
-      const created = await api.createMilestone(projectId, { title, folderId });
-      set((state) => ({
-        milestones: {
-          ...state.milestones,
-          [projectId]: [created.milestone, ...(state.milestones[projectId] ?? [])],
-        },
-        activeMilestoneId: created.milestone.id,
-        activeBoardId: null,
-        activeTaskId: null,
-        activeDocumentId: null,
-      }));
-      return created.milestone;
     } catch (error) {
       set({ error: message(error) });
       return null;
@@ -764,14 +859,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async moveMilestone(id, folderId) {
-    await get().updateMilestone(id, { folderId });
-  },
-
-  async renameMilestone(id, title) {
-    await get().updateMilestone(id, { title });
-  },
-
   async deleteMilestone(id) {
     try {
       await api.deleteMilestone(id);
@@ -782,7 +869,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             milestones.filter((milestone) => milestone.id !== id),
           ]),
         ),
-        activeMilestoneId: state.activeMilestoneId === id ? null : state.activeMilestoneId,
       }));
     } catch (error) {
       set({ error: message(error) });
@@ -855,15 +941,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const state = get();
       const boards = state.boards[projectId] ?? [];
       const documents = state.documents[projectId] ?? [];
-      const milestones = state.milestones[projectId] ?? [];
+      const roadmaps = state.roadmaps[projectId] ?? [];
       const gone = new Set([...before].filter((boardId) => !boards.some((board) => board.id === boardId)));
       const boardGone = state.activeBoardId !== null && gone.has(state.activeBoardId);
       const documentGone =
         state.activeDocumentId !== null &&
         !documents.some((document) => document.id === state.activeDocumentId);
-      const milestoneGone =
-        state.activeMilestoneId !== null &&
-        !milestones.some((milestone) => milestone.id === state.activeMilestoneId);
+      const roadmapGone =
+        state.activeRoadmapId !== null &&
+        !roadmaps.some((roadmap) => roadmap.id === state.activeRoadmapId);
       set((current) => ({
         tasks: Object.fromEntries(
           Object.entries(current.tasks).filter(([boardId]) => !gone.has(boardId)),
@@ -871,7 +957,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeBoardId: boardGone ? null : current.activeBoardId,
         activeTaskId: boardGone ? null : current.activeTaskId,
         activeDocumentId: documentGone ? null : current.activeDocumentId,
-        activeMilestoneId: milestoneGone ? null : current.activeMilestoneId,
+        activeRoadmapId: roadmapGone ? null : current.activeRoadmapId,
       }));
     } catch (error) {
       set({ error: message(error) });
@@ -1115,6 +1201,21 @@ function applyChange(
       });
       return;
     }
+    case "roadmap": {
+      const projectId = change.projectId;
+      if (!projectId) return;
+      set({
+        roadmaps: {
+          ...state.roadmaps,
+          [projectId]: change.deleted
+            ? (state.roadmaps[projectId] ?? []).filter((item) => item.id !== change.id)
+            : sortByPosition(upsert(state.roadmaps[projectId] ?? [], change as unknown as Roadmap)),
+        },
+        activeRoadmapId:
+          change.deleted && state.activeRoadmapId === change.id ? null : state.activeRoadmapId,
+      });
+      return;
+    }
     case "milestone": {
       const projectId = change.projectId;
       if (!projectId) return;
@@ -1125,8 +1226,6 @@ function applyChange(
             ? (state.milestones[projectId] ?? []).filter((item) => item.id !== change.id)
             : upsert(state.milestones[projectId] ?? [], change as unknown as Milestone),
         },
-        activeMilestoneId:
-          change.deleted && state.activeMilestoneId === change.id ? null : state.activeMilestoneId,
       });
       return;
     }

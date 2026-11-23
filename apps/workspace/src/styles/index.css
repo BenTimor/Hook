@@ -2462,35 +2462,78 @@
   background: rgba(var(--ink-rgb), 0.045);
 }
 
-.ws-milestone { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
-.ws-milestone-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--line-soft); }
-.ws-milestone-title { flex: 1; min-width: 0; padding: 4px 6px; border-radius: 7px; font-size: 15px; font-weight: 570; letter-spacing: -0.012em; color: var(--ink); outline: none; }
-.ws-milestone-title:focus { background: rgba(var(--ink-rgb), 0.045); }
-.ws-milestone-delete { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; color: var(--ink-4); }
-.ws-milestone-delete:hover { background: rgba(164, 66, 58, 0.08); color: #a4423a; }
-.ws-milestone-delete svg { width: 15px; height: 15px; }
-.ws-milestone-canvas { flex: 1; min-height: 0; overflow: auto; }
-.ws-milestone-track { display: flex; align-items: flex-start; gap: 16px; width: max-content; min-width: 100%; padding: 30px 28px 40px; }
-.ws-milestone-card { flex: 0 0 290px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--ivory); box-shadow: var(--shadow-xs); }
-.ws-milestone-card header { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; color: var(--ink-4); font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; }
-.ws-milestone-card header svg { width: 14px; height: 14px; }
-.ws-milestone-date input { width: 100%; height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink-2); font: inherit; font-size: 13px; }
-.ws-milestone-date input:focus { outline: none; border-color: rgba(var(--accent-rgb), 0.45); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.09); }
-.ws-milestone-date small { display: block; margin-top: 8px; color: var(--ink-4); font-size: 11px; }
-.ws-milestone-statuses { display: flex; flex-direction: column; gap: 6px; }
-.ws-milestone-status { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-2); font-size: 12px; text-align: left; }
-.ws-milestone-status svg { width: 15px; height: 15px; }
+.ws-milestones-page { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; background: radial-gradient(ellipse at 18% 0%, rgba(var(--accent-rgb), 0.055), transparent 55%), radial-gradient(ellipse at 80% 110%, rgba(56, 124, 84, 0.045), transparent 50%); }
+.ws-milestones-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 22px; padding: 28px 32px 8px; }
+.ws-milestones-hero > div { display: flex; flex-direction: column; gap: 3px; }
+.ws-milestones-hero > div > span { color: var(--ink-4); font-size: 10px; font-weight: 650; letter-spacing: 0.1em; text-transform: uppercase; }
+.ws-milestones-hero h1 { margin: 0; color: var(--ink); font-size: 25px; font-weight: 620; letter-spacing: -0.03em; }
+.ws-milestones-hero p { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; margin: 0; color: var(--ink-3); font-size: 12px; }
+.ws-milestones-hero small { color: var(--ink-4); font-size: 10.5px; }
+.ws-milestones-hero-actions { display: flex; align-items: center; gap: 18px; }
+.ws-milestones-add { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 9px; background: var(--accent); color: var(--ivory); font-size: 11.5px; font-weight: 620; box-shadow: var(--shadow-sm); }
+.ws-milestones-add:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.ws-milestones-add svg { width: 14px; height: 14px; }
+.ws-timeline-add { display: flex; width: 150px; height: 150px; flex: 0 0 150px; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border: 1.5px dashed var(--line-strong); border-radius: 50%; background: rgba(var(--accent-rgb), 0.025); color: var(--ink-3); font: inherit; font-size: 11px; font-weight: 600; text-align: center; }
+.ws-timeline-add:hover { border-color: rgba(var(--accent-rgb), 0.5); background: var(--accent-soft); color: var(--accent); }
+.ws-timeline-add svg { width: 20px; height: 20px; }
+.ws-timeline-scroll { flex: 1; min-height: 0; overflow-x: auto; overflow-y: hidden; padding: 34px 32px 60px; scroll-behavior: smooth; cursor: grab; user-select: none; }
+.ws-timeline-scroll[data-panning="true"] { cursor: grabbing; }
+.ws-timeline-scroll[data-drawer="true"] { padding-right: 430px; }
+.ws-timeline { position: relative; display: flex; align-items: center; gap: 52px; width: max-content; min-width: 100%; padding: 10px 18px; }
+.ws-timeline[data-few="true"] { width: max-content; min-width: 0; margin-inline: auto; justify-content: center; }
+.ws-timeline-line { position: absolute; top: 50%; right: 133px; left: 133px; height: 2px; border-radius: 2px; background: linear-gradient(90deg, transparent, var(--line-strong) 8%, var(--line-strong) 92%, transparent); transform-origin: left center; }
+.ws-timeline-node { position: relative; z-index: 1; display: flex; width: 230px; height: 230px; flex: 0 0 230px; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 26px; border: 1px solid var(--line); border-radius: 50%; background: var(--ivory); color: var(--ink-2); text-align: center; box-shadow: var(--shadow-xs); transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease; }
+.ws-timeline-node[data-status="planned"] { background: radial-gradient(circle at 50% 26%, rgba(138, 106, 47, 0.1), var(--ivory) 68%); }
+.ws-timeline-node[data-status="active"] { background: radial-gradient(circle at 50% 26%, rgba(54, 95, 136, 0.11), var(--ivory) 68%); }
+.ws-timeline-node[data-status="done"] { background: radial-gradient(circle at 50% 26%, rgba(56, 124, 84, 0.11), var(--ivory) 68%); }
+.ws-timeline-node[data-active="true"] { border-color: rgba(var(--accent-rgb), 0.5); box-shadow: 0 18px 46px rgba(36, 36, 30, 0.13); }
+.ws-timeline-ring { position: absolute; inset: -8px; border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 0 0 6px rgba(var(--accent-rgb), 0.08); pointer-events: none; }
+.ws-timeline-badge { color: var(--ink-4); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.ws-timeline-node[data-status="planned"] .ws-timeline-badge { color: #7a5d28; }
+.ws-timeline-node[data-status="active"] .ws-timeline-badge { color: #365f88; }
+.ws-timeline-node[data-status="done"] .ws-timeline-badge { color: #2f6a48; }
+.ws-timeline-date { display: flex; flex-direction: column; line-height: 1; margin: 2px 0; }
+.ws-timeline-date strong { color: var(--ink); font-size: 38px; font-weight: 620; letter-spacing: -0.05em; }
+.ws-timeline-date small { margin-top: 2px; color: var(--ink-4); font-size: 10px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; }
+.ws-timeline-title { display: -webkit-box; max-width: 178px; overflow: hidden; color: var(--ink); font-size: 14px; font-weight: 620; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ws-timeline-preview { display: -webkit-box; max-width: 178px; overflow: hidden; color: var(--ink-3); font-size: 11px; line-height: 1.38; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.ws-milestone-drawer { position: absolute; z-index: 20; top: 0; right: 0; bottom: 0; display: flex; width: 390px; max-width: calc(100vw - 44px); flex-direction: column; gap: 16px; padding: 16px 18px 18px; overflow: auto; border-left: 1px solid var(--line); background: rgba(255, 253, 249, 0.97); box-shadow: -24px 0 60px rgba(36, 36, 30, 0.13); backdrop-filter: blur(16px); }
+.ws-milestone-drawer-head { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.ws-milestone-drawer-head > span:first-child { color: var(--ink-4); font-size: 10px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; }
+.ws-milestone-drawer-head .ws-document-state { margin-left: auto; }
+.ws-milestone-drawer-close { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; color: var(--ink-3); }
+.ws-milestone-drawer-close:hover { background: rgba(var(--ink-rgb), 0.06); color: var(--ink); }
+.ws-milestone-drawer-close svg { width: 16px; height: 16px; }
+.ws-milestone-drawer-title { width: 100%; padding: 4px 2px; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 22px; font-weight: 600; letter-spacing: -0.025em; outline: none; }
+.ws-milestone-drawer-title:focus { box-shadow: 0 1px 0 var(--line-strong); }
+.ws-milestone-field { display: flex; flex-direction: column; gap: 7px; color: var(--ink-3); font-size: 10.5px; font-weight: 650; }
+.ws-milestone-field > span { display: flex; align-items: center; gap: 6px; letter-spacing: 0.06em; text-transform: uppercase; }
+.ws-milestone-field > span svg { width: 13px; height: 13px; }
+.ws-milestone-field input[type="date"] { height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink-2); font: inherit; font-size: 12.5px; }
+.ws-milestone-field input[type="date"]:focus { outline: none; border-color: rgba(var(--accent-rgb), 0.45); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.09); }
+.ws-milestone-field-date .ws-date-cell { width: 100%; min-height: 36px; justify-content: flex-start; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12.5px; }
+.ws-milestone-field-date .ws-date-cell:hover:not(:disabled) { background: var(--ivory); }
+.ws-milestone-field-date .ws-date-cell > span { min-width: 0; text-align: left; }
+.ws-milestone-field > small { color: var(--ink-4); font-size: 10.5px; font-weight: 400; }
+.ws-milestone-statuses { display: flex; flex-wrap: wrap; gap: 6px; }
+.ws-milestone-status { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-2); font-size: 11.5px; text-align: left; }
+.ws-milestone-status svg { width: 14px; height: 14px; }
 .ws-milestone-status:hover:not(:disabled) { background: var(--panel); }
 .ws-milestone-status[data-status="planned"][data-active="true"] { border-color: rgba(138, 106, 47, 0.28); background: rgba(138, 106, 47, 0.1); color: #7a5d28; }
 .ws-milestone-status[data-status="active"][data-active="true"] { border-color: rgba(54, 95, 136, 0.24); background: rgba(54, 95, 136, 0.1); color: #365f88; }
 .ws-milestone-status[data-status="done"][data-active="true"] { border-color: rgba(56, 124, 84, 0.24); background: rgba(56, 124, 84, 0.1); color: #2f6a48; }
 .ws-milestone-status:disabled { cursor: default; opacity: 0.55; }
-.ws-milestone-notes textarea { width: 100%; min-height: 158px; resize: vertical; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink-2); font: inherit; font-size: 12.5px; line-height: 1.55; }
+.ws-milestone-notes textarea { width: 100%; min-height: 190px; resize: vertical; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink-2); font: inherit; font-size: 12.5px; font-weight: 400; line-height: 1.55; }
 .ws-milestone-notes textarea:focus { outline: none; border-color: rgba(var(--accent-rgb), 0.45); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.09); background: var(--ivory); }
-.ws-milestone-meta dl { display: grid; gap: 10px; margin: 0; }
-.ws-milestone-meta dl > div { display: flex; justify-content: space-between; gap: 12px; }
-.ws-milestone-meta dt { color: var(--ink-4); font-size: 11px; }
-.ws-milestone-meta dd { margin: 0; color: var(--ink-2); font-size: 12px; text-align: right; }
+.ws-milestone-drawer-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.ws-milestone-drawer-foot > span { color: var(--ink-4); font-size: 10.5px; font-weight: 400; }
+.ws-milestone-delete { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; color: var(--ink-4); }
+.ws-milestone-delete:hover { background: rgba(164, 66, 58, 0.08); color: #a4423a; }
+.ws-milestone-delete svg { width: 15px; height: 15px; }
+@media (max-width: 760px) {
+  .ws-timeline-scroll[data-drawer="true"] { padding-right: 32px; }
+  .ws-milestone-drawer { width: min(390px, calc(100vw - 24px)); }
+}
 .ws-milestone-cards { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 10px; scroll-snap-type: x proximity; }
 .ws-milestone-card-link { display: flex; flex: 0 0 230px; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--ivory); text-align: left; scroll-snap-align: start; }
 .ws-milestone-card-link:hover { border-color: rgba(var(--accent-rgb), 0.35); background: var(--panel); }
@@ -3052,8 +3095,9 @@
 .ws-th-check { text-align: center; }
 .ws-cell-date { justify-content: center; }
 .ws-date-cell { position: relative; display: inline-flex; min-height: 28px; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); font: inherit; font-size: 12.2px; white-space: nowrap; cursor: pointer; }
-.ws-date-cell:hover { background: var(--panel); }
+.ws-date-cell:hover:not(:disabled) { background: var(--panel); }
 .ws-date-cell:focus-visible { outline: none; background: var(--ivory); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.1); }
+.ws-date-cell:disabled { cursor: default; opacity: 0.7; }
 .ws-date-cell svg { flex: 0 0 auto; width: 13px; height: 13px; color: var(--ink-4); }
 .ws-date-cell > span { min-width: 108px; text-align: center; }
 .ws-calendar { position: fixed; z-index: 150; width: 286px; max-height: calc(100vh - 24px); overflow: auto; padding: 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--ivory); box-shadow: var(--shadow-lg); animation: ws-calendar-in 120ms cubic-bezier(.2,.8,.2,1) both; }

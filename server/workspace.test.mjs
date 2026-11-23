@@ -845,11 +845,20 @@ test("a document stores its text direction", async (t) => {
   assert.equal(invalid.status, 400);
 });
 
-test("milestones keep their date, status and description, ordered by date", async (t) => {
+test("roadmaps hold milestones with their date, status and description", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);
 
-  const later = await request(`/projects/${project.id}/milestones`, {
+  const created = await request(`/projects/${project.id}/roadmaps`, {
+    method: "POST",
+    body: { name: "Release roadmap", description: "The path to launch." },
+  });
+  assert.equal(created.status, 201);
+  const roadmap = created.body.roadmap;
+  assert.equal(roadmap.name, "Release roadmap");
+  assert.equal(roadmap.description, "The path to launch.");
+
+  const later = await request(`/roadmaps/${roadmap.id}/milestones`, {
     method: "POST",
     body: {
       title: "Public beta",
@@ -859,17 +868,18 @@ test("milestones keep their date, status and description, ordered by date", asyn
     },
   });
   assert.equal(later.status, 201);
+  assert.equal(later.body.milestone.roadmapId, roadmap.id);
   assert.equal(later.body.milestone.dueDate, "2026-12-01");
   assert.equal(later.body.milestone.status, "active");
 
-  const sooner = await request(`/projects/${project.id}/milestones`, {
+  const sooner = await request(`/roadmaps/${roadmap.id}/milestones`, {
     method: "POST",
     body: { title: "Design freeze", dueDate: "2026-10-01" },
   });
   assert.equal(sooner.status, 201);
   assert.equal(sooner.body.milestone.status, "planned");
 
-  const list = await request(`/projects/${project.id}/milestones`);
+  const list = await request(`/roadmaps/${roadmap.id}/milestones`);
   assert.deepEqual(
     list.body.milestones.map((milestone) => milestone.title),
     ["Design freeze", "Public beta"],
@@ -883,13 +893,14 @@ test("milestones keep their date, status and description, ordered by date", asyn
   assert.equal(updated.body.milestone.status, "done");
   assert.equal(updated.body.milestone.dueDate, null);
 
-  const invalid = await request(`/projects/${project.id}/milestones`, {
+  const invalid = await request(`/roadmaps/${roadmap.id}/milestones`, {
     method: "POST",
     body: { title: "Nope", status: "someday" },
   });
   assert.equal(invalid.status, 400);
 
   const changes = await request("/changes?since=0&limit=200");
+  assert.ok(changes.body.changes.some((change) => change.kind === "roadmap"));
   assert.ok(changes.body.changes.some((change) => change.kind === "milestone"));
 });
 
@@ -1024,24 +1035,31 @@ test("deleting the account removes its projects and its memberships elsewhere", 
   assert.equal(feed.body.changes.length, 0);
 });
 
-test("deleting a folder removes its milestones", async (t) => {
+test("deleting a folder removes its roadmaps and their milestones", async (t) => {
   const { request } = await setup(t);
   const { body: created } = await request("/projects", {
     method: "POST",
-    body: { name: "Milestone folders" },
+    body: { name: "Roadmap folders" },
   });
   const project = created.project;
   const folder = await request(`/projects/${project.id}/folders`, {
     method: "POST",
     body: { name: "Release" },
   });
-  const milestone = await request(`/projects/${project.id}/milestones`, {
+  const roadmap = await request(`/projects/${project.id}/roadmaps`, {
     method: "POST",
-    body: { title: "Launch", folderId: folder.body.folder.id },
+    body: { name: "Launch roadmap", folderId: folder.body.folder.id },
+  });
+  assert.equal(roadmap.status, 201);
+  const milestone = await request(`/roadmaps/${roadmap.body.roadmap.id}/milestones`, {
+    method: "POST",
+    body: { title: "Launch" },
   });
   assert.equal(milestone.status, 201);
 
   await request(`/folders/${folder.body.folder.id}`, { method: "DELETE" });
+  const roadmaps = await request(`/projects/${project.id}/roadmaps`);
+  assert.deepEqual(roadmaps.body.roadmaps, []);
   const list = await request(`/projects/${project.id}/milestones`);
   assert.deepEqual(list.body.milestones, []);
 });
