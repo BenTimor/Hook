@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="color-scheme" content="light dark">
+    <meta name="color-scheme" content="light">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Hook</title>
     <link rel="stylesheet" href="hook.css">
@@ -12,8 +12,17 @@
       <div class="mark" aria-hidden="true"></div>
       <h1>Hook</h1>
       <p class="lede">Hook Browser</p>
-      <p class="status" id="status">Loading the overlay…</p>
+      <p class="status" id="status">Loading the tab list…</p>
+      <ol class="tabs" id="tabs"></ol>
+      <p class="note">
+        Served from our own pak, reading live browser state over mojom.
+      </p>
     </main>
+    <!-- The dock is `ChatDock` from packages/chat, built by Vite into
+         panel.mjs. It is the same panel the chat window and Hook Workspace
+         embed, at the same 380px. -->
+    <div class="panel" id="dock"></div>
     <script type="module" src="hook.js"></script>
+    <script type="module" src="panel.mjs"></script>
   </body>
 </html>

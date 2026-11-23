@@ -1,7 +1,13 @@
 /* Hook Browser: chrome://hook, Step 1 of docs/browser-poc-plan.md.
  *
- * Disposable on purpose. The real surfaces arrive in Step 2 on packages/ui
- * tokens; this page exists to prove that our resources are served at all.
+ * The left half is still the seam proof — the live tab list read over mojom.
+ * The right half is Step 2's first real surface: the chat dock from
+ * packages/chat, at the 380px the desktop apps give it.
+ *
+ * It is on `packages/ui` tokens like every other Hook surface, and the palette
+ * is the product's: light, cream, one accent. `panel.mjs` injects tokens.css at
+ * run time, so every value here carries a literal fallback — the page must not
+ * go colourless if the bundle is what broke.
  */
 
 html,
@@ -11,20 +17,25 @@ body {
 }
 
 body {
-  align-items: center;
-  background: light-dark(#fbfbfb, #131316);
-  color: light-dark(#17171a, #ececf0);
+  background: var(--canvas, #f5efe5);
+  color: var(--ink, #24241e);
   display: flex;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  justify-content: center;
+  font-family: var(--font-sans, system-ui, -apple-system, 'Segoe UI', sans-serif);
+  height: 100%;
+  overflow: hidden;
 }
 
 .seam {
+  align-self: center;
+  flex: 1;
+  margin: 0 auto;
+  max-width: 520px;
+  padding: 24px;
   text-align: center;
 }
 
 .mark {
-  background: light-dark(#17171a, #ececf0);
+  background: var(--ink, #24241e);
   border-radius: 10px;
   height: 28px;
   margin: 0 auto 20px;
@@ -39,13 +50,89 @@ h1 {
 }
 
 .lede {
-  color: light-dark(#62626b, #9a9aa4);
+  color: var(--ink-3, #736d60);
   font-size: 15px;
   margin: 6px 0 0;
 }
 
 .status {
-  color: light-dark(#8b8b95, #74747e);
+  color: var(--ink-3, #736d60);
   font-size: 13px;
-  margin: 28px 0 0;
+  margin: 28px 0 12px;
+}
+
+.tabs {
+  background: var(--panel, rgba(255, 253, 249, 0.58));
+  border: 1px solid var(--line, rgba(63, 57, 43, 0.075));
+  border-radius: var(--radius-panel, 16px);
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  text-align: start;
+}
+
+.tab {
+  align-items: baseline;
+  border-radius: var(--radius-row, 9px);
+  display: flex;
+  font-size: 13px;
+  gap: 10px;
+  padding: 7px 10px;
+}
+
+.tab-active {
+  background: var(--ivory, #fffdf9);
+  box-shadow: var(--shadow-xs, 0 1px 1px rgba(63, 57, 43, 0.035));
+}
+
+.tab-active .tab-title {
+  font-weight: 600;
+}
+
+.tab-active .tab-index {
+  color: var(--accent, #283b31);
+}
+
+.tab-index {
+  color: var(--ink-4, #8a8172);
+  font-variant-numeric: tabular-nums;
+  min-width: 14px;
+}
+
+.tab-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-domain {
+  color: var(--ink-4, #8a8172);
+  font-size: 11px;
+}
+
+.note {
+  color: var(--ink-4, #8a8172);
+  font-size: 12px;
+  margin: 18px 0 0;
+}
+
+/* The dock's own frame is packages/chat's `dock.css`; this is only the pane the
+ * browser puts it in. 380px is the width the dock and the desktop apps use. */
+.panel {
+  border-inline-start: 1px solid var(--line, rgba(63, 57, 43, 0.075));
+  display: flex;
+  flex: 0 0 380px;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.panel > .dock {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  height: 100%;
 }

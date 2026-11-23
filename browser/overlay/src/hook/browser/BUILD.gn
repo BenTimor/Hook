@@ -1,11 +1,14 @@
 # Hook Browser: the browser-process half of the WebUI seam.
 #
 # Nothing in this file is compiled until a patch adds "//hook/browser" to the
-# deps of //chrome/browser/ui/webui:configs. That is deliberate: the overlay is
-# inert in a stock checkout, and the patch is the one line that wakes it up.
+# deps of //chrome/browser (and, through it, //chrome/browser/ui/webui:configs).
+# That is deliberate: the overlay is inert in a stock checkout, and the patch is
+# the one line that wakes it up.
 
 source_set("browser") {
   sources = [
+    "tabs/hook_tabs.cc",
+    "tabs/hook_tabs.h",
     "ui/webui/hook_ui.cc",
     "ui/webui/hook_ui.h",
   ]
@@ -16,8 +19,17 @@ source_set("browser") {
   ]
 
   deps = [
+    "//base",
     "//chrome/browser/profiles:profile",
+    # BrowserWindowInterface is the public leaf interface, and the tab strip
+    # headers carry the model the live tab list reads.
+    "//chrome/browser/ui/browser_window",
+    "//chrome/browser/ui/tabs:tab_strip",
+    "//components/tabs:public",
     "//content/public/common",
+    "//hook/common:mojom",
     "//hook/resources:resources",
+    "//mojo/public/cpp/bindings",
+    "//url",
   ]
 }

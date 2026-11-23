@@ -99,6 +99,7 @@ pnpm engine
 # Hook Browser: the Chromium checkout lives outside the repo, see browser/README.md
 pnpm browser:sync               # fetch/refresh the tree at browser/VERSION
 pnpm browser:build              # gn gen + autoninja -C out/Dev chrome
+pnpm browser:ui                 # rebuild the dock bundle (panel.mjs) with Vite
 pnpm browser:verify             # tag, overlay rule, patch stack, junction
 pnpm browser:test
 
@@ -285,11 +286,15 @@ bash.
   `args.gn` the dev GN args, `overlay/src/hook/` the new paths that are
   junctioned into the checkout as `src/hook`, `patches/series` the small edits to
   upstream files that survive a rebase, and `tools/{sync,build,verify,patch}.mjs`
-  the whole interface. The ~100 GB checkout itself never enters the repo and
-  `browser/README.md` carries the dev loop, the toolchain prerequisites and the
-  traps. `args.gn` pins `use_siso = false`: siso cannot read the overlay
-  junction, so the tree builds with ninja (`browser/README.md`, "Traps").
-  Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
+  the whole interface. `browser/ui/` is the dock's own Vite project: it builds
+  `packages/chat` into `overlay/src/hook/resources/panel.mjs`, which is generated
+  but committed because Chromium's WebUI pipeline has no React (`.mjs`, its
+  stylesheet inlined, and `preview.html` to iterate without a rebuild —
+  `browser/README.md`, "The dock bundle"). The ~100 GB checkout itself never
+  enters the repo and `browser/README.md` carries the dev loop, the toolchain
+  prerequisites and the traps. `args.gn` pins `use_siso = false`: siso cannot read
+  the overlay junction, so the tree builds with ninja (`browser/README.md`,
+  "Traps"). Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
   Chromium build ever runs on a push.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,

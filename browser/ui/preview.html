@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hook dock — preview</title>
+    <style>
+      /* A stand-in for the browser's window: the pane the dock gets is 380px,
+       * on the same tokens the page uses. Nothing here ships; it exists so the
+       * panel can be iterated on without a Chromium rebuild. */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: #f5efe5;
+        display: flex;
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        justify-content: flex-end;
+      }
+
+      #dock {
+        border-inline-start: 1px solid rgba(127, 127, 127, 0.24);
+        flex: 0 0 380px;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      #dock > .dock {
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="dock"></div>
+    <script type="module" src="./panel.tsx"></script>
+  </body>
+</html>

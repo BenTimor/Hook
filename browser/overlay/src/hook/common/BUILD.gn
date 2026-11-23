@@ -1,0 +1,13 @@
+# Hook Browser: the mojom seam, in C++ for the browser process and in TypeScript
+# for the page.
+#
+# `webui_module_path = "/"` is what lets the generated TypeScript be imported by
+# basename (`./hook.mojom-webui.js`) from hook/resources/, the same way
+# chrome://critical-actions imports its own mojom from another directory.
+
+import("//mojo/public/tools/bindings/mojom.gni")
+
+mojom("mojom") {
+  sources = [ "hook.mojom" ]
+  webui_module_path = "/"
+}

@@ -23,15 +23,19 @@ Mirrors `src/` inside the checkout:
 
 ```
 overlay/src/hook/
-  browser/            C++ — the WebUI controller, later the tab model and more
+  browser/            C++ — the WebUI controller, the tab reader, later the tab model
+    tabs/             the live tab list (BrowserWindowInterface, read-only)
+    ui/webui/         chrome://hook's controller and its mojom handler
   common/             mojom IDL for the WebUI <-> browser IPC, shared constants
   app/                branding, icons, .grd strings, resources
-  browser/resources/  WebUI: the React surfaces
-  resources/          the chrome://hook page (Step 1)
+  resources/          the chrome://hook page: hook.html/ts/css, and panel.mjs
+                      (the dock, built by `pnpm browser:ui` from browser/ui/)
   rust/               hook-core, built without Tauri
   tests/              our own browser tests
 ```
 
-Step 1's first checkpoint lives in `browser/ui/webui/` and `resources/`: the page
-is served from the generated `hook_resources.pak`. The tab list and the sign-in
-throttle are the rest of Step 1.
+Step 1's seam is in `browser/` and `resources/`: the page is served from the
+generated `hook_resources.pak`, and it reads the live tab list over
+`common/hook.mojom`. Step 2's first surface is `resources/panel.mjs` — the dock
+from `packages/chat`, mounted beside the seam page at 380px. The signed-out
+navigation throttle is what is left of Step 1.

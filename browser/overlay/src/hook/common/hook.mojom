@@ -1,0 +1,28 @@
+// Hook Browser: the WebUI <-> browser seam for chrome://hook.
+//
+// Step 1 of docs/browser-poc-plan.md. One method, returning the tabs the
+// browser actually has open: it proves the page can read live browser state over
+// mojom, which is the transport every later surface (the dock, the side panel,
+// the sign-in card) will use. The product contract is the active tab; the whole
+// list is the probe.
+
+module hook.mojom;
+
+// One row of the live tab list.
+struct Tab {
+  // Position in the tabstrip, zero based.
+  int32 index;
+  // The tab's handle, stable for the life of the tab (not across restarts).
+  int32 id;
+  // Whether this tab is the selected one.
+  bool active;
+  // The tab's title as WebContents reports it, possibly empty.
+  string title;
+  // The host of the last committed URL, without scheme or path.
+  string domain;
+};
+
+interface PageHandler {
+  // The live tab list of the browser window that hosts this page.
+  GetTabs() => (array<Tab> tabs);
+};

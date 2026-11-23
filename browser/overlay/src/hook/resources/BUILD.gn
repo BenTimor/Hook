@@ -4,6 +4,9 @@
 # there is no hand-written .grd to keep in step. chrome/chrome_paks.gni adds
 # the pak to the repack (one line in browser/patches/); this target is also a
 # dependency there, or the pak is never built.
+#
+# The mojom is generated in the browser's directory and imported here by
+# basename, which is what `webui_module_path = "/"` in //hook/common buys.
 
 import("//ui/webui/resources/tools/build_webui.gni")
 
@@ -12,10 +15,25 @@ build_webui("build") {
 
   # A plain page: the stylesheet is a static resource, not a
   # css_to_wrapper module. css_files would pull in Polymer for no reason.
+  #
+  # panel.mjs is the dock from packages/chat, built by Vite from
+  # browser/ui/ (`pnpm browser:ui`). Chromium's WebUI pipeline compiles Lit and
+  # TypeScript and ships no React, so the shared surface travels as a prebuilt
+  # bundle. `.mjs` rather than `.js` on purpose: build_webui refuses `.js` in
+  # static_files, and text/javascript is what Chromium serves for `.mjs`.
   static_files = [
     "hook.css",
     "hook.html",
+    "panel.mjs",
   ]
 
   ts_files = [ "hook.ts" ]
+
+  mojo_files_deps = [ "//hook/common:mojom_ts__generator" ]
+  mojo_files = [ "$root_gen_dir/hook/common/hook.mojom-webui.ts" ]
+
+  # The mojo bindings module, which is what the generated webui mojom imports
+  # (`//resources/mojo/mojo/public/js/bindings.js`).
+  webui_context_type = "trusted"
+  ts_deps = [ "//ui/webui/resources/mojo:build_ts" ]
 }

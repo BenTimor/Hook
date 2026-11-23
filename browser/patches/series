@@ -3,3 +3,4 @@
 0001-bundle-hook-resources.patch
 0002-register-hook-webui.patch
 0003-reserve-hook-resource-ids.patch
+0004-register-hook-bindings.patch

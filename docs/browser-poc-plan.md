@@ -1,16 +1,24 @@
 # Hook Browser — POC plan
 
-> **Status: tooling, the first seam checkpoint, and a rebuild gate.**
+> **Status: tooling, the seam, and the first real surface.**
 > `browser/` holds the pinned tag, the dev args and the sync/build/verify/patch
-> tools, and Step 0 is done on Windows. Step 1 is in progress: `chrome://hook`
-> renders from the overlay through three small patches, while the mojom tab read
-> and the signed-out navigation throttle are still to come. The next browser
-> work waits for the one-time ninja rebuild (siso cannot read the overlay
-> junction; `browser/README.md`, "Switching from a siso build directory"), and it
-> will be built against the real host and the real backend — no mock panel.
-> Steps 2–4 are not written. `docs/browser-architecture.md` holds the standing
-> decisions about the fork itself; this file holds the order of work for the
-> first proof of concept, and why it is that order.
+> tools. Step 0 is done on Windows, and so is the rebuild it gated: `out/Dev` is
+> a ninja build (`use_siso = false`, because siso cannot read the overlay
+> junction). Step 1's seam is in — `chrome://hook` renders from the overlay, and
+> the page reads the live tab list over mojom through the binder registered by
+> the fourth patch. The signed-out navigation throttle is what is left of Step 1.
+> Step 2's first surface is in too: `ChatDock` from `packages/chat`, at 380px,
+> beside the seam page, built by Vite and served from our pak. It is a pane in
+> `chrome://hook` rather than a Views side-panel entry, which is the next piece,
+> together with the New Tab page. It is built against the real host only so far:
+> there is still no channel to the backend, and no mock panel was ever written.
+> The rebuild and the surface are verified, not just built: `pnpm browser:smoke`
+> launches `out/Dev/chrome.exe` with a throwaway profile, opens `chrome://hook`,
+> and asserts the live tab list, the dock at 380px, the composer and one send
+> round trip — it passes on Windows.
+> `docs/browser-architecture.md` holds the standing decisions about the fork
+> itself; this file holds the order of work for the first proof of concept, and
+> why it is that order.
 
 The POC answers one question: **does our overlay reach Chromium, and can the Hook
 chat surface live inside it?** It is not a browser you can daily-drive, and it is
@@ -25,7 +33,7 @@ not the product surface — it is the seam.
 | Precursor shell | **No** | A WebView2/Electron shell that browses today would diverge from the fork and pull Tauri into a UI that must not have it. The UX questions are cheap to answer after the seam works, and expensive to answer twice. |
 | Order of work | **Seam first, UI second** | The risky part is the overlay reaching the browser (GN wiring, WebUI resources, mojom, a navigation throttle). Components written against a mock contract are written against a guess. |
 | Surface prototypes | **No** | A panel prototyped against mocked mojo, auth and chat is written twice: once against the mock, then again against the real host. The one-time rebuild is the smaller cost, so the panel and its host are built once. |
-| Panel UI build | **Vite bundle served from the overlay** | `packages/chat` is React; Chromium's WebUI pipeline is Lit/TypeScript and ships no React. The browser builds the shared packages with Vite and packs the output as a static resource. Rewriting `ChatDock` in Lit would fork the surface all three products share. |
+| Panel UI build | **Vite bundle served from the overlay** | `packages/chat` is React; Chromium's WebUI pipeline is Lit/TypeScript and ships no React. The browser builds the shared packages with Vite and packs the output as a static resource. Rewriting `ChatDock` in Lit would fork the surface all three products share. For the POC the bundle is committed (`browser/ui/` → `overlay/src/hook/resources/panel.mjs`); a build-time action is the follow-up. |
 | Where the tree lives | **Outside the repo**, overlay junctioned in | See "Where things live". |
 | Sign-in gate | **Blocks the whole browser** | Matches Hook and Hook Workspace: signed out means the window is the sign-in card and navigation is refused. Implemented as a `ContentBrowserClient` throttle, not a `//content` patch. |
 | Browser tools | **None** | No tab or navigation tools in `tools.rs` or `bridge.rs`. The agent is told the page it is looking at; it cannot act on it. |
@@ -60,13 +68,14 @@ C:\Dev\cr\                        local only, never pushed (~100 GB)
   src\hook\                        junction -> Hook\browser\overlay\src\hook
   out\Dev\
 
-Hook\browser\                     committed (~20-50 MB)
+Hook\browser\                     committed
   VERSION                         the one pinned tag; the sync script reads it
   README.md                       dev loop, traps, rebase ritual
   .gclient.in                     gclient config with the overlay as a dep
   args.gn                         dev args (symbol levels set before build 1)
   patches/series + *.patch        the only edits to upstream files
   overlay/src/hook/               new paths only; this is what `//hook` resolves to
+  ui/                             the dock bundle's Vite project (panel.tsx, transport)
   tools/{sync,patch,verify,build}.mjs
 ```
 
@@ -86,6 +95,7 @@ node browser/tools/sync.mjs      # fetch/refresh the tree at browser/VERSION
 node browser/tools/build.mjs     # gn gen + autoninja -C out/Dev chrome
 node browser/tools/verify.mjs    # tag, overlay rule, patch stack, junction
 node browser/tools/patch.mjs     # list | add <slug> [-- paths] | apply
+pnpm browser:ui                  # rebuild the dock bundle (overlay/.../panel.mjs)
 ```
 
 ## The steps
@@ -109,6 +119,13 @@ BuildTools install unless `vs2022_install` is set. Both are prerequisites in
 `browser/README.md` now, and `sync.mjs` checks the SDK before a build wastes an
 evening.
 
+**The switch to ninja cost what the README predicted.** Moving `out/Dev` from a
+siso build to `use_siso = false` recompiled the tree — about 3 h 30 m wall clock
+for 58,308 steps on 28 cores — and the second attempt, after launching the old
+binary out of `out/Dev` and locking two DLLs, is the reason `browser/README.md`
+says to run the built browser only after a build. The tree is now a ninja one:
+a C++ change is minutes, a resource change is seconds.
+
 ### Step 1 — prove the seam (the only POC that matters)
 
 The whole overlay, kept deliberately disposable:
@@ -126,27 +143,36 @@ The whole overlay, kept deliberately disposable:
 Done when: the built browser opens `chrome://hook`, lists the tabs actually open,
 and a typed URL does nothing but return to the sign-in card.
 
-Cost: tens of lines of C++, one `build_webui` target, and three patch files
-(registration, repack, resource ids). The page and its stylesheet are already in
-(see the status note above); the tab list and the throttle are next.
+Cost: tens of lines of C++, one `build_webui` target, and four patch files
+(registration, repack, resource ids, binder). **In:** the page, its stylesheet,
+the mojom method behind the tab list (`hook/common/hook.mojom`,
+`ReadTabs` in `browser/tabs/`) and the binder line in
+`chrome_browser_interface_binders_webui.cc`. **Left:** the throttle.
 
 ### Step 2 — the surfaces, against a browser that exists
 
 - New Tab page becomes Hook's: wordmark, greeting, chips.
 - Side panel becomes `ChatDock` at 380px, unchanged (`packages/chat`), on
-  `packages/ui` tokens.
+  `packages/ui` tokens. **In, as a pane in `chrome://hook`:** `browser/ui/` builds
+  the bundle, `resources/panel.mjs` carries it, and the page draws it beside the
+  seam proof. The Views side-panel entry that hosts the same page in the browser
+  UI is the next piece of C++.
 - Sign-in becomes the shared card.
 
-Two small fixes land first, because both engines need them and both packages
-depend on Tauri today: `packages/chat/src/open.ts` and `packages/ui/src/window.ts`
-import `@tauri-apps/api` at module scope. They become an injected opener, so
-`packages/chat` and `packages/ui` are host-agnostic as the architecture doc claims.
+One fix that the surface turned out not to need yet: `packages/chat/src/open.ts`
+and `packages/ui/src/window.ts` import `@tauri-apps/api` at module scope, but both
+guard every call with `isTauri()`/`__TAURI_INTERNALS__`, so the bundle loads and
+runs in the browser as it is. Turning them into an injected opener is still the
+right shape — it is what makes `packages/chat` and `packages/ui` host-agnostic as
+the architecture doc claims — and it is now a refactor with no browser work
+blocked behind it.
 
 The panel is React, not Lit. It is built with Vite into a static bundle that the
 overlay serves from its pak; `build_webui` packages the output instead of
 compiling the components. Chromium's own WebUI pipeline has no React, and
 rewriting `ChatDock` in Lit would fork the surface Hook and Hook Workspace
-already share.
+already share. `browser/README.md`, "The dock bundle", holds the details
+(`.mjs`, inlined stylesheet, committed output, and why each).
 
 Tabstrip restyling comes last, after the WebUI surfaces work: it is Views, so it
 is C++, and it is the most expensive and least informative part.
@@ -170,19 +196,20 @@ the binder-map line, the navigation throttle. It does not by itself make sign-in
 or chat real — those live in `hook-core` (`auth.rs`, `turn.rs`) and the browser
 has no channel to them yet. With no mock panel, the order is:
 
-1. **Finish Step 1.** The mojom probe (the live tab list) plus the binder-map
-   line; the contract it proves is the active tab (title, index, count, domain,
-   selection). The navigation throttle rejects a signed-out navigation. The
-   throttle reads the shared `account.json`; it never writes it.
+1. **Finish Step 1.** ~~The mojom probe (the live tab list) plus the binder-map
+   line~~ — done: `chrome://hook` lists the tabs actually open. The navigation
+   throttle still rejects nothing; it is the last piece of Step 1, and it reads
+   the shared `account.json` (never writes it).
 2. **The channel (Step 3).** The shipping shape is the Tauri-free sidecar, which
    owns auth and the chat turn. The loopback endpoint on a running Hook app is a
    real, smaller channel and may land first; either way the panel's
    `ChatTransport` is the same contract. Sign-in and sign-out go through
    `auth.rs`, so the browser is never a second writer of the account file.
-3. **The surfaces (Step 2).** The C++ side-panel host, the Vite bundle, the
-   shared sign-in card and the New Tab page. The active-tab context is a
-   `TabContext` implementation over the mojom interface; there is no mock
-   version to replace.
+3. **The surfaces (Step 2).** ~~The Vite bundle and the dock at 380px~~ — done,
+in `chrome://hook`. Still to come: the Views side-panel host that puts the same
+page beside the tabstrip, the shared sign-in card and the New Tab page. The
+active-tab context is a `TabContext` implementation over the mojom interface;
+there is no mock version to replace.
 4. **Tabstrip restyling**, last, as before.
 
 The first version of the throttle needs somewhere to send a signed-out

@@ -38,6 +38,8 @@ browser/
   `sync.mjs` checks both and prints the exact `winget` line if they are missing.
 - **Defender and indexing exclusions** for the checkout and depot_tools. On a
   large tree the difference is multiples, not percent.
+- **The repository's `node_modules`** (`pnpm install` at the Hook root) if you
+  rebuild the dock bundle: `pnpm browser:ui` runs the repository's own Vite.
 - ~120 GB free: ~27 GB of tree, ~12 GB of build output, growing with the tree.
 
 ## The four commands
@@ -46,6 +48,7 @@ browser/
 node browser/tools/sync.mjs      # fetch/refresh the tree at browser/VERSION (~30-90 min clean)
 node browser/tools/build.mjs     # gn gen + autoninja -C out/Dev chrome (hours, once)
 node browser/tools/verify.mjs    # tag, overlay rule, patch stack, junction
+node browser/tools/smoke.mjs     # launch the built browser, read chrome://hook over CDP
 node browser/tools/patch.mjs     # list | add <slug> [-- paths] | apply
 ```
 
@@ -55,6 +58,45 @@ tree defaults to `C:\Dev\cr`; override with `--root` or `HOOK_CHROMIUM_ROOT`.
 
 `build.mjs --gen-only` stops after `gn gen`, which is what a WebUI-only iteration
 usually needs.
+
+One more command belongs to the panel rather than to the tree:
+
+```bash
+pnpm browser:ui                  # rebuild overlay/src/hook/resources/panel.mjs
+pnpm browser:ui:dev              # the same panel in an ordinary browser, no tree
+```
+
+`smoke.mjs` is the check that the seam actually reached a window: it launches
+`out/Dev/chrome.exe` with a throwaway profile and DevTools on a loopback port,
+opens `chrome://hook`, and asserts the tab list, the dock at 380px and one send
+round trip. `--shot <png>` saves a screenshot, `--chrome <path>` points it at
+another binary. Run it **after** a build, never during one: it maps DLLs out of
+`out/` and the linker cannot overwrite a file that is mapped.
+
+## The dock bundle
+
+`browser/ui/` is the panel's own little Vite project: `panel.tsx` mounts
+`ChatDock` from `packages/chat`, `transport.ts` is the `ChatTransport` the
+browser has for now (local, until the Step 3 sidecar), and `shiki-stub.ts`
+answers `highlight.ts` with Shiki's own fallback so the pak does not grow every
+grammar and theme as a chunk.
+
+`pnpm browser:ui` writes the result to
+`browser/overlay/src/hook/resources/panel.mjs` — one ES module with the
+stylesheet inlined, which `build_webui` packs into `hook_resources.pak`. The
+file is generated but **committed**, and both halves of that are deliberate:
+
+- Chromium's WebUI build compiles Lit and TypeScript and ships no React, so the
+  shared surface cannot be built by `build_webui` itself. `build_webui` also
+  refuses `.js` in `static_files` and lints every `.css` it is given against
+  Chromium's stylelint config, which a bundle has no reason to satisfy — hence
+  `.mjs` and the inlined stylesheet.
+- Committing it keeps `gn gen` hermetic and works before `pnpm install` has ever
+  run for a new contributor. The cost is a generated file: regenerate it in the
+  same commit as any change under `packages/chat/src` or `packages/ui/src`, or
+the panel silently shows the old surface. A build-time `action()` that runs
+Vite into `$root_gen_dir` is the cleaner shape and the follow-up; it needs the
+repository's `node_modules` as a declared input, which GN cannot see.
 
 ## Switching from a siso build directory
 
@@ -75,6 +117,12 @@ Most product work does not need a Chromium build. WebUI is TypeScript and runs
 against mocked mojo bindings in an ordinary browser, the same way `apps/chat`
 already falls back to `mock.ts`. A real WebUI change in the tree is `autoninja`
 plus a resource repack, not a rebuild.
+
+The dock is React and needs no tree at all: `pnpm browser:ui:dev` serves
+`browser/ui/preview.html`, which mounts the panel at 380px against the same
+transport the browser uses. Change `packages/chat` or `packages/ui`, watch it
+there, and run `pnpm browser:ui` when it looks right — the bundle it writes is
+what the pak carries.
 
 Build `chrome`, never `all`: `all` drags in every test binary.
 
@@ -125,13 +173,24 @@ quarter behind means shipping a vulnerable browser, so this is an obligation.
 ## Status
 
 Step 0 of the POC plan is done on Windows: the tree builds at tag `159.0.8154.13`
-and a stock Chromium runs. Step 1's first checkpoint is in: the overlay adds
-`chrome://hook`, served from our own `hook_resources.pak` and drawn by
-`overlay/src/hook/resources/`. The mojom tab list and the signed-out navigation
-throttle are the rest of Step 1.
+and a stock Chromium runs. Step 1's seam is in on both halves — `chrome://hook`,
+served from our own `hook_resources.pak` and drawn by
+`overlay/src/hook/resources/`, and the live tab list read over mojom through a
+binder registered by the fourth patch. The signed-out navigation throttle is the
+rest of Step 1.
 
-`out/Dev` on this machine is still a siso build with the overlay linked in; the
-switch to ninja is documented above and deferred. The built `chrome.exe` opens
-`chrome://hook` today, and no rebuild is needed until the browser code changes.
-The next browser work waits for that rebuild and is built against the real host
-and backend: there is no prototype panel to throw away.
+Step 2's first surface landed with the ninja rebuild: the chat dock from
+`packages/chat` at 380px beside the seam page (`browser/ui/`, `pnpm browser:ui`).
+It is a pane in `chrome://hook` rather than a Views side-panel entry; the
+`SidePanelEntry` host and the New Tab page are next.
+
+`out/Dev` is a ninja build now (`use_siso = false`, because siso cannot read the
+overlay junction). A C++ change is an `autoninja -C out/Dev chrome` away, and a
+WebUI-only change still needs nothing but a resource repack.
+
+`pnpm browser:smoke` is the check that all of that reached a window: it launches
+the built browser with a throwaway profile, opens `chrome://hook` over the
+DevTools protocol, and asserts the live tab list, the dock at 380px, the composer
+and one send round trip. It passes at tag `159.0.8154.13`, so the answer to the
+POC's question — does our overlay reach Chromium, and can the Hook chat surface
+live inside it — is yes.
