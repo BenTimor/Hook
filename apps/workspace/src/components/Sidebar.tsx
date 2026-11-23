@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   ChevronRight,
   FilePlus2,
+  Flag,
   LogOut,
   FileText,
   Folder as FolderIcon,
@@ -17,7 +18,7 @@ import {
 
 import { Dialog, HookMark, TextFieldDialog } from "@hook/ui";
 
-import type { Board, DocumentMeta, Folder, Project, Role } from "../lib/types";
+import type { Board, DocumentMeta, Folder, Milestone, Project, Role } from "../lib/types";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { PersonAvatar } from "./AssigneesPicker";
 import { CreateItemDialog, type CreateRequest } from "./CreateItem";
@@ -29,7 +30,8 @@ type Target =
   | { kind: "project"; id: string }
   | { kind: "folder"; id: string }
   | { kind: "board"; id: string }
-  | { kind: "document"; id: string };
+  | { kind: "document"; id: string }
+  | { kind: "milestone"; id: string };
 
 type Menu = { x: number; y: number; target: Target };
 type Rename = { target: Target; projectId: string; value: string };
@@ -80,27 +82,33 @@ export function Sidebar({
   const pendingInviteCount = invites.filter((invite) => invite.status === "pending").length;
   const boards = useWorkspaceStore((state) => state.boards);
   const documents = useWorkspaceStore((state) => state.documents);
+  const milestones = useWorkspaceStore((state) => state.milestones);
   const folders = useWorkspaceStore((state) => state.folders);
   const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
   const activeBoardId = useWorkspaceStore((state) => state.activeBoardId);
   const activeDocumentId = useWorkspaceStore((state) => state.activeDocumentId);
+  const activeMilestoneId = useWorkspaceStore((state) => state.activeMilestoneId);
   const displayName = name?.trim() || email?.split("@")[0] || "Account";
 
   const openProject = useWorkspaceStore((state) => state.openProject);
   const openBoard = useWorkspaceStore((state) => state.openBoard);
   const openDocument = useWorkspaceStore((state) => state.openDocument);
+  const openMilestone = useWorkspaceStore((state) => state.openMilestone);
   const loadProjectContents = useWorkspaceStore((state) => state.loadProjectContents);
   const renameProject = useWorkspaceStore((state) => state.renameProject);
   const renameFolder = useWorkspaceStore((state) => state.renameFolder);
   const renameBoard = useWorkspaceStore((state) => state.renameBoard);
   const renameDocument = useWorkspaceStore((state) => state.renameDocument);
+  const renameMilestone = useWorkspaceStore((state) => state.renameMilestone);
   const moveBoard = useWorkspaceStore((state) => state.moveBoard);
   const moveDocument = useWorkspaceStore((state) => state.moveDocument);
+  const moveMilestone = useWorkspaceStore((state) => state.moveMilestone);
   const moveFolder = useWorkspaceStore((state) => state.moveFolder);
   const deleteProject = useWorkspaceStore((state) => state.deleteProject);
   const deleteFolder = useWorkspaceStore((state) => state.deleteFolder);
   const deleteBoard = useWorkspaceStore((state) => state.deleteBoard);
   const deleteDocument = useWorkspaceStore((state) => state.deleteDocument);
+  const deleteMilestone = useWorkspaceStore((state) => state.deleteMilestone);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>(readExpanded);
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -132,7 +140,9 @@ export function Sidebar({
           ? (folders[project.id] ?? []).some((folder) => folder.id === target.id)
           : target.kind === "board"
             ? (boards[project.id] ?? []).some((board) => board.id === target.id)
-            : (documents[project.id] ?? []).some((document) => document.id === target.id),
+            : target.kind === "document"
+              ? (documents[project.id] ?? []).some((document) => document.id === target.id)
+              : (milestones[project.id] ?? []).some((milestone) => milestone.id === target.id),
     ) ?? null;
 
   const findFolder = (id: string): { folder: Folder; projectId: string } | null => {
@@ -153,6 +163,13 @@ export function Sidebar({
     for (const [projectId, list] of Object.entries(documents)) {
       const document = list.find((candidate) => candidate.id === id);
       if (document) return { document, projectId };
+    }
+    return null;
+  };
+  const findMilestone = (id: string): { milestone: Milestone; projectId: string } | null => {
+    for (const [projectId, list] of Object.entries(milestones)) {
+      const milestone = list.find((candidate) => candidate.id === id);
+      if (milestone) return { milestone, projectId };
     }
     return null;
   };
@@ -198,6 +215,9 @@ export function Sidebar({
       documents: (documents[projectId] ?? []).filter(
         (document) => document.folderId && inside.has(document.folderId),
       ).length,
+      milestones: (milestones[projectId] ?? []).filter(
+        (milestone) => milestone.folderId && inside.has(milestone.folderId),
+      ).length,
     };
   };
 
@@ -217,7 +237,7 @@ export function Sidebar({
     return out;
   };
 
-  const moveEntries = (target: Target, projectId: string, kind: "board" | "document" | "folder"): MenuEntry[] => {
+  const moveEntries = (target: Target, projectId: string, kind: "board" | "document" | "milestone" | "folder"): MenuEntry[] => {
     const options = folderOptions(projectId);
     const inside = new Set<string>([target.id]);
     if (kind === "folder") {
@@ -237,10 +257,13 @@ export function Sidebar({
         ? findBoard(target.id)?.board.folderId ?? null
         : kind === "document"
           ? findDocument(target.id)?.document.folderId ?? null
-          : findFolder(target.id)?.folder.parentId ?? null;
+          : kind === "milestone"
+            ? findMilestone(target.id)?.milestone.folderId ?? null
+            : findFolder(target.id)?.folder.parentId ?? null;
     const move = (folderId: string | null) => {
       if (kind === "board") void moveBoard(target.id, folderId);
       if (kind === "document") void moveDocument(target.id, folderId);
+      if (kind === "milestone") void moveMilestone(target.id, folderId);
       if (kind === "folder") void moveFolder(projectId, target.id, folderId);
     };
     return [
@@ -293,6 +316,12 @@ export function Sidebar({
                 icon: <FilePlus2 />,
                 onSelect: () => startCreate("document", project.id, null),
               },
+              {
+                kind: "action" as const,
+                label: "New milestone…",
+                icon: <Flag />,
+                onSelect: () => startCreate("milestone", project.id, null),
+              },
             ]
           : []),
         { kind: "separator" },
@@ -343,6 +372,12 @@ export function Sidebar({
                 label: "New document…",
                 icon: <FilePlus2 />,
                 onSelect: () => startCreate("document", project.id, folder.folder.id),
+              },
+              {
+                kind: "action" as const,
+                label: "New milestone…",
+                icon: <Flag />,
+                onSelect: () => startCreate("milestone", project.id, folder.folder.id),
               },
               { kind: "separator" as const },
               {
@@ -396,6 +431,34 @@ export function Sidebar({
       ];
     }
 
+    if (target.kind === "milestone") {
+      const milestone = findMilestone(target.id)?.milestone;
+      if (!milestone) return [];
+      return [
+        { kind: "action", label: "Open", onSelect: () => void openMilestone(milestone.id, project.id) },
+        ...(canWrite
+          ? [
+              { kind: "separator" as const },
+              {
+                kind: "action" as const,
+                label: "Rename milestone…",
+                onSelect: () =>
+                  setRenaming({ target, projectId: project.id, value: milestone.title || "Untitled" }),
+              },
+              { kind: "separator" as const },
+              ...moveEntries(target, project.id, "milestone"),
+              { kind: "separator" as const },
+              {
+                kind: "action" as const,
+                label: "Delete milestone…",
+                danger: true,
+                onSelect: () => setRemoving({ target, projectId: project.id }),
+              },
+            ]
+          : []),
+      ];
+    }
+
     const document = findDocument(target.id)?.document;
     if (!document) return [];
     return [
@@ -429,7 +492,7 @@ export function Sidebar({
 
   const row = (
     options: {
-      kind: "project" | "folder" | "board" | "document";
+      kind: "project" | "folder" | "board" | "document" | "milestone";
       id: string;
       label: string;
       depth: number;
@@ -550,6 +613,23 @@ export function Sidebar({
         }),
       );
     }
+    for (const milestone of (milestones[project.id] ?? []).filter(
+      (candidate) => parentOf(project.id, candidate.folderId) === parentId,
+    )) {
+      items.push(
+        row({
+          kind: "milestone",
+          id: milestone.id,
+          label: milestone.title || "Untitled",
+          depth,
+          projectId: project.id,
+          active: milestone.id === activeMilestoneId,
+          loaded: true,
+          icon: <Flag strokeWidth={1.8} />,
+          onOpen: () => void openMilestone(milestone.id, project.id),
+        }),
+      );
+    }
     return items;
   };
 
@@ -598,7 +678,7 @@ export function Sidebar({
               label: project.name,
               depth: 0,
               projectId: project.id,
-              active: project.id === activeProjectId && !activeBoardId && !activeDocumentId,
+              active: project.id === activeProjectId && !activeBoardId && !activeDocumentId && !activeMilestoneId,
               open,
               hasChildren: true,
               loaded,
@@ -638,7 +718,9 @@ export function Sidebar({
         title: "Delete this folder and everything in it?",
         description: `The boards${inner.boards > 0 ? ` (${inner.boards})` : ""}${
           inner.boards > 0 ? " with their tasks" : ""
-        }, its documents${inner.documents > 0 ? ` (${inner.documents})` : ""} and any folders inside it are deleted for everyone in the project. This cannot be undone.`,
+        }, its documents${inner.documents > 0 ? ` (${inner.documents})` : ""}, its milestones${
+          inner.milestones > 0 ? ` (${inner.milestones})` : ""
+        } and any folders inside it are deleted for everyone in the project. This cannot be undone.`,
         confirm: "Delete everything",
       };
     }
@@ -647,6 +729,13 @@ export function Sidebar({
         title: "Delete this board?",
         description: "Its tasks go with it, for everyone in the project. This cannot be undone.",
         confirm: "Delete board",
+      };
+    }
+    if (removing.target.kind === "milestone") {
+      return {
+        title: "Delete this milestone?",
+        description: "Its date, status and description go with it, for everyone in the project. This cannot be undone.",
+        confirm: "Delete milestone",
       };
     }
     return {
@@ -747,9 +836,15 @@ export function Sidebar({
               ? "Rename folder"
               : renaming?.target.kind === "board"
                 ? "Rename board"
-                : "Rename document"
+                : renaming?.target.kind === "milestone"
+                  ? "Rename milestone"
+                  : "Rename document"
         }
-        label={renaming?.target.kind === "document" ? "Title" : "Name"}
+        label={
+          renaming?.target.kind === "document" || renaming?.target.kind === "milestone"
+            ? "Title"
+            : "Name"
+        }
         value={renaming?.value ?? ""}
         onChange={(value) => setRenaming((current) => (current ? { ...current, value } : current))}
         confirm="Save"
@@ -764,6 +859,7 @@ export function Sidebar({
             void renameFolder(pending.projectId, pending.target.id, value);
           if (pending.target.kind === "board") void renameBoard(pending.target.id, value);
           if (pending.target.kind === "document") void renameDocument(pending.target.id, value);
+          if (pending.target.kind === "milestone") void renameMilestone(pending.target.id, value);
         }}
       />
 
@@ -788,6 +884,7 @@ export function Sidebar({
                   void deleteFolder(pending.projectId, pending.target.id);
                 if (pending.target.kind === "board") void deleteBoard(pending.target.id);
                 if (pending.target.kind === "document") void deleteDocument(pending.target.id);
+                if (pending.target.kind === "milestone") void deleteMilestone(pending.target.id);
               }}
             >
               {removeCopy?.confirm ?? "Delete"}

@@ -10,6 +10,7 @@ import type { DocumentMeta, TextDirection } from "./lib/types";
 import { useWorkspaceStore } from "./store/useWorkspaceStore";
 import { BoardPage, TaskPanel } from "./components/BoardView";
 import { DocumentEditor } from "./components/DocumentEditor";
+import { MilestonePage } from "./components/MilestonePage";
 import { InvitesPanel } from "./components/MembersPanel";
 import { ProjectHome } from "./components/ProjectHome";
 import { Sidebar } from "./components/Sidebar";
@@ -53,11 +54,15 @@ function Workspace({
   const activeBoardId = useWorkspaceStore((state) => state.activeBoardId);
   const activeTaskId = useWorkspaceStore((state) => state.activeTaskId);
   const activeDocumentId = useWorkspaceStore((state) => state.activeDocumentId);
+  const activeMilestoneId = useWorkspaceStore((state) => state.activeMilestoneId);
   const boards = useWorkspaceStore((state) =>
     state.activeProjectId ? (state.boards[state.activeProjectId] ?? EMPTY) : EMPTY,
   );
   const documents = useWorkspaceStore((state) =>
     state.activeProjectId ? (state.documents[state.activeProjectId] ?? EMPTY) : EMPTY,
+  );
+  const milestones = useWorkspaceStore((state) =>
+    state.activeProjectId ? (state.milestones[state.activeProjectId] ?? EMPTY) : EMPTY,
   );
   const tasks = useWorkspaceStore((state) =>
     state.activeBoardId ? (state.tasks[state.activeBoardId] ?? EMPTY) : EMPTY,
@@ -66,6 +71,7 @@ function Workspace({
   const openBoard = useWorkspaceStore((state) => state.openBoard);
   const openTask = useWorkspaceStore((state) => state.openTask);
   const openDocument = useWorkspaceStore((state) => state.openDocument);
+  const openMilestone = useWorkspaceStore((state) => state.openMilestone);
   const createProject = useWorkspaceStore((state) => state.createProject);
 
   const [invitesOpen, setInvitesOpen] = useState(false);
@@ -90,6 +96,10 @@ function Workspace({
     () => documents.find((candidate) => candidate.id === activeDocumentId) ?? null,
     [documents, activeDocumentId],
   );
+  const milestoneMeta = useMemo(
+    () => milestones.find((candidate) => candidate.id === activeMilestoneId) ?? null,
+    [milestones, activeMilestoneId],
+  );
   const task = useMemo(
     () => tasks.find((candidate) => candidate.id === activeTaskId) ?? null,
     [tasks, activeTaskId],
@@ -104,7 +114,7 @@ function Workspace({
   // Picking something in the tree leaves the invites list behind.
   useEffect(() => {
     if (activeProjectId) setInvitesOpen(false);
-  }, [activeProjectId, activeBoardId, activeDocumentId]);
+  }, [activeProjectId, activeBoardId, activeDocumentId, activeMilestoneId]);
 
   // The chat agent should know what "this" is. While the dock is open the
   // summary is refreshed on a slow tick, because a text selection is not a
@@ -120,6 +130,7 @@ function Workspace({
       if (board) lines.push(`Board: ${board.name}`);
       if (task) lines.push(`Open task: ${task.title}`);
       if (activeDocumentId) lines.push(`Document: ${documentMeta?.title || "Untitled"}`);
+      if (activeMilestoneId) lines.push(`Milestone: ${milestoneMeta?.title || "Untitled"}`);
       const selection = window.getSelection()?.toString().trim();
       if (selection) lines.push(`Selected text: "${selection.slice(0, 800)}"`);
       void setChatContext(lines.join("\n"));
@@ -127,7 +138,7 @@ function Workspace({
     push();
     const timer = window.setInterval(push, 1500);
     return () => window.clearInterval(timer);
-  }, [dockOpen, project, board, task, activeDocumentId, documentMeta]);
+  }, [dockOpen, project, board, task, activeDocumentId, documentMeta, activeMilestoneId, milestoneMeta]);
 
   const suggestions = board
     ? [
@@ -135,7 +146,13 @@ function Workspace({
         "Which task should I do first?",
         "Summarise what is on this board",
       ]
-    : activeDocumentId
+    : activeMilestoneId
+      ? [
+          "Summarise this milestone",
+          "What should be done before this milestone?",
+          "Turn this milestone into tasks",
+        ]
+      : activeDocumentId
       ? [
           "Summarise this document",
           "Tighten this document's opening",
@@ -158,13 +175,15 @@ function Workspace({
           { label: project.name, onClick: () => void openProject(project.id) },
           ...(board
             ? [{ label: board.name, ...(task ? { onClick: () => void openTask(null) } : {}) }, ...(task ? [{ label: task.title }] : [])]
-            : documentMeta
-              ? [{ label: documentMeta.title || "Untitled" }]
-              : []),
+            : milestoneMeta
+              ? [{ label: milestoneMeta.title || "Untitled" }]
+              : documentMeta
+                ? [{ label: documentMeta.title || "Untitled" }]
+                : []),
         ]
       : [{ label: "Home" }];
 
-  const back = Boolean(board || activeDocumentId);
+  const back = Boolean(board || activeDocumentId || activeMilestoneId);
   const showProject = (id: string) => {
     setInvitesOpen(false);
     void openProject(id);
@@ -258,6 +277,12 @@ function Workspace({
               onOpenProject={showProject}
               onOpenInvites={showInvites}
             />
+          ) : activeMilestoneId ? (
+            <MilestonePage
+              id={activeMilestoneId}
+              project={project}
+              onBack={() => void openProject(project.id)}
+            />
           ) : activeDocumentId ? (
             <DocumentPage
               id={activeDocumentId}
@@ -276,6 +301,7 @@ function Workspace({
               accountEmail={auth.email ?? null}
               onOpenBoard={(id) => void openBoard(id, project.id)}
               onOpenDocument={(id) => void openDocument(id, project.id)}
+              onOpenMilestone={(id) => void openMilestone(id, project.id)}
             />
           )}
         </div>

@@ -112,6 +112,22 @@ export interface Comment {
   seq: number;
 }
 
+export type MilestoneStatus = "planned" | "active" | "done";
+
+export interface Milestone {
+  id: string;
+  projectId: string;
+  folderId: string | null;
+  title: string;
+  description: string;
+  dueDate: string | null;
+  status: MilestoneStatus;
+  position: number;
+  createdAt: number;
+  updatedAt: number;
+  seq: number;
+}
+
 export type TextDirection = "ltr" | "rtl";
 
 export interface DocumentMeta {
@@ -160,6 +176,7 @@ export type ChangeKind =
   | "task"
   | "comment"
   | "document"
+  | "milestone"
   | "member"
   | "invite";
 

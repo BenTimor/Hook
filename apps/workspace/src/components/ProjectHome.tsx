@@ -1,5 +1,6 @@
 import {
   FileText,
+  Flag,
   FolderPlus,
   KanbanSquare,
   Plus,
@@ -23,30 +24,36 @@ import {
 
 const EMPTY: never[] = [];
 const WRITE_ROLES = ["owner", "manager", "editor"];
+const MILESTONE_LABEL = { planned: "Planned", active: "In progress", done: "Done" } as const;
 
 /**
  * A project, before you pick something inside it.
  *
  * The tree on the left is the navigation now, so this page is the overview:
- * what the project is, who is in it, and what was touched last. Boards and
- * documents are opened from the tree or from these cards.
+ * what the project is, who is in it, and what was touched last. Boards,
+ * documents and milestones are opened from the tree or from these cards.
  */
 export function ProjectHome({
   project,
   accountEmail,
   onOpenBoard,
   onOpenDocument,
+  onOpenMilestone,
 }: {
   project: Project;
   accountEmail: string | null;
   onOpenBoard: (id: string) => void;
   onOpenDocument: (id: string) => void;
+  onOpenMilestone: (id: string) => void;
 }) {
   const boards = useWorkspaceStore(
     (state) => state.boards[project.id] ?? EMPTY,
   );
   const documents = useWorkspaceStore(
     (state) => state.documents[project.id] ?? EMPTY,
+  );
+  const milestones = useWorkspaceStore(
+    (state) => state.milestones[project.id] ?? EMPTY,
   );
   const members = useWorkspaceStore(
     (state) => state.members[project.id] ?? EMPTY,
@@ -65,6 +72,12 @@ export function ProjectHome({
   const recentDocuments = [...documents]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, 4);
+  const recentMilestones = [...milestones].sort((left, right) => {
+    if (left.dueDate && right.dueDate) return left.dueDate.localeCompare(right.dueDate);
+    if (left.dueDate) return -1;
+    if (right.dueDate) return 1;
+    return right.updatedAt - left.updatedAt;
+  });
 
   const items = [
     ...boards.map((board) => ({
@@ -362,6 +375,53 @@ export function ProjectHome({
           )}
         </section>
       </div>
+
+      <section className="ws-overview-section ws-milestone-overview">
+        <header>
+          <h2>Milestones</h2>
+          <span>{milestones.length}</span>
+          {canWrite && (
+            <button
+              className="ws-section-add"
+              aria-label="Create milestone"
+              title="Create milestone"
+              onClick={() =>
+                setCreating({
+                  kind: "milestone",
+                  projectId: project.id,
+                  folderId: null,
+                })
+              }
+            >
+              <Plus />
+            </button>
+          )}
+        </header>
+        {recentMilestones.length === 0 ? (
+          <p className="ws-overview-empty">No milestones yet.</p>
+        ) : (
+          <div className="ws-milestone-cards">
+            {recentMilestones.map((milestone) => (
+              <button
+                className="ws-milestone-card-link"
+                key={milestone.id}
+                onClick={() => onOpenMilestone(milestone.id)}
+              >
+                <span className="ws-milestone-card-icon"><Flag /></span>
+                <span className="ws-milestone-card-main">
+                  <strong>{milestone.title || "Untitled"}</strong>
+                  <small>
+                    {milestone.dueDate
+                      ? milestone.dueDate.split("-").reverse().join("/")
+                      : "No date"}{" "}
+                    · {MILESTONE_LABEL[milestone.status]}
+                  </small>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section
         className="ws-overview-section ws-overview-work ws-quick-access"

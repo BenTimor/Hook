@@ -26,12 +26,14 @@ import { requireApiUser } from "./tokens.mjs";
  *                 `fields` holds the rest
  *   ws_comments   `author_kind` says whether a person or their Hook agent wrote
  *   ws_documents  Markdown is the source of truth; `rev` catches stale writes
+ *   ws_milestones a project item with a date, status and description
  *
  * Every row carries `seq` from one global counter. Clients pull
  * `/api/ws/changes?since=N` and get only rows in projects they belong to, so a
  * device converges on the same view as every other device without merging.
  */
 export const ROLES = ["owner", "manager", "editor", "viewer"];
+const MILESTONE_STATUSES = new Set(["planned", "active", "done"]);
 const RANK = { viewer: 1, editor: 2, manager: 3, owner: 4 };
 
 export const LIMITS = {
@@ -42,6 +44,7 @@ export const LIMITS = {
   tasksPerProject: 20_000,
   assigneesPerTask: 20,
   documentsPerProject: 5_000,
+  milestonesPerProject: 5_000,
   documentBytes: 512 * 1024,
   commentBytes: 16 * 1024,
   page: 200,
@@ -183,6 +186,22 @@ function migrate(db) {
       seq INTEGER NOT NULL
     ) STRICT;
 
+    CREATE TABLE IF NOT EXISTS ws_milestones (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      folder_id TEXT,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      due_date TEXT,
+      status TEXT NOT NULL DEFAULT 'planned',
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER,
+      seq INTEGER NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS ws_milestones_project ON ws_milestones (project_id, due_date);
     CREATE INDEX IF NOT EXISTS ws_members_subject ON ws_members (subject);
     CREATE INDEX IF NOT EXISTS ws_invites_email ON ws_invites (email, status);
     CREATE INDEX IF NOT EXISTS ws_tasks_board ON ws_tasks (board_id, position);
@@ -839,6 +858,7 @@ export function createWorkspaceRouter({ db, env = {} }) {
         }
       }
       tombstone(db, "ws_documents", `folder_id IN (${marks})`, ids);
+      tombstone(db, "ws_milestones", `folder_id IN (${marks})`, ids);
       tombstone(db, "ws_folders", `id IN (${marks})`, ids);
     });
     res.json({ ok: true });
@@ -1239,6 +1259,96 @@ export function createWorkspaceRouter({ db, env = {} }) {
     res.json({ ok: true });
   });
 
+  // ── Milestones ────────────────────────────────────────────────────────────
+
+  router.get("/projects/:id/milestones", (req, res) => {
+    const id = req.params.id;
+    if (!actor(req, res, id, "read")) return;
+    res.json({ milestones: list(db, "milestones", id) });
+  });
+
+  router.get("/milestones/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_milestones", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "read")) return;
+    const row = db.prepare("SELECT * FROM ws_milestones WHERE id = ?").get(req.params.id);
+    res.json({ milestone: shapeMilestone(row) });
+  });
+
+  router.post("/projects/:id/milestones", (req, res) => {
+    const id = req.params.id;
+    const who = actor(req, res, id, "write");
+    if (!who) return;
+    const total = db
+      .prepare("SELECT COUNT(*) AS total FROM ws_milestones WHERE project_id = ? AND deleted_at IS NULL")
+      .get(id).total;
+    if (total >= limit.milestonesPerProject) {
+      return badRequest(res, "This project has reached its milestone limit.", "milestone_quota");
+    }
+    const title = text(req.body?.title, 200) ?? "Milestone";
+    const description = text(req.body?.description ?? "", limit.documentBytes);
+    if (description === null) return badRequest(res, "That description is too long.");
+    const dueDate = req.body?.dueDate ?? null;
+    if (dueDate !== null && (typeof dueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) {
+      return badRequest(res, "That milestone date is not valid.");
+    }
+    const status = req.body?.status ?? "planned";
+    if (!MILESTONE_STATUSES.has(status)) return badRequest(res, "That milestone status is not valid.");
+    const row = insert(db, "milestones", {
+      project_id: id,
+      folder_id: req.body?.folderId ?? null,
+      title,
+      description,
+      due_date: dueDate,
+      status,
+      position: Number.isSafeInteger(req.body?.position) ? req.body.position : 0,
+      created_at: now(),
+    });
+    res.status(201).json({ milestone: shapeMilestone(row) });
+  });
+
+  router.patch("/milestones/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_milestones", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    const current = db.prepare("SELECT * FROM ws_milestones WHERE id = ?").get(req.params.id);
+    const fields = {};
+    if (req.body?.title !== undefined) {
+      const title = text(req.body.title, 200);
+      if (!title) return badRequest(res, "Give the milestone a title.");
+      fields.title = title;
+    }
+    if (req.body?.description !== undefined) {
+      const description = text(req.body.description, limit.documentBytes);
+      if (description === null) return badRequest(res, "That description is too long.");
+      fields.description = description;
+    }
+    if (req.body?.dueDate !== undefined) {
+      const dueDate = req.body.dueDate;
+      if (dueDate !== null && (typeof dueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) {
+        return badRequest(res, "That milestone date is not valid.");
+      }
+      fields.due_date = dueDate;
+    }
+    if (req.body?.status !== undefined) {
+      if (!MILESTONE_STATUSES.has(req.body.status)) {
+        return badRequest(res, "That milestone status is not valid.");
+      }
+      fields.status = req.body.status;
+    }
+    if (req.body?.folderId !== undefined) fields.folder_id = req.body.folderId ?? null;
+    if (Number.isSafeInteger(req.body?.position)) fields.position = req.body.position;
+    res.json({ milestone: shapeMilestone(update(db, "milestones", current.id, fields)) });
+  });
+
+  router.delete("/milestones/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_milestones", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    remove(db, "milestones", req.params.id);
+    res.json({ ok: true });
+  });
+
   // ── Changes feed ──────────────────────────────────────────────────────────
 
   /**
@@ -1302,6 +1412,10 @@ export function createWorkspaceRouter({ db, env = {} }) {
         .all(since, subject)
         .map((row) => ({ kind: "document", ...row })),
       ...db
+        .prepare(`SELECT * FROM ws_milestones WHERE seq > ? AND project_id IN (${mine})`)
+        .all(since, subject)
+        .map((row) => ({ kind: "milestone", ...row })),
+      ...db
         // A member row without the account's name is just a subject number on
         // screen, so the feed carries the same profile the members list does.
         .prepare(
@@ -1355,11 +1469,16 @@ export function createWorkspaceRouter({ db, env = {} }) {
 // ── Row helpers ───────────────────────────────────────────────────────────────
 
 function list(db, kind, projectId) {
-  const order = kind === "documents" ? "updated_at DESC" : "position, updated_at";
+  const order = kind === "documents"
+    ? "updated_at DESC"
+    : kind === "milestones"
+      ? "CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date, position, updated_at"
+      : "position, updated_at";
   const rows = db
     .prepare(`SELECT * FROM ws_${kind} WHERE project_id = ? AND deleted_at IS NULL ORDER BY ${order}`)
     .all(projectId);
   if (kind === "folders") return rows.map(shapeFolder);
+  if (kind === "milestones") return rows.map(shapeMilestone);
   return kind === "documents" ? rows.map(shapeDocumentMeta) : rows;
 }
 
@@ -1369,6 +1488,7 @@ const PREFIX = {
   tasks: "tk",
   comments: "cm",
   documents: "dc",
+  milestones: "ms",
 };
 
 function insert(db, kind, values) {
@@ -1700,6 +1820,22 @@ function shapeDocument(row) {
   };
 }
 
+function shapeMilestone(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    folderId: row.folder_id,
+    title: row.title,
+    description: row.description,
+    dueDate: row.due_date,
+    status: ["planned", "active", "done"].includes(row.status) ? row.status : "planned",
+    position: row.position,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    seq: row.seq,
+  };
+}
+
 function shapeInvite(row) {
   return {
     id: row.id,
@@ -1780,6 +1916,16 @@ function shapeChange(row) {
         direction: row.direction === "rtl" ? "rtl" : "ltr",
         rev: row.rev,
         updatedBy: row.updated_by,
+      });
+      break;
+    case "milestone":
+      Object.assign(change, {
+        folderId: row.folder_id,
+        title: row.title,
+        description: row.description,
+        dueDate: row.due_date,
+        status: ["planned", "active", "done"].includes(row.status) ? row.status : "planned",
+        position: row.position,
       });
       break;
     case "member":

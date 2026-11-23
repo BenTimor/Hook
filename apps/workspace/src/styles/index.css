@@ -2516,6 +2516,43 @@
   background: rgba(var(--ink-rgb), 0.045);
 }
 
+.ws-milestone { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
+.ws-milestone-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--line-soft); }
+.ws-milestone-title { flex: 1; min-width: 0; padding: 4px 6px; border-radius: 7px; font-size: 15px; font-weight: 570; letter-spacing: -0.012em; color: var(--ink); outline: none; }
+.ws-milestone-title:focus { background: rgba(var(--ink-rgb), 0.045); }
+.ws-milestone-delete { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; color: var(--ink-4); }
+.ws-milestone-delete:hover { background: rgba(164, 66, 58, 0.08); color: #a4423a; }
+.ws-milestone-delete svg { width: 15px; height: 15px; }
+.ws-milestone-canvas { flex: 1; min-height: 0; overflow: auto; }
+.ws-milestone-track { display: flex; align-items: flex-start; gap: 16px; width: max-content; min-width: 100%; padding: 30px 28px 40px; }
+.ws-milestone-card { flex: 0 0 290px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--ivory); box-shadow: var(--shadow-xs); }
+.ws-milestone-card header { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; color: var(--ink-4); font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; }
+.ws-milestone-card header svg { width: 14px; height: 14px; }
+.ws-milestone-date input { width: 100%; height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink-2); font: inherit; font-size: 13px; }
+.ws-milestone-date input:focus { outline: none; border-color: rgba(var(--accent-rgb), 0.45); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.09); }
+.ws-milestone-date small { display: block; margin-top: 8px; color: var(--ink-4); font-size: 11px; }
+.ws-milestone-statuses { display: flex; flex-direction: column; gap: 6px; }
+.ws-milestone-status { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-2); font-size: 12px; text-align: left; }
+.ws-milestone-status svg { width: 15px; height: 15px; }
+.ws-milestone-status:hover:not(:disabled) { background: var(--panel); }
+.ws-milestone-status[data-status="planned"][data-active="true"] { border-color: rgba(138, 106, 47, 0.28); background: rgba(138, 106, 47, 0.1); color: #7a5d28; }
+.ws-milestone-status[data-status="active"][data-active="true"] { border-color: rgba(54, 95, 136, 0.24); background: rgba(54, 95, 136, 0.1); color: #365f88; }
+.ws-milestone-status[data-status="done"][data-active="true"] { border-color: rgba(56, 124, 84, 0.24); background: rgba(56, 124, 84, 0.1); color: #2f6a48; }
+.ws-milestone-status:disabled { cursor: default; opacity: 0.55; }
+.ws-milestone-notes textarea { width: 100%; min-height: 158px; resize: vertical; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink-2); font: inherit; font-size: 12.5px; line-height: 1.55; }
+.ws-milestone-notes textarea:focus { outline: none; border-color: rgba(var(--accent-rgb), 0.45); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.09); background: var(--ivory); }
+.ws-milestone-meta dl { display: grid; gap: 10px; margin: 0; }
+.ws-milestone-meta dl > div { display: flex; justify-content: space-between; gap: 12px; }
+.ws-milestone-meta dt { color: var(--ink-4); font-size: 11px; }
+.ws-milestone-meta dd { margin: 0; color: var(--ink-2); font-size: 12px; text-align: right; }
+.ws-milestone-cards { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 10px; scroll-snap-type: x proximity; }
+.ws-milestone-card-link { display: flex; flex: 0 0 230px; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--ivory); text-align: left; scroll-snap-align: start; }
+.ws-milestone-card-link:hover { border-color: rgba(var(--accent-rgb), 0.35); background: var(--panel); }
+.ws-milestone-card-icon { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+.ws-milestone-card-icon svg { width: 15px; height: 15px; }
+.ws-milestone-card-main { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.ws-milestone-card-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 12.5px; font-weight: 560; }
+.ws-milestone-card-main small { color: var(--ink-4); font-size: 10.5px; }
 .ws-document-state {
   display: inline-flex;
   align-items: center;

@@ -845,6 +845,54 @@ test("a document stores its text direction", async (t) => {
   assert.equal(invalid.status, 400);
 });
 
+test("milestones keep their date, status and description, ordered by date", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+
+  const later = await request(`/projects/${project.id}/milestones`, {
+    method: "POST",
+    body: {
+      title: "Public beta",
+      description: "Ship it.",
+      dueDate: "2026-12-01",
+      status: "active",
+    },
+  });
+  assert.equal(later.status, 201);
+  assert.equal(later.body.milestone.dueDate, "2026-12-01");
+  assert.equal(later.body.milestone.status, "active");
+
+  const sooner = await request(`/projects/${project.id}/milestones`, {
+    method: "POST",
+    body: { title: "Design freeze", dueDate: "2026-10-01" },
+  });
+  assert.equal(sooner.status, 201);
+  assert.equal(sooner.body.milestone.status, "planned");
+
+  const list = await request(`/projects/${project.id}/milestones`);
+  assert.deepEqual(
+    list.body.milestones.map((milestone) => milestone.title),
+    ["Design freeze", "Public beta"],
+  );
+
+  const updated = await request(`/milestones/${later.body.milestone.id}`, {
+    method: "PATCH",
+    body: { status: "done", dueDate: null },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.milestone.status, "done");
+  assert.equal(updated.body.milestone.dueDate, null);
+
+  const invalid = await request(`/projects/${project.id}/milestones`, {
+    method: "POST",
+    body: { title: "Nope", status: "someday" },
+  });
+  assert.equal(invalid.status, 400);
+
+  const changes = await request("/changes?since=0&limit=200");
+  assert.ok(changes.body.changes.some((change) => change.kind === "milestone"));
+});
+
 test("the changes feed is one cursor, filtered by membership, tombstones included", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);
@@ -974,6 +1022,28 @@ test("deleting the account removes its projects and its memberships elsewhere", 
 
   const feed = await request("/changes?since=0", { token: OWNER });
   assert.equal(feed.body.changes.length, 0);
+});
+
+test("deleting a folder removes its milestones", async (t) => {
+  const { request } = await setup(t);
+  const { body: created } = await request("/projects", {
+    method: "POST",
+    body: { name: "Milestone folders" },
+  });
+  const project = created.project;
+  const folder = await request(`/projects/${project.id}/folders`, {
+    method: "POST",
+    body: { name: "Release" },
+  });
+  const milestone = await request(`/projects/${project.id}/milestones`, {
+    method: "POST",
+    body: { title: "Launch", folderId: folder.body.folder.id },
+  });
+  assert.equal(milestone.status, 201);
+
+  await request(`/folders/${folder.body.folder.id}`, { method: "DELETE" });
+  const list = await request(`/projects/${project.id}/milestones`);
+  assert.deepEqual(list.body.milestones, []);
 });
 
 test("folders organize boards and documents, and deleting one keeps its contents", async (t) => {

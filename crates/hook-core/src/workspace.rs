@@ -227,6 +227,24 @@ pub fn definitions() -> Vec<Value> {
             }),
         ),
         tool(
+            "workspace_milestones",
+            "Project milestones: a title, a target date (YYYY-MM-DD), a status (planned, active or done) and a description. They are project items like documents and boards, and each has its own page.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "get", "create", "update", "delete"] },
+                    "project": { "type": "string" },
+                    "milestone": { "type": "string", "description": "Milestone id (ms_…)." },
+                    "title": { "type": "string" },
+                    "dueDate": { "type": "string", "description": "YYYY-MM-DD, or null to clear." },
+                    "status": { "type": "string", "enum": ["planned", "active", "done"] },
+                    "description": { "type": "string" },
+                    "folder": { "type": "string" }
+                },
+                "required": ["action"]
+            }),
+        ),
+        tool(
             "document_markdown",
             "The exact syntax of Hook's document Markdown, on demand: the colour, highlight, underline and key directives, the callout blocks and how they nest, where each is allowed, what stays literal, the traps, and the document options that are not Markdown (title, direction). Call it before you style a document, a task description or a comment, or when you are not sure whether something is allowed. Plain Markdown and plain prose need no lookup.",
             json!({ "type": "object", "properties": {} }),
@@ -319,6 +337,7 @@ pub async fn execute(
         "workspace_tasks" => tasks(client, args).await,
         "workspace_comments" => comments(client, chat_id, args).await,
         "workspace_documents" => documents(client, args).await,
+        "workspace_milestones" => milestones(client, args).await,
         "workspace_members" => members(client, args).await,
         "workspace_invites" => invites(client, args).await,
         "workspace_preview" => preview(client, args).await,
@@ -542,6 +561,50 @@ fn document_fields(args: &Value) -> Value {
     body
 }
 
+async fn milestones(client: &WorkspaceClient, args: &Value) -> ToolResult {
+    match action(args)?.as_str() {
+        "list" => client.get(&format!("/projects/{}/milestones", required(args, "project")?)).await,
+        "get" => client.get(&format!("/milestones/{}", required(args, "milestone")?)).await,
+        "create" => {
+            let project = required(args, "project")?;
+            let mut body = milestone_fields(args);
+            if body.get("title").is_none() {
+                body["title"] = json!("Milestone");
+            }
+            client.post(&format!("/projects/{project}/milestones"), body).await
+        }
+        "update" => {
+            let milestone = required(args, "milestone")?;
+            client.patch(&format!("/milestones/{milestone}"), milestone_fields(args)).await
+        }
+        "delete" => client.delete(&format!("/milestones/{}", required(args, "milestone")?)).await,
+        other => Err(format!("Unknown action: {other}")),
+    }
+}
+
+/// Only the milestone fields the call named; an absent field is left unchanged.
+fn milestone_fields(args: &Value) -> Value {
+    let mut body = json!({});
+    for (key, field) in [
+        ("title", "title"),
+        ("description", "description"),
+        ("status", "status"),
+    ] {
+        if let Some(value) = string(args, key) {
+            body[field] = json!(value);
+        }
+    }
+    if let Some(due) = args.get("dueDate") {
+        if due.is_null() || due.is_string() {
+            body["dueDate"] = due.clone();
+        }
+    }
+    if let Some(folder) = string(args, "folder") {
+        body["folderId"] = json!(folder);
+    }
+    body
+}
+
 async fn members(client: &WorkspaceClient, args: &Value) -> ToolResult {
     match action(args)?.as_str() {
         "list" => client.get(&format!("/projects/{}/members", required(args, "project")?)).await,
@@ -658,6 +721,7 @@ mod tests {
             "workspace_tasks",
             "workspace_comments",
             "workspace_documents",
+            "workspace_milestones",
             "workspace_members",
             "workspace_invites",
             "workspace_preview",

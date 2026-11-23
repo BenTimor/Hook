@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { api } from "../lib/bridge";
+import { ApiError, api } from "../lib/bridge";
 import type {
   Board,
   Change,
@@ -10,6 +10,7 @@ import type {
   Folder,
   Invite,
   Member,
+  Milestone,
   Project,
   Task,
   TextDirection,
@@ -30,11 +31,13 @@ interface WorkspaceState {
   activeBoardId: string | null;
   activeTaskId: string | null;
   activeDocumentId: string | null;
+  activeMilestoneId: string | null;
 
   boards: ById<Board[]>;
   tasks: ById<Task[]>;
   comments: ById<Comment[]>;
   documents: ById<DocumentMeta[]>;
+  milestones: ById<Milestone[]>;
   members: ById<Member[]>;
   /** Invitations nobody answered yet: the address is the only handle on them. */
   pending: ById<Invite[]>;
@@ -106,6 +109,18 @@ interface WorkspaceState {
   ) => Promise<{ document: DocumentMeta | null; conflict: DocumentMeta | null }>;
   deleteDocument: (id: string) => Promise<void>;
 
+  openMilestone: (id: string | null, projectId?: string) => Promise<void>;
+  loadMilestone: (id: string) => Promise<Milestone | null>;
+  createMilestone: (
+    projectId: string,
+    title: string,
+    folderId?: string | null,
+  ) => Promise<Milestone | null>;
+  updateMilestone: (id: string, patch: Partial<Milestone>) => Promise<boolean>;
+  moveMilestone: (id: string, folderId: string | null) => Promise<void>;
+  renameMilestone: (id: string, title: string) => Promise<void>;
+  deleteMilestone: (id: string) => Promise<void>;
+
   createFolder: (
     projectId: string,
     name: string,
@@ -146,10 +161,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeBoardId: null,
   activeTaskId: null,
   activeDocumentId: null,
+  activeMilestoneId: null,
   boards: {},
   tasks: {},
   comments: {},
   documents: {},
+  milestones: {},
   members: {},
   pending: {},
   folders: {},
@@ -202,16 +219,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   async openProject(id) {
-    set({ activeProjectId: id, activeBoardId: null, activeTaskId: null, activeDocumentId: null });
+    set({
+      activeProjectId: id,
+      activeBoardId: null,
+      activeTaskId: null,
+      activeDocumentId: null,
+      activeMilestoneId: null,
+    });
     if (!id) return;
     await get().loadProjectContents(id);
   },
 
   async loadProjectContents(projectId) {
     try {
-      const [boards, documents, members, folders] = await Promise.all([
+      const [boards, documents, milestones, members, folders] = await Promise.all([
         api.boards(projectId),
         api.documents(projectId),
+        // An older service has no milestones; an empty list keeps the rest of
+        // the project usable while the client is newer than the deployment.
+        api.milestones(projectId).catch((error) => {
+          if (error instanceof ApiError && error.status === 404) return { milestones: [] };
+          throw error;
+        }),
         api.members(projectId),
         api.folders(projectId),
       ]);
@@ -230,6 +259,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
                 "ltr",
             })),
           },
+          milestones: { ...state.milestones, [projectId]: milestones.milestones },
           members: { ...state.members, [projectId]: members.members },
           // An older service has no pending list; a project without one simply
           // offers no addresses to assign to.
@@ -287,6 +317,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeBoardId: id,
       activeTaskId: null,
       activeDocumentId: null,
+      activeMilestoneId: null,
       ...(owner ? { activeProjectId: owner } : {}),
     });
     if (!id) return;
@@ -542,6 +573,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeDocumentId: id,
       activeBoardId: null,
       activeTaskId: null,
+      activeMilestoneId: null,
       ...(projectId ? { activeProjectId: projectId } : {}),
     });
     if (!id) return;
@@ -664,6 +696,99 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  async openMilestone(id, projectId) {
+    set({
+      activeMilestoneId: id,
+      activeDocumentId: null,
+      activeBoardId: null,
+      activeTaskId: null,
+      ...(projectId ? { activeProjectId: projectId } : {}),
+    });
+    if (!id) return;
+    const milestone = await get().loadMilestone(id);
+    const owner = projectId ?? milestone?.projectId;
+    if (owner && milestone && !get().members[owner]) await get().loadProjectContents(owner);
+  },
+
+  async loadMilestone(id) {
+    try {
+      const result = await api.milestone(id);
+      const projectId = result.milestone.projectId;
+      set((state) => ({
+        milestones: {
+          ...state.milestones,
+          [projectId]: upsert(state.milestones[projectId] ?? [], result.milestone),
+        },
+      }));
+      return result.milestone;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async createMilestone(projectId, title, folderId = null) {
+    try {
+      const created = await api.createMilestone(projectId, { title, folderId });
+      set((state) => ({
+        milestones: {
+          ...state.milestones,
+          [projectId]: [created.milestone, ...(state.milestones[projectId] ?? [])],
+        },
+        activeMilestoneId: created.milestone.id,
+        activeBoardId: null,
+        activeTaskId: null,
+        activeDocumentId: null,
+      }));
+      return created.milestone;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async updateMilestone(id, patch) {
+    try {
+      const result = await api.updateMilestone(id, patch);
+      const projectId = result.milestone.projectId;
+      set((state) => ({
+        milestones: {
+          ...state.milestones,
+          [projectId]: upsert(state.milestones[projectId] ?? [], result.milestone),
+        },
+      }));
+      return true;
+    } catch (error) {
+      set({ error: message(error) });
+      return false;
+    }
+  },
+
+  async moveMilestone(id, folderId) {
+    await get().updateMilestone(id, { folderId });
+  },
+
+  async renameMilestone(id, title) {
+    await get().updateMilestone(id, { title });
+  },
+
+  async deleteMilestone(id) {
+    try {
+      await api.deleteMilestone(id);
+      set((state) => ({
+        milestones: Object.fromEntries(
+          Object.entries(state.milestones).map(([project, milestones]) => [
+            project,
+            milestones.filter((milestone) => milestone.id !== id),
+          ]),
+        ),
+        activeMilestoneId: state.activeMilestoneId === id ? null : state.activeMilestoneId,
+      }));
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
   async createFolder(projectId, name, parentId = null) {
     try {
       const created = await api.createFolder(projectId, name, parentId);
@@ -730,11 +855,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const state = get();
       const boards = state.boards[projectId] ?? [];
       const documents = state.documents[projectId] ?? [];
+      const milestones = state.milestones[projectId] ?? [];
       const gone = new Set([...before].filter((boardId) => !boards.some((board) => board.id === boardId)));
       const boardGone = state.activeBoardId !== null && gone.has(state.activeBoardId);
       const documentGone =
         state.activeDocumentId !== null &&
         !documents.some((document) => document.id === state.activeDocumentId);
+      const milestoneGone =
+        state.activeMilestoneId !== null &&
+        !milestones.some((milestone) => milestone.id === state.activeMilestoneId);
       set((current) => ({
         tasks: Object.fromEntries(
           Object.entries(current.tasks).filter(([boardId]) => !gone.has(boardId)),
@@ -742,6 +871,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeBoardId: boardGone ? null : current.activeBoardId,
         activeTaskId: boardGone ? null : current.activeTaskId,
         activeDocumentId: documentGone ? null : current.activeDocumentId,
+        activeMilestoneId: milestoneGone ? null : current.activeMilestoneId,
       }));
     } catch (error) {
       set({ error: message(error) });
@@ -982,6 +1112,21 @@ function applyChange(
                 markdown: undefined,
               }),
         },
+      });
+      return;
+    }
+    case "milestone": {
+      const projectId = change.projectId;
+      if (!projectId) return;
+      set({
+        milestones: {
+          ...state.milestones,
+          [projectId]: change.deleted
+            ? (state.milestones[projectId] ?? []).filter((item) => item.id !== change.id)
+            : upsert(state.milestones[projectId] ?? [], change as unknown as Milestone),
+        },
+        activeMilestoneId:
+          change.deleted && state.activeMilestoneId === change.id ? null : state.activeMilestoneId,
       });
       return;
     }

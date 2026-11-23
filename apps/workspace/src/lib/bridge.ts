@@ -11,6 +11,7 @@ import type {
   Folder,
   Invite,
   Member,
+  Milestone,
   Project,
   Task,
   TextDirection,
@@ -175,6 +176,21 @@ const demo = {
       seq: 7,
     },
   ] as DocumentMeta[],
+  milestones: [
+    {
+      id: "ms_demo",
+      projectId: DEMO_PROJECT.id,
+      folderId: null,
+      title: "First release",
+      description: "Ship the first public build.",
+      dueDate: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
+      status: "active",
+      position: 0,
+      createdAt: demoNow(),
+      updatedAt: demoNow(),
+      seq: 8,
+    },
+  ] as Milestone[],
   folders: [
     {
       id: "fd_demo",
@@ -263,6 +279,10 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
           return {
             documents: demo.documents.filter((document) => document.projectId === id),
           };
+        case "milestones":
+          return {
+            milestones: demo.milestones.filter((milestone) => milestone.projectId === id),
+          };
         case "folders":
           return { folders: demo.folders.filter((folder) => folder.projectId === id) };
         case "members":
@@ -323,6 +343,23 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       };
       demo.documents = [document, ...demo.documents];
       return { document };
+    }
+    if (resource === "milestones") {
+      const milestone: Milestone = {
+        id: demoId("ms"),
+        projectId: id,
+        folderId: (payload.folderId as string | null) ?? null,
+        title: String(payload.title ?? "Milestone"),
+        description: String(payload.description ?? ""),
+        dueDate: typeof payload.dueDate === "string" ? payload.dueDate : null,
+        status: payload.status === "done" || payload.status === "active" ? payload.status : "planned",
+        position: demoSeq,
+        createdAt: demoNow(),
+        updatedAt: demoNow(),
+        seq: demoSeq,
+      };
+      demo.milestones = [milestone, ...demo.milestones];
+      return { milestone };
     }
     return { ok: true };
   }
@@ -493,6 +530,30 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       return { ok: true };
     }
     return { document: demo.documents.find((document) => document.id === id) };
+  }
+
+  if (root === "milestones") {
+    if (method === "PATCH") {
+      demo.milestones = demo.milestones.map((milestone) =>
+        milestone.id === id
+          ? {
+              ...milestone,
+              ...payload,
+              status:
+                payload.status === "done" || payload.status === "active" || payload.status === "planned"
+                  ? payload.status
+                  : milestone.status,
+              updatedAt: demoNow(),
+            }
+          : milestone,
+      );
+      return { milestone: demo.milestones.find((milestone) => milestone.id === id) };
+    }
+    if (method === "DELETE") {
+      demo.milestones = demo.milestones.filter((milestone) => milestone.id !== id);
+      return { ok: true };
+    }
+    return { milestone: demo.milestones.find((milestone) => milestone.id === id) };
   }
 
   if (root === "comments" && method === "DELETE") {
@@ -731,6 +792,23 @@ export const api = {
     }
   },
   deleteDocument: (id: string) => call<{ ok: true }>("DELETE", `/documents/${id}`),
+
+  milestones: (projectId: string) =>
+    call<{ milestones: Milestone[] }>("GET", `/projects/${projectId}/milestones`),
+  milestone: (id: string) => call<{ milestone: Milestone }>("GET", `/milestones/${id}`),
+  createMilestone: (
+    projectId: string,
+    milestone: {
+      title: string;
+      description?: string;
+      dueDate?: string | null;
+      status?: Milestone["status"];
+      folderId?: string | null;
+    },
+  ) => call<{ milestone: Milestone }>("POST", `/projects/${projectId}/milestones`, milestone),
+  updateMilestone: (id: string, patch: Partial<Milestone>) =>
+    call<{ milestone: Milestone }>("PATCH", `/milestones/${id}`, patch),
+  deleteMilestone: (id: string) => call<{ ok: true }>("DELETE", `/milestones/${id}`),
 
   members: (projectId: string) =>
     call<{ members: Member[]; pending: Invite[] }>("GET", `/projects/${projectId}/members`),
