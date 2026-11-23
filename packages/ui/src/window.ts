@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /**
  * Tauri's own marker. In a plain browser (`pnpm dev`) every window call is a
@@ -9,17 +8,50 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 export const isTauri = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/**
+ * The window API, loaded only where there is a window to load it from.
+ *
+ * A static `import {getCurrentWindow} from "@tauri-apps/api/window"` at module
+ * scope makes this package *depend* on Tauri being resolvable even where it never
+ * runs — a Chromium WebUI (`browser/ui`) has no Tauri and should not have to
+ * pretend. The import is therefore lazy and cached, and `win` keeps the same
+ * shape the three products already call.
+ */
+type TauriWindow = typeof import("@tauri-apps/api/window");
+let windowApi: TauriWindow | null = null;
+
+async function currentWindow(): Promise<ReturnType<
+  TauriWindow["getCurrentWindow"]
+> | null> {
+  if (!isTauri()) return null;
+  if (!windowApi) windowApi = await import("@tauri-apps/api/window");
+  return windowApi.getCurrentWindow();
+}
+
 export const win = {
-  minimize: () => isTauri() && getCurrentWindow().minimize(),
-  toggleMaximize: () => isTauri() && getCurrentWindow().toggleMaximize(),
-  close: () => isTauri() && getCurrentWindow().close(),
-  isMaximized: async (): Promise<boolean> =>
-    isTauri() ? getCurrentWindow().isMaximized() : false,
+  minimize: () => {
+    void currentWindow().then((handle) => handle?.minimize());
+  },
+  toggleMaximize: () => {
+    void currentWindow().then((handle) => handle?.toggleMaximize());
+  },
+  close: () => {
+    void currentWindow().then((handle) => handle?.close());
+  },
+  isMaximized: async (): Promise<boolean> => {
+    const handle = await currentWindow();
+    return handle ? handle.isMaximized() : false;
+  },
   onResized: (callback: () => void) => {
-    if (!isTauri()) return () => {};
-    const pending = getCurrentWindow().onResized(callback);
+    let off: (() => void) | null = null;
+    void currentWindow().then((handle) => {
+      if (!handle) return;
+      void handle.onResized(callback).then((stop) => {
+        off = stop;
+      });
+    });
     return () => {
-      pending.then((off) => off()).catch(() => {});
+      off?.();
     };
   },
 };

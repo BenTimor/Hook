@@ -2,22 +2,25 @@
 //
 // Step 1 of docs/browser-poc-plan.md. The page is ours; it is served from the
 // generated hook_resources.pak and drawn by hook/resources/. It carries the
-// mojom probe — the live tab list — so the page is proof that the overlay
-// reaches the browser process, not just the resource pipeline.
+// mojom probe — the live tab list — and, at 380px beside it, the chat dock from
+// packages/chat (Step 2).
 //
-// Step 2 replaces the page's body with the real surfaces (the dock and the
-// sign-in card); the seam itself, this handler included, stays.
+// Step 2's remaining surfaces replace the page's body with the real sign-in card
+// and the New Tab page; the seam itself, this controller included, stays.
 
 #ifndef HOOK_BROWSER_UI_WEBUI_HOOK_UI_H_
 #define HOOK_BROWSER_UI_WEBUI_HOOK_UI_H_
 
+#include <memory>
+
 #include "content/public/browser/webui_config.h"
 #include "hook/common/hook.mojom.h"
-#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "ui/webui/mojo_web_ui_controller.h"
 
 namespace hook {
 
+class HookPageHandler;
 class HookUI;
 
 // Registered in chrome/browser/ui/webui/chrome_web_ui_configs.cc, which is one
@@ -28,7 +31,7 @@ class HookUIConfig : public content::DefaultWebUIConfig<HookUI> {
   HookUIConfig();
 };
 
-class HookUI : public ui::MojoWebUIController, public mojom::PageHandler {
+class HookUI : public ui::MojoWebUIController {
  public:
   explicit HookUI(content::WebUI* web_ui);
   HookUI(const HookUI&) = delete;
@@ -41,10 +44,7 @@ class HookUI : public ui::MojoWebUIController, public mojom::PageHandler {
   void BindInterface(mojo::PendingReceiver<mojom::PageHandler> receiver);
 
  private:
-  // mojom::PageHandler:
-  void GetTabs(GetTabsCallback callback) override;
-
-  mojo::Receiver<mojom::PageHandler> page_handler_{this};
+  std::unique_ptr<HookPageHandler> page_handler_;
 
   WEB_UI_CONTROLLER_TYPE_DECL();
 };

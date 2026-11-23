@@ -89,6 +89,10 @@ export default defineConfig({
       // See shiki-stub.ts: the web bundle would ship every grammar and theme as
       // its own chunk file inside our pak.
       { find: /^shiki\/bundle\/web$/, replacement: resolve(here, "shiki-stub.ts") },
+      // `packages/ui` and `packages/chat` import Tauri lazily; there is no Tauri
+      // in a browser process, and a stub keeps a second copy out of the pak.
+      { find: /^@tauri-apps\/api\/core$/, replacement: resolve(here, "tauri-stub.ts") },
+      { find: /^@tauri-apps\/api\/window$/, replacement: resolve(here, "tauri-stub.ts") },
     ],
   },
   build: {
@@ -106,6 +110,11 @@ export default defineConfig({
     rollupOptions: {
       output: {
         assetFileNames: "panel.[ext]",
+        // One file, always: a dynamic import that Vite resolves locally would
+        // otherwise emit a chunk, and the pak carries exactly one script. The
+        // page's own runtime import of `hook.mojom-webui.js` is left alone by
+        // `@vite-ignore`, so it is not code-split.
+        inlineDynamicImports: true,
       },
     },
   },

@@ -1,22 +1,23 @@
 diff --git a/chrome/browser/chrome_browser_interface_binders_webui.cc b/chrome/browser/chrome_browser_interface_binders_webui.cc
-index 81e0eb3762..c7f7e9ada5 100644
+index 81e0eb3762..c3c6e0c624 100644
 --- a/chrome/browser/chrome_browser_interface_binders_webui.cc
 +++ b/chrome/browser/chrome_browser_interface_binders_webui.cc
-@@ -77,6 +77,8 @@
+@@ -77,6 +77,9 @@
  #if !BUILDFLAG(IS_CHROMEOS)
  #include "chrome/browser/ui/webui/signin/profile_picker_ui.h"
  #endif
++#include "hook/browser/ui/webui/hook_panel_ui.h"
 +#include "hook/browser/ui/webui/hook_ui.h"
 +#include "hook/common/hook.mojom.h"
  #endif
  
  #if BUILDFLAG(ENABLE_WEBUI_HISTORY)
-@@ -227,6 +229,8 @@ void PopulateChromeWebUIFrameBindersPartsAllPlatforms(
+@@ -227,6 +230,8 @@ void PopulateChromeWebUIFrameBindersPartsAllPlatforms(
        indigo_internals::mojom::PageHandlerFactory, IndigoInternalsUI>(map);
    RegisterWebUIControllerInterfaceBinder<
        webnn_internals::mojom::PageHandlerFactory, WebNNInternalsUI>(map);
 +  RegisterWebUIControllerInterfaceBinder<hook::mojom::PageHandler,
-+                                         hook::HookUI>(map);
++                                         hook::HookUI, hook::HookPanelUI>(map);
  #endif
    RegisterWebUIControllerInterfaceBinder<::mojom::OmniboxInternalsPageHandler,
                                           OmniboxInternalsUI>(map);

@@ -22,7 +22,59 @@ struct Tab {
   string domain;
 };
 
+// One row of the dock's history: everything the list needs and nothing else.
+struct ChatSummary {
+  string id;
+  string title;
+  // Milliseconds since the epoch, the same number the store keeps. (mojom keeps
+  // the IDL spelling in C++, so the field is snake_case here and `updated_at`
+  // in C++.)
+  double updated_at;
+  // A reply is streaming in this chat right now.
+  bool busy;
+  // The account's cloud sync is off, so this chat is only on this computer.
+  bool unsynced;
+};
+
+// A message as the dock draws it. Tool calls are deliberately not carried: the
+// panel renders the conversation, and the inspector's view of a turn is the
+// window's, not the browser's.
+struct ChatMessage {
+  string id;
+  string role;
+  string content;
+  // complete | streaming | error | aborted
+  string status;
+  // Hidden messages stay in the store for replay; the dock filters them out.
+  bool hidden;
+  string error;
+};
+
+struct ChatView {
+  ChatSummary chat;
+  array<ChatMessage> messages;
+};
+
 interface PageHandler {
   // The live tab list of the browser window that hosts this page.
   GetTabs() => (array<Tab> tabs);
+
+  // Called by the page once it has drawn itself. A side panel entry is not
+  // shown until its host says so (`WebUIContentsWrapper`), which is how every
+  // top-chrome page announces that it is ready; in a tab it is a no-op.
+  ShowUI();
+
+  // Whether a running Hook app published its channel. The browser process reads
+  // the descriptor and makes the calls; a chrome:// renderer cannot open a
+  // socket to loopback at all (Chromium kills it for "Incorrect scheme").
+  GetChannel() => (bool available, string reason);
+
+  // The dock's history and one conversation, read from that channel.
+  ListChats() => (array<ChatSummary> chats, string error);
+  GetChat(string id) => (ChatView? chat, string error);
+  CreateChat() => (string id, string error);
+  // Starts the turn. `context` is the page's trailing context frame (the active
+  // tab), capped by the backend like every other product's.
+  SendMessage(string id, string text, string context) => (bool ok, string error);
+  StopMessage(string id);
 };

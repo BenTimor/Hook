@@ -14,6 +14,7 @@ mod agent;
 mod analytics;
 mod auth;
 mod bridge;
+mod channel;
 mod coding;
 mod commands;
 mod config;
@@ -533,6 +534,7 @@ fn setup(
         cfg: cfg.clone(),
         auth: auth.clone(),
         sync: sync.clone(),
+        channel: Arc::new(channel::Channel::new()),
         relay: relay.clone(),
         remote_chats: Arc::new(Mutex::new(HashSet::new())),
         vision: vision.clone(),
@@ -545,6 +547,15 @@ fn setup(
         capabilities,
     });
     app.manage(state.clone());
+
+    // Hook Browser reads this: a loopback channel beside the account file, with
+    // the same store and the same turn the window uses. Off with HOOK_CHANNEL=0.
+    state.channel.serve(
+        Arc::new(channel::LiveBackend {
+            state: state.clone(),
+        }),
+        &data_dir,
+    );
     // A coding chat written before machines existed belongs to this computer;
     // give it the id the account knows so its stub can travel. A controller
     // (Workspace, the phone) never owns a direct chat, even if an old sync left

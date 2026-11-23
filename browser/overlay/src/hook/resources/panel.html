@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="color-scheme" content="light">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hook</title>
+    <style>
+      /* chrome://hook-panel is the dock inside the browser's side panel. The
+       * panel gives the document its width; the dock fills it. The dock's own
+       * stylesheet (inlined into panel.mjs) draws everything inside. */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: var(--canvas, #f5efe5);
+        overflow: hidden;
+      }
+
+      #dock {
+        height: 100%;
+      }
+
+      #dock > .dock {
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="dock"></div>
+    <script type="module" src="panel.mjs"></script>
+  </body>
+</html>

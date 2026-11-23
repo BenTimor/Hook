@@ -1,25 +1,30 @@
 #!/usr/bin/env node
 /**
- * Check that a built Hook Browser really renders the overlay.
+ * Check that a built Hook Browser really renders the overlay — and, with
+ * `--channel`, that its dock reaches a running Hook app.
  *
  *   node browser/tools/smoke.mjs                       # out/Dev, a temp profile
- *   node browser/tools/smoke.mjs --shot hook.png       # also save a screenshot
+ *   node browser/tools/smoke.mjs --side-panel          # also the side panel
+ *   node browser/tools/smoke.mjs --signin-state out    # the sign-in gate refuses
+ *   node browser/tools/smoke.mjs --channel             # needs Hook running
+ *   node browser/tools/smoke.mjs --shot hook.png       # screenshots too
  *   node browser/tools/smoke.mjs --chrome <path to chrome.exe>
  *
  * It launches the binary with a throwaway profile and the DevTools protocol on a
  * loopback port, opens `chrome://hook`, and reads what the page drew: the tab
- * list from the mojom seam, the dock from the Vite panel, the composer, and one
- * send round trip. A pass means the overlay's C++, its mojom, its pak and the
- * shared `packages/chat` bundle all reached a real window.
+ * list from the mojom seam, the dock from the Vite bundle, the composer, one send
+ * round trip, the sign-in gate, and — when asked — the side panel and the real
+ * conversations of the Hook app that is running on this machine.
  *
- * Run it after a build, never during one: it loads DLLs out of `out/`, and the
- * linker cannot overwrite a DLL that is mapped.
+ * Run it after a build, never during one: it maps DLLs out of `out/`, and the
+ * linker cannot overwrite a file that is mapped.
  *
  * `ws` is the repository's dependency, so this runs from a checkout with
  * `pnpm install` done; nothing here is part of a release.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,11 +34,13 @@ import WebSocket from "ws";
 import { bold, fail, ok, parseArgs, srcDir, step, treeRoot, warn } from "./lib.mjs";
 
 const PAGE = "chrome://hook/";
+const PANEL = "chrome://hook-panel/";
 
-function sleep(ms) {
-  return new Promise((done) => setTimeout(done, ms));
-}
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
+// ------------------------------------------------------------------ plumbing --
+
+/** Poll `url` until it answers JSON, or give up. */
 async function waitFor(url, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -48,7 +55,7 @@ async function waitFor(url, timeoutMs) {
   return null;
 }
 
-/** A CDP session with just enough of the protocol for this check. */
+/** A CDP session with just enough of the protocol for these checks. */
 function connect(socketUrl) {
   const socket = new WebSocket(socketUrl);
   const pending = new Map();
@@ -58,10 +65,10 @@ function connect(socketUrl) {
   socket.on("message", (raw) => {
     const message = JSON.parse(String(raw));
     if (message.id && pending.has(message.id)) {
-      const { resolve: done, reject } = pending.get(message.id);
+      const entry = pending.get(message.id);
       pending.delete(message.id);
-      if (message.error) reject(new Error(JSON.stringify(message.error)));
-      else done(message.result);
+      if (message.error) entry.reject(new Error(JSON.stringify(message.error)));
+      else entry.resolve(message.result);
       return;
     }
     events.push(message);
@@ -79,8 +86,88 @@ function connect(socketUrl) {
       socket.send(JSON.stringify({ id, method, params }));
     });
 
-  return { opened, send, events, close: () => socket.close() };
+  const evaluate = async (expression) => {
+    const result = await send("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+      timeout: 20000,
+    });
+    if (result.exceptionDetails) {
+      throw new Error(result.exceptionDetails.exception?.description ?? "exception");
+    }
+    return result.result?.value;
+  };
+
+  return { opened, send, evaluate, events, close: () => socket.close() };
 }
+
+const problemsOf = (client) =>
+  client.events
+    .filter(
+      (event) =>
+        event.method === "Runtime.exceptionThrown" ||
+        event.method === "Log.entryAdded" ||
+        (event.method === "Runtime.consoleAPICalled" && event.params.type === "error"),
+    )
+    .map((event) => JSON.stringify(event.params).slice(0, 300));
+
+/**
+ * The account file the browser's gate reads, so the check knows what to expect
+ * when nothing forces the answer. Only the presence of a token matters.
+ */
+function machineSignedIn() {
+  const dir =
+    process.platform === "win32"
+      ? process.env.APPDATA
+      : process.platform === "darwin"
+        ? join(process.env.HOME ?? "", "Library", "Application Support")
+        : (process.env.XDG_DATA_HOME ?? join(process.env.HOME ?? "", ".local", "share"));
+  if (!dir) return false;
+  const path = join(dir, "app.hook", "account.json");
+  if (!existsSync(path)) return false;
+  try {
+    const account = JSON.parse(readFileSync(path, "utf8"));
+    return typeof account?.session?.token === "string" && account.session.token.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** A local page the gate can either reach or refuse; no network involved. */
+function probeServer() {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.end("<!DOCTYPE html><title>gate probe</title><p>reached");
+  });
+  return new Promise((done) => {
+    server.listen(0, "127.0.0.1", () => done(server));
+  });
+}
+
+async function screenshot(client, path, target) {
+  if (!path || !client) return;
+  try {
+    await client.send("Page.bringToFront").catch(() => {});
+    await sleep(300);
+    let image;
+    try {
+      image = await client.send("Page.captureScreenshot", { format: "png", ...target });
+    } catch {
+      image = await client.send("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: true,
+        ...target,
+      });
+    }
+    writeFileSync(path, Buffer.from(image.data, "base64"));
+    console.log(`    screenshot: ${path}`);
+  } catch (failure) {
+    console.error(warn(`screenshot skipped: ${String(failure).slice(0, 120)}`));
+  }
+}
+
+// ---------------------------------------------------------------------- main --
 
 export async function main(argv) {
   const { flags } = parseArgs(argv);
@@ -88,6 +175,13 @@ export async function main(argv) {
   const out = flags.get("out") ?? "out/Dev";
   const port = Number(flags.get("port") ?? 9333);
   const shot = typeof flags.get("shot") === "string" ? resolve(flags.get("shot")) : null;
+  const sidePanel = flags.get("side-panel") === true;
+  const channelCheck = flags.get("channel") === true;
+  const signin = flags.get("signin-state");
+  if (signin !== undefined && signin !== "in" && signin !== "out") {
+    console.error(fail("--signin-state takes in or out"));
+    return 1;
+  }
 
   const binary =
     typeof flags.get("chrome") === "string"
@@ -100,25 +194,34 @@ export async function main(argv) {
 
   const profile = mkdtempSync(join(tmpdir(), "hook-smoke-"));
   step(`launching ${bold(binary)}`);
-  const child = spawn(binary, [
-    `--user-data-dir=${profile}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-breakpad",
-    // The check runs unattended: a window nobody is looking at is occluded by
-    // definition, and an occluded window stops producing frames — which makes
-    // a screenshot fail rather than the page being wrong.
-    "--disable-backgrounding-occluded-windows",
-    "--disable-renderer-backgrounding",
-    "--disable-features=CalculateNativeWinOcclusion",
-    "--remote-debugging-port=" + port,
-    PAGE,
-  ], { stdio: "ignore", windowsHide: false });
+  const child = spawn(
+    binary,
+    [
+      `--user-data-dir=${profile}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-breakpad",
+      // The check runs unattended: a window nobody is looking at is occluded by
+      // definition, and an occluded window stops producing frames — which makes a
+      // screenshot fail rather than the page being wrong.
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-features=CalculateNativeWinOcclusion",
+      `--remote-debugging-port=${port}`,
+      ...(signin ? [`--hook-signin-state=${signin}`] : []),
+      ...(sidePanel ? ["--hook-side-panel"] : []),
+      PAGE,
+    ],
+    { stdio: "ignore", windowsHide: false },
+  );
 
   const stop = () => {
     try {
       if (process.platform === "win32") {
-        spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore", windowsHide: true });
+        spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], {
+          stdio: "ignore",
+          windowsHide: true,
+        });
       } else {
         child.kill("SIGTERM");
       }
@@ -127,7 +230,8 @@ export async function main(argv) {
     }
   };
 
-  let failures = [];
+  const failures = [];
+
   try {
     const version = await waitFor(`http://127.0.0.1:${port}/json/version`, 60000);
     if (!version) {
@@ -137,15 +241,16 @@ export async function main(argv) {
     console.log(`    ${version.Browser}`);
 
     // The URL argument sometimes opens beside the new tab page; ask for it.
-    const targets = await waitFor(`http://127.0.0.1:${port}/json/list`, 5000);
+    let targets = await waitFor(`http://127.0.0.1:${port}/json/list`, 5000);
     if (!targets?.some((target) => target.url === PAGE)) {
       await fetch(`http://127.0.0.1:${port}/json/new?${PAGE}`, { method: "PUT" });
-      await sleep(1000);
+      await sleep(1500);
+      targets = await waitFor(`http://127.0.0.1:${port}/json/list`, 5000) ?? [];
     }
-    const pages = await waitFor(`http://127.0.0.1:${port}/json/list`, 5000) ?? [];
-    const page = pages.find((target) => target.type === "page" && target.url === PAGE);
+    const page = targets.find((target) => target.type === "page" && target.url === PAGE);
     if (!page) {
-      console.error(fail("chrome://hook did not open."));
+      const seen = (targets ?? []).map((target) => target.url).join(" | ");
+      console.error(fail(`chrome://hook did not open. Targets: ${seen}`));
       return 1;
     }
 
@@ -156,20 +261,8 @@ export async function main(argv) {
     await client.send("Page.enable");
     await sleep(1500);
 
-    const evaluate = async (expression) => {
-      const result = await client.send("Runtime.evaluate", {
-        expression,
-        awaitPromise: true,
-        returnByValue: true,
-        timeout: 15000,
-      });
-      if (result.exceptionDetails) {
-        throw new Error(result.exceptionDetails.exception?.description ?? "exception");
-      }
-      return result.result?.value;
-    };
-
-    const report = await evaluate(`(() => {
+    // ---- the dock, on the seam page -----------------------------------------
+    const report = await client.evaluate(`(() => {
       const dock = document.querySelector('#dock > .dock');
       return {
         title: document.title,
@@ -197,8 +290,8 @@ export async function main(argv) {
       if (!report.dock.composer) failures.push("the dock has no composer");
     }
 
-    // One send, so the transport and the dock are exercised rather than painted.
-    const roundTrip = await evaluate(`(async () => {
+    // ---- one send, so the transport is exercised rather than painted --------
+    const roundTrip = await client.evaluate(`(async () => {
       const box = document.querySelector('#dock textarea');
       if (!box) return { error: 'no textarea' };
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
@@ -210,41 +303,128 @@ export async function main(argv) {
       await new Promise((done) => setTimeout(done, 3000));
       return { text: document.querySelector('#dock')?.textContent?.slice(-240) ?? '' };
     })()`);
-    console.log("round trip:", JSON.stringify(roundTrip, null, 2));
     if (!roundTrip?.text?.includes("smoke check")) {
       failures.push("a sent message never reached the thread");
     }
 
-    const problems = client.events
-      .filter((event) => event.method === "Runtime.exceptionThrown" ||
-        event.method === "Log.entryAdded" ||
-        (event.method === "Runtime.consoleAPICalled" && event.params.type === "error"))
-      .map((event) => JSON.stringify(event.params).slice(0, 300));
-
-    if (shot) {
-      // A screenshot of an occluded page is refused, so raise the tab first.
-      try {
-        await client.send("Page.bringToFront");
-        await sleep(300);
-        let image;
-        try {
-          image = await client.send("Page.captureScreenshot", { format: "png" });
-        } catch {
-          image = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-        }
-        writeFileSync(shot, Buffer.from(image.data, "base64"));
-        console.log(`    screenshot: ${shot}`);
-      } catch (failure) {
-        console.error(warn(`screenshot skipped: ${String(failure).slice(0, 120)}`));
-      }
-    }
-    client.close();
-
+    const problems = problemsOf(client);
     if (problems.length) {
       console.error(warn("console problems:"));
-      for (const problem of problems) console.error("  " + problem);
+      for (const problem of problems) console.error(`  ${problem}`);
       failures.push(`${problems.length} console error(s)`);
     }
+
+    // ---- the side panel ------------------------------------------------------
+    let panelShotTarget = null;
+    if (sidePanel) {
+      const panelTarget = (await waitFor(`http://127.0.0.1:${port}/json/list`, 5000) ?? []).find(
+        (target) => target.url.startsWith("chrome://hook-panel"),
+      );
+      if (!panelTarget) {
+        failures.push("--side-panel was set, but no chrome://hook-panel target exists");
+      } else {
+        const panel = connect(panelTarget.webSocketDebuggerUrl);
+        await panel.opened;
+        await panel.send("Runtime.enable");
+        await sleep(2000);
+        const panelDock = await panel.evaluate(`(() => {
+          const dock = document.querySelector('#dock > .dock');
+          return dock ? {
+            width: Math.round(dock.getBoundingClientRect().width),
+            composer: !!dock.querySelector('textarea'),
+          } : null;
+        })()`);
+        console.log(`    side panel: ${JSON.stringify(panelDock)}`);
+        if (!panelDock?.composer) failures.push("the side panel did not draw the dock");
+        else if (panelDock.width < 300) failures.push(`the side panel's dock is ${panelDock.width}px wide`);
+        const panelProblems = problemsOf(panel);
+        if (panelProblems.length) {
+          console.error(warn(`side panel console problems: ${panelProblems.length}`));
+          failures.push(`${panelProblems.length} console error(s) in the side panel`);
+        }
+        if (shot) {
+          panelShotTarget = panel;
+        } else {
+          panel.close();
+        }
+      }
+    }
+
+    // ---- the real backend, when a Hook app is running ------------------------
+    if (channelCheck) {
+      const state = await client.evaluate(`(async () => {
+        const module = await import("./hook.mojom-webui.js");
+        const handler = module.PageHandler.getRemote();
+        const status = await handler.getChannel();
+        const list = await handler.listChats();
+        const first = list.chats[0];
+        let view = null;
+        let refused = null;
+        if (first) {
+          const got = await handler.getChat(first.id);
+          view = got.chat
+            ? { title: got.chat.chat.title, messages: got.chat.messages.length, busy: got.chat.chat.busy }
+            : null;
+          // A whitespace-only message is refused by hook-core before any turn:
+          // this proves the write path without spending a model call.
+          refused = await handler.sendMessage(first.id, "   ", "");
+        }
+        return {
+          available: status.available,
+          reason: status.reason,
+          chats: list.chats.length,
+          listError: list.error,
+          view,
+          refused,
+        };
+      })()`);
+      console.log(`    channel: ${JSON.stringify(state)}`);
+      if (!state?.available) {
+        failures.push(`the browser sees no channel: ${state?.reason ?? "no answer"}`);
+      } else if (!(state.chats > 0)) {
+        failures.push(`the channel returned no chats (${state.listError})`);
+      } else {
+        if (!state.view || state.view.messages < 1) failures.push("the first conversation came back empty");
+        if (!state.refused || state.refused.ok) failures.push("an empty message was accepted");
+      }
+    }
+
+    // ---- the pictures, before the gate sends the tab away --------------------
+    if (shot) {
+      await screenshot(client, shot);
+      if (panelShotTarget) {
+        await screenshot(panelShotTarget, shot.replace(/\.png$/, "-panel.png"), { fromSurface: false });
+        panelShotTarget.close();
+      }
+    }
+
+    // ---- the sign-in gate, last: it navigates the tab -----------------------
+    const server = await probeServer();
+    try {
+      const probePort = server.address().port;
+      const probe = `http://127.0.0.1:${probePort}/gate`;
+      const gated = signin === "out" || (signin === undefined && !machineSignedIn());
+      await client
+        .send("Page.navigate", { url: probe })
+        .catch(() => {
+          // the navigation is cancelled when the gate fires; that is the point
+        });
+      await sleep(2500);
+      const landed = String(await client.evaluate("location.href"));
+      console.log(`    gate: ${gated ? "signed out" : "signed in"} → ${landed}`);
+      if (gated) {
+        if (!landed.startsWith("chrome://hook")) {
+          failures.push(`signed out, but ${probe} loaded (landed on ${landed})`);
+        }
+      } else if (!landed.startsWith(probe)) {
+        failures.push(`signed in, but ${probe} did not load (landed on ${landed})`);
+      }
+    } catch (failure) {
+      failures.push(`the sign-in gate check failed: ${String(failure).slice(0, 120)}`);
+    } finally {
+      server.close();
+    }
+    client.close();
   } finally {
     stop();
     await sleep(500);

@@ -4,3 +4,7 @@
 0002-register-hook-webui.patch
 0003-reserve-hook-resource-ids.patch
 0004-register-hook-bindings.patch
+0005-sign-in-gate.patch
+0006-hook-side-panel.patch
+0007-panel-action.patch
+0008-webui-name-metrics.patch

@@ -101,6 +101,7 @@ pnpm browser:sync               # fetch/refresh the tree at browser/VERSION
 pnpm browser:build              # gn gen + autoninja -C out/Dev chrome
 pnpm browser:ui                 # rebuild the dock bundle (panel.mjs) with Vite
 pnpm browser:verify             # tag, overlay rule, patch stack, junction
+pnpm browser:smoke              # launch the built browser, read chrome://hook over CDP
 pnpm browser:test
 
 # Offline chat against a fake OpenAI-compatible endpoint on :8787
@@ -285,12 +286,20 @@ bash.
   that is in this repository. `VERSION` is the one pinned Chromium tag,
   `args.gn` the dev GN args, `overlay/src/hook/` the new paths that are
   junctioned into the checkout as `src/hook`, `patches/series` the small edits to
-  upstream files that survive a rebase, and `tools/{sync,build,verify,patch}.mjs`
+  upstream files that survive a rebase, and `tools/{sync,build,verify,patch,smoke}.mjs`
   the whole interface. `browser/ui/` is the dock's own Vite project: it builds
   `packages/chat` into `overlay/src/hook/resources/panel.mjs`, which is generated
   but committed because Chromium's WebUI pipeline has no React (`.mjs`, its
   stylesheet inlined, and `preview.html` to iterate without a rebuild —
-  `browser/README.md`, "The dock bundle"). The ~100 GB checkout itself never
+  `browser/README.md`, "The dock bundle"). The overlay is more than the seam now:
+  `browser/navigation/` is the signed-out gate, `browser/ui/views/` is the dock as
+  a side-panel entry (`chrome://hook-panel`, `--hook-side-panel`), and
+  `browser/channel/` is the client for a *running* Hook app's loopback channel
+  (`crates/hook-core/src/channel.rs`) — the browser process makes those calls
+  because a `chrome://` renderer is killed for a cross-scheme request, and that is
+  also why its token never reaches the page. `pnpm browser:smoke` is the check:
+  the tab list, the dock, the gate both ways, the side panel, and `--channel`
+  against a running app. The ~100 GB checkout itself never
   enters the repo and `browser/README.md` carries the dev loop, the toolchain
   prerequisites and the traps. `args.gn` pins `use_siso = false`: siso cannot read
   the overlay junction, so the tree builds with ninja (`browser/README.md`,
@@ -524,6 +533,19 @@ Changing one side of a boundary is the most common way to break this repo.
   "Product" in this repo means a business product sharing the account — Hook,
   Hook Workspace, HookCode on a phone, and the future browser — not every
   `apps/*` directory.
+- **Browser channel change (the dock's link to a running Hook app):**
+  `crates/hook-core/src/channel.rs` (route, token, descriptor, the JSON shape) →
+  `browser/overlay/src/hook/browser/channel/hook_channel.{h,cc}` (the browser
+  process makes the call) → `hook_page_handler.cc` (JSON → mojom) →
+  `common/hook.mojom` → `browser/ui/transport.ts` (the `ChatTransport`) →
+  `pnpm browser:smoke --channel` with Hook running. The token is a credential:
+  never log it, never send it to a page, and keep the routes read-and-send only —
+  a channel that can rename or delete is a second window into the account. A
+  `chrome://` renderer cannot make these requests itself (Chromium kills it for
+  "Incorrect scheme"), so the call stays in the browser process, and the
+  descriptor is read on a thread pool because the page asks during startup, where
+  blocking work is a DCHECK.
+
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
   `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`
   + `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`

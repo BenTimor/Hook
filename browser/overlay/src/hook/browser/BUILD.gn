@@ -7,8 +7,22 @@
 
 source_set("browser") {
   sources = [
+    "account/hook_paths.cc",
+    "account/hook_paths.h",
+    "channel/hook_channel.cc",
+    "channel/hook_channel.h",
+    "navigation/hook_sign_in_throttle.cc",
+    "navigation/hook_sign_in_throttle.h",
     "tabs/hook_tabs.cc",
     "tabs/hook_tabs.h",
+    "ui/views/hook_side_panel.cc",
+    "ui/views/hook_side_panel.h",
+    "ui/webui/hook_data_source.cc",
+    "ui/webui/hook_data_source.h",
+    "ui/webui/hook_page_handler.cc",
+    "ui/webui/hook_page_handler.h",
+    "ui/webui/hook_panel_ui.cc",
+    "ui/webui/hook_panel_ui.h",
     "ui/webui/hook_ui.cc",
     "ui/webui/hook_ui.h",
   ]
@@ -24,12 +38,23 @@ source_set("browser") {
     # BrowserWindowInterface is the public leaf interface, and the tab strip
     # headers carry the model the live tab list reads.
     "//chrome/browser/ui/browser_window",
+    # The side panel: the registry and entry a window owns, the WebUI view that
+    # hosts our top-chrome page, and the top-chrome controller/base config.
+    "//chrome/browser/ui/side_panel",
     "//chrome/browser/ui/tabs:tab_strip",
+    "//chrome/browser/ui/views/side_panel",
+    "//chrome/browser/ui/webui/top_chrome",
     "//components/tabs:public",
+    "//components/strings",
     "//content/public/common",
     "//hook/common:mojom",
     "//hook/resources:resources",
     "//mojo/public/cpp/bindings",
+    "//net",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
+    "//ui/base",
+    "//ui/views",
     "//url",
   ]
 }

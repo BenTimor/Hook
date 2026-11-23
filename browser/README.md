@@ -69,9 +69,19 @@ pnpm browser:ui:dev              # the same panel in an ordinary browser, no tre
 `smoke.mjs` is the check that the seam actually reached a window: it launches
 `out/Dev/chrome.exe` with a throwaway profile and DevTools on a loopback port,
 opens `chrome://hook`, and asserts the tab list, the dock at 380px and one send
-round trip. `--shot <png>` saves a screenshot, `--chrome <path>` points it at
-another binary. Run it **after** a build, never during one: it maps DLLs out of
-`out/` and the linker cannot overwrite a file that is mapped.
+round trip.
+
+| flag | what it adds |
+| --- | --- |
+| `--side-panel` | opens the dock's side panel (`--hook-side-panel`) and asserts `chrome://hook-panel` drew it |
+| `--signin-state in\|out` | forces the sign-in gate's answer and asserts the matching behaviour — refused and redirected, or committed |
+| `--channel` | asserts the real backend: the page's mojom sees a running Hook app's channel, lists its chats, reads one transcript, and the backend refuses an empty message |
+| `--shot <png>` | saves a screenshot (`-panel.png` for the side panel) |
+| `--chrome <path>` | points it at another binary |
+
+Run it **after** a build, never during one: it maps DLLs out of `out/` and the
+linker cannot overwrite a file that is mapped. `--channel` needs the Hook app
+running on this machine; every other flag runs alone.
 
 ## The dock bundle
 
@@ -124,6 +134,21 @@ transport the browser uses. Change `packages/chat` or `packages/ui`, watch it
 there, and run `pnpm browser:ui` when it looks right — the bundle it writes is
 what the pak carries.
 
+`http://localhost:5173/transport-test.html` is the check for the dock's live text,
+with no browser and no model: it drives `channelTransport` with a fake handler and
+feeds the events through the dock's own reducer rules. It exists because a reply
+that is drawn twice is not a rendering detail — a poll used to report a new chunk
+*and* the end of the turn, and the dock's frame-coalesced delta then landed after
+`done` had already replaced the thread. Two rules keep that from coming back, and
+the page fails loudly if either is broken:
+
+- a delta only ever carries text the dock does not have yet (`shown`, seeded from
+  the `started` snapshot);
+- a delta only ever appends to the reply itself: when the reply appears after the
+  send's snapshot, the transport sends `started` again rather than a delta that
+  would glue the answer onto the user's message;
+- a poll that finds the turn over emits `done` **instead of** a delta.
+
 Build `chrome`, never `all`: `all` drags in every test binary.
 
 ## Traps
@@ -173,24 +198,71 @@ quarter behind means shipping a vulnerable browser, so this is an obligation.
 ## Status
 
 Step 0 of the POC plan is done on Windows: the tree builds at tag `159.0.8154.13`
-and a stock Chromium runs. Step 1's seam is in on both halves — `chrome://hook`,
-served from our own `hook_resources.pak` and drawn by
-`overlay/src/hook/resources/`, and the live tab list read over mojom through a
-binder registered by the fourth patch. The signed-out navigation throttle is the
-rest of Step 1.
+and `out/Dev` is a ninja build (`use_siso = false`, because siso cannot read the
+overlay junction). A C++ change is an `autoninja -C out/Dev chrome` away — minutes,
+not hours — and a WebUI-only change is a resource repack.
 
-Step 2's first surface landed with the ninja rebuild: the chat dock from
-`packages/chat` at 380px beside the seam page (`browser/ui/`, `pnpm browser:ui`).
-It is a pane in `chrome://hook` rather than a Views side-panel entry; the
-`SidePanelEntry` host and the New Tab page are next.
+Step 1 is complete, in `overlay/src/hook/` and eight small patches:
 
-`out/Dev` is a ninja build now (`use_siso = false`, because siso cannot read the
-overlay junction). A C++ change is an `autoninja -C out/Dev chrome` away, and a
-WebUI-only change still needs nothing but a resource repack.
+- `chrome://hook`, served from our own `hook_resources.pak`;
+- the live tab list over mojom (`common/hook.mojom`, `browser/tabs/`), registered
+  by the binder patch;
+- the sign-in gate (`browser/navigation/hook_sign_in_throttle.cc`): while the
+  machine has no account, a navigation to the web is cancelled and the tab is sent
+  to `chrome://hook`. It reads the shared account file on a thread pool, never
+  writes it, and `--hook-signin-state=in|out` makes it provable on a signed-in
+  machine.
 
-`pnpm browser:smoke` is the check that all of that reached a window: it launches
-the built browser with a throwaway profile, opens `chrome://hook` over the
-DevTools protocol, and asserts the live tab list, the dock at 380px, the composer
-and one send round trip. It passes at tag `159.0.8154.13`, so the answer to the
-POC's question — does our overlay reach Chromium, and can the Hook chat surface
-live inside it — is yes.
+Step 2's first surfaces are in: the dock from `packages/chat` at 380px, on
+`packages/ui` tokens, built by `pnpm browser:ui` and served from the pak — as a
+pane of `chrome://hook` and as a real side-panel entry (`chrome://hook-panel`,
+`browser/ui/views/`, entry id + action item patches). `--hook-side-panel` opens
+it, and the toolbar's pin keeps it. The New Tab page and the shared sign-in card
+are what is left of Step 2.
+
+Step 3's cheap proof is in, and so is page context: a **running Hook app**
+publishes a loopback channel (`crates/hook-core/src/channel.rs`) beside the account
+file, and the browser process reads it for the page. `pnpm browser:smoke --channel`
+against a running Hook app is the demonstration: it listed 31 real conversations,
+read an 11-message transcript, and got the backend's refusal for an empty message.
+
+`pnpm browser:smoke` passes for all of it, so the answer to the POC's question —
+does our overlay reach Chromium, and can the Hook chat surface live inside it — is
+yes.
+
+## The channel
+
+The dock's real backend is a *running* Hook app, not a server: `hook-core`'s
+`channel.rs` binds an ephemeral loopback port and writes
+`%APPDATA%pp.hookrowser-channel.json` (`port`, `token`, `pid`, `product`,
+`version`) beside the shared account file, atomically and `0600` on unix. Quitting
+Hook removes it; a killed process leaves it behind, which is why "available" means
+**`/health` answered**, not "a file exists".
+
+Routes, all requiring `Authorization: Bearer <token>` except `/health`: `/chats`,
+`/chats/{id}`, `POST /chats`, `POST /chats/{id}/send`, `POST /chats/{id}/stop`.
+Nothing is served while signed out, and nothing writes a setting, a title or a
+delete: the channel reads and sends, and the window keeps the rest.
+
+Three constraints decided the shape, and each cost an attempt to learn:
+
+1. **The page cannot make the call.** A `chrome://` renderer is terminated by
+   Chromium for a cross-scheme request (`Incorrect scheme`) — not blocked, killed.
+   So `hook/browser/channel/hook_channel.cc` makes it in the browser process and
+   the answer travels over mojom (`hook_page_handler.cc`). The token therefore
+   never reaches the page.
+2. **The UI thread may not read the file at startup.** The page asks for the
+   channel as soon as it loads, which can be inside the browser's startup tasks
+   where blocking work is a `DCHECK`. The descriptor is read on a thread pool.
+3. **`DownloadToString` has a 5 MB cap** (`kMaxBoundedStringDownloadSize`) and
+   `DCHECK`s above it, so the reply bound is that constant, not a hopeful number.
+
+The transport (`browser/ui/transport.ts`) polls `getChat` every ~350 ms while the
+chat says `busy`, and emits the dock's `delta` events from the text that grew.
+That is enough for the typing to read as live, and it leaves the dock's event
+contract untouched for the day a real stream (or the sidecar) arrives.
+
+The sidecar this stands in for is Step 3's shipping shape: auth and the turn out
+of process, published at the same routes, with `browser/ui/transport.ts` as the
+only file that changes. `docs/browser-poc-plan.md`, "What shipping needs", lists
+the rest.

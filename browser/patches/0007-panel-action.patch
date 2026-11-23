@@ -1,0 +1,57 @@
+diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
+index 0756115e09..dda8389fbb 100644
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -285,6 +285,7 @@
+ #define IDC_CHROME_ENTERPRISE_RELEASE_NOTES 40305
+ #define IDC_SHOW_TTC_MENU 40306
+ #define IDC_OPEN_OTHER_DEVICE_TAB 40307
++#define IDC_SHOW_HOOK_CHAT_SIDE_PANEL 40308
+ 
+ // Spell-check
+ #define IDC_SPELLCHECK_SUGGESTION_0     41000
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 49ae288c45..af336c4beb 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -8943,6 +8943,9 @@ Keep your key file in a safe place. You will need it to create new versions of y
+       <message name="IDS_SIDE_PANEL_TOOLBAR_BUTTON_CXMENU_PIN" desc="The label of the context menu item for pinning a side panel toolbar button.">
+         Pin
+       </message>
++      <message name="IDS_HOOK_CHAT_TITLE" desc="Title of Hook's chat side panel entry.">
++        Hook
++      </message>
+       <message name="IDS_SIDE_PANEL_HEADER_UNPIN_BUTTON_TOOLTIP" desc="The tooltip for unpinning a side panel toolbar button.">
+         Unpin from toolbar
+       </message>
+diff --git a/chrome/browser/ui/actions/chrome_action_id.h b/chrome/browser/ui/actions/chrome_action_id.h
+index 04e31117fc..45bb83a404 100644
+--- a/chrome/browser/ui/actions/chrome_action_id.h
++++ b/chrome/browser/ui/actions/chrome_action_id.h
+@@ -346,6 +346,7 @@
+   E(kActionSidePanelShowContextualTasks) \
+   E(kActionSidePanelShowHistoryCluster, IDC_SHOW_HISTORY_CLUSTERS_SIDE_PANEL) \
+   E(kActionSidePanelShowHistory, IDC_SHOW_HISTORY_SIDE_PANEL) \
++  E(kActionSidePanelShowHookChat, IDC_SHOW_HOOK_CHAT_SIDE_PANEL) \
+   E(kActionSidePanelShowLens) \
+   E(kActionSidePanelShowLensOverlayResults) \
+   E(kActionSidePanelShowReadAnything) \
+diff --git a/chrome/browser/ui/browser_actions.cc b/chrome/browser/ui/browser_actions.cc
+index 66af63af26..23e4504bf4 100644
+--- a/chrome/browser/ui/browser_actions.cc
++++ b/chrome/browser/ui/browser_actions.cc
+@@ -550,6 +550,14 @@ void BrowserActions::InitializeSidePanelActions() {
+                                                         : kReadingListOldIcon,
+                       kActionSidePanelShowReadingList, bwi, true)
+           .Build());
++  root_action_item_->AddChild(
++      SidePanelAction(SidePanelEntryId::kHookChat, IDS_HOOK_CHAT_TITLE,
++                      IDS_HOOK_CHAT_TITLE,
++                      features::IsRoundedIconsEnabled()
++                          ? vector_icons::kChatIcon
++                          : vector_icons::kChatOldIcon,
++                      kActionSidePanelShowHookChat, bwi, true)
++          .Build());
+   if (profile->IsRegularProfile() &&
+       base::FeatureList::IsEnabled(features::kTabsFromOtherDevicesSidePanel)) {
+     root_action_item_->AddChild(

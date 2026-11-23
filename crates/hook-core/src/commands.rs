@@ -36,6 +36,8 @@ pub struct AppState {
     pub auth: Arc<AuthStore>,
     /// Background conversation and project sync.
     pub sync: Arc<crate::sync::SyncEngine>,
+    /// The loopback surface Hook Browser reads (channel.rs).
+    pub channel: Arc<crate::channel::Channel>,
     /// The live account connection: presence, remote commands and chat fan-out.
     pub relay: Arc<crate::relay::RelayClient>,
     /// Chats a controller is driving on this machine. Their live turn and agent
@@ -115,19 +117,26 @@ pub async fn ws_request(
 /// open document, selected text). The next chat request carries it as context.
 #[tauri::command]
 pub fn set_chat_context(state: State<'_, Arc<AppState>>, context: String) {
-    let trimmed = context.trim();
-    let value = if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.chars().take(4000).collect::<String>())
-    };
-    *lock(&state.context) = value;
+    state.set_chat_context(&context);
 }
 
 impl AppState {
     /// The live context block, if the product set one.
     pub fn chat_context(&self) -> Option<String> {
         lock(&self.context).clone()
+    }
+
+    /// Sets the trailing context frame (the browser's active tab, Workspace's
+    /// board). Trimmed and capped: it is appended to every turn, so it must not
+    /// be able to eat the prompt.
+    pub fn set_chat_context(&self, context: &str) {
+        let trimmed = context.trim();
+        let value = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.chars().take(4000).collect::<String>())
+        };
+        *lock(&self.context) = value;
     }
 }
 
@@ -745,20 +754,65 @@ pub async fn send_message(
             .save_image(&chat.meta.id, &mime, &bytes, image.width, image.height, Some("user"))?;
         message.attachments.push(attachment);
     }
+    commit_and_start(state.inner(), &mut chat, message)
+}
+
+/// Append `message` to `chat`, save it, and start the turn. The window and the
+/// browser channel both end here, so a message from either looks the same in the
+/// store and in the sync queue.
+pub(crate) fn commit_and_start(
+    state: &Arc<AppState>,
+    chat: &mut Chat,
+    message: Message,
+) -> Result<String, String> {
     chat.messages.push(message);
-    state.store.save(&mut chat)?;
+    state.store.save(chat)?;
     crate::turn::trace("send_message saved");
     state.sync.wake();
     crate::turn::trace("sync woken");
 
-    turn::kick(state.inner().clone(), chat.meta.id.clone());
+    turn::kick(state.clone(), chat.meta.id.clone());
     // Analytics only: the request has already left, and a personal endpoint is
     // the one thing Hook's own metering never sees.
     if state.settings.custom_provider().is_some() && state.auth.required() {
-        crate::analytics::track(state.inner(), "byok_turn");
+        crate::analytics::track(state, "byok_turn");
     }
     crate::turn::trace("turn kicked");
-    Ok(chat.meta.id)
+    Ok(chat.meta.id.clone())
+}
+
+/// A message typed in Hook Browser's dock: text only, an ordinary chat, and the
+/// same code path the window uses.
+pub(crate) fn send_chat_message(
+    state: &Arc<AppState>,
+    chat_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("Message is empty".into());
+    }
+    let mut chat = state.store.load(chat_id)?;
+    if crate::coding::is_coding(&chat) {
+        return Err("This conversation belongs to a coding agent.".into());
+    }
+    if chat.meta.remote {
+        return Err("This conversation is owned by another machine.".into());
+    }
+    chat.meta.updated_at = now_ms();
+    if chat.messages.is_empty() && chat.meta.title == DEFAULT_TITLE {
+        chat.meta.title = derive_title(text);
+    }
+    commit_and_start(state, &mut chat, Message::new("user", text, "complete"))?;
+    Ok(())
+}
+
+/// Cancel a chat's stream, without the coding/remote branches `stop_stream`
+/// needs: the channel only serves ordinary chats.
+pub(crate) fn stop_chat_turn(state: &Arc<AppState>, chat_id: &str) {
+    if let Some(token) = lock(&state.streams).get(chat_id).cloned() {
+        token.cancel();
+    }
 }
 
 fn coding_needs_plan() -> &'static str {

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hook dock transport — regression check</title>
+    <style>
+      body {
+        background: #f5efe5;
+        color: #24241e;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 13px;
+        padding: 20px;
+      }
+
+      pre {
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 id="verdict">running…</h1>
+    <pre id="detail"></pre>
+    <script type="module">
+      import { runTransportTest } from "./transport-test.ts";
+
+      const result = await runTransportTest();
+      document.getElementById("verdict").textContent = result.ok ? "PASS" : "FAIL";
+      document.getElementById("detail").textContent = JSON.stringify(result, null, 2);
+      document.title = result.ok ? "PASS" : "FAIL";
+    </script>
+  </body>
+</html>

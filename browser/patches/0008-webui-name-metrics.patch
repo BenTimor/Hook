@@ -1,0 +1,24 @@
+diff --git a/tools/metrics/histograms/metadata/page/histograms.xml b/tools/metrics/histograms/metadata/page/histograms.xml
+index 249b5835ce..761a97efea 100644
+--- a/tools/metrics/histograms/metadata/page/histograms.xml
++++ b/tools/metrics/histograms/metadata/page/histograms.xml
+@@ -1097,6 +1097,7 @@ chromium-metrics-reviews@google.com.
+   <variant name=".Feedback"/>
+   <variant name=".HistoryClustersSidePanel"/>
+   <variant name=".HistorySidePanel"/>
++  <variant name=".HookPanel"/>
+   <variant name=".LensOverlayUntrusted"/>
+   <variant name=".LensSidePanelUntrusted"/>
+   <variant name=".MakoUntrusted"/>
+diff --git a/tools/metrics/histograms/metadata/ui/histograms.xml b/tools/metrics/histograms/metadata/ui/histograms.xml
+index 31e7e4d785..fd65681f27 100644
+--- a/tools/metrics/histograms/metadata/ui/histograms.xml
++++ b/tools/metrics/histograms/metadata/ui/histograms.xml
+@@ -191,6 +191,7 @@ chromium-metrics-reviews@google.com.
+   <variant name=".Feedback"/>
+   <variant name=".HistoryClustersSidePanel"/>
+   <variant name=".HistorySidePanel"/>
++  <variant name=".HookPanel"/>
+   <variant name=".LensOverlayUntrusted"/>
+   <variant name=".LensSidePanelUntrusted"/>
+   <variant name=".MakoUntrusted"/>
