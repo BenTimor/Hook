@@ -306,6 +306,7 @@ mod tests {
             auth: AuthConfig::default(),
             coding: CodingConfig::default(),
             agent: Default::default(),
+            compact: Default::default(),
             memory: Default::default(),
             update: Default::default(),
         }

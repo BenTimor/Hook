@@ -144,11 +144,28 @@ bash.
   and nothing else, and everything volatile (coding-agent notes, memory frames,
   the live hint, window context) is a message appended after it. See
   "Never rewrite the request prefix" below before touching `system_message`,
-  `build_history` or `ensure_memory_frames`. `emit` is the one way an event
-  reaches the window; for a chat a controller is watching it publishes to the
-  relay too, coalesced to one frame per 400 ms. Never publish a delta per token:
-  the server closes a host that outruns its frame budget, and the frames it
-  missed are never replayed.
+  `build_history` or `ensure_memory_frames`. Compaction is the one deliberate
+  exception: `compact.rs` folds the older turns into a hidden summary once the
+  chat crosses `[compact] at`, and `build_history` replays from it.
+  `emit` is the one way an event reaches the window; for a chat a controller is
+  watching it publishes to the relay too, coalesced to one frame per 400 ms.
+  Never publish a delta per token: the server closes a host that outruns its
+  frame budget, and the frames it missed are never replayed.
+- `crates/hook-core/src/compact.rs` — folding a long chat into a summary
+  (`[compact]` in the TOML): the token estimate, the share-of-window test, the
+  cut (always on a user turn, so no call is separated from its result), the
+  summary request and the hidden `role: "compaction"` message it writes. A
+  provider that refuses the request as too long triggers one compaction and a
+  retry (`looks_like_overflow`), because the share is only an estimate of the
+  model's window. The
+  message sits where the cut happened and is the one place the request prefix is
+  rewritten on purpose; `turn.rs::build_history` replays from it and starts every
+  request with its summary. `context_start` is the single definition of "what
+  the model still sees" — images and memory frames use it too.
+- `crates/hook-core/src/slash.rs` — the composer's commands: the registry
+  (`COMMANDS`), the parser, and the runner. `slash_commands` sends the list to
+  the window (empty unless advanced mode), and `send_message` intercepts a message
+  that parses, so typing a command the menu hides is impossible.
 - `crates/hook-core/src/memory.rs` — what the chat agent remembers between
   conversations: entries (text, kind, pin, source chat), the pinned block, the
   frames that carry it into a chat, `memory_search`, and per-account files in
@@ -246,7 +263,10 @@ bash.
   because its engine is not given that rule.
   `apps/chat/src/components/{Thread,Composer}.tsx` are the thin store adapters;
   a product supplies the pictures (`renderExtras`) and what Report means
-  (`onReport`).
+  (`onReport`). A `compaction` message is hidden and drawn by `CompactionItem` in
+  advanced mode only; the simple view shows the activity line while it runs.
+  `Composer` takes a `commands` list for its `/` menu, and the backend decides
+  what is in it.
   `apps/chat/src/components/{AgentTree,AgentInspector}.tsx` are the sidebar tree
   and the read-only transcript drawer. `chat.css` holds their styles and
   `dock.css` the 380px overrides, so both apps look the same.
@@ -483,6 +503,17 @@ Changing one side of a boundary is the most common way to break this repo.
   `analytics::track(state, kind)` at the call site. Only the kind, plan, product
   and app version travel: no message, path, endpoint or key. `--events` in
   `scripts/waitlist-admin.sh` reads them.
+- **New slash command:** one entry in `COMMANDS` (`slash.rs`) and one arm in
+  `slash::run`. Nothing else: `slash_commands` filters by advanced mode, the
+  composer renders whatever it returns, and `send_message` accepts exactly what
+  the registry declares. A command that changes a chat answers like a message
+  (`send_message` returns the chat id) and emits the same `StreamEvent`s, so the
+  window needs no branch of its own. Commands are advanced-mode only and the
+  backend refuses them even when a stale window offers one (the window's gating
+  is cosmetic). `/compact` runs
+  `turn::kick_compact` for a model chat and `coding::compact` for a direct one
+  (a live pi over `compact`; a settled one started again on its session), and a
+  remote cached chat sends `coding.compact` to its owner.
 - **New chat-agent tool:** schema + impl in `tools.rs`, dispatch in `turn.rs`,
   and the prompt in `turn.rs` (`system_prompt`) if the agent must know about it.
   Give it a line in `activity_label` (`turn.rs`): that is what the chat says it

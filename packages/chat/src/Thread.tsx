@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 
+import { CompactionItem } from "./CompactionItem";
 import { MessageItem } from "./MessageItem";
 import { TurnActivity } from "./TurnActivity";
 import { WorkGroup } from "./WorkSteps";
@@ -89,7 +90,11 @@ export function Thread<M extends ChatMessage>({
     lastPart?.kind === "text" &&
     lastPart.message.status === "streaming" &&
     lastPart.text.trim() !== "";
-  const showActivity = activity !== undefined && !textArriving;
+  // While a compaction is written, advanced mode already draws the fold itself;
+  // a second "Thinking" line under it would say the same thing twice.
+  const compacting =
+    last?.type === "compaction" && last.message.status === "streaming";
+  const showActivity = activity !== undefined && !textArriving && !compacting;
 
   const lastAnswerKey = useMemo(() => {
     for (let i = blocks.length - 1; i >= 0; i -= 1) {
@@ -139,6 +144,10 @@ export function Thread<M extends ChatMessage>({
     >
       <div className="thread-inner" ref={innerRef}>
         {blocks.map((block) => {
+          if (block.type === "compaction") {
+            return <CompactionItem key={block.key} message={block.message} />;
+          }
+
           if (block.type === "message") {
             return (
               <MessageItem

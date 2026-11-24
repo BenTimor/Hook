@@ -766,6 +766,14 @@ pub async fn send_message(
         None => Chat::new(),
     };
 
+    // A command is not a message: the backend runs it and the window sees the
+    // same events a turn would produce. `/unknown` is still plain text, so a
+    // user who starts a sentence with a slash reaches the model as before.
+    if let Some(call) = crate::slash::parse(&text) {
+        crate::slash::run(&app_state, &chat, call).await?;
+        return Ok(chat.meta.id);
+    }
+
     // A coding-agent chat is a conversation with `pi`, not a model turn. The
     // same composer and the same command drive both, so the window never has
     // to know which kind of conversation it is looking at.
@@ -1193,7 +1201,7 @@ fn require_host(state: &AppState, device_id: &str) -> Result<String, String> {
     Ok(device.name.clone())
 }
 
-async fn remote_rpc(
+pub(crate) async fn remote_rpc(
     state: &AppState,
     device_id: &str,
     method: &str,
@@ -1418,6 +1426,14 @@ fn settings_view(state: &AppState) -> SettingsView {
 #[tauri::command]
 pub fn get_settings(state: State<'_, Arc<AppState>>) -> Result<SettingsView, String> {
     Ok(settings_view(&state))
+}
+
+/// The commands the composer may offer. Empty unless advanced mode is on, so a
+/// simple-mode window never shows a menu it cannot use; `send_message` refuses
+/// them independently.
+#[tauri::command]
+pub fn slash_commands(state: State<'_, Arc<AppState>>) -> Vec<crate::slash::CommandView> {
+    crate::slash::list(state.settings.advanced_mode())
 }
 
 #[tauri::command]

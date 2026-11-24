@@ -41,7 +41,17 @@ export interface AnswerBlock<M extends ChatMessage> {
   live: boolean;
 }
 
-export type ThreadBlock<M extends ChatMessage> = MessageBlock<M> | AnswerBlock<M>;
+/** A compaction: the hidden summary the turns above it were folded into. */
+export interface CompactionBlock<M extends ChatMessage> {
+  type: "compaction";
+  key: string;
+  message: M;
+}
+
+export type ThreadBlock<M extends ChatMessage> =
+  | MessageBlock<M>
+  | AnswerBlock<M>
+  | CompactionBlock<M>;
 
 interface BuildOptions {
   /** Advanced mode: hidden tool traffic and intermediate messages are shown. */
@@ -91,7 +101,8 @@ export function buildBlocks<M extends ChatMessage>(
         (message) =>
           !message.hidden &&
           message.role !== "system" &&
-          message.role !== "tool",
+          message.role !== "tool" &&
+          message.role !== "compaction",
       )
       .map((message): ThreadBlock<M> => {
         if (message.role === "user") {
@@ -112,11 +123,16 @@ export function buildBlocks<M extends ChatMessage>(
   }
 
   // The simple view drops hidden traffic before grouping; the advanced one
-  // keeps it and never draws a system message or a hidden user message.
+  // keeps it and never draws a system message or a hidden user message. A
+  // compaction is hidden either way: the simple view must not show that the
+  // context was summarized, advanced mode draws it as its own block.
   const shown = messages.filter((message) =>
     options.showDetails
       ? message.role !== "system" && (message.role !== "user" || !message.hidden)
-      : !message.hidden && message.role !== "system" && message.role !== "tool",
+      : !message.hidden &&
+        message.role !== "system" &&
+        message.role !== "tool" &&
+        message.role !== "compaction",
   );
 
   const blocks: ThreadBlock<M>[] = [];
@@ -130,6 +146,11 @@ export function buildBlocks<M extends ChatMessage>(
   };
 
   for (const message of shown) {
+    if (message.role === "compaction") {
+      flush(false);
+      blocks.push({ type: "compaction", key: message.id, message });
+      continue;
+    }
     if (message.role === "user") {
       flush(false);
       blocks.push({ type: "message", key: message.id, message });

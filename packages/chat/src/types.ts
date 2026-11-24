@@ -8,7 +8,7 @@ export interface ChatToolCall {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "system" | "tool";
+  role: "user" | "assistant" | "system" | "tool" | "compaction";
   content: string;
   status?: string;
   error?: string | null;
@@ -18,6 +18,30 @@ export interface ChatMessage {
   toolCalls?: ChatToolCall[];
   /** Set on `role: "tool"` results: the call they belong to. */
   toolCallId?: string;
+  /** Set on `role: "compaction"`: what the summary folded away. */
+  compaction?: ChatCompaction;
+}
+
+/**
+ * What one compaction folded. A compaction message is hidden: the simple view
+ * never draws it, and advanced mode shows the fold it is.
+ */
+export interface ChatCompaction {
+  /** Messages folded into the summary; `0` when the engine keeps the count. */
+  messages: number;
+  tokensBefore: number;
+  tokensAfter: number;
+}
+
+/** One command the composer may offer, as the backend describes it. */
+export interface SlashCommand {
+  /** Without the slash: `compact`. */
+  name: string;
+  summary: string;
+  /** How it is typed, argument hint included: `/compact [what to keep]`. */
+  usage: string;
+  /** `"any"` or `"coding"`. */
+  scope?: string;
 }
 
 /** A picture staged in the composer, already downscaled. */

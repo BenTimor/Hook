@@ -20,6 +20,9 @@ pub struct HarnessConfig {
     /// Chat-agent behaviour. Optional section.
     #[serde(default)]
     pub agent: AgentConfig,
+    /// When a long chat is summarized so its context stays small.
+    #[serde(default)]
+    pub compact: CompactConfig,
     /// What the chat agent remembers between conversations. Optional section.
     #[serde(default)]
     pub memory: MemoryConfig,
@@ -72,6 +75,65 @@ impl AgentConfig {
             .map(str::trim)
             .filter(|p| !p.is_empty())
     }
+}
+
+/// Compacting a chat's context. A conversation that keeps growing is replayed in
+/// every request, so past a share of the window its older turns are summarized
+/// into one hidden message and only the recent ones are sent whole.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompactConfig {
+    /// Summarize automatically. Off leaves `/compact` as the only way.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Share of the context window at which a chat is compacted (0.0–1.0).
+    /// 0.3 means the older turns go once a request would spend 30% of the
+    /// window on them.
+    #[serde(default = "default_compact_at")]
+    pub at: f32,
+    /// Recent user turns kept verbatim after the summary. The cut always lands
+    /// on a user message, so no tool call is separated from its result.
+    #[serde(default = "default_keep_turns")]
+    pub keep_turns: usize,
+    /// The window the share is measured against. 0 uses `[coding]
+    /// context_window`, which is also what the engine is told the model takes.
+    #[serde(default)]
+    pub window: u64,
+}
+
+impl Default for CompactConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            at: default_compact_at(),
+            keep_turns: default_keep_turns(),
+            window: 0,
+        }
+    }
+}
+
+impl CompactConfig {
+    /// The window to measure against: the build's own number unless the section
+    /// overrides it. Zero is never a window.
+    pub fn window(&self, coding: &CodingConfig) -> u64 {
+        if self.window > 0 {
+            self.window
+        } else {
+            coding.context_window
+        }
+    }
+
+    /// The share, clamped to something that can actually fire.
+    pub fn share(&self) -> f32 {
+        self.at.clamp(0.05, 0.95)
+    }
+}
+
+fn default_compact_at() -> f32 {
+    0.30
+}
+
+fn default_keep_turns() -> usize {
+    3
 }
 
 /// Long-term memory. The caps are budgets, not preferences: the pinned block is

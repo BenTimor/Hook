@@ -24,7 +24,8 @@ use serde_json::Value;
 use crate::agent::{AgentInfo, STATE_NEEDS_INPUT};
 use crate::commands::AppState;
 use crate::store::{
-    now_ms, strip_verbatim, Chat, ChatMeta, Message, Store, ToolCallRecord, KIND_CODING,
+    now_ms, strip_verbatim, Chat, ChatMeta, Compaction, Message, Store, ToolCallRecord,
+    KIND_CODING,
 };
 use crate::turn::{self, StreamEvent};
 
@@ -234,6 +235,47 @@ pub fn send_with_id(
     }
 }
 
+/// Fold this conversation's older turns into a summary.
+///
+/// pi owns the transcript, so this is pi's own compaction: a live agent is asked
+/// over RPC, and a settled one (or one whose process is gone) is started again
+/// on its session just to compact it. The summary pi writes is shown in advanced
+/// mode when the `compaction_end` record arrives.
+pub fn compact(
+    state: &Arc<AppState>,
+    chat: &Chat,
+    instructions: Option<&str>,
+) -> Result<(), String> {
+    let Some(folder) = chat.meta.project_path.clone() else {
+        return Err("This coding agent has no folder. Choose one first.".into());
+    };
+    match state.agents.for_chat(&chat.meta.id) {
+        Some(info) if info.is_live() => {
+            state.agents.compact(&info.id, instructions)?;
+        }
+        _ => {
+            state.agents.start_compact(
+                &chat.meta.id,
+                &folder,
+                Some(chat.meta.title.as_str()),
+                chat.meta.session_id.as_deref(),
+                instructions,
+            )?;
+        }
+    }
+    // The engine's own records take it from here; this is what the window says
+    // while the summary is being written.
+    turn::emit(
+        state,
+        &chat.meta.id,
+        StreamEvent::Activity {
+            label: Some("Compacting the conversation…".into()),
+        },
+    );
+    state.sync.wake();
+    Ok(())
+}
+
 fn start(
     state: &Arc<AppState>,
     chat: &mut Chat,
@@ -370,6 +412,16 @@ pub fn on_record(state: &Arc<AppState>, chat_id: &str, agent_id: &str, record: &
             }
         }
         "tool_execution_end" => tool_result(state, chat_id, record),
+        "compaction_start" => {
+            turn::emit(
+                state,
+                chat_id,
+                StreamEvent::Activity {
+                    label: Some("Compacting the conversation…".into()),
+                },
+            );
+        }
+        "compaction_end" => compaction_end(state, chat_id, record),
         "agent_settled" => {
             // Everything pi wrote is in the chat by now.
             let info = state.agents.get(agent_id);
@@ -401,6 +453,58 @@ pub fn on_record(state: &Arc<AppState>, chat_id: &str, agent_id: &str, record: &
             }
         }
         _ => {}
+    }
+}
+
+/// pi finished (or failed) a compaction. A manual one is its own turn and ends
+/// the conversation's activity; an automatic one happens inside a run that is
+/// still going, so it must not emit a `Done` of its own.
+fn compaction_end(state: &Arc<AppState>, chat_id: &str, record: &Value) {
+    let manual = record.get("reason").and_then(Value::as_str) == Some("manual");
+    if let Some(error) = record
+        .get("errorMessage")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+    {
+        if manual {
+            close(state, chat_id, "complete");
+            if let Ok(mut chat) = state.store.load(chat_id) {
+                let _ = fail(state, &mut chat, error);
+            }
+        }
+        return;
+    }
+    let Some(result) = record.get("result") else {
+        return;
+    };
+    let summary = result
+        .get("summary")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if summary.is_empty() {
+        return;
+    }
+    let Ok(mut chat) = state.store.load(chat_id) else {
+        return;
+    };
+    let mut message = Message::compaction(&summary);
+    message.compaction = Some(Compaction {
+        // pi keeps the transcript; it counts tokens, not Hook's messages.
+        messages: 0,
+        tokens_before: result.get("tokensBefore").and_then(Value::as_u64).unwrap_or(0),
+        tokens_after: result
+            .get("estimatedTokensAfter")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    });
+    chat.messages.push(message);
+    chat.meta.updated_at = now_ms();
+    let _ = state.store.save(&mut chat);
+    if manual {
+        close(state, chat_id, "complete");
     }
 }
 

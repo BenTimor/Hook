@@ -25,6 +25,7 @@ import type {
   ReportRequest,
   SearchHit,
   SettingsView,
+  SlashCommand,
   StreamEvent,
   SyncEvent,
   SyncView,
@@ -341,6 +342,10 @@ export const api = {
 
   getSettings: (): Promise<SettingsView> =>
     isTauri() ? invoke<SettingsView>("get_settings") : mock.getSettings(),
+
+  /** Commands the composer may offer. Empty unless advanced mode is on. */
+  slashCommands: (): Promise<SlashCommand[]> =>
+    isTauri() ? invoke<SlashCommand[]>("slash_commands") : mock.slashCommands(),
 
   setProjectsDir: (path: string): Promise<SettingsView> =>
     isTauri()

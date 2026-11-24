@@ -103,11 +103,14 @@ renderer does not learn that the run is remote.
   `agent.list`, `projects.list`, `folders.browse`, `folders.pin`,
   `sessions.list`, `coding.create`,
   `coding.fetch`, `coding.send`, `coding.stop`, `coding.answer`,
-  `coding.rename`, `coding.delete`, `projects.create`, `preview.open` are the
-  method names v1 uses.
+  `coding.rename`, `coding.delete`, `coding.compact`, `projects.create`,
+  `preview.open` are the method names v1 uses.
 - A `coding.*` method is handled by the machine that owns the direct coding
   chat. `coding.fetch` returns the whole conversation and marks the chat as
-  watched, so its records are mirrored from then on. `coding.create` accepts
+  watched, so its records are mirrored from then on. `coding.compact` asks the
+  host to fold the engine's session into a summary (`instructions` is optional
+  free text for what to keep); a run in progress is refused, because pi aborts
+  it before compacting. `coding.create` accepts
   either a `project` (resolved inside the host's projects folder) or a `folder`
   (a full path the controller reached through `folders.browse`): the host
   resolves and validates the folder in both cases, and a folder outside the

@@ -133,6 +133,14 @@ struct CodingAnswerParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct CodingCompactParams {
+    chat_id: String,
+    #[serde(default)]
+    instructions: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CodingRenameParams {
     chat_id: String,
     title: String,
@@ -172,6 +180,7 @@ pub async fn handle(
         "coding.fetch" => coding_fetch(state, decode(params)?),
         "coding.send" => coding_send(state, decode(params)?),
         "coding.stop" => coding_stop(state, decode(params)?),
+        "coding.compact" => coding_compact(state, decode(params)?),
         "coding.answer" => coding_answer(state, decode(params)?),
         "coding.rename" => coding_rename(state, decode(params)?),
         "coding.delete" => coding_delete(state, decode(params)?),
@@ -734,6 +743,23 @@ fn coding_send(state: &Arc<AppState>, params: CodingSendParams) -> Result<Value,
     crate::coding::send_with_id(state, &mut chat, text, message_id.as_deref())
         .map_err(|error| fail("send_failed", error))?;
     state.sync.wake();
+    Ok(json!({ "chatId": chat_id }))
+}
+
+fn coding_compact(state: &Arc<AppState>, params: CodingCompactParams) -> Result<Value, RpcFailure> {
+    let chat_id = params.chat_id.trim();
+    let chat = state
+        .store
+        .load(chat_id)
+        .map_err(|_| fail("unknown_chat", "No such conversation on this machine."))?;
+    host_chat(state, &chat)?;
+    let instructions = params
+        .instructions
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    crate::coding::compact(state, &chat, instructions)
+        .map_err(|error| fail("compact_failed", error))?;
     Ok(json!({ "chatId": chat_id }))
 }
 

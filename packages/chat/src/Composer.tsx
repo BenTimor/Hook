@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, CornerDownLeft, ImagePlus, Square, X } from "lucide-react";
 
-import type { DraftImage } from "./types";
+import type { DraftImage, SlashCommand } from "./types";
 import "./chat.css";
 
 /** Downscale before sending: a 6 MP phone photo is not worth 8 MB of base64. */
 const MAX_EDGE = 1600;
+
+/** How long the command menu stays mounted after it closes (`chat.css`). */
+const MENU_EXIT_MS = 90;
 
 async function fileToDraftImage(file: File): Promise<DraftImage | null> {
   if (!file.type.startsWith("image/")) return null;
@@ -53,6 +56,12 @@ export interface ComposerProps {
   hint?: ReactNode;
   /** Change it to move the caret here (a new chat, a new conversation). */
   focusKey?: string | number | null;
+  /**
+   * Commands the composer offers when the draft starts with `/`. Empty or
+   * omitted means no menu — the backend only hands them to advanced mode, so a
+   * product never has to decide which mode it is in.
+   */
+  commands?: SlashCommand[];
   className?: string;
 }
 
@@ -74,12 +83,55 @@ export function Composer({
   placeholder = "Ask anything…",
   hint,
   focusKey,
+  commands = [],
   className,
 }: ComposerProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [composing, setComposing] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // The menu is open while the draft is a command name being typed. Escape
+  // closes it for that exact text, so typing on opens it again.
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [active, setActive] = useState(0);
+  // Mounted a beat longer than it is open, so the close animation can play.
+  // What was on screen is kept for that beat: the matches are gone by then.
+  const [mounted, setMounted] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const lastMatches = useRef<SlashCommand[]>([]);
+
+  const query = /^\/[^\s]*$/.test(value) ? value.slice(1).toLowerCase() : null;
+  const matches = query === null ? [] : commands.filter((c) => c.name.startsWith(query));
+  const menuOpen = matches.length > 0 && dismissed !== value;
+  const shown = menuOpen ? matches : lastMatches.current;
+
+  useEffect(() => {
+    if (menuOpen) lastMatches.current = matches;
+  }, [menuOpen, matches]);
+
+  useEffect(() => {
+    if (menuOpen) {
+      setMounted(true);
+      setClosing(false);
+      return;
+    }
+    if (!mounted) return;
+    setClosing(true);
+    // A timeout rather than `animationend`: with reduced motion the animation
+    // never runs, and the node still has to go.
+    const timer = window.setTimeout(() => {
+      setClosing(false);
+      setMounted(false);
+    }, MENU_EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [menuOpen, mounted]);
+
+  const pick = (command: SlashCommand) => {
+    onChange(`/${command.name} `);
+    setDismissed(null);
+    setActive(0);
+    requestAnimationFrame(() => ref.current?.focus());
+  };
 
   useEffect(() => {
     const el = ref.current;
@@ -126,6 +178,34 @@ export function Composer({
       }}
     >
       <div className="composer" data-dragging={dragging || undefined}>
+        {mounted && shown.length > 0 ? (
+          <div
+            className="composer-menu"
+            role="listbox"
+            aria-label="Commands"
+            data-closing={closing || undefined}
+          >
+            {shown.map((command, index) => (
+              <button
+                type="button"
+                key={command.name}
+                className="composer-menu-item"
+                role="option"
+                aria-selected={index === active}
+                data-active={index === active || undefined}
+                onMouseEnter={() => setActive(index)}
+                // mousedown, not click: the textarea must keep the focus.
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  pick(command);
+                }}
+              >
+                <span className="composer-menu-usage">{command.usage}</span>
+                <span className="composer-menu-summary">{command.summary}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         {images.length > 0 && (
           <div className="composer-images">
             {images.map((image) => (
@@ -186,6 +266,28 @@ export function Composer({
               }
             }}
             onKeyDown={(event) => {
+              if (menuOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+                event.preventDefault();
+                const step = event.key === "ArrowDown" ? 1 : -1;
+                setActive((index) => (index + step + matches.length) % matches.length);
+                return;
+              }
+              if (menuOpen && event.key === "Escape") {
+                // Escape closes the menu for this draft and must not also reach
+                // the window, where the same key stops the running turn.
+                event.stopPropagation();
+                setDismissed(value);
+                return;
+              }
+              if (
+                menuOpen &&
+                (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !composing))
+              ) {
+                // Enter completes the command; the next Enter sends it.
+                event.preventDefault();
+                pick(matches[Math.min(active, matches.length - 1)]);
+                return;
+              }
               if (event.key === "Enter" && !event.shiftKey && !composing) {
                 event.preventDefault();
                 submit();

@@ -15,6 +15,7 @@ import type {
   RemoteProject,
   RemoteTarget,
   SettingsView,
+  SlashCommand,
   StreamEvent,
   SyncEvent,
   SyncView,
@@ -175,6 +176,10 @@ export const mobile = {
 
   getSettings: (): Promise<SettingsView> =>
     isTauri() ? invoke<SettingsView>("get_settings") : demo.getSettings(),
+
+  /** Commands the composer may offer. Empty unless advanced mode is on. */
+  slashCommands: (): Promise<SlashCommand[]> =>
+    isTauri() ? invoke<SlashCommand[]>("slash_commands") : demo.slashCommands(),
 
   setAdvancedMode: (enabled: boolean): Promise<SettingsView> =>
     isTauri()

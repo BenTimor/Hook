@@ -1,5 +1,7 @@
 import type { ChatAttachment, ChatMessage } from "@hook/chat";
 
+export type { SlashCommand } from "@hook/chat";
+
 /**
  * The phone's view of the backend.
  *
@@ -9,7 +11,7 @@ import type { ChatAttachment, ChatMessage } from "@hook/chat";
  * same JSON the desktop's `apps/chat/src/lib/types.ts` describes, trimmed.
  */
 
-export type Role = "user" | "assistant" | "system" | "tool";
+export type Role = "user" | "assistant" | "system" | "tool" | "compaction";
 
 /** A message as the store writes it; `ChatMessage` is the part the surface needs. */
 export interface Message extends ChatMessage {

@@ -20,6 +20,7 @@ export function ChatComposer({ className }: { className?: string }) {
   const removeDraftImage = useMobileChat((s) => s.removeDraftImage);
   const send = useMobileChat((s) => s.send);
   const stop = useMobileChat((s) => s.stop);
+  const commands = useMobileChat((s) => s.commands);
   const coding = useMobileChat(
     (s) => s.chats.find((chat) => chat.id === s.activeId)?.kind === "coding",
   );
@@ -45,6 +46,7 @@ export function ChatComposer({ className }: { className?: string }) {
       onAddImages={coding ? undefined : addDraftImages}
       onRemoveImage={removeDraftImage}
       placeholder={coding ? "Message the coding agent…" : "Ask anything…"}
+      commands={commands}
       className={className}
     />
   );

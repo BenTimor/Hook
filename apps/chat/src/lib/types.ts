@@ -1,4 +1,4 @@
-export type Role = "user" | "assistant" | "system" | "tool";
+export type Role = "user" | "assistant" | "system" | "tool" | "compaction";
 export type MessageStatus = "complete" | "streaming" | "error" | "aborted";
 
 export interface Usage {
@@ -39,6 +39,25 @@ export interface Message {
   /** Internal bookkeeping: tool traffic and agent events. Never rendered. */
   hidden?: boolean;
   attachments?: Attachment[];
+  /** Set on `role: "compaction"`: what the summary folded away. */
+  compaction?: Compaction;
+}
+
+/** What one compaction folded: the summary itself is the message's content. */
+export interface Compaction {
+  /** Messages folded into the summary; `0` when the engine keeps the count. */
+  messages: number;
+  tokensBefore: number;
+  tokensAfter: number;
+}
+
+/** One command the composer may offer (advanced mode only). */
+export interface SlashCommand {
+  name: string;
+  summary: string;
+  usage: string;
+  /** `"any"` or `"coding"`. */
+  scope?: string;
 }
 
 export interface ChatMeta {

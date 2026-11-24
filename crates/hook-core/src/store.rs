@@ -81,6 +81,23 @@ pub struct Message {
     /// Pictures that belong to this message.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// Set on `role: "compaction"`: what the summary folded and how big the
+    /// context was on either side. The summary itself is `content`. A
+    /// compaction message is `hidden`, so it never counts as a message or
+    /// becomes a chat's preview; the thread draws it in advanced mode only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<Compaction>,
+}
+
+/// How much context one compaction took away. Token counts are estimates
+/// (`compact::estimate`), kept to show the reader what happened.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Compaction {
+    /// Messages folded into the summary.
+    pub messages: usize,
+    pub tokens_before: u64,
+    pub tokens_after: u64,
 }
 
 /// One picture attached to a message. Bytes live on disk; the chat file only
@@ -131,7 +148,15 @@ impl Message {
             hidden: false,
             kind: None,
             attachments: Vec::new(),
+            compaction: None,
         }
+    }
+
+    /// A compaction marker: hidden, so it never counts as a message and never
+    /// becomes a preview, but it sits where the cut happened and carries the
+    /// summary every later request starts from.
+    pub fn compaction(summary: &str) -> Self {
+        Self::hidden("compaction", summary)
     }
 
     /// A message that participates in the model's history but is never drawn.

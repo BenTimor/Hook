@@ -126,8 +126,8 @@ The contract is `docs/relay-protocol.md`.
     `agent.steer`, `agent.answer`, `agent.stop`, `agent.stopChat`,
     `projects.list`, `folders.browse`, `folders.pin`, `sessions.list`.
   - `coding.create`, `coding.fetch`, `coding.send`, `coding.stop`,
-    `coding.answer`, `coding.rename`, `coding.delete`: the host half of a direct
-    chat. `create` takes a project name or a folder path; `fetch` marks the chat
+    `coding.answer`, `coding.rename`, `coding.delete`, `coding.compact`: the host
+    half of a direct chat. `create` takes a project name or a folder path; `fetch` marks the chat
     watched so its records are mirrored from then on; `delete` removes the
     original here (and queues its stub tombstone) on behalf of any device of the
     account that can reach this one.

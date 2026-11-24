@@ -17,6 +17,7 @@ mod bridge;
 mod channel;
 mod coding;
 mod commands;
+mod compact;
 mod config;
 mod devices;
 mod git;
@@ -31,6 +32,7 @@ mod remote;
 mod reports;
 mod runtime;
 mod settings;
+mod slash;
 mod store;
 mod sync;
 mod tools;
@@ -195,6 +197,7 @@ pub fn builder(
             commands::edit_message,
             commands::stop_stream,
             commands::get_settings,
+            commands::slash_commands,
             commands::set_projects_dir,
             commands::set_advanced_mode,
             commands::set_custom_provider,
@@ -620,6 +623,9 @@ fn setup(
     // A coding-agent chat whose engine died with the last window would keep a
     // "streaming" reply forever; turn it into the error it always was.
     coding::recover(&state.store);
+    // The same for a summary that was being written when the window closed: its
+    // marker never carried text and must not hold the chat out of sync.
+    compact::recover(&state.store);
     sync.spawn();
 
     // One request tells us what the model can see. If the card says images, the

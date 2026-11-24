@@ -3,6 +3,7 @@ export { Markdown } from "./Markdown";
 export { CodeBlock } from "./CodeBlock";
 export { highlight } from "./highlight";
 export { openExternal } from "./open";
+export { CompactionItem } from "./CompactionItem";
 export { MessageItem } from "./MessageItem";
 export { Thread } from "./Thread";
 export { WorkGroup, ReasoningStepView, ToolStepView } from "./WorkSteps";
@@ -47,6 +48,7 @@ export type {
   AnswerPart,
   AnswerTextPart,
   AnswerWorkPart,
+  CompactionBlock,
   MessageBlock,
   ThreadBlock,
 } from "./turns";
@@ -64,4 +66,10 @@ export type {
   DockMessage,
   DockReport,
 } from "./ChatDock";
-export type { ChatMessage, ChatToolCall, DraftImage } from "./types";
+export type {
+  ChatCompaction,
+  ChatMessage,
+  ChatToolCall,
+  DraftImage,
+  SlashCommand,
+} from "./types";

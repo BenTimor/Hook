@@ -10,6 +10,7 @@ import type {
   PreviewView,
   RemoteTarget,
   SettingsView,
+  SlashCommand,
   StreamEvent,
   SyncEvent,
   SyncView,
@@ -51,6 +52,8 @@ interface MobileState {
    */
   sending: boolean;
   settings: SettingsView | null;
+  /** Commands the composer offers. The backend only hands them to advanced mode. */
+  commands: SlashCommand[];
   /** Whether conversations may leave this phone, and why not when they may not. */
   sync: SyncView | null;
   /** The account's machines and this phone's relay state. */
@@ -115,6 +118,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   draftImages: [],
   sending: false,
   settings: null,
+  commands: [],
   sync: null,
   devices: null,
   preview: null,
@@ -122,16 +126,18 @@ export const useMobileChat = create<MobileState>((set, get) => ({
 
   async init() {
     try {
-      const [auth, settings, preview, sync, devices] = await Promise.all([
+      const [auth, settings, preview, sync, devices, commands] = await Promise.all([
         mobile.authStatus(),
         mobile.getSettings(),
         mobile.previewState(),
         mobile.syncStatus(),
         mobile.devices(),
+        mobile.slashCommands(),
       ]);
       set({
         auth,
         settings,
+        commands,
         sync,
         devices,
         preview: preview && preview.active ? preview : null,
@@ -383,6 +389,9 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     try {
       const settings = await mobile.setAdvancedMode(enabled);
       set({ settings });
+      // The list is the backend's: off is empty, so the menu cannot linger
+      // after the switch is turned off.
+      set({ commands: await mobile.slashCommands() });
       if (!enabled) {
         // A coding-agent conversation is tool traffic, not one reply after
         // another; the simple view cannot draw it. Step back to the empty

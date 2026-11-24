@@ -13,6 +13,7 @@ import type {
   RemoteProject,
   RemoteTarget,
   SettingsView,
+  SlashCommand,
   StreamEvent,
   SyncView,
 } from "./types";
@@ -540,6 +541,18 @@ export const demo = {
       });
     }
     return id;
+  },
+
+  async slashCommands(): Promise<SlashCommand[]> {
+    if (!advancedMode) return [];
+    return [
+      {
+        name: "compact",
+        summary: "Summarize the older turns and continue from the summary",
+        usage: "/compact [what to keep]",
+        scope: "any",
+      },
+    ];
   },
 
   async getSettings(): Promise<SettingsView> {

@@ -331,6 +331,126 @@ fn spawn_turn(state: Arc<AppState>, chat_id: String) {
     });
 }
 
+/// Compact this chat now, outside the turn that would otherwise have done it.
+/// `/compact` lands here; the work is a pseudo-turn, so the window sees the
+/// same activity line and the Stop button can abort the summary call.
+pub fn kick_compact(
+    state: Arc<AppState>,
+    chat_id: String,
+    instructions: Option<String>,
+) -> Result<(), String> {
+    if state.turns.is_busy(&chat_id) {
+        return Err("Wait for this reply to finish before compacting.".into());
+    }
+    use futures_util::FutureExt;
+    tauri::async_runtime::spawn(async move {
+        let outcome = std::panic::AssertUnwindSafe(compact_turn(
+            state.clone(),
+            chat_id.clone(),
+            instructions,
+        ))
+        .catch_unwind()
+        .await;
+        if outcome.is_err() {
+            finish(&state, &chat_id);
+        }
+    });
+    Ok(())
+}
+
+async fn compact_turn(
+    state: Arc<AppState>,
+    chat_id: String,
+    instructions: Option<String>,
+) {
+    // A turn that is somehow already running is not queued the way a message is:
+    // the chat has nothing new to answer, it just cannot be compacted now.
+    if !state.turns.begin(&chat_id) {
+        return;
+    }
+    let cancel = CancelToken::new();
+    lock(&state.streams).insert(chat_id.clone(), cancel.clone());
+
+    let cfg = match config::get() {
+        Ok(cfg) => cfg.clone(),
+        Err(error) => {
+            fail_compact(&state, &chat_id, error);
+            return;
+        }
+    };
+    let target = match provider::ProviderTarget::resolve(
+        &cfg,
+        state.settings.custom_provider().as_ref(),
+        state.auth.token(),
+    ) {
+        Ok(target) => target,
+        Err(error) => {
+            fail_compact(&state, &chat_id, error);
+            return;
+        }
+    };
+    // The user message that made this chat long is the one the summary belongs
+    // to: the free plan counts messages, and compaction is not a new one.
+    let message_id = state.store.load(&chat_id).ok().and_then(|chat| {
+        chat.messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .map(|message| message.id.clone())
+    });
+    if let Err(error) = crate::compact::run(
+        &state,
+        &chat_id,
+        &target.cfg,
+        &target.token,
+        target.byok,
+        message_id,
+        instructions.as_deref(),
+        cancel,
+    )
+    .await
+    {
+        trace(&format!("compact failed: {error}"));
+        if let Ok(chat) = state.store.load(&chat_id) {
+            emit(
+                &state,
+                &chat_id,
+                StreamEvent::Error {
+                    message: error,
+                    messages: chat.messages.clone(),
+                    meta: chat.meta.clone(),
+                },
+            );
+        }
+    } else if let Ok(chat) = state.store.load(&chat_id) {
+        emit(
+            &state,
+            &chat_id,
+            StreamEvent::Done {
+                messages: chat.messages.clone(),
+                meta: chat.meta.clone(),
+            },
+        );
+    }
+    finish(&state, &chat_id);
+}
+
+/// Say why nothing was compacted, then let the chat go back to normal.
+fn fail_compact(state: &Arc<AppState>, chat_id: &str, error: String) {
+    if let Ok(chat) = state.store.load(chat_id) {
+        emit(
+            state,
+            chat_id,
+            StreamEvent::Error {
+                message: error,
+                messages: chat.messages.clone(),
+                meta: chat.meta.clone(),
+            },
+        );
+    }
+    finish(state, chat_id);
+}
+
 /// Turn any assistant message still marked as streaming into a visible error.
 fn fail_turn(state: &AppState, chat_id: &str, message: &str) {
     let Ok(mut chat) = state.store.load(chat_id) else {
@@ -506,12 +626,50 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
 
     trace("tools prepared");
 
+    // A chat that has grown past its share of the context window is summarized
+    // once, before this turn asks the model anything. It happens on the first
+    // round only: the tool rounds of one turn share the history this turn built.
+    let mut compact_checked = false;
+    // A provider that refuses the request as too long is a second trigger: the
+    // share is a guess about the model's window, and the endpoint knows better.
+    let mut overflow_retried = false;
+
     loop {
         let Ok(mut chat) = state.store.load(&chat_id) else {
             trace("chat could not be loaded; giving up");
             break;
         };
         trace("chat loaded");
+
+        if !compact_checked {
+            compact_checked = true;
+            if crate::compact::wanted(&chat, &cfg, byok).is_some() {
+                trace("compacting the conversation");
+                match crate::compact::run(
+                    &state,
+                    &chat_id,
+                    &cfg,
+                    &provider_token,
+                    byok,
+                    turn_message_id.clone(),
+                    None,
+                    cancel.clone(),
+                )
+                .await
+                {
+                    Ok(_) => {
+                        trace("compacted");
+                        // A failed compaction leaves the chat untouched and the
+                        // turn simply carries the full history, which is what
+                        // this branch says nothing about.
+                        if let Ok(fresh) = state.store.load(&chat_id) {
+                            chat = fresh;
+                        }
+                    }
+                    Err(error) => trace(&format!("compaction skipped: {error}")),
+                }
+            }
+        }
 
         let assistant = Message::new("assistant", "", "streaming");
         let assistant_id = assistant.id.clone();
@@ -846,6 +1004,55 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                     let _ = state.store.save(&mut chat);
                     continue;
                 }
+                if !overflow_retried && crate::compact::looks_like_overflow(&err) {
+                    overflow_retried = true;
+                    eprintln!("hook: the request was too long for the model, compacting — {err}");
+                    // Drop the failed placeholder before compacting: it saves
+                    // its own copy of the chat, and a stale one written after it
+                    // would put the conversation back the way it was.
+                    chat.messages.retain(|m| m.id != assistant_id);
+                    chat.meta.updated_at = now_ms();
+                    let _ = state.store.save(&mut chat);
+                    // The retry skips the share test: the chat is under its
+                    // threshold by definition, and the endpoint just proved the
+                    // estimate wrong.
+                    match crate::compact::run(
+                        &state,
+                        &chat_id,
+                        &cfg,
+                        &provider_token,
+                        byok,
+                        turn_message_id.clone(),
+                        None,
+                        cancel.clone(),
+                    )
+                    .await
+                    {
+                        Ok(true) => continue,
+                        _ => {
+                            // Compacting did not help (or could not run): the
+                            // endpoint's refusal is still the answer.
+                            trace("overflow compaction did not make room");
+                            if let Ok(mut chat) = state.store.load(&chat_id) {
+                                let mut entry = Message::new("assistant", "", "error");
+                                entry.error = Some(err.clone());
+                                chat.messages.push(entry);
+                                chat.meta.updated_at = now_ms();
+                                let _ = state.store.save(&mut chat);
+                                emit(
+                                    &state,
+                                    &chat_id,
+                                    StreamEvent::Error {
+                                        message: err.clone(),
+                                        messages: chat.messages.clone(),
+                                        meta: chat.meta.clone(),
+                                    },
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
                 let entry = &mut chat.messages[index];
                 entry.content = content;
                 entry.reasoning = non_empty(reasoning);
@@ -1027,7 +1234,8 @@ fn ensure_memory_frames(store: &crate::memory::MemoryStore, chat: &mut Chat, exc
             }
             // The pinned picture belongs at the top of the conversation, before
             // the question it is meant to inform.
-            chat.messages.insert(0, frame);
+            let at = crate::compact::context_start(chat);
+            chat.messages.insert(at, frame);
             true
         }
     }
@@ -1589,14 +1797,25 @@ fn build_history(
     // saving the results: half a tool batch makes the whole request invalid
     // ("an assistant message with 'tool_calls' must be followed by tool
     // messages responding to each 'tool_call_id'").
+    // A summary from an earlier compaction is the context's beginning. The
+    // messages before it are still in the chat — the thread draws them and the
+    // search finds them — but this request starts from the summary and the
+    // turns kept after it.
+    let start = crate::compact::context_start(chat);
     let mut history = Vec::new();
+    if let Some(summary) = crate::compact::summary(chat) {
+        history.push(json!({ "role": "system", "content": summary }));
+    }
     let mut replayed: HashSet<String> = HashSet::new();
 
-    for message in chat.messages.iter() {
+    for message in chat.messages[start..].iter() {
         if message.id == exclude_id || message.status == "error" {
             continue;
         }
         match message.role.as_str() {
+            // Already the first message of this list, and never a message of
+            // its own: its summary is what the request starts from.
+            "compaction" => {}
             // Emitted with the assistant message that called them, below.
             "tool" => {}
             "user" => {
@@ -1689,7 +1908,10 @@ fn newest_image_ids(chat: &Chat, exclude_id: &str, limit: usize) -> HashSet<Stri
     if limit == 0 {
         return keep;
     }
-    for message in chat.messages.iter().rev() {
+    // Pictures from turns that were folded into a summary are no longer sent,
+    // so they must not take a slot from the ones that still are.
+    let start = crate::compact::context_start(chat);
+    for message in chat.messages[start..].iter().rev() {
         if message.id == exclude_id || message.status == "error" {
             continue;
         }
@@ -2434,6 +2656,26 @@ mod tests {
         let user = Message::new("user", "hi", "complete");
         let chat = chat_with(vec![user, bad]);
         assert_eq!(build_history(&chat, "x", &ReasoningEcho::Auto, true, None).len(), 1);
+    }
+
+    #[test]
+    fn a_compaction_starts_the_history_from_its_summary() {
+        let mut marker = Message::compaction("earlier: we decided on Astro");
+        marker.status = "complete".into();
+        let chat = chat_with(vec![
+            Message::new("user", "one", "complete"),
+            Message::new("assistant", "answer one", "complete"),
+            marker,
+            Message::new("user", "two", "complete"),
+        ]);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0]["role"], "system");
+        assert!(history[0]["content"].as_str().unwrap().contains("Astro"));
+        assert_eq!(history[1]["role"], "user");
+        assert_eq!(history[1]["content"], "two");
+        // The folded turns are still in the chat; only the request skips them.
+        assert_eq!(chat.messages.len(), 4);
     }
 
     #[test]

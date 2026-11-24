@@ -77,6 +77,24 @@ thinking = "high"
 # max_tokens = 4096
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Compaction
+#
+#  A long conversation is replayed in every request, so past a share of the
+#  window the older turns are summarized into one hidden message and only the
+#  recent ones are sent whole. The summary is a model call: it is part of the
+#  turn that triggered it, so the free plan counts the user's message once.
+
+[compact]
+# Summarize automatically. Off leaves /compact (advanced mode) as the only way.
+enabled = true
+# Share of the context window at which a chat is compacted.
+at = 0.30
+# Recent user turns kept verbatim after the summary.
+keep_turns = 3
+# The window the share is measured against. 0 uses [coding] context_window.
+window = 0
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Coding agents
 #
 #  The chat agent can launch pi inside a project folder. Each agent is spawned

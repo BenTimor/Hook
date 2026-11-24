@@ -19,6 +19,7 @@ export function Composer() {
   const send = useChatStore((s) => s.send);
   const stop = useChatStore((s) => s.stop);
   const focusToken = useChatStore((s) => s.focusToken);
+  const commands = useChatStore((s) => s.commands);
   const draftImages = useChatStore((s) => s.draftImages);
   const addDraftImages = useChatStore((s) => s.addDraftImages);
   const removeDraftImage = useChatStore((s) => s.removeDraftImage);
@@ -62,6 +63,7 @@ export function Composer() {
           ) : undefined
         }
         focusKey={`${activeId ?? "new"}:${focusToken}`}
+        commands={commands}
       />
     </>
   );

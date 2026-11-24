@@ -26,6 +26,7 @@ import type {
   RemoteTarget,
   SearchHit,
   SettingsView,
+  SlashCommand,
   StreamEvent,
   SyncView,
   UpdateInfo,
@@ -873,6 +874,20 @@ export const mock = {
     rehash(target);
     onEvent({ kind: "done", messages: clone(target.messages), meta: clone(target.meta) });
     return target.meta.id;
+  },
+
+  async slashCommands(): Promise<SlashCommand[]> {
+    // The browser demo has no backend to run one, but the menu is part of the
+    // surface, so advanced mode shows the same list the app would.
+    if (!MOCK_ADVANCED) return [];
+    return [
+      {
+        name: "compact",
+        summary: "Summarize the older turns and continue from the summary",
+        usage: "/compact [what to keep]",
+        scope: "any",
+      },
+    ];
   },
 
   async getSettings(): Promise<SettingsView> {

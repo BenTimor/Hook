@@ -490,7 +490,22 @@ pinned_budget_chars = 2400   # about 600 tokens; the block stops there
 max_text_chars = 400     # longer facts are cut, not rejected
 context_role = "system"  # "user" for an endpoint that rejects a trailing
                          # system message; "none" drops the live context
+
+[compact]
+enabled = true   # false leaves /compact (advanced mode) as the only way
+at = 0.30        # compact once a request would spend 30% of the window
+keep_turns = 3   # recent user turns kept verbatim after the summary
+window = 0       # 0 = [coding] context_window; the share is measured against it
 ```
+
+`[compact]` is the one place the request prefix is rewritten on purpose: a long
+conversation would otherwise be replayed in full on every turn. It fires on the
+first round of a turn, only when the estimate crosses the share, and it is a
+model call of its own that repeats the user's message id — the free plan still
+counts that message once. The share is an estimate of the window; when an
+endpoint answers "too long" anyway (a model smaller than the configured window),
+that turn compacts once and retries. See **Advanced mode** for how the cut is
+drawn.
 
 `harness.config.example.toml` remains a direct-provider template if you want to
 build a standalone copy without the account service.
@@ -1506,6 +1521,12 @@ re-retrieved per turn (that would rewrite the prefix), and the memory tools are
 offered only when memory is on, so the prompt section and the toolset cannot
 disagree.
 
+There is exactly one deliberate exception: **compaction** (`compact.rs`). When a
+conversation reaches its share of the window, the older turns are summarized into
+one hidden `compaction` message parked where the cut happened, and every later
+request starts from that summary. It is the only operation that drops the
+prefix, which is why it happens rarely, once per crossing, and never mid-turn.
+
 The trailing frame is sent as a `system` message: that is the right shape, and
 every endpoint Hook has been pointed at accepts it. If one refuses, the turn is
 retried with the same text as a `user` message and the refusal is remembered for
@@ -1579,6 +1600,21 @@ not the display preference.
   reply works in both views. The Workspace dock always has this view; the chat
   window and the phone can turn Advanced on. A direct coding chat keeps every
   message in the simple view, because its engine is not given that rule.
+- **Automatic compaction is drawn as what it is.** A long conversation is
+  summarized rather than replayed forever (see **Configure**, `[compact]`); the
+  summary is a hidden message, so the simple view shows only the thinking line
+  while it is written. With Advanced on, the cut is drawn where it happened: one
+  line — *37 messages folded into a summary · 312k → 9k tokens* — that expands to
+  the summary itself, at the point in the conversation it covers. A direct coding
+  chat gets the same line from pi's own compaction (`/compact`, or the engine's
+  automatic one), with the transcript itself untouched.
+- **Commands.** With Advanced on, typing `/` in the composer opens a menu of
+  commands; the same registry (`crates/hook-core/src/slash.rs`) decides what the
+  backend accepts, so a hidden command cannot be typed in. The catalogue is
+  returned by `slash_commands` and is empty unless Advanced is on. Today:
+  `/compact [what to keep]` — compact now instead of waiting for the share — in
+  both an ordinary conversation and a direct coding-agent chat. Adding a command
+  is one entry in `COMMANDS` and one match arm in `slash::run`.
 - **The sidebar** gains a **Coding agents** tree: one folder per project, with
   rows for runs that are still working, plus a run that stopped (stopped,
   failed, interrupted) in the open chat within the last few minutes. Older
@@ -1864,7 +1900,9 @@ that conversation — what the engine says is what you read.
   running agent and Stop kills it; a question it is blocked on appears in the
   task board with its options. A settled run stays warm for five minutes, and a
   later message resumes the same session (`ChatMeta.sessionId`), even after a
-  restart.
+  restart. `/compact` asks the engine to fold its older turns into a summary
+  (pi's own `compact` RPC); the chat's messages stay on screen, and the fold is
+  drawn in advanced mode like any other.
 - **Local only.** A coding-agent chat is never uploaded: the folder, the engine
   process and the session file exist on one computer, and half of that arriving
   on another would be worse than not arriving at all. Turning **Advanced** off
@@ -1899,6 +1937,8 @@ crates/hook-core/src/          the backend every product links
   provider.rs   OpenAI-compatible SSE client + streamed tool_calls
   store.rs      atomic JSON persistence, pin/delete/restore/search
   turn.rs       the assistant turn: model → tools → tools → answer, plus wakes
+  compact.rs    folding a long conversation into a summary
+  slash.rs      the composer's commands (a registry, the parser, the runner)
   tools.rs      the tool schemas and their implementations
   agent.rs      engine RPC supervisor: spawn, states, plans, progress batching,
                 wakes, stop-chat, read-only session transcripts

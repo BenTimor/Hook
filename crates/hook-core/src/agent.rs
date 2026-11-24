@@ -821,6 +821,7 @@ impl AgentManager {
             resume_session,
             plan_titles,
             false,
+            None,
         )
     }
 
@@ -867,7 +868,88 @@ impl AgentManager {
             resume_session,
             &[],
             true,
+            None,
         )
+    }
+
+    /// Start the direct agent for a chat just to compact its session: no prompt,
+    /// only pi's `compact` command. Nothing to say means a resume of an existing
+    /// session — the chat has to have one, or there is nothing to compact.
+    pub fn start_compact(
+        &self,
+        chat_id: &str,
+        folder: &str,
+        title: Option<&str>,
+        session: Option<&str>,
+        instructions: Option<&str>,
+    ) -> Result<AgentInfo, String> {
+        let folder = folder.trim();
+        if folder.is_empty() {
+            return Err("A coding agent needs a folder to work in.".into());
+        }
+        let path = PathBuf::from(folder)
+            .canonicalize()
+            .map_err(|_| format!("The folder \"{folder}\" is not available on this computer."))?;
+        if !path.is_dir() {
+            return Err(format!("\"{folder}\" is not a folder."));
+        }
+        let path = crate::store::strip_verbatim(path);
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Coding agent".to_string());
+        let project_id = self.projects.id_for_path(&path).unwrap_or_default();
+        self.spawn(
+            chat_id,
+            path,
+            name,
+            project_id,
+            "",
+            title,
+            session,
+            &[],
+            true,
+            Some(serde_json::json!({
+                "id": next_id("compact"),
+                "type": "compact",
+                "customInstructions": instructions,
+            })),
+        )
+    }
+
+    /// Ask a live direct agent to compact its session. pi aborts whatever it is
+    /// running first, so this is only offered while the agent is settled.
+    pub fn compact(
+        &self,
+        agent_id: &str,
+        instructions: Option<&str>,
+    ) -> Result<AgentInfo, String> {
+        let (info, tx) = {
+            let inner = lock(&self.inner);
+            let entry = inner
+                .agents
+                .get(agent_id)
+                .ok_or_else(|| format!("No agent {agent_id}"))?;
+            (entry.info.clone(), entry.tx.clone())
+        };
+        let tx = tx.ok_or("That coding agent is no longer running.")?;
+        if info.is_working() {
+            return Err("Let the agent finish before compacting the conversation.".into());
+        }
+        if info.question.is_some() {
+            return Err("That agent is waiting for an answer. Answer it first.".into());
+        }
+        tx.send(AgentCmd::Line(serde_json::json!({
+            "id": next_id("compact"),
+            "type": "compact",
+            "customInstructions": instructions,
+        })))
+        .map_err(|_| "That coding agent is no longer running.".to_string())?;
+        self.set_state(agent_id, STATE_RUNNING, |info| {
+            info.updated_at = now_ms();
+            info.last_step = Some("Compacting the conversation".into());
+        });
+        Ok(self.get(agent_id).unwrap_or(info))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -882,9 +964,10 @@ impl AgentManager {
         resume_session: Option<&str>,
         plan_titles: &[String],
         direct: bool,
+        kick: Option<serde_json::Value>,
     ) -> Result<AgentInfo, String> {
         let task = task.trim();
-        if task.is_empty() {
+        if task.is_empty() && kick.is_none() {
             return Err(if direct {
                 "Say something for the coding agent to do.".into()
             } else {
@@ -1147,12 +1230,16 @@ impl AgentManager {
         }
         let _ = self.signal_tx.send(Signal::Changed);
 
-        // Kick off the run.
-        let _ = tx.send(AgentCmd::Line(serde_json::json!({
-            "id": next_id("prompt"),
-            "type": "prompt",
-            "message": task,
-        })));
+        // Kick off the run. A compaction is the one start that has nothing to
+        // say: it replays the session and asks pi to summarize it.
+        let line = kick.unwrap_or_else(|| {
+            serde_json::json!({
+                "id": next_id("prompt"),
+                "type": "prompt",
+                "message": task,
+            })
+        });
+        let _ = tx.send(AgentCmd::Line(line));
 
         let inner = self.inner.clone();
         let data_dir = self.data_dir.clone();
@@ -2266,6 +2353,26 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
                     info.updated_at = now_ms();
                     changed = true;
                 }
+            }
+            "compaction_start" => {
+                if info.state != STATE_STOPPED {
+                    info.state = STATE_RUNNING.to_string();
+                }
+                info.last_step = Some("Compacting the conversation".into());
+                info.updated_at = now_ms();
+                changed = true;
+            }
+            "compaction_end" => {
+                // A manual compaction is the whole job: pi emits no settle
+                // record for it, so the agent is idle again once it is done.
+                // A threshold or overflow compaction happens mid-run.
+                let manual = record.get("reason").and_then(|r| r.as_str()) == Some("manual");
+                if manual && info.state == STATE_RUNNING {
+                    info.state = STATE_IDLE.to_string();
+                }
+                info.last_step = None;
+                info.updated_at = now_ms();
+                changed = true;
             }
             "tool_execution_start" => {
                 let tool = record

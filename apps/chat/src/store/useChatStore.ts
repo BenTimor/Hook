@@ -20,6 +20,7 @@ import type {
   PreviewView,
   RemoteTarget,
   SettingsView,
+  SlashCommand,
   StreamEvent,
   SyncView,
   DevicesView,
@@ -62,6 +63,8 @@ interface ChatStore {
   /** The user's choice for the right-side panel; auto-opens the first time a run shows one. */
   previewOpen: boolean;
   settings: SettingsView | null;
+  /** Commands the composer offers. The backend only hands them to advanced mode. */
+  commands: SlashCommand[];
   /** Whether conversations may leave this computer, and why not when they may not. */
   sync: SyncView | null;
   /** The account's machines and this device's relay state. */
@@ -200,7 +203,7 @@ let unsubscribeDevices: (() => void) | null = null;
 export const useChatStore = create<ChatStore>((set, get) => {
   /** Load everything that belongs to the signed-in window. */
   const loadWorkspace = async () => {
-    const [info, chats, agents, preview, settings, sync, devices] =
+    const [info, chats, agents, preview, settings, sync, devices, commands] =
       await Promise.all([
         api.appInfo(),
         api.listChats(),
@@ -209,8 +212,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
         api.getSettings(),
         api.syncStatus(),
         api.devices(),
+        api.slashCommands(),
       ]);
     set({
+      commands,
       info,
       chats: sortMetas(chats),
       ready: true,
@@ -241,6 +246,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       preview: null,
       previewOpen: false,
       settings: null,
+      commands: [],
       sync: null,
       settingsOpen: false,
       inspectAgentId: null,
@@ -458,6 +464,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     preview: null,
     previewOpen: false,
     settings: null,
+    commands: [],
     sync: null,
     devices: null,
     remoteErrors: {},
@@ -810,6 +817,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const images = coding ? [] : get().draftImages;
       if (!trimmed && images.length === 0) return;
       if (activeId && get().streams[activeId] && !coding) return;
+      // A command is not a message the account counts; the backend runs it and
+      // the compaction it starts repeats the last message id on the wire.
+      const isCommand = get().commands.some(
+        (command) =>
+          trimmed === `/${command.name}` || trimmed.startsWith(`/${command.name} `),
+      );
       set({ draft: "", draftImages: [], pendingNewChat: !activeId });
       try {
         const id = await api.sendMessage(
@@ -821,7 +834,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         // The account service counts this message now; keep the number in
         // Settings honest until the next account check.
         const auth = get().auth;
-        if (auth?.quota && auth.quota.used < auth.quota.limit) {
+        if (!isCommand && auth?.quota && auth.quota.used < auth.quota.limit) {
           set({
             auth: {
               ...auth,
@@ -1002,6 +1015,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
       try {
         const settings = await api.setAdvancedMode(enabled);
         set({ settings });
+        // The list is the backend's: off is empty, so the menu cannot linger
+        // after the switch is turned off.
+        set({ commands: await api.slashCommands() });
       } catch (error) {
         set({ settings: previous });
         toast.error(textOf(error));
