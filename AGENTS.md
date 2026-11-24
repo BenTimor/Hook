@@ -656,8 +656,8 @@ Changing one side of a boundary is the most common way to break this repo.
 - **Git/sync behavior:** `server/sync.mjs` + `server/git.mjs` (limits, merge
   rules, endpoints) → `crates/hook-core/src/{sync,git}.rs` → `agent.rs` (env,
   managed config) → `hook-guard.mjs` (`sync_pull`/`sync_push`) → `turn.rs`
-  (what the chat agent tells the coding agent) → Settings status → README
-  **Sync between computers** and `infra/README.md`. Add to `server/sync.test.mjs`
+  (what the chat agent tells the coding agent) → Settings status →
+  `docs/sync.md` and `infra/README.md`. Add to `server/sync.test.mjs`
   / `server/git.test.mjs` and the sync unit tests in `sync.rs`. Message order is
   transcript order, never `createdAt` order: a tool result has to sit directly
   after the assistant message that called it, while the memory frame is written
@@ -696,8 +696,8 @@ Changing one side of a boundary is the most common way to break this repo.
 - **Workspace entity or permission change:** `server/workspace.mjs` +
   `server/workspace.test.mjs` → the shared client and tool family in
   `crates/hook-core/src/workspace.rs` → the `ws_request` command →
-  `apps/workspace/src/lib/bridge.ts` → store/components → README
-  **Hook Workspace**. A new entity needs its own row in the changes feed, or a
+  `apps/workspace/src/lib/bridge.ts` → store/components → `docs/workspace.md`.
+  A new entity needs its own row in the changes feed, or a
   device will never learn about it. A task's `assignees` list holds each
   member's subject, or the address of someone invited who has not accepted —
   accepting the invitation rewrites every matching entry — and the legacy
@@ -749,8 +749,8 @@ Changing one side of a boundary is the most common way to break this repo.
   the update store and `SettingsSheet` → `release.config.json` `store` fields
   (`productId` → `server/releases.mjs` `storeListing` → `/api/waitlist/status`
   → the approved screen in `waitlist/OnboardingPanels.tsx`, which links the
-  Store and never an installer) → README **Updating a Store install**, **The
-  taskbar icon** and **Microsoft Store (MSIX)**.
+  Store and never an installer) → `docs/microsoft-store.md` (**Updating a Store
+  install**, **The taskbar icon**).
 - **New dependency (npm or crate):** run `pnpm test:licenses` before you commit.
   It fails on strong copyleft, source-available licenses and anything
   unrecognised, because Hook is `AGPL-3.0-only` and dual-licensed — a dependency
@@ -904,31 +904,36 @@ Changing one side of a boundary is the most common way to break this repo.
 
 ## Docs
 
-`README.md` is the deep reference. Read the section instead of guessing:
+`README.md` is the landing page; `docs/README.md` is its index, and the deep
+reference lives in `docs/`. Read the document instead of guessing:
 
-- Invariants and architecture → **How it is put together**
-- One account and several products → **One account, several products**
-- Coding-agent runtime, RPC args, guard policy, preview → **Coding agents**
+- Invariants and architecture → `docs/architecture.md`
+- One account and several products → `docs/account.md`
+- Coding-agent runtime, RPC args, guard policy, preview →
+  `docs/coding-agents.md`; the remote half → `docs/machines.md`
 - Plans, the free limits, the account sync switch and personal endpoints →
-  **Plans, limits and your own model**
-- Config keys and what is compiled in → **Configure**
-- Version bumping, releasing an installer, updates → **Updates** and
-  **Releasing**
-- AI reporting for users and reviewers → **Reporting AI output**
+  `docs/plans.md`
+- Config keys and what is compiled in → `docs/configure.md`
+- Version bumping, releasing an installer, updates → `docs/releasing.md`
+- AI reporting for users and reviewers → `docs/reporting.md`
 - Microsoft Store setup/submission, MSIX, Store update cadence →
-  **Microsoft Store (MSIX)**
-- Local data layout (`%APPDATA%\app.hook*`) → **Where the data lives**
-- Landing page, OAuth, model proxy → **Web waitlist** + `infra/README.md`
-- Coverage → **Tests**
+  `docs/microsoft-store.md`
+- Local data layout (`%APPDATA%\app.hook*`) → `docs/data-layout.md`
+- What syncs, merges and is refused → `docs/sync.md`
+- Landing page, OAuth → `docs/waitlist.md`; the container, deploy and model
+  proxy → `docs/server.md` and `docs/model-proxy.md` (+ `infra/README.md`)
+- Coverage → `docs/tests.md`
 - Hook Browser (designed, not built) → `docs/browser-architecture.md`,
   `docs/browser-poc-plan.md`, `docs/browser-os-decoders.md` (the OS decoder path:
   designed, sized, not started), `docs/browser-host.md` (the browser's own host
   process: designed, sized, not started)
-- License, what a fork may do, bundled third-party terms → **License** in
-  `README.md`, plus `LICENSE`, `TRADEMARK.md`, `THIRD_PARTY_NOTICES.md`,
-  `CONTRIBUTING.md` and `CLA.md`
+- License, what a fork may do, bundled third-party terms → `docs/license.md`,
+  plus `LICENSE`, `TRADEMARK.md`, `THIRD_PARTY_NOTICES.md`, `CONTRIBUTING.md`
+  and `CLA.md`
 
 **Keep docs in sync.** When a change alters commands, config keys, file layout,
 data paths, runtime behavior or a user-visible flow, update this file and the
-matching README section (and `infra/README.md` for server config) in the same
-commit. Prefer a pointer to the code over a copy that will drift.
+matching document under `docs/` (and `infra/README.md` for server config) in the
+same commit. Prefer a pointer to the code over a copy that will drift. A new
+section belongs in the right `docs/` file and in `docs/README.md`, not back in
+the root README.

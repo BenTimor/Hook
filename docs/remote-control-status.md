@@ -15,7 +15,7 @@ and Caddy block were already live.
 **Scope of this document:** the "Your machines" feature — devices, the relay,
 running coding agents on another computer, live chat/agent events and remote
 previews. It is a handoff, not user documentation; the user-facing copy lives in
-`README.md` under **Your machines**.
+[`machines.md`](machines.md).
 
 ---
 
@@ -220,8 +220,8 @@ The contract is `docs/relay-protocol.md`.
 ### 2.5 Docs
 
 - `docs/relay-protocol.md` — frames, roles, RPC, presence, limits, REST.
-- `README.md` — **Your machines**, free-plan/cloud-sync notes, phone preview,
-  tests.
+- `docs/machines.md`, `docs/plans.md`, `docs/mobile.md`, `docs/tests.md` —
+  user-facing copy, the free-plan/cloud-sync rule, the phone preview.
 - `AGENTS.md` — new modules, `remote_agents` capability, remote-control touch
   points, preview rule.
 - `infra/README.md` — devices/relay/preview routes, wildcard certificate runbook.

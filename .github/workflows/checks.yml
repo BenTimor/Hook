@@ -5,7 +5,7 @@ name: Checks
 #
 # This workflow does not build an installer. Installers are built, published and
 # handed to the Microsoft Store from the machine that makes the release
-# (`pnpm release`, see README **Releasing**): the download channel and the Store
+# (`pnpm release`, see `docs/releasing.md`): the download channel and the Store
 # channel are one deliberate action by a person who already has the toolchain
 # and the MSIX identity, instead of a twenty-minute Windows build per push.
 #

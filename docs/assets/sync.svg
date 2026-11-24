@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 560" width="1100" height="560" role="img" aria-label="How a conversation travels between two computers: each device pushes to the account, the server is the only merger, and the other device pulls everything newer than its cursor">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#736d60"/>
+    </marker>
+    <marker id="a2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#526457"/>
+    </marker>
+    <style>
+      .box { fill: #fffdf9; stroke: rgba(63,57,43,0.18); stroke-width: 1.5; }
+      .accent { fill: #283b31; }
+      .chip { fill: #e3e7db; stroke: rgba(40,59,49,0.18); stroke-width: 1; }
+      .t { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; fill: #24241e; }
+      .name { font-size: 16px; font-weight: 650; }
+      .sub { font-size: 12.5px; fill: #5f5a51; }
+      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12px; fill: #5f5a51; }
+      .label { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; font-size: 12px; fill: #5f5a51; }
+      .head { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; fill: #736d60; }
+      .onaccent { fill: #f5efe5; font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; }
+    </style>
+  </defs>
+
+  <rect width="1100" height="560" fill="#f5efe5"/>
+
+  <!-- device A -->
+  <rect class="box" x="30" y="96" width="252" height="212" rx="12"/>
+  <text class="t name" x="48" y="126">This computer</text>
+  <text class="t sub" x="48" y="147">an open chat, a project folder</text>
+  <g class="t mono">
+    <text x="48" y="180">chats/&lt;id&gt;.json</text>
+    <text x="48" y="204">images/&lt;chat id&gt;/</text>
+    <text x="48" y="228">projects/&lt;name&gt;/</text>
+    <text x="48" y="252">sync.json — cursor</text>
+  </g>
+  <text class="t sub" x="48" y="284">a streaming chat is never uploaded</text>
+
+  <!-- server -->
+  <rect class="accent" x="400" y="60" width="300" height="384" rx="14"/>
+  <text x="422" y="92" class="onaccent" style="font-size:15px; font-weight:650">The account</text>
+  <text x="422" y="113" class="onaccent" style="font-size:12px; opacity:.72">the only place two devices meet</text>
+
+  <g>
+    <rect class="chip" x="422" y="132" width="256" height="34" rx="8"/>
+    <text class="t mono" x="436" y="154">/api/sync/chats</text>
+
+
+    <rect class="chip" x="422" y="176" width="256" height="34" rx="8"/>
+    <text class="t mono" x="436" y="198">/api/sync/changes</text>
+
+
+    <rect class="chip" x="422" y="220" width="256" height="34" rx="8"/>
+    <text class="t mono" x="436" y="242">/api/sync/media</text>
+    <text class="t label" x="566" y="242">SHA-256</text>
+
+    <rect class="chip" x="422" y="264" width="256" height="34" rx="8"/>
+    <text class="t mono" x="436" y="286">/api/git/&lt;id&gt;.git</text>
+    <text class="t label" x="580" y="286">code</text>
+
+    <rect class="chip" x="422" y="308" width="256" height="34" rx="8"/>
+    <text class="t mono" x="436" y="330">/api/relay</text>
+    <text class="t label" x="586" y="330">live</text>
+  </g>
+
+  <text x="422" y="372" class="onaccent" style="font-size:12px; opacity:.72">Merge rules live here, in one place:</text>
+  <text x="422" y="394" class="mono onaccent" style="opacity:.85">messages unioned by id · a finished copy</text>
+  <text x="422" y="412" class="mono onaccent" style="opacity:.85">beats a stale one · a delete is a tombstone</text>
+
+  <!-- device B -->
+  <rect class="box" x="818" y="96" width="252" height="212" rx="12"/>
+  <text class="t name" x="836" y="126">Another computer</text>
+  <text class="t sub" x="836" y="147">or the phone</text>
+  <g class="t mono">
+    <text x="836" y="180">same files</text>
+    <text x="836" y="204">its own cursor</text>
+    <text x="836" y="228">its own device id</text>
+  </g>
+  <text class="t sub" x="836" y="284">a cached remote chat never uploads</text>
+
+  <!-- arrows -->
+  <path d="M 282 170 L 400 170" stroke="#736d60" stroke-width="1.5" fill="none" marker-end="url(#a2)"/>
+  <text class="label" x="300" y="160">push</text>
+
+  <path d="M 400 214 L 282 214" stroke="#526457" stroke-width="1.5" fill="none" marker-end="url(#a2g)"/>
+  <text class="label" x="300" y="232">pull</text>
+
+  <path d="M 700 170 L 818 170" stroke="#526457" stroke-width="1.5" fill="none" marker-end="url(#a2g)"/>
+  <text class="label" x="740" y="160">pull</text>
+
+  <path d="M 818 214 L 700 214" stroke="#736d60" stroke-width="1.5" fill="none" marker-end="url(#a2)"/>
+  <text class="label" x="740" y="232">push</text>
+
+  <!-- policy bar -->
+  <rect class="box" x="30" y="474" width="1040" height="62" rx="10" stroke-dasharray="5 5"/>
+  <text class="t sub" x="50" y="500">The gate in front of every route above:</text>
+  <text class="t mono" x="50" y="522">paid plan + cloud sync switched on</text>
+  <text class="t sub" x="330" y="522">otherwise the answer is</text>
+  <text class="t mono" x="470" y="522">sync_not_included / sync_disabled</text>
+  <text class="t sub" x="700" y="522">and nothing leaves the machine</text>
+</svg>

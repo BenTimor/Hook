@@ -139,8 +139,9 @@ be merged, and it wastes your work.
   suite and it is expected to grow.
 - Update the docs in the same commit. If your change alters a command, a config
   key, a file path, a data path, a user-visible flow or the architecture, update
-  `README.md`, `AGENTS.md` or the matching file under `docs/`. A change that
-  makes a sentence in AGENTS.md wrong should fix that sentence.
+  the matching file under `docs/` (its index is `docs/README.md`), plus
+  `AGENTS.md` when it is about working on the code. A change that makes a
+  sentence in AGENTS.md wrong should fix that sentence.
 - Say what you tested and on which platform.
 
 ## Things that will get a pull request closed

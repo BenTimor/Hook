@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 660" width="1100" height="660" role="img" aria-label="Hook architecture: four products built on shared packages and one Rust core, talking to one account service">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#736d60"/>
+    </marker>
+    <style>
+      .box { fill: #fffdf9; stroke: rgba(63,57,43,0.18); stroke-width: 1.5; }
+      .soft { fill: #f0e9dc; stroke: rgba(63,57,43,0.12); stroke-width: 1; }
+      .accent { fill: #283b31; }
+      .chip { fill: #e3e7db; stroke: rgba(40,59,49,0.18); stroke-width: 1; }
+      .t { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; fill: #24241e; }
+      .name { font-size: 17px; font-weight: 650; }
+      .sub { font-size: 12.5px; fill: #5f5a51; }
+      .tiny { font-size: 12px; fill: #5f5a51; }
+      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12px; fill: #5f5a51; }
+      .label { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; font-size: 12px; fill: #5f5a51; }
+      .head { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; fill: #736d60; }
+      .onaccent { fill: #f5efe5; }
+    </style>
+  </defs>
+
+  <rect width="1100" height="660" fill="#f5efe5"/>
+
+  <!-- products -->
+  <text class="head" x="30" y="34">Products</text>
+  <g>
+    <rect class="box" x="30" y="48" width="245" height="84" rx="12"/>
+    <text class="t name" x="48" y="78">Hook</text>
+    <text class="t sub" x="48" y="100">desktop chat + coding agents</text>
+    <text class="t tiny" x="48" y="118">apps/chat</text>
+
+    <rect class="box" x="291" y="48" width="245" height="84" rx="12"/>
+    <text class="t name" x="309" y="78">Hook Workspace</text>
+    <text class="t sub" x="309" y="100">projects, boards, docs</text>
+    <text class="t tiny" x="309" y="118">apps/workspace</text>
+
+    <rect class="box" x="552" y="48" width="245" height="84" rx="12"/>
+    <text class="t name" x="570" y="78">HookCode</text>
+    <text class="t sub" x="570" y="100">the same account on a phone</text>
+    <text class="t tiny" x="570" y="118">apps/mobile</text>
+
+    <rect class="soft" x="813" y="48" width="257" height="84" rx="12" stroke-dasharray="5 5"/>
+    <text class="t name" x="831" y="78">Hook Browser</text>
+    <text class="t sub" x="831" y="100">Chromium overlay, designed</text>
+    <text class="t tiny" x="831" y="118">browser/</text>
+  </g>
+
+  <!-- shared surfaces -->
+  <text class="head" x="30" y="184">Shared code — one build, no forks</text>
+  <rect class="box" x="30" y="198" width="490" height="122" rx="12"/>
+  <text class="t name" x="48" y="228">packages/</text>
+  <text class="mono" x="48" y="252">ui · chat · markdown</text>
+  <text class="t sub" x="48" y="277">tokens and window chrome, the thread and</text>
+  <text class="t sub" x="48" y="295">composer, the document dialect and preview</text>
+
+  <rect class="box" x="540" y="198" width="530" height="122" rx="12"/>
+  <text class="t name" x="558" y="228">crates/hook-core</text>
+  <text class="t sub" x="558" y="252">the backend every product links</text>
+  <g class="t tiny">
+    <text x="558" y="277" class="mono">turn · compact · tools · memory · agent · coding</text>
+    <text x="558" y="297" class="mono">store · sync · auth · bridge · workspace · guard</text>
+  </g>
+
+  <!-- arrows products -> shared -->
+  <path d="M 152 132 L 152 198" stroke="#736d60" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M 413 132 L 413 198" stroke="#736d60" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M 674 132 L 674 198" stroke="#736d60" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M 940 132 L 940 198" stroke="#736d60" stroke-width="1.5" fill="none" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+
+  <!-- account service -->
+  <text class="head" x="30" y="378">One account service — server/, one container</text>
+  <rect class="accent" x="30" y="392" width="1040" height="132" rx="14"/>
+  <text x="50" y="422" class="t onaccent" style="font-size:15px; font-weight:650">hookcode.io/api</text>
+  <text x="50" y="444" class="t onaccent" style="font-size:12.5px; opacity:.72">device login · model proxy · sync · git · relay · Workspace</text>
+
+  <g>
+    <rect class="chip" x="50" y="462" width="112" height="30" rx="8"/>
+    <text class="t mono" x="64" y="482">auth</text>
+    <rect class="chip" x="172" y="462" width="120" height="30" rx="8"/>
+    <text class="t mono" x="186" y="482">proxy</text>
+    <rect class="chip" x="302" y="462" width="112" height="30" rx="8"/>
+    <text class="t mono" x="316" y="482">sync</text>
+    <rect class="chip" x="424" y="462" width="112" height="30" rx="8"/>
+    <text class="t mono" x="438" y="482">git</text>
+    <rect class="chip" x="546" y="462" width="112" height="30" rx="8"/>
+    <text class="t mono" x="560" y="482">relay</text>
+    <rect class="chip" x="668" y="462" width="146" height="30" rx="8"/>
+    <text class="t mono" x="682" y="482">workspace</text>
+    <rect class="chip" x="824" y="462" width="146" height="30" rx="8"/>
+    <text class="t mono" x="838" y="482">provider</text>
+    <rect class="chip" x="980" y="462" width="70" height="30" rx="8"/>
+    <text class="t mono" x="994" y="482">releases</text>
+  </g>
+
+  <path d="M 275 320 L 275 392" stroke="#736d60" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M 805 320 L 805 392" stroke="#736d60" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <text class="label" x="292" y="352">HTTPS · WebSocket · SSE</text>
+  <text class="label" x="822" y="352">the token never reaches the page</text>
+
+  <!-- data -->
+  <text class="head" x="30" y="572">Data stays on the machine it was made on, unless the account may sync</text>
+  <g>
+    <rect class="box" x="30" y="586" width="336" height="52" rx="10"/>
+    <text class="t mono" x="46" y="617">%APPDATA%\app.hook\</text>
+    <text class="t tiny" x="196" y="617">account.json · memory</text>
+
+    <rect class="box" x="378" y="586" width="336" height="52" rx="10"/>
+    <text class="t mono" x="394" y="617">app.hook.chat\</text>
+    <text class="t tiny" x="512" y="617">chats · projects · agent-home</text>
+
+    <rect class="box" x="726" y="586" width="344" height="52" rx="10"/>
+    <text class="t mono" x="742" y="617">/data on the VPS</text>
+    <text class="t tiny" x="860" y="617">sqlite · releases · git · sync</text>
+  </g>
+</svg>
