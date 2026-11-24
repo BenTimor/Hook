@@ -144,11 +144,12 @@ rows written before this rule are adopted when the service starts.
   horizontal timeline where each milestone is a large circle carrying its date,
   status, title and description preview, connected by a line. It scrolls left
   to right with momentum and elastic edges, supports drag from anywhere and
-  Ctrl + wheel zoom, and keeps the clicked circle in view instead of jumping
-  back to the start. Clicking a circle opens a Motion-animated drawer for
-  editing that milestone. Hovering a gap or using the always-visible right-edge
-  button adds another milestone there, dated one day after the milestone before
-  it. Milestones themselves are not tree items.
+  Ctrl + wheel zoom, and never jumps back to the start when you click a
+  milestone. Clicking a circle grows that circle into a large centered editor
+  (title, status, date and description) instead of opening a side drawer.
+  Hovering a gap or using the always-visible right-edge button adds another
+  milestone there, dated one day after the milestone before it. Milestones
+  themselves are not tree items.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,
   and an agent comment carries the conversation it came from, so a teammate sees
   "via Hook agent" instead of mistaking it for something the user typed. The

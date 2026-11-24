@@ -2530,7 +2530,30 @@
 .ws-timeline-title { display: -webkit-box; max-width: calc(270px * var(--roadmap-zoom, 1)); overflow: hidden; color: var(--ink); font-size: calc(18px * var(--roadmap-zoom, 1)); font-weight: 620; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ws-timeline-preview { display: -webkit-box; max-width: calc(270px * var(--roadmap-zoom, 1)); overflow: hidden; color: var(--ink-3); font-size: calc(13.5px * var(--roadmap-zoom, 1)); line-height: 1.38; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 @media (prefers-reduced-motion: reduce) {
-  .ws-timeline-node::before { animation: none; }
+  .ws-timeline-node::before, .ws-milestone-focus::before { animation: none; }
+}
+.ws-milestone-focus-backdrop { position: absolute; z-index: 30; inset: 0; display: grid; place-items: center; padding: 8px; background: rgba(31, 38, 30, 0.16); backdrop-filter: blur(6px); }
+.ws-milestone-focus { --orbit-a: rgba(54, 95, 136, 0.7); --orbit-b: rgba(47, 111, 109, 0.5); --orbit-c: rgba(var(--accent-rgb), 0.64); position: relative; display: flex; width: min(760px, calc(100vw - 40px), calc(100vh - 64px)); aspect-ratio: 1; flex-direction: column; align-items: center; justify-content: center; gap: 11px; padding: clamp(46px, 10%, 76px) clamp(48px, 12%, 92px) clamp(62px, 14%, 108px); border: 1px solid var(--line); border-radius: 50%; background: var(--ivory); box-shadow: 0 30px 100px rgba(36, 36, 30, 0.24); }
+.ws-milestone-focus::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; background: conic-gradient(from 0deg, transparent 0deg, var(--orbit-a) 48deg, var(--orbit-b) 118deg, transparent 176deg, var(--orbit-c) 232deg, transparent 296deg, transparent 360deg); opacity: 0.78; pointer-events: none; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px)); animation: ws-milestone-orbit 28s linear infinite; }
+.ws-milestone-focus > * { position: relative; z-index: 1; }
+.ws-milestone-focus[data-status="planned"] { --orbit-a: rgba(182, 146, 78, 0.76); --orbit-b: rgba(208, 176, 106, 0.46); --orbit-c: rgba(143, 115, 51, 0.64); }
+.ws-milestone-focus[data-status="active"] { --orbit-a: rgba(93, 139, 181, 0.78); --orbit-b: rgba(126, 166, 199, 0.48); --orbit-c: rgba(54, 95, 136, 0.68); }
+.ws-milestone-focus[data-status="done"] { --orbit-a: rgba(79, 156, 114, 0.78); --orbit-b: rgba(122, 191, 149, 0.48); --orbit-c: rgba(47, 106, 72, 0.68); }
+.ws-milestone-focus-close { position: absolute; z-index: 2; top: clamp(24px, 5%, 38px); right: clamp(28px, 7%, 54px); display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: rgba(255, 253, 249, 0.8); color: var(--ink-3); }
+.ws-milestone-focus-close:hover { background: var(--panel); color: var(--ink); }
+.ws-milestone-focus-close svg { width: 16px; height: 16px; }
+.ws-milestone-focus-kicker { color: var(--ink-4); font-size: 9.5px; font-weight: 650; letter-spacing: 0.1em; text-transform: uppercase; }
+.ws-milestone-focus-statuses { justify-content: center; }
+.ws-milestone-focus-title { width: 100%; padding: 2px 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: clamp(21px, 3.4vw, 29px); font-weight: 600; letter-spacing: -0.03em; text-align: center; outline: none; }
+.ws-milestone-focus-title:focus { box-shadow: 0 1px 0 var(--line-strong); }
+.ws-milestone-focus-date, .ws-milestone-focus-notes { width: 100%; }
+.ws-milestone-focus-notes { text-align: left; }
+.ws-milestone-focus-notes textarea { min-height: 104px; resize: none; }
+.ws-milestone-focus-foot { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft); color: var(--ink-4); font-size: 10.5px; font-weight: 400; }
+.ws-milestone-focus-foot .ws-document-state { margin-right: auto; }
+@media (max-height: 620px) {
+  .ws-milestone-focus { gap: 8px; }
+  .ws-milestone-focus-notes textarea { min-height: 72px; }
 }
 .ws-milestone-drawer { position: absolute; z-index: 20; top: 0; right: 0; bottom: 0; display: flex; width: 390px; max-width: calc(100vw - 44px); flex-direction: column; gap: 16px; padding: 16px 18px 18px; overflow: auto; border-left: 1px solid var(--line); background: rgba(255, 253, 249, 0.97); box-shadow: -24px 0 60px rgba(36, 36, 30, 0.13); backdrop-filter: blur(16px); }
 .ws-milestone-drawer-head { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }

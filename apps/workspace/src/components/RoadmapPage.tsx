@@ -77,6 +77,7 @@ export function RoadmapPage({
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editorOrigin, setEditorOrigin] = useState<{ x: number; y: number } | null>(null);
   const [creating, setCreating] = useState(false);
   const [insertAfterId, setInsertAfterId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -95,6 +96,7 @@ export function RoadmapPage({
   const track = useRef<HTMLDivElement>(null);
   const wheelTarget = useRef(0);
   const wheelFrame = useRef<number | null>(null);
+  const page = useRef<HTMLDivElement>(null);
   const x = useMotionValue(0);
   const dragControls = useDragControls();
   const readOnly = project.role === "viewer";
@@ -159,6 +161,15 @@ export function RoadmapPage({
   }, [id, roadmap, loadRoadmap]);
 
   useEffect(() => {
+    if (!editorOpen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setEditorOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [editorOpen]);
+
+  useEffect(() => {
     setSelectedId((current) => {
       if (current && timeline.some((milestone) => milestone.id === current)) return current;
       return timeline[0]?.id ?? null;
@@ -179,7 +190,7 @@ export function RoadmapPage({
       const t = track.current;
       if (!v || !t) return;
       const overflow = Math.max(0, t.scrollWidth - v.clientWidth);
-      const max = overflow + (editorOpen ? 430 : 0);
+      const max = overflow;
       maxDragRef.current = max;
       setMaxDrag(max);
       if (x.get() < -max) x.set(-max);
@@ -193,6 +204,7 @@ export function RoadmapPage({
   }, [editorOpen, timeline.length, x, zoom]);
 
   useEffect(() => {
+    if (editorOpen) return;
     const frame = requestAnimationFrame(() => {
       const v = viewport.current;
       const node = activeNode.current;
@@ -202,7 +214,7 @@ export function RoadmapPage({
       const margin = 48;
       const left = nodeRect.left - vRect.left;
       const right = left + nodeRect.width;
-      const visibleRight = vRect.width - (editorOpen ? 430 : 0) - margin;
+      const visibleRight = vRect.width - margin;
       let delta = 0;
       if (right > visibleRight) delta = visibleRight - right;
       else if (left < margin) delta = margin - left;
@@ -221,8 +233,18 @@ export function RoadmapPage({
     if (!saved) return;
   };
 
-  const choose = (milestone: Milestone) => {
+  const choose = (milestone: Milestone, element: HTMLElement) => {
     if (suppressClick.current) return;
+    const box = page.current?.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    setEditorOrigin(
+      box
+        ? {
+            x: rect.left + rect.width / 2 - (box.left + box.width / 2),
+            y: rect.top + rect.height / 2 - (box.top + box.height / 2),
+          }
+        : null,
+    );
     setSelectedId(milestone.id);
     setEditorOpen(true);
   };
@@ -233,13 +255,15 @@ export function RoadmapPage({
     if (!confirm("Delete this milestone for everyone?")) return;
     void deleteMilestone(selected.id).then(() => {
       setSelectedId(next?.id ?? null);
-      setEditorOpen(Boolean(next));
+      setEditorOpen(false);
+      setEditorOrigin(null);
     });
   };
 
   const openCreate = (after: Milestone | null) => {
     setInsertAfterId(after?.id ?? null);
     setNewTitle("");
+    setEditorOrigin(null);
     setCreating(true);
   };
 
@@ -258,6 +282,7 @@ export function RoadmapPage({
       if (!milestone) return;
       setInsertAfterId(null);
       setSelectedId(milestone.id);
+      setEditorOrigin(null);
       setEditorOpen(true);
     });
   };
@@ -272,7 +297,7 @@ export function RoadmapPage({
   }
 
   return (
-    <div className="ws-milestones-page">
+    <div className="ws-milestones-page" ref={page}>
       <header className="ws-page-head">
         <div className="ws-page-title">
           <span className="ws-page-kicker">Roadmap</span>
@@ -406,7 +431,7 @@ export function RoadmapPage({
                       ? `${milestone.title || "Untitled"}, ${fullDate(milestone.dueDate)}`
                       : milestone.title || "Untitled"
                   }
-                  onClick={() => choose(milestone)}
+                  onClick={(event) => choose(milestone, event.currentTarget)}
                   initial={{ opacity: 0, y: 28, scale: 0.86 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ delay: 0.05 + index * 0.06, type: "spring", stiffness: 240, damping: 24 }}
@@ -457,60 +482,42 @@ export function RoadmapPage({
 
       <AnimatePresence>
         {editorOpen && selected ? (
-          <motion.aside
-            className="ws-milestone-drawer"
-            aria-label="Edit milestone"
-            initial={{ x: 430, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 430, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 380, damping: 38 }}
+          <motion.div
+            className="ws-milestone-focus-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            onClick={() => setEditorOpen(false)}
           >
-            <div className="ws-milestone-drawer-head">
-              <span>Edit milestone</span>
-              <span className="ws-document-state" data-dirty={saving}>
-                {!saving && <Check aria-hidden="true" />}
-                {saving ? "Saving…" : "Saved"}
-              </span>
+            <motion.div
+              className="ws-milestone-focus"
+              data-status={status}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Edit ${selected.title || "milestone"}`}
+              initial={{
+                x: editorOrigin?.x ?? 0,
+                y: editorOrigin?.y ?? 0,
+                scale: editorOrigin ? 0.35 : 0.9,
+                opacity: 0,
+              }}
+              animate={{ x: 0, y: 0, scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 280, damping: 30, mass: 0.8 }}
+              onClick={(event) => event.stopPropagation()}
+            >
               <button
                 type="button"
-                className="ws-milestone-drawer-close"
-                aria-label="Close editor"
+                className="ws-milestone-focus-close"
+                aria-label="Close milestone"
                 onClick={() => setEditorOpen(false)}
               >
                 <X aria-hidden="true" />
               </button>
-            </div>
 
-            <input
-              className="ws-milestone-drawer-title"
-              value={title}
-              readOnly={readOnly}
-              aria-label="Milestone title"
-              onChange={(event) => setTitle(event.target.value)}
-              onBlur={() => {
-                const next = title.trim();
-                if (next && next !== selected.title) void save({ title: next });
-              }}
-            />
-
-            <div className="ws-milestone-field ws-milestone-field-date">
-              <span><CalendarDays aria-hidden="true" />Target date</span>
-              <DateCell
-                value={dueDate}
-                type="date"
-                label="Target date"
-                disabled={readOnly}
-                onChange={(next) => {
-                  setDueDate(next);
-                  void save({ dueDate: next || null });
-                }}
-              />
-              <small>{fullDate(dueDate || null)}</small>
-            </div>
-
-            <div className="ws-milestone-field">
-              <span><Circle aria-hidden="true" />Status</span>
-              <div className="ws-milestone-statuses">
+              <div className="ws-milestone-focus-kicker">Milestone</div>
+              <div className="ws-milestone-statuses ws-milestone-focus-statuses">
                 {STATUS.map(({ id: value, label, Icon }) => (
                   <button
                     key={value}
@@ -530,37 +537,67 @@ export function RoadmapPage({
                   </button>
                 ))}
               </div>
-            </div>
 
-            <label className="ws-milestone-field ws-milestone-notes">
-              <span>Description</span>
-              <textarea
-                value={description}
+              <input
+                className="ws-milestone-focus-title"
+                value={title}
                 readOnly={readOnly}
-                aria-label="Milestone description"
-                placeholder="What does this milestone mean?"
-                onChange={(event) => setDescription(event.target.value)}
+                aria-label="Milestone title"
+                onChange={(event) => setTitle(event.target.value)}
                 onBlur={() => {
-                  if (description !== selected.description) void save({ description });
+                  const next = title.trim();
+                  if (next && next !== selected.title) void save({ title: next });
                 }}
               />
-            </label>
 
-            <div className="ws-milestone-drawer-foot">
-              <span>Updated {new Date(selected.updatedAt).toLocaleDateString("en-GB")}</span>
-              {!readOnly ? (
-                <button
-                  type="button"
-                  className="ws-milestone-delete"
-                  aria-label="Delete milestone"
-                  title="Delete milestone"
-                  onClick={removeSelected}
-                >
-                  <Trash2 aria-hidden="true" />
-                </button>
-              ) : null}
-            </div>
-          </motion.aside>
+              <div className="ws-milestone-field ws-milestone-field-date ws-milestone-focus-date">
+                <span><CalendarDays aria-hidden="true" />Target date</span>
+                <DateCell
+                  value={dueDate}
+                  type="date"
+                  label="Target date"
+                  disabled={readOnly}
+                  onChange={(next) => {
+                    setDueDate(next);
+                    void save({ dueDate: next || null });
+                  }}
+                />
+              </div>
+
+              <label className="ws-milestone-field ws-milestone-notes ws-milestone-focus-notes">
+                <span>Description</span>
+                <textarea
+                  value={description}
+                  readOnly={readOnly}
+                  aria-label="Milestone description"
+                  placeholder="What does this milestone mean?"
+                  onChange={(event) => setDescription(event.target.value)}
+                  onBlur={() => {
+                    if (description !== selected.description) void save({ description });
+                  }}
+                />
+              </label>
+
+              <div className="ws-milestone-focus-foot">
+                <span className="ws-document-state" data-dirty={saving}>
+                  {!saving && <Check aria-hidden="true" />}
+                  {saving ? "Saving…" : "Saved"}
+                </span>
+                <span>Updated {new Date(selected.updatedAt).toLocaleDateString("en-GB")}</span>
+                {!readOnly ? (
+                  <button
+                    type="button"
+                    className="ws-milestone-delete"
+                    aria-label="Delete milestone"
+                    title="Delete milestone"
+                    onClick={removeSelected}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            </motion.div>
+          </motion.div>
         ) : null}
       </AnimatePresence>
 
