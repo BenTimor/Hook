@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use crate::commands::AppState;
+use crate::state::AppState;
 use crate::store::Chat;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -136,7 +136,7 @@ async fn compact(state: &Arc<AppState>, chat: &Chat, args: &str) -> Result<(), S
                 .device_id
                 .clone()
                 .ok_or("This conversation does not know which machine owns it.")?;
-            crate::commands::remote_rpc(
+            crate::session::remote_rpc(
                 state,
                 &device,
                 "coding.compact",

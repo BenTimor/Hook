@@ -1529,6 +1529,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hook-host"
+version = "0.1.0"
+dependencies = [
+ "hook-core",
+ "tokio",
+]
+
+[[package]]
 name = "hook-mobile"
 version = "0.1.0"
 dependencies = [

@@ -287,7 +287,7 @@ impl SyncEngine {
     }
 
     pub fn spawn(self: Arc<Self>) {
-        tauri::async_runtime::spawn(async move {
+        crate::rt::spawn(async move {
             let mut failures = 0u32;
             loop {
                 if self.auth.token().is_some() {

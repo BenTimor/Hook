@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde_json::Value;
 
 use crate::agent::{AgentInfo, STATE_NEEDS_INPUT};
-use crate::commands::AppState;
+use crate::state::AppState;
 use crate::store::{
     now_ms, strip_verbatim, Chat, ChatMeta, Compaction, Message, Store, ToolCallRecord,
     KIND_CODING,

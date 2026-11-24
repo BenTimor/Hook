@@ -18,14 +18,17 @@ family's centre of gravity:
   registry** (`/api/devices`): the name, platform, app version, capabilities and
   last-seen time. No conversation or project content lives there.
 - **One relay.** Every running product holds an outbound WebSocket to
-  `/api/relay`. Hook and a headless install are hosts; Hook Workspace and the
-  phone are controllers. The phone can start and watch work on a computer
-  without that computer accepting an inbound connection.
+  `/api/relay`. Hook and a headless install are hosts; Hook Workspace, the phone
+  and Hook Browser's host are controllers. The phone can start and watch work on
+  a computer without that computer accepting an inbound connection.
 - **Capabilities, not forks.** The backend is a single crate (`hook-core`). A
-  product passes `Product` and `Capabilities` to `hook_core::builder`; the chat
-  agent's prompt and toolset are trimmed to what that product can honour. Hook
-  Workspace, for example, has no preview panel, so its agent is never told
-  about one.
+  window passes `Product` and `Capabilities` to `hook_core::builder`; a product
+  with no window — Hook Browser's host, `crates/hook-host` — links the same crate
+  with `default-features = false` and calls `hook_core::start`. Either way the
+  chat agent's prompt and toolset are trimmed to what that product can honour.
+  Hook Workspace, for example, has no preview panel, so its agent is never told
+  about one; the browser's host has no project folder, so it is never told about
+  one either.
 - **Capability behind the API first.** Anything a product can do is an endpoint
   before it is a button, which is what makes a second product usable through
   the chat agent alone — even when it is not installed.

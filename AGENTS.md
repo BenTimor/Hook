@@ -184,11 +184,13 @@ bash.
   description this machine registers. `docs/relay-protocol.md` is the contract;
   `docs/remote-control-status.md` is the handoff (what exists, what is left).
 - `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
-  builder every product calls. `resolve_data_dir` is the one place that decides
-  where a process keeps its data: `%APPDATA%\<identifier>` for an installed
-  build, `%APPDATA%\hook-dev\<identifier>` for a debug one, `HOOK_DATA_DIR` over
-  both (see **Commands**). A capability trims the prompt and the toolset; it
-  must never change the data model. The six fields are places an answer can
+  builder every product calls. `resolve_data_dir` / `product_data_dir` are the
+  one place that decides where a process keeps its data: `%APPDATA%\<identifier>`
+  for an installed build, `%APPDATA%\hook-dev\<identifier>` for a debug one,
+  `HOOK_DATA_DIR` over both (see **Commands**); `Product::identifier()` names the
+  folder and `Product::slug()` the word used everywhere a product is named to a
+  machine (`/health`, the descriptor file, analytics). A capability trims the
+  prompt and the toolset; it must never change the data model. The six fields are places an answer can
   appear or things a device can reach: `preview_pages` (an HTML file served from
   a project), `preview_workspace` (a board, task or document — just account
   data), `coding_agents` (this process can run `pi`), `remote_agents` (it can
@@ -196,6 +198,25 @@ bash.
   on this machine). `Capabilities::mobile()` is the phone: Workspace and the
   other machines, no local folder and no local engine. `Capabilities::workspace()`
   is a controller too: Hook on the same computer hosts the agent.
+  `Capabilities::browser()` is Hook Browser's host: the phone's shape in its own
+  folder (`%APPDATA%\app.hook.browser`) — a controller, never a host.
+- `crates/hook-core/src/{boot,events,rt,state,session}.rs` — the backend without
+  a window. `boot::start(StartOptions)` builds the state for both a Tauri product
+  and `hook-host`: the stores, the account, sync, the agent supervisor, the
+  relay, the preview server and the channel, but never a window. `lib.rs` keeps
+  only what a window adds (the tray, focus, `--headless`) and calls it.
+  `events::EventSink` is what replaced `AppState.app`: a product says what
+  happened and nothing below `lib.rs` holds an `AppHandle`. `rt` owns the tokio
+  handle (`rt::set` once at startup, `rt::spawn` everywhere) — `Handle::spawn`
+  needs no reactor, which is why the "no reactor running" panic that used to
+  abort a window from a command thread cannot come back through it. `state.rs`
+  holds `AppState`; `session.rs` holds the operations the IPC, the channel and
+  the relay all drive (send, stop, delete, browser sign-in, an RPC), so the three
+  cannot disagree about what a chat may do. Tauri is a feature:
+  `default = ["desktop"]`, and `hook-core` with `default-features = false`
+  compiles none of `commands.rs`, `update.rs` or any Tauri type — so a new IPC
+  command needs no host branch, and a capability that only makes sense with a
+  window must not be read from the backend's shared code.
 - `crates/hook-core/src/auth.rs` — device flow, the shared
   `%APPDATA%\app.hook\account.json`, per-product mirrors, git-token rotation,
   and the account side of entitlements: the plan, the account-wide cloud-sync
@@ -347,14 +368,17 @@ bash.
   (`crates/hook-core/src/channel.rs`) — the browser process makes those calls
   because a `chrome://` renderer is killed for a cross-scheme request, and that is
   also why its token never reaches the page — and `browser/host/` starts that host
-  when none answers: one launch per browser run, `hook --headless`, a path fixed
-  at build time (`hook_host_path` in the GN args, written by `build.mjs`; beside
-  `chrome.exe` in a packaged build), a descriptor accepted only when its `pid` is
-  the child's, and `--hook-no-host` to turn it off (`docs/browser-host.md`).
+  when none answers: one launch per browser run, `hook-host`
+  (`crates/hook-host`), a path fixed at build time (`hook_host_path` in the GN
+  args, written by `build.mjs`; beside `chrome.exe` in a packaged build), a
+  descriptor accepted only when its `pid` is the child's, and `--hook-no-host` to
+  turn it off (`docs/browser-host.md`).
   `pnpm browser:smoke` is the check:
   the tab list, the dock, the gate both ways (the card is on the page), the side
-  panel, `--newtab`, `--codecs`, `--host` for the launch, and `--channel` against
-  a running app — or against `hook --headless`, the host with no window. Every
+  panel, `--newtab`, `--codecs`, `--host` for the launch (the pid, the
+  `browser` product, and the browser's own descriptor file), and `--channel`
+  against a running app — or against `hook --headless`, the chat app with no
+  window. Every
   other flag passes `--hook-no-host`, so no check leaves a process behind. The
   ~100 GB checkout itself never
   enters the repo and `browser/README.md` carries the dev loop, the toolchain
@@ -614,8 +638,10 @@ Changing one side of a boundary is the most common way to break this repo.
   `tauri ios init` once, and it ships through App Store Connect and the Play
   Console. `scripts/release.sh` keeps its own list and does not build it.
   "Product" in this repo means a business product sharing the account — Hook,
-  Hook Workspace, HookCode on a phone, and the future browser — not every
-  `apps/*` directory.
+  Hook Workspace, HookCode on a phone, and Hook Browser — not every `apps/*`
+  directory. A product with no window is not an `apps/<id>` Tauri crate:
+  `crates/hook-host` is the browser's, and it links `hook-core` with
+  `default-features = false`.
 - **Browser channel change (the dock's link to a running Hook host):**
   `crates/hook-core/src/channel.rs` (route, token, descriptor, the JSON shape) →
   `browser/overlay/src/hook/browser/channel/hook_channel.{h,cc}` (the browser
@@ -627,9 +653,13 @@ Changing one side of a boundary is the most common way to break this repo.
   token is a credential:
   never log it, never send it to a page, and keep the routes read-and-send only —
   a channel that can rename or delete is a second window into the account. The
-  descriptor sits beside the account file, so a debug build publishes it under
-  `%APPDATA%\hook-dev\app.hook\` and `--channel` follows the installed app, not
-  `pnpm app` (`browser/README.md`, **The channel**). A
+  descriptor sits beside the account file and is named per product
+  (`browser-channel.<slug>.json`, from `Product::slug()`), because two hosts
+  running at once is normal: `hook_paths::ChannelDescriptorFiles()` lists what the
+  browser reads, in order, and a file that exists but cannot be parsed stops the
+  search. A debug build publishes under `%APPDATA%\hook-dev\app.hook\` and
+  `--channel` follows the installed app, not `pnpm app`
+  (`browser/README.md`, **The channel**). A
   `chrome://` renderer cannot make these requests itself (Chromium kills it for
   "Incorrect scheme"), so the call stays in the browser process, and the
   descriptor (`channel/hook_descriptor.{h,cc}`) is read on a thread pool because
@@ -643,12 +673,16 @@ Changing one side of a boundary is the most common way to break this repo.
   path is resolved at build time and never from a page, a preference or the
   environment, the descriptor is accepted only when its `pid` is the child's, and
   every smoke flag but `--host` passes `--hook-no-host` so a check leaves nothing
-  running. The launch sets `HOOK_DATA_DIR` to `<shared>/app.hook.chat`
+  running. The launch sets `HOOK_DATA_DIR` to `<shared>/app.hook.browser`
   (`kHostProductFolder`), because a *debug* host would otherwise publish its
   channel under `%APPDATA%\hook-dev\` where the browser never looks — a host whose
   data folder is not beside the account the gate reads is a host this browser
-  cannot use. The launch itself is `hook --headless` today; `Product::Browser`
-  and the sidecar replace the binary and that folder name, not this file.
+  cannot use. The binary is `hook-host` (`crates/hook-host`), searched beside
+  `chrome.exe` and then at `hook_host_path`; `--host` also asserts `/health`
+  reports the `browser` product and that `browser-channel.browser.json` is the
+  file that answered. `hook --headless` still exists as the chat app with no
+  window, which is what `--channel` borrows, but nothing in the launch depends on
+  it.
 
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
   `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`

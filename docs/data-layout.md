@@ -64,6 +64,13 @@ Hook Workspace writes to `%APPDATA%\app.hook.workspace\` and reads the same
 twice; its cached data and the service it talks to are documented in
 [Hook Workspace](workspace.md).
 
+Hook Browser's host (`crates/hook-host`, started by the browser) writes to
+`%APPDATA%\app.hook.browser\`: its own chats, settings and agent home, the same
+account, and its own `browser-channel.browser.json` in the shared `app.hook\`
+folder beside Hook's. Two products hosting a channel at once is why that
+descriptor is named per product. The browser's history is its own until sync
+reconciles it with the account, the same way Workspace's is.
+
 The Microsoft Store (MSIX) build writes to the same `%APPDATA%\app.hook.chat`
 folder: its manifest opts out of AppData virtualization so Store and direct
 installs share chats and sign-in. In-app updates download installers to

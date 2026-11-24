@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/hook-core",
+    "crates/hook-host",
     "apps/chat/src-tauri",
     "apps/workspace/src-tauri",
     "apps/mobile/src-tauri",

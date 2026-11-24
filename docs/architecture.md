@@ -29,8 +29,14 @@ crates/hook-core/src/          the backend every product links
   sync.rs       background chat/picture/project/memory/endpoint sync, server-side
                 merge cursor
   auth.rs       device flow and the account file shared by every product
-  commands.rs   the IPC surface
-  lib.rs        Product + Capabilities, the app builder every product calls
+  commands.rs   the IPC surface (feature `desktop`: the only Tauri-typed module)
+  boot.rs       start(StartOptions): the backend without a window, for both
+  events.rs     EventSink — what replaced AppState.app
+  rt.rs         the process's tokio handle; rt::spawn needs no reactor
+  state.rs      AppState; session.rs the operations IPC/channel/relay share
+  lib.rs        Product + Capabilities, the builder a window calls
+crates/hook-host/              Hook Browser's host (no Tauri, no window):
+                               the same backend, `%APPDATA%\app.hook.browser`
 apps/chat/                     the chat product
   src/lib/bridge.ts  typed invoke wrappers + app-wide event bus
   src/store/         zustand: chats, per-chat streams, agents, settings

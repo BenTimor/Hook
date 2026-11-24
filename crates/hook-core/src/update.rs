@@ -308,7 +308,7 @@ pub fn open_store_for_update(app: &AppHandle, cfg: &HarnessConfig) -> Result<(),
     // needs a moment before this one disappears. Long enough to be reliable,
     // short enough that the window does not look stuck.
     let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::rt::spawn(async move {
         tokio::time::sleep(Duration::from_millis(700)).await;
         handle.exit(0);
     });
@@ -341,6 +341,10 @@ async fn fetch_index(cfg: &HarnessConfig, product: crate::Product) -> Result<Rel
         // never read; the product's own release channel lives in App Store
         // Connect and Play Console, not in `release.config.json`.
         crate::Product::Mobile => format!("{}/api/releases/mobile", base(cfg)),
+        // The browser's host has no window, so it has no update check and never
+        // calls this. Naming its index keeps the match honest rather than
+        // pretending the phone is the only such product.
+        crate::Product::Browser => format!("{}/api/releases/browser", base(cfg)),
     };
     let client = http_client(Some(MANIFEST_TIMEOUT))?;
     let response = client

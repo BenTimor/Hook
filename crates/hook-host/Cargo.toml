@@ -1,0 +1,15 @@
+[package]
+name = "hook-host"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+publish = false
+license = "AGPL-3.0-only"
+description = "Hook Browser's host process: the same backend, with no window"
+
+# Not a Tauri app and not a product's window: this is the process the browser
+# starts. It links `hook-core` with `default-features = false`, which is what
+# keeps Tauri, wry and the tray out of a binary that has nothing to draw on.
+[dependencies]
+hook-core = { path = "../hook-core", default-features = false }
+tokio = { version = "1", features = ["full"] }

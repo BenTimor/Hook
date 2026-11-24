@@ -49,9 +49,25 @@ base::FilePath AccountFile() {
   return dir.empty() ? base::FilePath() : dir.AppendASCII("account.json");
 }
 
-base::FilePath ChannelDescriptorFile() {
+std::vector<base::FilePath> ChannelDescriptorFiles() {
+  std::vector<base::FilePath> files;
   const base::FilePath dir = SharedDir();
-  return dir.empty() ? base::FilePath() : dir.AppendASCII("browser-channel.json");
+  if (dir.empty()) {
+    return files;
+  }
+  // The browser's own host first: it is the one this browser launched, in its own
+  // folder, and it is the only descriptor whose pid can match the child the
+  // launcher started. The chat app is the useful fallback (it hosted this channel
+  // before the browser had a host), Workspace is the other desktop product, and a
+  // phone has no folder on this machine. The bare name is what every build before
+  // the per-product split wrote, so a host that has not been rebuilt is still
+  // found.
+  for (const char* name :
+       {"browser-channel.browser.json", "browser-channel.chat.json",
+        "browser-channel.workspace.json", "browser-channel.json"}) {
+    files.push_back(dir.AppendASCII(name));
+  }
+  return files;
 }
 
 }  // namespace hook::paths

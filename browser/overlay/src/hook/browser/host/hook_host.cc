@@ -37,17 +37,19 @@ constexpr base::TimeDelta kWaitForDescriptor = base::Seconds(20);
 constexpr base::TimeDelta kPollInterval = base::Milliseconds(250);
 
 #if BUILDFLAG(IS_WIN)
-constexpr char kHostBinary[] = "hook.exe";
+constexpr char kHostBinary[] = "hook-host.exe";
 constexpr wchar_t kDataDirVariable[] = L"HOOK_DATA_DIR";
 #else
-constexpr char kHostBinary[] = "hook";
+constexpr char kHostBinary[] = "hook-host";
 constexpr char kDataDirVariable[] = "HOOK_DATA_DIR";
 #endif
 
-// The host is the chat product today, so its data folder is the chat product's
-// (`apps/chat/src-tauri/tauri.conf.json`). Step 3 of docs/browser-host.md
-// replaces this with `app.hook.browser` when the host is the browser's own.
-constexpr char kHostProductFolder[] = "app.hook.chat";
+// The browser's own host, so the browser's own folder: `Product::Browser` in
+// `hook-core` keeps its chats in `%APPDATA%pp.hook.browser`, beside the account
+// every product shares. Naming it here is what keeps the browser's gate and the
+// channel looking at one account even when this host is a dev build (which would
+// otherwise nest itself under `hook-dev`).
+constexpr char kHostProductFolder[] = "app.hook.browser";
 
 // A packaged browser ships the host next to itself. A dev tree has no such file,
 // so the build writes the path to the repository's binary into the GN args —
@@ -118,15 +120,14 @@ class Launcher {
       return;
     }
 
+    // No switches: `hook-host` has no window to suppress and no mode to choose.
+    // It is the backend with a channel, and that is all it is.
     base::CommandLine command_line(path);
-    // The interim host: the same app, the same account, the same channel, and no
-    // window. Replaced by the sidecar, not by a different command line.
-    command_line.AppendSwitch("headless");
 
     base::LaunchOptions options;
 #if BUILDFLAG(IS_WIN)
     // No console window on someone's desktop: the host is an implementation
-    // detail, and `--headless` only hides the window we would otherwise build.
+    // detail, not a program they started.
     options.start_hidden = true;
 #endif
 

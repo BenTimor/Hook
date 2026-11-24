@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use serde_json::{json, Value};
 
-use crate::commands::AppState;
+use crate::state::AppState;
 
 /// A tool call is a few kilobytes of JSON; the answer can be a page of results.
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -50,7 +50,7 @@ struct Inner {
     /// instead of leaving a growing pile of live tokens behind.
     by_chat: HashMap<String, String>,
     port: Option<u16>,
-    server: Option<tauri::async_runtime::JoinHandle<()>>,
+    server: Option<tokio::task::JoinHandle<()>>,
 }
 
 pub struct ToolBridge {
@@ -88,7 +88,7 @@ impl ToolBridge {
         };
 
         let bridge = self.clone();
-        let handle = tauri::async_runtime::spawn(async move {
+        let handle = crate::rt::spawn(async move {
             let listener = match tokio::net::TcpListener::from_std(listener) {
                 Ok(listener) => listener,
                 Err(error) => {
@@ -101,7 +101,7 @@ impl ToolBridge {
                     continue;
                 };
                 let bridge = bridge.clone();
-                tauri::async_runtime::spawn(async move {
+                crate::rt::spawn(async move {
                     if let Err(error) = handle_connection(stream, bridge).await {
                         if error.kind() != std::io::ErrorKind::BrokenPipe
                             && error.kind() != std::io::ErrorKind::ConnectionReset
@@ -329,7 +329,7 @@ async fn dispatch(state: Arc<AppState>, chat_id: String, name: String, args: Val
     if crate::workspace::handles(&name) {
         return crate::workspace::execute(&state.workspace, &chat_id, &name, &args).await;
     }
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let result = crate::rt::spawn_blocking(move || {
         if crate::memory::handles(&name) {
             return crate::memory::execute(&state.memory, &name, &args, &chat_id);
         }

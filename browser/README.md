@@ -227,23 +227,26 @@ node browser/tools/smoke.mjs --host           # the browser starts its own host
 node browser/tools/smoke.mjs --channel        # the dock on real conversations
 ```
 
-`--host` is the one that needs a second binary: close Hook first (a host that is
-already answering means nothing is launched), and give it something to launch.
-`pnpm app` (a debug build, `apps/chat/src-tauri/target/debug/hook.exe`) or
-`pnpm app:build` (release, `target/release/`, the one that behaves like an
-installed product) — either is picked up by `build.mjs`, which writes the path
-into `out/Dev/args.gn` at `gn gen` time, so **re-run `build.mjs --gen-only` after
-building Hook** if you built the browser first. A debug host is fine: the browser
-launches it with `HOOK_DATA_DIR` pinned to the shared data folder, so it does not
-vanish into `%APPDATA%\hook-dev\` (`docs/browser-host.md`, "Starting it").
+`--host` is the one that needs a second binary: close every Hook product first (a
+host that is already answering means nothing is launched), and build the host.
+
+```bash
+cargo build -p hook-host        # target/debug/hook-host.exe, seconds once the tree is warm
+```
+
+`build.mjs` picks that up and writes its path into `out/Dev/args.gn` at `gn gen`
+time, so **re-run `build.mjs --gen-only` after building the host** if you built
+the browser first. A debug host is fine: the browser launches it with
+`HOOK_DATA_DIR` pinned to `app.hook.browser` under the shared folder, so it does
+not vanish into `%APPDATA%\hook-dev\` (`docs/browser-host.md`, "Starting it").
 
 Two failure paths are worth provoking on purpose, because both are what a person
 will actually see:
 
-- rename `target/release/hook.exe` (or the debug one) and `--host` must fail with
-  "Hook's host is not installed on this computer" on the card, not a hang;
-- run `pnpm browser:smoke` with no `--host` and confirm no `hook.exe` survives it
-  (`--hook-no-host` is passed, so a check leaves nothing behind).
+- rename `target/debug/hook-host.exe` and `--host` must fail with "Hook's host is
+  not installed on this computer" on the card, not a hang;
+- run `pnpm browser:smoke` with no `--host` and confirm no `hook-host.exe`
+  survives it (`--hook-no-host` is passed, so a check leaves nothing behind).
 
 **By hand**, which is what a tester actually does. Launch the binary with a
 throwaway profile so it never touches a real one:
@@ -356,16 +359,21 @@ file, and the browser process reads it for the page. `pnpm browser:smoke --chann
 against a running Hook app is the demonstration: it listed 33 real conversations,
 read a 48-message transcript, and got the backend's refusal for an empty message.
 
-The interim host is `hook --headless`: the same app and the same channel with no
-window and no tray icon. **The browser starts it itself** when no channel answers
+The host is **`hook-host`** (`crates/hook-host`): the backend with no window, no
+tray, no IPC surface and no Tauri — it links `hook-core` with
+`default-features = false`, so `commands.rs` and `update.rs` are not even
+compiled. It is `Product::Browser`, with its own data folder
+(`%APPDATA%\app.hook.browser`) and its own channel descriptor. **The browser
+starts it itself** when no channel answers
 (`overlay/src/hook/browser/host/hook_host.cc`): one launch per browser run (again
 if the host it started exits), a path fixed at build time, and the descriptor
 accepted only when its `pid` is the child's. `--hook-no-host` turns it off, and
-`pnpm browser:smoke --host` asserts it.
-It is not yet the sidecar the plan describes — that one is a separate binary that
-owns auth and the turn without Tauri, with its own product and data folder. The
-design, the two shapes it considered and the order of work are in
-`docs/browser-host.md`; step 1 (this launch) is in, steps 2–4 are not.
+`pnpm browser:smoke --host` asserts the launch, the pid and that `/health`
+reports the `browser` product.
+`hook --headless` still exists as the chat app with no window — it is what
+`--channel` borrows for a machine with no `hook-host` build — but the browser no
+longer depends on it. The design, the two shapes it considered and the order of
+work are in `docs/browser-host.md`; steps 1–4 are in.
 
 `pnpm browser:smoke` is the check for all of it, so the answer to the POC's question —
 does our overlay reach Chromium, and can the Hook chat surface live inside it — is
@@ -375,16 +383,22 @@ yes.
 
 The dock's real backend is a *running* Hook host, not a server: `hook-core`'s
 `channel.rs` binds an ephemeral loopback port and writes
-`%APPDATA%\app.hook\browser-channel.json` (`port`, `token`, `pid`, `product`,
-`version`) beside the shared account file, atomically and `0600` on unix. That
-host is whichever Hook process is running; when none answers, **the browser
-starts one** (`overlay/src/hook/browser/host/hook_host.cc`, `hook --headless`). A
-debug
-build (`pnpm app`) writes the descriptor with its own data instead, under
+`%APPDATA%\app.hook\browser-channel.<product>.json` (`port`, `token`, `pid`,
+`product`, `version`) beside the shared account file, atomically and `0600` on
+unix — `browser-channel.browser.json` for `hook-host`, `.chat.json` for Hook,
+`.workspace.json` for Hook Workspace. One file per product, because the folder is
+shared and a Hook app in the tray running beside the browser's own host is the
+normal case: neither may overwrite the other's token. The browser reads its own
+name first and falls back to the others (and to the bare `browser-channel.json`
+of a host that has not been rebuilt), so a machine with no `hook-host` still
+works. When nothing answers, **the browser starts its own**.
+
+A debug build writes its descriptor with its own data instead, under
 `%APPDATA%\hook-dev\app.hook\`, so a development Hook never takes over the
-installed app's channel — and the browser, which reads the installed path, does
-not see it. Quitting Hook removes it; a killed process leaves it behind, which is
-why "available" means **`/health` answered**, not "a file exists".
+installed app's channel — which is why the browser launches the host with
+`HOOK_DATA_DIR` naming the folder its gate reads. Quitting Hook removes its
+descriptor; a killed process leaves it behind, which is why "available" means
+**`/health` answered**, not "a file exists".
 
 Routes, all requiring `Authorization: Bearer <token>` except `/health`: `/chats`,
 `/chats/{id}`, `POST /chats`, `POST /chats/{id}/send`, `POST /chats/{id}/stop`.

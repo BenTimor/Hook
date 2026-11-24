@@ -36,7 +36,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MAX_HEAD: usize = 16 * 1024;
 const MAX_BODY: usize = 64 * 1024;
-const DESCRIPTOR_NAME: &str = "browser-channel.json";
+const DESCRIPTOR_PREFIX: &str = "browser-channel";
 const CHANNEL_DIR: &str = "app.hook";
 
 /// What the HTTP surface asks the application for.
@@ -75,7 +75,7 @@ pub trait ChannelBackend: Send + Sync {
 
 /// The live backend: the running app's store, turn state and account.
 pub struct LiveBackend {
-    pub state: Arc<crate::commands::AppState>,
+    pub state: Arc<crate::state::AppState>,
 }
 
 fn message_json(message: &crate::store::Message) -> Value {
@@ -101,11 +101,7 @@ fn meta_json(meta: &crate::store::ChatMeta, busy: bool, unsynced: bool) -> Value
 
 impl ChannelBackend for LiveBackend {
     fn product(&self) -> &'static str {
-        match self.state.product {
-            crate::Product::Chat => "chat",
-            crate::Product::Workspace => "workspace",
-            crate::Product::Mobile => "mobile",
-        }
+        self.state.product.slug()
     }
 
     fn version(&self) -> String {
@@ -151,11 +147,11 @@ impl ChannelBackend for LiveBackend {
 
     fn send(&self, id: &str, text: &str, context: &str) -> Result<(), String> {
         self.state.set_chat_context(context);
-        crate::commands::send_chat_message(&self.state, id, text)
+        crate::session::send_chat_message(&self.state, id, text)
     }
 
     fn stop(&self, id: &str) -> Result<(), String> {
-        crate::commands::stop_chat_turn(&self.state, id);
+        crate::session::stop_chat_turn(&self.state, id);
         Ok(())
     }
 
@@ -171,7 +167,7 @@ impl ChannelBackend for LiveBackend {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
         Box::pin(async move {
-            let view = crate::commands::begin_browser_sign_in(&self.state).await?;
+            let view = crate::session::begin_browser_sign_in(&self.state).await?;
             serde_json::to_value(view).map_err(|error| error.to_string())
         })
     }
@@ -221,7 +217,7 @@ impl Channel {
                 return;
             }
         };
-        if let Some(path) = descriptor_path(data_dir) {
+        if let Some(path) = descriptor_path(data_dir, backend.product()) {
             match write_descriptor(&path, port, &self.token, backend.as_ref()) {
                 Ok(()) => *lock(&self.descriptor) = Some(path),
                 Err(error) => eprintln!("hook: could not publish the browser channel: {error}"),
@@ -248,7 +244,7 @@ impl Channel {
         self.port.store(port, Ordering::SeqCst);
 
         let token = self.token.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::rt::spawn(async move {
             let listener = match tokio::net::TcpListener::from_std(listener) {
                 Ok(listener) => listener,
                 Err(error) => {
@@ -262,7 +258,7 @@ impl Channel {
                 };
                 let backend = backend.clone();
                 let token = token.clone();
-                tauri::async_runtime::spawn(async move {
+                crate::rt::spawn(async move {
                     if let Err(error) = handle(stream, &token, backend).await {
                         if error.kind() != ErrorKind::BrokenPipe
                             && error.kind() != ErrorKind::ConnectionReset
@@ -289,9 +285,20 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|error| error.into_inner())
 }
 
-fn descriptor_path(data_dir: &std::path::Path) -> Option<PathBuf> {
+/// Where this product's descriptor goes: `browser-channel.<product>.json` beside
+/// the shared account file.
+///
+/// One file per product, because the folder is shared and two hosts running at
+/// once is the normal case once the browser is a product of its own: a Hook app
+/// in the tray and the browser's own host must not overwrite each other's token,
+/// and a browser must be able to tell which of them answered.
+fn descriptor_path(data_dir: &std::path::Path, product: &str) -> Option<PathBuf> {
     let parent = data_dir.parent()?;
-    Some(parent.join(CHANNEL_DIR).join(DESCRIPTOR_NAME))
+    Some(
+        parent
+            .join(CHANNEL_DIR)
+            .join(format!("{DESCRIPTOR_PREFIX}.{product}.json")),
+    )
 }
 
 fn write_descriptor(
@@ -829,14 +836,17 @@ mod tests {
         let data = base.join("app.hook.chat");
         std::fs::create_dir_all(&data).expect("dir");
         let backend = Fake::new();
-        let path = descriptor_path(&data).expect("path");
+        let path = descriptor_path(&data, "chat").expect("path");
         write_descriptor(&path, 4242, "abc", backend.as_ref()).expect("write");
         let raw = std::fs::read_to_string(&path).expect("read");
         let parsed: Value = serde_json::from_str(&raw).expect("json");
         assert_eq!(parsed["port"], 4242);
         assert_eq!(parsed["token"], "abc");
         assert_eq!(parsed["product"], "chat");
-        assert!(path.ends_with("app.hook/browser-channel.json") || path.ends_with("app.hook\\browser-channel.json"));
+        // Named after the product that published it: the folder is shared, and a
+        // Hook app in the tray must not overwrite the browser's own host.
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        assert_eq!(name, "browser-channel.chat.json");
         let _ = std::fs::remove_dir_all(base);
     }
 }

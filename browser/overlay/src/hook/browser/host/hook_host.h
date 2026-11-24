@@ -6,9 +6,11 @@
 // time, and only after the descriptor it writes names our child. Nothing a page,
 // a preference or an environment variable says can name an executable here.
 //
-// The process it starts is today's interim host: the chat app with no window and
-// no tray icon (`--headless`, `crates/hook-core/src/lib.rs`). The sidecar in
-// `docs/browser-host.md` replaces the binary, not this file.
+// The process it starts is `hook-host` (`crates/hook-host`): the backend with no
+// window, no tray, no IPC surface and no Tauri, in the browser's own data folder
+// (`%APPDATA%pp.hook.browser`). It publishes `browser-channel.browser.json`, so
+// a Hook app in the tray can serve a browser that has no host of its own without
+// the two overwriting each other.
 
 #ifndef HOOK_BROWSER_HOST_HOOK_HOST_H_
 #define HOOK_BROWSER_HOST_HOOK_HOST_H_

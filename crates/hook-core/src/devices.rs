@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::AuthStore;
-use crate::commands::AppState;
+use crate::state::AppState;
 
 /// What this build tells the account about itself on connect. It is not a
 /// fingerprint: a name, a shape, a version, a capability summary and a few
@@ -70,14 +70,6 @@ fn platform_label() -> String {
     std::env::consts::OS.to_string()
 }
 
-fn product_name(product: crate::Product) -> &'static str {
-    match product {
-        crate::Product::Chat => "chat",
-        crate::Product::Workspace => "workspace",
-        crate::Product::Mobile => "mobile",
-    }
-}
-
 fn machine_kind(product: crate::Product) -> &'static str {
     match product {
         crate::Product::Mobile => "mobile",
@@ -129,7 +121,7 @@ pub fn profile(state: &AppState) -> DeviceProfile {
         platform: platform_label(),
         arch: std::env::consts::ARCH.to_string(),
         app_version: crate::version::current(),
-        product: product_name(state.product).to_string(),
+        product: state.product.slug().to_string(),
         role: role.to_string(),
         can_host: role == "host",
         capabilities: json!({

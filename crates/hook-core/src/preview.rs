@@ -677,7 +677,7 @@ fn fingerprint(root: &Path) -> u64 {
     hasher.finish()
 }
 
-struct Server(tauri::async_runtime::JoinHandle<()>);
+struct Server(tokio::task::JoinHandle<()>);
 
 impl Drop for Server {
     fn drop(&mut self) {
@@ -702,7 +702,7 @@ fn start_server(root: PathBuf) -> Result<(u16, Server), String> {
         .map_err(|e| format!("Project folder is unavailable: {e}"))?;
     let root = crate::store::strip_verbatim(root);
 
-    let handle = tauri::async_runtime::spawn(async move {
+    let handle = crate::rt::spawn(async move {
         let listener = match tokio::net::TcpListener::from_std(listener) {
             Ok(listener) => listener,
             Err(error) => {
@@ -715,7 +715,7 @@ fn start_server(root: PathBuf) -> Result<(u16, Server), String> {
                 continue;
             };
             let root = root.clone();
-            tauri::async_runtime::spawn(async move {
+            crate::rt::spawn(async move {
                 if let Err(error) = serve(stream, &root).await {
                     if error.kind() != std::io::ErrorKind::BrokenPipe {
                         eprintln!("hook: preview request failed: {error}");

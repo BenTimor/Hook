@@ -149,15 +149,35 @@ function machineSignedIn() {
 }
 
 // The descriptor a running Hook host publishes (`crates/hook-core/src/channel.rs`).
+//
+// One file per product, so a Hook app in the tray and the browser's own host can
+// run at once: the browser's first, then the products it may fall back to, then
+// the single name every build before the split wrote. The order is the browser's
+// (`browser/overlay/src/hook/browser/account/hook_paths.cc`).
+const DESCRIPTOR_NAMES = [
+  "browser-channel.browser.json",
+  "browser-channel.chat.json",
+  "browser-channel.workspace.json",
+  "browser-channel.json",
+];
+
 function readDescriptor() {
   const dir = sharedDir();
   if (!dir) return null;
-  try {
-    const descriptor = JSON.parse(readFileSync(join(dir, "browser-channel.json"), "utf8"));
-    return typeof descriptor?.port === "number" && descriptor.port > 0 ? descriptor : null;
-  } catch {
-    return null;
+  for (const name of DESCRIPTOR_NAMES) {
+    const path = join(dir, name);
+    if (!existsSync(path)) continue;
+    try {
+      const descriptor = JSON.parse(readFileSync(path, "utf8"));
+      if (typeof descriptor?.port === "number" && descriptor.port > 0) {
+        return { ...descriptor, file: name };
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
+  return null;
 }
 
 // A descriptor outlives a killed host, so "published" is not "running": the
@@ -443,11 +463,13 @@ export async function main(argv) {
 
     // ---- the browser starting its own host -----------------------------------
     //
-    // `docs/browser-host.md`, step 1. The page asks for the channel as it loads;
-    // nothing answered, so the browser process launches one (`host/hook_host.cc`,
-    // `hook --headless`) and only accepts the descriptor that names its child.
+    // `docs/browser-host.md`, steps 1 and 3. The page asks for the channel as it
+    // loads; nothing answered, so the browser process launches `hook-host.exe`
+    // (`host/hook_host.cc`) and only accepts the descriptor that names its child.
     // The pid is the assertion: a descriptor that was already there is not this
-    // run's, and one that survives the browser is not "kill on exit".
+    // run's, and one that survives the browser is not "kill on exit". The product
+    // is the other half of step 3: the host is the browser's own, not a chat app
+    // borrowed for the occasion.
     if (hostCheck) {
       if (existing) {
         console.error(warn(
@@ -478,6 +500,18 @@ export async function main(argv) {
           console.log(`    host: pid ${hostPid}, ${health.product} ${health.version}`);
           if (processAlive(child.pid) && hostPid === child.pid) {
             failures.push("the descriptor names the browser itself, not a host");
+          }
+          if (health.product !== "browser") {
+            failures.push(
+              `the host serves the "${health.product}" product, not "browser" ` +
+                `(hook-host, not a chat app)`,
+            );
+          }
+          if (started.file !== "browser-channel.browser.json") {
+            failures.push(
+              `the host published ${started.file}: the browser's own host writes ` +
+                `browser-channel.browser.json, so this one is another product's`,
+            );
           }
         }
       }

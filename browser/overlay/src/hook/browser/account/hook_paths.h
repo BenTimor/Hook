@@ -8,6 +8,8 @@
 #ifndef HOOK_BROWSER_ACCOUNT_HOOK_PATHS_H_
 #define HOOK_BROWSER_ACCOUNT_HOOK_PATHS_H_
 
+#include <vector>
+
 #include "base/files/file_path.h"
 
 namespace hook::paths {
@@ -20,10 +22,12 @@ base::FilePath SharedDir();
 // The account every Hook product shares: `SharedDir()/account.json`.
 base::FilePath AccountFile();
 
-// The loopback channel a Hook host publishes while it runs:
-// `SharedDir()/browser-channel.json`. Which host is not this file's business —
-// the app in the tray, or the one the browser started itself.
-base::FilePath ChannelDescriptorFile();
+// Every loopback channel a host may have published, most specific first:
+// `browser-channel.browser.json` (the host this browser started), then the other
+// products that may be running beside it, then the pre-step-4 file name. One file
+// per product, because the folder is shared and two hosts running at once is
+// normal once the browser has a host of its own.
+std::vector<base::FilePath> ChannelDescriptorFiles();
 
 }  // namespace hook::paths
 

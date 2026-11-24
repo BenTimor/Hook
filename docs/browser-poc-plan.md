@@ -27,14 +27,14 @@
 > scheme"), which is why the call is made in the browser process and handed over
 > mojom, and why the token never reaches the page.
 >
-> **The browser now starts the host it talks to.** When no channel answers it
-> launches `hook --headless` itself, once per run, from a path fixed at build
-> time, and only accepts a descriptor naming its own child
-> (`browser/host/hook_host.cc`; `docs/browser-host.md`, step 1). `--hook-no-host`
-> turns that off and every other smoke flag passes it, so no check leaves a
-> process behind. The shipping shape — a Tauri-free sidecar that owns auth and
-> the turn — is still steps 2–3 of that document, and `browser/ui/transport.ts`
-> is the only file that changes when it lands.
+> **The browser starts its own host.** When no channel answers it launches
+> `hook-host` (`crates/hook-host`: the backend with no window and no Tauri, in
+> `%APPDATA%\app.hook.browser`) once per run, from a path fixed at build time, and
+> only accepts a descriptor naming its own child
+> (`browser/host/hook_host.cc`; `docs/browser-host.md`, steps 1–4).
+> `--hook-no-host` turns that off and every other smoke flag passes it, so no
+> check leaves a process behind. `browser/ui/transport.ts` did not change for any
+> of it: the routes were the contract, exactly as the document required.
 >
 > Everything above is verified, not just built: `pnpm browser:smoke` launches
 > `out/Dev/chrome.exe` with a throwaway profile and asserts the live tab list, the
@@ -228,9 +228,11 @@ is C++, and every further step there costs a rebuild.
 **The cheap proof is in.** `crates/hook-core/src/channel.rs` publishes a loopback
 HTTP surface from a running Hook app — `/health`, the chat list, one conversation,
 create, send, stop — guarded by a per-process token it writes beside the account
-file (`%APPDATA%\app.hook\browser-channel.json`). The browser process reads that
-descriptor on a thread pool and calls the channel with `SimpleURLLoader`; the page
-sees the answers over mojom (`hook_channel.{h,cc}`, `hook_page_handler.cc`).
+file (`%APPDATA%\app.hook\browser-channel.<product>.json` — one per product, so a
+Hook app in the tray and the browser's own host can run at once). The browser
+process reads its own product's descriptor first, then the other names, on a
+thread pool, and calls the channel with `SimpleURLLoader`; the page sees the
+answers over mojom (`hook_channel.{h,cc}`, `hook_page_handler.cc`).
 
 Two constraints shaped it, and both are worth keeping:
 

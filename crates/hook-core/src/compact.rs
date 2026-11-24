@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::commands::AppState;
+use crate::state::AppState;
 use crate::config::HarnessConfig;
 use crate::provider::{self, CancelToken, Chunk, Outcome, RequestContext};
 use crate::store::{now_ms, Chat, Compaction, Message};

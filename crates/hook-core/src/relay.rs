@@ -24,7 +24,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{header::HeaderName, HeaderValue};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::commands::AppState;
+use crate::state::AppState;
 use crate::devices::{DeviceProfile, DeviceView};
 
 /// How a relay event reaches the window. Kept as a callback so the headless
@@ -163,7 +163,7 @@ impl RelayClient {
         *lock(&self.inner.state) = Arc::downgrade(&state);
         self.emit_view();
         let relay = self.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::rt::spawn(async move {
             relay.run(state).await;
         });
     }
@@ -417,7 +417,7 @@ impl RelayClient {
         let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
         *lock(&self.inner.out) = Some((generation, out.clone()));
 
-        let writer = tauri::async_runtime::spawn(async move {
+        let writer = crate::rt::spawn(async move {
             while let Some(message) = out_rx.recv().await {
                 if sink.send(message).await.is_err() {
                     break;
@@ -628,7 +628,7 @@ impl RelayClient {
                     inner: self.inner.clone(),
                 };
                 let state = state.clone();
-                tauri::async_runtime::spawn(async move {
+                crate::rt::spawn(async move {
                     let result = crate::remote::handle(&state, &from, &method, params).await;
                     let frame = match result {
                         Ok(value) => json!({ "kind": "rpcResult", "id": id, "ok": true, "result": value }),

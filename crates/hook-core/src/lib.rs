@@ -1,25 +1,44 @@
-//! The backend every Hook desktop product links.
+#![cfg_attr(
+    not(feature = "desktop"),
+    allow(
+        dead_code,
+        reason = "without the IPC surface the functions it calls have no caller, and that is the point: the host is the same backend with no window"
+    )
+)]
+
+//! The backend every Hook product links.
 //!
-//! A product is a Tauri window plus a UI. The account, the chat store and its
-//! sync engine, the coding-agent supervisor, the preview server, the assistant
-//! turn and the whole IPC surface live here, compiled once, so "the chat works
-//! the same in Workspace" is a property of the build rather than of two
-//! implementations that must be kept in step.
+//! The account, the chat store and its sync engine, the coding-agent supervisor,
+//! the preview server, the assistant turn, the tools and the IPC surface live
+//! here, compiled once, so "the chat works the same in Workspace" is a property
+//! of the build rather than of two implementations that must be kept in step.
 //!
-//! `Capabilities` is how a product says what its chat agent may do. It is
-//! deliberately small: a capability changes the prompt and the toolset, never
-//! the data model.
+//! Two shapes link it, and only one of them has a window:
+//!
+//! * a Tauri product (`apps/chat`, `apps/workspace`, `apps/mobile`) calls
+//!   `builder`, which starts the backend in `boot::start` and then adds a
+//!   window, a tray and the IPC surface (`commands.rs`);
+//! * Hook Browser's host (`crates/hook-host`) links this crate with
+//!   `default-features = false` and calls [`start`] directly. It has no window,
+//!   no Tauri types and no `commands.rs` at all — just the backend and the
+//!   loopback channel the browser reads.
+//!
+//! Both pass a [`Product`] and a set of [`Capabilities`]. A capability trims the
+//! prompt and the toolset; it never changes the data model.
 
 mod agent;
+mod boot;
 mod analytics;
 mod auth;
 mod bridge;
 mod channel;
 mod coding;
+#[cfg(feature = "desktop")]
 mod commands;
 mod compact;
 mod config;
 mod devices;
+pub mod events;
 mod git;
 mod guard;
 mod import;
@@ -30,26 +49,33 @@ mod provider;
 mod relay;
 mod remote;
 mod reports;
+pub mod rt;
 mod runtime;
+mod session;
 mod settings;
+mod state;
 mod slash;
 mod store;
 mod sync;
 mod tools;
 mod turn;
+#[cfg(feature = "desktop")]
 mod update;
 mod version;
 mod workspace;
 
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+#[cfg(feature = "desktop")]
+use std::sync::Arc;
 
-use tauri::{Emitter, Manager};
-use tokio::sync::mpsc;
+#[cfg(feature = "desktop")]
+use tauri::Manager;
 
-use crate::agent::{AgentManager, Signal};
-use crate::commands::AppState;
+// What a process that is not a Tauri window starts the backend with. A window
+// goes through `builder` instead, which calls the same `start`.
+pub use crate::boot::{start, StartOptions};
+pub use crate::events::{EventSink, NoopSink};
+pub use crate::state::AppState;
 
 // The release app has no console for background helpers to inherit.
 #[cfg(windows)]
@@ -64,15 +90,48 @@ pub fn guard_source() -> &'static str {
 
 /// Which product this backend is serving.
 ///
-/// The data folder comes from the Tauri identifier, not from here; this enum is
-/// about behaviour that differs user-visibly (what the chat agent is told, and
-/// later which product-specific tools it gets).
+/// The data folder comes from the Tauri identifier for a window, and from
+/// `identifier()` for a plain binary (`hook-host`); this enum is about behaviour
+/// that differs user-visibly (what the chat agent is told, which folder the
+/// process owns, and which product-specific tools it gets).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Product {
     Chat,
     Workspace,
     /// Hook on a phone. The same conversation, no folder on this device.
     Mobile,
+    /// Hook's host process for Hook Browser (`crates/hook-host`). Not a window:
+    /// the browser starts it, it serves the channel, and it keeps running while
+    /// the browser is open. Its own folder and its own descriptor, so it can run
+    /// beside a Hook app in the tray.
+    Browser,
+}
+
+impl Product {
+    /// The one-word name used everywhere a product is named to a machine: the
+    /// `hook://sync` and analytics payloads, `/health`, the app-info command and
+    /// the channel descriptor's file name.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Product::Chat => "chat",
+            Product::Workspace => "workspace",
+            Product::Mobile => "mobile",
+            Product::Browser => "browser",
+        }
+    }
+
+    /// The folder this product keeps its own data in, which is also its Tauri
+    /// identifier for the products that have a window. One product per folder is
+    /// what makes "which chats" a property of the build rather than of whichever
+    /// process happened to start first.
+    pub fn identifier(self) -> &'static str {
+        match self {
+            Product::Chat => "app.hook.chat",
+            Product::Workspace => "app.hook.workspace",
+            Product::Mobile => "app.hook.mobile",
+            Product::Browser => "app.hook.browser",
+        }
+    }
 }
 
 /// What this product's chat agent may do, and therefore what the prompt and the
@@ -133,6 +192,22 @@ impl Capabilities {
         }
     }
 
+    /// Hook Browser's host: the conversation and the account's Workspace data.
+    /// No engine and no project folder on this machine — the browser can drive
+    /// agents on the account's other computers — and no page served from disk,
+    /// because there is no project to serve one from. It is the phone's shape
+    /// with a different data folder: the browser is a controller, not a host.
+    pub const fn browser() -> Self {
+        Self {
+            preview_pages: false,
+            preview_workspace: true,
+            coding_agents: false,
+            remote_agents: true,
+            workspace_tools: true,
+            projects: false,
+        }
+    }
+
     /// Hook on a phone: the conversation and the account's Workspace data, no
     /// folder, no engine, no page served from disk. The preview surface exists
     /// and shows boards, tasks and documents, because those arrive over the API.
@@ -148,24 +223,6 @@ impl Capabilities {
     }
 }
 
-fn emit_agents(state: &AppState) {
-    // One payload feeds both the title-bar pill and the per-chat task board.
-    let overview = state.agents.overview();
-    let _ = state.app.emit("hook://agents", &overview);
-    // A controller watching a chat on this machine gets the same board. The
-    // overview is per account, but the relay fans out by chat.
-    if let Ok(payload) = serde_json::to_value(&overview) {
-        if let Ok(chats) = state.remote_chats.lock() {
-            for chat_id in chats.iter() {
-                let _ = state.relay.publish(
-                    chat_id,
-                    serde_json::json!({ "type": "agents", "overview": payload }),
-                );
-            }
-        }
-    }
-}
-
 /// Build the Tauri app: plugins, state, background loops and the IPC surface.
 ///
 /// The caller supplies `generate_context!()`, the window configuration and its
@@ -174,6 +231,7 @@ fn emit_agents(state: &AppState) {
 /// `env!("CARGO_PKG_VERSION")` in the product crate — is what this build reports
 /// as itself. It is a required argument so no product can silently fall back to
 /// hook-core's version, which is not a release number (see `version.rs`).
+#[cfg(feature = "desktop")]
 pub fn builder(
     product: Product,
     capabilities: Capabilities,
@@ -258,33 +316,6 @@ pub fn builder(
         ])
 }
 
-/// A panic inside a spawned task is otherwise invisible: the window keeps
-/// waiting for an event that will never arrive, and the only trace is a line in
-/// a terminal someone has to be watching. Keep the last ones on disk.
-fn install_panic_log(data_dir: &std::path::Path) {
-    use std::io::Write;
-
-    let path = data_dir.join("panic.log");
-    std::panic::set_hook(Box::new(move |info| {
-        let thread = std::thread::current();
-        let name = thread.name().unwrap_or("unnamed");
-        let location = info
-            .location()
-            .map(|at| format!("{}:{}", at.file(), at.line()))
-            .unwrap_or_else(|| "unknown".to_string());
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let text = format!("{stamp} [{name}] {location}: {info}
-");
-        eprintln!("hook: panic {text}");
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = file.write_all(text.as_bytes());
-        }
-    }));
-}
-
 /// Hook is the machine host, so closing its window must not stop the work: the
 /// window hides to the tray and the agent processes keep running. Quit lives in
 /// the tray menu, and `on_exit` still kills every child.
@@ -367,15 +398,62 @@ fn install_tray(app: &mut tauri::App) -> tauri::Result<()> {
 /// `HOOK_DATA_DIR` overrides both: point it at an installed product's folder to
 /// read its data from a debug build, or at an empty folder to walk through a
 /// fresh install.
+#[cfg(feature = "desktop")]
 fn resolve_data_dir(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(in_place(app.path().app_data_dir()?))
+}
+
+/// The two things every product does to the folder the platform gave it:
+/// `HOOK_DATA_DIR` wins outright, and a debug build nests one level deeper so it
+/// cannot join an installed product's account, device id and chats.
+fn in_place(dir: PathBuf) -> PathBuf {
     if let Some(dir) = std::env::var_os("HOOK_DATA_DIR").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(dir));
+        return PathBuf::from(dir);
     }
-    let dir = app.path().app_data_dir()?;
     if !cfg!(debug_assertions) {
-        return Ok(dir);
+        return dir;
     }
-    Ok(dev_data_dir(&dir).unwrap_or(dir))
+    dev_data_dir(&dir).unwrap_or(dir)
+}
+
+/// Where a product that is not a Tauri window keeps its own data.
+///
+/// A Tauri product answers this from its identifier (`app.path().app_data_dir()`);
+/// a plain binary has no such context, so the same folder is named here —
+/// `%APPDATA%\<identifier>` on Windows — and then goes through the identical
+/// `HOOK_DATA_DIR` and debug-nesting rules. `hook-host` is the only caller: it
+/// must land in the folder the browser's gate already reads the account from, or
+/// the card would say "signed in" while the channel served nothing.
+pub fn product_data_dir(identifier: &str) -> Result<PathBuf, std::io::Error> {
+    Ok(in_place(appdata_dir()?.join(identifier)))
+}
+
+#[cfg(windows)]
+fn appdata_dir() -> Result<PathBuf, std::io::Error> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| std::io::Error::other("APPDATA is not set"))
+}
+
+#[cfg(target_os = "macos")]
+fn appdata_dir() -> Result<PathBuf, std::io::Error> {
+    std::env::var_os("HOME")
+        .map(|home| {
+            PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+        })
+        .ok_or_else(|| std::io::Error::other("HOME is not set"))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn appdata_dir() -> Result<PathBuf, std::io::Error> {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
+        })
+        .ok_or_else(|| std::io::Error::other("HOME is not set"))
 }
 
 /// `%APPDATA%\app.hook.chat` → `%APPDATA%\hook-dev\app.hook.chat`.
@@ -392,337 +470,39 @@ fn dev_data_dir(_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+#[cfg(feature = "desktop")]
 fn setup(
     app: &mut tauri::App,
     product: Product,
     capabilities: Capabilities,
     version: &'static str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // First, so anything that logs or reports "this build" during startup
-    // names the product's version rather than hook-core's.
-    version::set(version);
-    let data_dir = resolve_data_dir(app)?;
-    std::fs::create_dir_all(&data_dir)?;
-    install_panic_log(&data_dir);
+    // The runtime is the window's. An async command and the background work it
+    // starts then share one thread pool, and `rt::spawn` from a synchronous
+    // command thread still works (`Handle::spawn` needs no reactor).
+    crate::rt::set(tauri::async_runtime::handle().inner().clone());
 
-    let store = Arc::new(store::Store::new(data_dir.clone()).map_err(std::io::Error::other)?);
-    let settings = Arc::new(settings::SettingsStore::new(&data_dir));
-    let projects = Arc::new(projects::ProjectsStore::new(&data_dir));
-    let cfg = Arc::new(config::get().map_err(std::io::Error::other)?.clone());
-    // Memory lives beside the account file, not beside the chats: both products
-    // read the same store, and a different account reads a different file.
-    let memory = Arc::new(memory::MemoryStore::new(&data_dir, cfg.memory.clone()));
-    let auth = Arc::new(auth::AuthStore::new(
-        &data_dir,
-        &cfg.auth.base_url,
-        cfg.auth.required,
-        &cfg.provider.api_key,
-    ));
-    // Mint the git-only token at launch so the first coding agent does not have
-    // to wait for a sync cycle. A product without a coding agent never needs it,
-    // and a phone should not hold a credential it cannot use.
-    if capabilities.coding_agents {
-        let auth = auth.clone();
-        tauri::async_runtime::spawn(async move {
-            // Repositories are account data: a free account never syncs, and a
-            // paid account with the switch off does not either. No sync, no git
-            // credential to mint.
-            if auth.is_free() || auth.cloud_sync() == Some(false) {
-                return;
-            }
-            let _ = auth.ensure_git_token().await;
-        });
-    }
-    // Written before each run instead of once here: a coding agent's model
-    // config carries its own run id and the current token. Capabilities come
-    // from the model card, not from the build: the endpoint says what the model
-    // can do, and a provider that cannot answer simply reports nothing.
-    let vision = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    // Both of these only exist so a coding agent can be started: the engine is
-    // the `pi` bundle, and git is what a project pushes with. A product without
-    // one (the phone) skips the lookup entirely, so it never reports a missing
-    // engine it was never going to use.
-    let engine = if capabilities.coding_agents {
-        runtime::resolve(app.path().resource_dir().ok().as_deref(), &data_dir)
-    } else {
-        // No engine is bundled with this build; saying so is more honest than
-        // looking for one and reporting it missing.
-        Err("This product has no coding engine.".to_string())
-    };
-    let git_runtime = if capabilities.coding_agents {
-        git::resolve(app.path().resource_dir().ok().as_deref(), &data_dir)
-    } else {
-        None
-    };
-    if capabilities.coding_agents {
-        match &git_runtime {
-            Some(git) => eprintln!("hook: git at {}", git.program.display()),
-            None => eprintln!("hook: git is missing; project sync is unavailable"),
-        }
-    }
-
-    let (signal_tx, mut signal_rx) = mpsc::unbounded_channel();
-    // The loopback endpoint that gives a directly-driven coding agent the chat
-    // agent's tools. Served once the app state exists, below.
-    let bridge = Arc::new(bridge::ToolBridge::new());
-    let agents = Arc::new(
-        AgentManager::new(
-            &data_dir,
-            cfg.clone(),
-            vision.clone(),
-            engine,
-            settings.clone(),
-            projects.clone(),
-            signal_tx,
-        )
-        .with_auth(auth.clone())
-        .with_git(git_runtime.clone())
-        .with_bridge(bridge.clone())
-        .with_capabilities(capabilities)
-        .with_memory(memory.clone()),
-    );
-
-    // The live account surface: presence, remote commands and chat fan-out.
-    // The relay is a transport only; `remote.rs` decides what a command means.
-    let relay_emit: relay::Emitter = {
-        let app = app.handle().clone();
-        Arc::new(move |event, payload| {
-            let _ = app.emit(event, payload);
-        })
-    };
-    let relay = Arc::new(relay::RelayClient::new(relay_emit));
-
-    let preview_emit: preview::Emitter = {
-        let app = app.handle().clone();
-        let relay = relay.clone();
-        Arc::new(move |event| {
-            let _ = app.emit("hook://preview", &event);
-            // The same panel event goes to a controller watching this chat.
-            // The URL is the host's loopback address; the viewer replaces it
-            // with a ticket URL minted by the account service.
-            let Ok(mut payload) = serde_json::to_value(&event) else {
-                return;
-            };
-            if payload.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
-                if let Some(chat_id) = payload.get("chatId").and_then(serde_json::Value::as_str) {
-                    let _ = relay.publish(
-                        chat_id,
-                        serde_json::json!({ "type": "previewClosed", "chatId": chat_id }),
-                    );
-                }
-                return;
-            }
-            let Some(chat_id) = payload
-                .get("chatId")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-            else {
-                return;
-            };
-            if let Some(object) = payload.as_object_mut() {
-                object.insert(
-                    "deviceId".into(),
-                    serde_json::Value::String(relay.device_id()),
-                );
-                object.insert(
-                    "deviceName".into(),
-                    serde_json::Value::String(relay.view().self_name),
-                );
-            }
-            let _ = relay.publish(
-                &chat_id,
-                serde_json::json!({ "type": "preview", "preview": payload }),
-            );
-        })
-    };
-
-    let sync_emit: sync::Emitter = {
-        let app = app.handle().clone();
-        Arc::new(move |event, payload| {
-            let _ = app.emit(event, payload);
-        })
-    };
-    let sync = Arc::new(sync::SyncEngine::new(
-        sync_emit,
-        &data_dir,
-        auth.clone(),
-        store.clone(),
-        projects.clone(),
-        settings.clone(),
-        memory.clone(),
-        git_runtime,
-    ));
-    // An endpoint saved on another device just became the one this app talks to.
-    // The model card has to be asked again; the window hears about it through
-    // the `hook://sync` event the engine emits.
-    sync.on_settings_changed({
-        let app = app.handle().clone();
-        Arc::new(move || {
-            if let Some(state) = app.try_state::<Arc<AppState>>() {
-                let state = state.inner().clone();
-                tauri::async_runtime::spawn(async move {
-                    commands::refresh_capabilities(&state).await;
-                });
-            }
-        })
-    });
-
-    let workspace = Arc::new(workspace::WorkspaceClient::new(&cfg, auth.clone()));
-
-    memory.bind(auth.subject().as_deref());
-    let state = Arc::new(AppState {
-        app: app.handle().clone(),
-        store,
-        settings,
-        projects,
-        memory,
-        agents,
-        preview: Arc::new(preview::PreviewManager::new(preview_emit)),
-        streams: Arc::new(Mutex::new(HashMap::new())),
-        turns: turn::TurnState::default(),
-        coding: crate::coding::CodingState::default(),
-        cfg: cfg.clone(),
-        auth: auth.clone(),
-        sync: sync.clone(),
-        channel: Arc::new(channel::Channel::new()),
-        relay: relay.clone(),
-        remote_chats: Arc::new(Mutex::new(HashSet::new())),
-        mirror: Default::default(),
-        vision: vision.clone(),
-        vision_off: Arc::new(Default::default()),
-        context_role_off: Arc::new(Default::default()),
-        imports: Arc::new(import::Importer::new()),
-        workspace,
-        context: Arc::new(Mutex::new(None)),
+    let state = boot::start(boot::StartOptions {
+        data_dir: resolve_data_dir(app)?,
+        resource_dir: app.path().resource_dir().ok(),
         product,
         capabilities,
-    });
+        events: Arc::new(events::TauriSink::new(app.handle().clone())),
+        version,
+    })?;
     app.manage(state.clone());
-
-    // Hook Browser reads this: a loopback channel beside the account file, with
-    // the same store and the same turn the window uses. Off with HOOK_CHANNEL=0.
-    state.channel.serve(
-        Arc::new(channel::LiveBackend {
-            state: state.clone(),
-        }),
-        &data_dir,
-    );
-    // A coding chat written before machines existed belongs to this computer;
-    // give it the id the account knows so its stub can travel. A controller
-    // (Workspace, the phone) never owns a direct chat, even if an old sync left
-    // one behind.
-    if capabilities.coding_agents {
-        state
-            .store
-            .own_coding(&auth.device_id(), &state.agents.device_name());
-    }
-    // Now that the state it acts for exists, the tool bridge can take calls.
-    bridge.serve(state.clone());
-    // One connection per running product: a host for Hook, a controller for the
-    // phone and Workspace. It waits for a session and reconnects on its own.
-    relay.serve(state.clone());
-    // A coding-agent chat whose engine died with the last window would keep a
-    // "streaming" reply forever; turn it into the error it always was.
-    coding::recover(&state.store);
-    // The same for a summary that was being written when the window closed: its
-    // marker never carried text and must not hold the chat out of sync.
-    compact::recover(&state.store);
-    sync.spawn();
-
-    // One request tells us what the model can see. If the card says images, the
-    // chat may send them and the engine is told so before any agent starts.
-    // Re-run after sign-in and on window reload.
-    {
-        let state = state.clone();
-        tauri::async_runtime::spawn(async move {
-            commands::refresh_capabilities(&state).await;
-        });
-    }
-
-    // One supervisor drains every agent signal: keeps the UI indicator honest
-    // and wakes the owning chat when an agent needs attention.
-    let supervisor = state.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(signal) = signal_rx.recv().await {
-            match signal {
-                Signal::Changed => emit_agents(&supervisor),
-                Signal::Wake(wake) => {
-                    emit_agents(&supervisor);
-                    supervisor.sync.wake();
-                    if let Some(info) = supervisor.agents.get(&wake.agent_id) {
-                        turn::on_agent_event(supervisor.clone(), info);
-                    }
-                }
-                Signal::Preview(report) => {
-                    if let Some(info) = supervisor.agents.get(&report.agent_id) {
-                        let root = std::path::PathBuf::from(&info.project_path);
-                        if let Err(error) = supervisor.preview.show(
-                            &info.chat_id,
-                            &info.id,
-                            &info.project,
-                            &root,
-                            &report.file,
-                            &report.title,
-                        ) {
-                            eprintln!("hook: preview rejected: {error}");
-                        }
-                    }
-                }
-                Signal::Record {
-                    chat_id,
-                    agent_id,
-                    record,
-                } => {
-                    // A directly-driven agent's conversation is assembled from
-                    // its own records; the chat agent never sees them.
-                    coding::on_record(&supervisor, &chat_id, &agent_id, &record);
-                }
-            }
-        }
-    });
-
-    // One tick a second: collect progress notes and hand due batches to the
-    // chats. Coding agents write to a mailbox; this is what turns that into
-    // chat messages (at most once per update interval).
-    let ticker = state.clone();
-    let interval = std::time::Duration::from_secs(cfg.coding.update_interval_seconds.clamp(10, 3600));
-    tauri::async_runtime::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
-        loop {
-            tick.tick().await;
-            ticker.agents.harvest();
-            ticker.agents.flush_due(interval);
-            // The preview belongs to one coding-agent run. Once that run settles
-            // the panel stays open and usable, but the page stops refreshing
-            // itself; the user reloads it by hand.
-            if let Some(agent_id) = ticker.preview.agent_id() {
-                let live = ticker
-                    .agents
-                    .get(&agent_id)
-                    .map(|info| info.is_active())
-                    .unwrap_or(false);
-                if !live {
-                    ticker.preview.settle();
-                }
-            }
-        }
-    });
 
     // `--headless` is the host without a face: the window is never shown and no
     // tray icon is installed, so a script or a shortcut can start the process
     // that serves the browser's channel and keeps agents running, and nothing
     // appears on the desktop. It is the interim sidecar: the same account, the
     // same turn, and the same channel the browser already talks to, in a process
-    // that is not the window someone is using.
-    let headless = std::env::args().any(|argument| argument == "--headless");
-    if headless {
+    // that is not the window someone is using. `hook-host` is the real one.
+    if std::env::args().any(|argument| argument == "--headless") {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.hide();
         }
-        eprintln!(
-            "hook: headless host, channel {}",
-            state.channel.describe()
-        );
+        eprintln!("hook: headless host, channel {}", state.channel.describe());
         return Ok(());
     }
 
@@ -743,11 +523,19 @@ fn setup(
 }
 
 /// Kill everything that would otherwise outlive the window.
+#[cfg(feature = "desktop")]
 pub fn on_exit(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<Arc<AppState>>() {
-        state.agents.kill_all_sync();
-        state.preview.stop();
+        shutdown(&state);
     }
+}
+
+/// Stop the work that outlives everything else: agent children and the preview
+/// server. A window calls it as it exits; `hook-host` calls it when it is asked
+/// to stop. Both leave a machine with nothing of theirs still running.
+pub fn shutdown(state: &AppState) {
+    state.agents.kill_all_sync();
+    state.preview.stop();
 }
 
 #[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]

@@ -9,7 +9,7 @@
 //! Reporting is best effort and silent: a dropped event must never interrupt a
 //! conversation, and a local preview build must not call hookcode.io at all.
 
-use crate::commands::AppState;
+use crate::state::AppState;
 
 /// The kinds `server/events.mjs` accepts. Kept here as well so a typo in a call
 /// site is caught by `hook-core`'s own tests rather than silently stored.
@@ -36,17 +36,13 @@ pub fn track(state: &AppState, kind: &str) {
         return;
     };
     let base = state.cfg.auth.base_url.trim_end_matches('/').to_string();
-    let product = match state.product {
-        crate::Product::Chat => "chat",
-        crate::Product::Workspace => "workspace",
-        crate::Product::Mobile => "mobile",
-    };
+    let product = state.product.slug();
     let version = crate::version::current().to_string();
     let kind = kind.to_string();
-    // `tauri::async_runtime` on purpose: this is called from synchronous
-    // commands (a sent message), where a bare `tokio::spawn` has no reactor and
-    // panics the window.
-    tauri::async_runtime::spawn(async move {
+    // `rt::spawn` on purpose: this is called from synchronous commands (a sent
+    // message), where a bare `tokio::spawn` has no reactor and panics the
+    // window. `Handle::spawn` does not need one.
+    crate::rt::spawn(async move {
         let Ok(client) = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(8))

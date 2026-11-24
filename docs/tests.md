@@ -4,6 +4,7 @@ What each suite proves, and which commands run them.
 
 ```bash
 cargo test                                      # the whole workspace: no engine, no network
+cargo test -p hook-core --no-default-features    # the backend without Tauri: what `hook-host` links
 cargo test -p hook-core -- --ignored             # live tests against `pnpm mock`
 pnpm typecheck                                  # the only static gate: every package + the site
 pnpm waitlist:test                              # API, auth, proxy, download, sync, git, devices, relay, preview, workspace
@@ -21,7 +22,10 @@ Nothing there builds an installer — `pnpm release` does that, locally, when yo
 decide to ship (see [Releasing](releasing.md)). The release profile is
 `lto = "thin"` with parallel codegen units, and a product ships one `rlib` plus
 its binary — not the
-mobile `staticlib`/`cdylib` as well. `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
+mobile `staticlib`/`cdylib` as well. `--no-default-features` is the windowless
+build: it compiles out `commands.rs`, `update.rs` and every Tauri type, which is
+what `crates/hook-host` ships, so a change that reaches for an `AppHandle` below
+`lib.rs` fails there instead of in a review. `cargo test` covers SSE framing, UTF-8 splits, reasoning echo (the exact request
 shapes thinking-mode APIs reject), image parts and the base64/header helpers,
 path containment, the project and agent stores, progress batching, the chat-agent
 tool loop, the guard policy (a Node harness feeds it bad `bash` calls, force-push

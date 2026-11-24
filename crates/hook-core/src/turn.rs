@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::Emitter;
 
 use crate::agent::AgentInfo;
 use crate::auth::RefreshOutcome;
-use crate::commands::AppState;
+use crate::state::AppState;
+use crate::events::EmitExt;
 use crate::config::{self, ReasoningEcho};
 use crate::provider::{self, CancelToken, Chunk, Outcome};
 use crate::store::{now_ms, truncate, Attachment, Chat, ChatMeta, Message, ToolCallRecord};
@@ -232,7 +232,7 @@ pub(crate) fn emit(state: &AppState, chat_id: &str, event: StreamEvent) {
     if crate::remote::is_remote(state, chat_id) {
         mirror(state, chat_id, &event);
     }
-    let _ = state.app.emit(
+    state.events.emit(
         "hook://chat",
         ChatEvent {
             chat_id: chat_id.to_string(),
@@ -315,7 +315,7 @@ pub fn kick(state: Arc<AppState>, chat_id: String) {
 fn spawn_turn(state: Arc<AppState>, chat_id: String) {
     use futures_util::FutureExt;
 
-    tauri::async_runtime::spawn(async move {
+    crate::rt::spawn(async move {
         let outcome =
             std::panic::AssertUnwindSafe(run_turn(state.clone(), chat_id.clone()))
                 .catch_unwind()
@@ -343,7 +343,7 @@ pub fn kick_compact(
         return Err("Wait for this reply to finish before compacting.".into());
     }
     use futures_util::FutureExt;
-    tauri::async_runtime::spawn(async move {
+    crate::rt::spawn(async move {
         let outcome = std::panic::AssertUnwindSafe(compact_turn(
             state.clone(),
             chat_id.clone(),
@@ -968,10 +968,10 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 // about the user's key, not about Hook.
                 if !byok && (err.starts_with("401 · ") || err.starts_with("403 · ")) {
                     if let RefreshOutcome::Revoked(message) = state.auth.refresh().await {
-                        crate::commands::revoke_local(&state);
+                        crate::state::revoke_local(&state);
                         let mut view = state.auth.view();
                         view.message = Some(message);
-                        let _ = state.app.emit("hook://auth", view);
+                        state.events.emit("hook://auth", view);
                     }
                 }
                 if rejects_context_role(&err)

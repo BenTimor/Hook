@@ -6,9 +6,10 @@
 // the page: it is read here, from the shared descriptor, and used here.
 //
 // Which process answers is not this file's business. A channel is published by
-// whichever Hook process is running — the app in the tray, `hook --headless`, or
-// the host this browser started itself when nothing answered
-// (`browser/host/hook_host.h`).
+// whichever Hook process is running: the host this browser started itself
+// (`browser/host/hook_host.h`, `hook-host`), or an app in the tray if it answers
+// first. Each product publishes its own descriptor
+// (`browser-channel.<product>.json`), and this browser reads its own first.
 //
 // The descriptor is read on a thread pool: the page asks for it as soon as it
 // loads, which can be inside the browser's startup tasks, where the UI thread is

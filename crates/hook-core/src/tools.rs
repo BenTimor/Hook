@@ -326,7 +326,7 @@ pub struct ToolEnv<'a> {
     pub user_initiated: bool,
     /// The app state, when this is a chat-agent turn. Direct coding agents and
     /// unit tests have no relay and therefore no machines.
-    pub state: Option<&'a crate::commands::AppState>,
+    pub state: Option<&'a crate::state::AppState>,
 }
 
 /// Runs one tool call and returns the JSON text handed back to the model.
@@ -358,7 +358,7 @@ struct TargetMachine {
     local: bool,
 }
 
-pub(crate) fn machine_view(state: &crate::commands::AppState) -> Value {
+pub(crate) fn machine_view(state: &crate::state::AppState) -> Value {
     let view = state.relay.view();
     let machines: Vec<Value> = view
         .devices

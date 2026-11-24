@@ -15,7 +15,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::commands::AppState;
+use crate::state::AppState;
 use crate::relay::RpcFailure;
 use crate::store::Chat;
 
@@ -824,7 +824,7 @@ fn coding_delete(state: &Arc<AppState>, params: ChatParams) -> Result<Value, Rpc
         .load(chat_id)
         .map_err(|_| fail("unknown_chat", "No such conversation on this machine."))?;
     host_chat(state, &chat)?;
-    crate::commands::delete_local_chat(state, chat_id)
+    crate::session::delete_local_chat(state, chat_id)
         .map_err(|error| fail("delete_failed", error))?;
     Ok(json!({ "chatId": chat_id, "deleted": true }))
 }

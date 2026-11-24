@@ -5,6 +5,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 
 use crate::config::HarnessConfig;
+use crate::state::AppState;
 use crate::store::{ToolCallRecord, Usage};
 
 /// Cooperative cancellation shared between the command layer and the stream loop.
@@ -983,5 +984,36 @@ mod tests {
         .await
         .expect("stream failed");
         assert!(matches!(outcome, Outcome::Cancelled));
+    }
+}
+
+pub async fn refresh_capabilities(state: &Arc<AppState>) {
+    // The card belongs to whichever endpoint this product talks to: Hook's own
+    // model, or the one the user entered. A provider without `/models` simply
+    // reports nothing.
+    let Ok(target) = crate::provider::ProviderTarget::resolve(
+        &state.cfg,
+        state.settings.custom_provider().as_ref(),
+        state.auth.token(),
+    ) else {
+        state.vision.store(false, std::sync::atomic::Ordering::Relaxed);
+        return;
+    };
+    let caps = crate::provider::fetch_capabilities(&target.cfg, &target.token, target.byok).await;
+    if !caps.known {
+        eprintln!("hook: no model card at the provider; capabilities unknown");
+        return;
+    }
+    eprintln!(
+        "hook: model {} capabilities from /models: vision={}",
+        target.cfg.model.name, caps.vision
+    );
+    state
+        .vision
+        .store(caps.vision, std::sync::atomic::Ordering::Relaxed);
+    if caps.vision {
+        state
+            .vision_off
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 }

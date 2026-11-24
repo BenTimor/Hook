@@ -1,79 +1,17 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
-use crate::agent::AgentManager;
-use crate::auth::{AuthStore, AuthView, LoginOutcome, RefreshOutcome};
+use crate::auth::{AuthView, LoginOutcome, RefreshOutcome};
 use crate::config;
-use crate::preview::{PreviewManager, PreviewView};
-use crate::projects::{Project, ProjectsStore};
-use crate::provider::CancelToken;
-use crate::settings::SettingsStore;
-use crate::store::{now_ms, Chat, ChatMeta, Message, SearchHit, Store, DEFAULT_TITLE};
-use crate::turn::{self, TurnState};
-
-pub struct AppState {
-    pub app: AppHandle,
-    pub store: Arc<Store>,
-    pub settings: Arc<SettingsStore>,
-    pub projects: Arc<ProjectsStore>,
-    /// What the chat agent remembers between conversations. Shared by both
-    /// products: it lives beside the account file, not beside the chats.
-    pub memory: Arc<crate::memory::MemoryStore>,
-    pub agents: Arc<AgentManager>,
-    pub preview: Arc<PreviewManager>,
-    pub streams: Arc<Mutex<HashMap<String, CancelToken>>>,
-    pub turns: TurnState,
-    /// The assistant message a directly-driven coding agent is still writing.
-    /// Only this process can finish it; see `coding.rs`.
-    pub coding: crate::coding::CodingState,
-    /// The compiled-in harness config (provider, model, auth origin).
-    pub cfg: Arc<config::HarnessConfig>,
-    /// The signed-in account and its API token.
-    pub auth: Arc<AuthStore>,
-    /// Background conversation and project sync.
-    pub sync: Arc<crate::sync::SyncEngine>,
-    /// The loopback surface Hook Browser reads (channel.rs).
-    pub channel: Arc<crate::channel::Channel>,
-    /// The live account connection: presence, remote commands and chat fan-out.
-    pub relay: Arc<crate::relay::RelayClient>,
-    /// Chats a controller is driving on this machine. Their live turn and agent
-    /// events are mirrored to the relay; a chat used only here never leaves the
-    /// process.
-    pub remote_chats: Arc<Mutex<HashSet<String>>>,
-    /// Deltas waiting for the next relay frame of a chat this machine hosts.
-    /// Coalesced so a fast model cannot outrun the relay's frame budget.
-    pub mirror: turn::MirrorState,
-    /// Whether the model can see images, taken from its `/models` card.
-    pub vision: Arc<std::sync::atomic::AtomicBool>,
-    /// Set when the endpoint rejects image parts anyway, so later turns stop
-    /// trying. A card can promise more than the endpoint delivers.
-    pub vision_off: Arc<std::sync::atomic::AtomicBool>,
-    /// Set when the endpoint refused a context frame sent as a trailing
-    /// `system` message, so later turns send it as `user` instead. A card can
-    /// promise more than the endpoint delivers; so can a config.
-    pub context_role_off: Arc<std::sync::atomic::AtomicBool>,
-    /// Scanned ChatGPT / Claude exports, kept between the preview and the
-    /// confirmation so a large archive is parsed once.
-    pub imports: Arc<crate::import::Importer>,
-    /// Hook Workspace's data, reached over the account API. Shared with the
-    /// chat agent's tools, which work without Workspace installed.
-    pub workspace: Arc<crate::workspace::WorkspaceClient>,
-    /// What the user is looking at, written by the product's window. Ephemeral:
-    /// it rides on the next request only, and is never stored in a chat.
-    pub context: Arc<Mutex<Option<String>>>,
-    /// Which desktop product this backend is serving.
-    pub product: crate::Product,
-    /// What this product's chat agent may do (see `Capabilities`).
-    pub capabilities: crate::Capabilities,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
-}
+use crate::events::EmitExt;
+use crate::preview::PreviewView;
+use crate::projects::Project;
+use crate::state::{lock, AppState};
+use crate::store::{now_ms, Chat, ChatMeta, Message, SearchHit, DEFAULT_TITLE};
+use crate::turn;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,26 +59,6 @@ pub async fn ws_request(
 #[tauri::command]
 pub fn set_chat_context(state: State<'_, Arc<AppState>>, context: String) {
     state.set_chat_context(&context);
-}
-
-impl AppState {
-    /// The live context block, if the product set one.
-    pub fn chat_context(&self) -> Option<String> {
-        lock(&self.context).clone()
-    }
-
-    /// Sets the trailing context frame (the browser's active tab, Workspace's
-    /// board). Trimmed and capped: it is appended to every turn, so it must not
-    /// be able to eat the prompt.
-    pub fn set_chat_context(&self, context: &str) {
-        let trimmed = context.trim();
-        let value = if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.chars().take(4000).collect::<String>())
-        };
-        *lock(&self.context) = value;
-    }
 }
 
 #[tauri::command]
@@ -309,7 +227,7 @@ pub async fn import_scan(
     let store = state.store.clone();
     let imports = state.imports.clone();
     // Parsing a few hundred megabytes of JSON must not block the window.
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         imports.scan(&store, std::path::Path::new(&path))
     })
     .await
@@ -324,10 +242,10 @@ pub async fn import_apply(
 ) -> Result<crate::import::ImportSummary, String> {
     let store = state.store.clone();
     let imports = state.imports.clone();
-    let app = state.app.clone();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
+    let events = state.events.clone();
+    let outcome = crate::rt::spawn_blocking(move || {
         let emit = |progress: crate::import::ImportProgress| {
-            let _ = app.emit("hook://import", progress);
+            events.emit("hook://import", progress);
         };
         imports.apply(&store, std::path::Path::new(&path), &emit)
     })
@@ -347,63 +265,17 @@ pub fn app_info(state: State<'_, Arc<AppState>>) -> Result<AppInfo, String> {
     config::get()?;
     Ok(AppInfo {
         version: crate::version::current(),
-        product: match state.product {
-            crate::Product::Chat => "chat",
-            crate::Product::Workspace => "workspace",
-            crate::Product::Mobile => "mobile",
-        },
+        product: state.product.slug(),
     })
 }
 
-fn emit_auth(app: &AppHandle, view: &AuthView) {
-    let _ = app.emit("hook://auth", view);
-}
 
 /// Drop everything that belonged to the signed-in account: live coding
 /// agents, in-flight chat streams and the preview server. Used when the token
 /// is revoked server-side or the user signs out.
-pub(crate) fn revoke_local(state: &AppState) {
-    state.agents.kill_all_sync();
-    state.preview.stop();
-    state.relay.disconnect();
-    for token in lock(&state.streams).values() {
-        token.cancel();
-    }
-    lock(&state.streams).clear();
-}
 
 /// Ask the model card what it can see. Called at launch, after sign-in and on
 /// window reload. A provider without `/models` simply reports nothing.
-pub async fn refresh_capabilities(state: &Arc<AppState>) {
-    // The card belongs to whichever endpoint this product talks to: Hook's own
-    // model, or the one the user entered. A provider without `/models` simply
-    // reports nothing.
-    let Ok(target) = crate::provider::ProviderTarget::resolve(
-        &state.cfg,
-        state.settings.custom_provider().as_ref(),
-        state.auth.token(),
-    ) else {
-        state.vision.store(false, std::sync::atomic::Ordering::Relaxed);
-        return;
-    };
-    let caps = crate::provider::fetch_capabilities(&target.cfg, &target.token, target.byok).await;
-    if !caps.known {
-        eprintln!("hook: no model card at the provider; capabilities unknown");
-        return;
-    }
-    eprintln!(
-        "hook: model {} capabilities from /models: vision={}",
-        target.cfg.model.name, caps.vision
-    );
-    state
-        .vision
-        .store(caps.vision, std::sync::atomic::Ordering::Relaxed);
-    if caps.vision {
-        state
-            .vision_off
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-    }
-}
 
 #[tauri::command]
 pub fn auth_status(state: State<'_, Arc<AppState>>) -> AuthView {
@@ -431,28 +303,27 @@ pub async fn auth_login(
             );
         }
     }
-    emit_auth(&app, &view);
+    crate::auth::emit(&state.events, &view);
 
     let poll_state = state.clone();
-    let poll_app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::rt::spawn(async move {
         match poll_state.auth.wait_for_approval(generation).await {
             LoginOutcome::Approved => {
                 // Show the app as soon as the token is stored; the model-card
                 // probe can finish in the background.
-                emit_auth(&poll_app, &poll_state.auth.view());
+                crate::auth::emit(&poll_state.events, &poll_state.auth.view());
                 poll_state.sync.wake();
                 poll_state.relay.wake();
-                refresh_capabilities(&poll_state).await;
+                crate::provider::refresh_capabilities(&poll_state).await;
             }
             LoginOutcome::Cancelled => {
-                emit_auth(&poll_app, &poll_state.auth.view());
+                crate::auth::emit(&poll_state.events, &poll_state.auth.view());
             }
             LoginOutcome::Failed(message) => {
                 poll_state.auth.cancel();
                 let mut view = poll_state.auth.view();
                 view.message = Some(message);
-                emit_auth(&poll_app, &view);
+                crate::auth::emit(&poll_state.events, &view);
             }
         }
     });
@@ -466,41 +337,12 @@ pub async fn auth_login(
 /// on screen, so nothing is opened here. The page shows the code and the caller
 /// polls `auth/status`; the poll still runs in this process, because `auth.rs` is
 /// what writes the shared account file, and the browser only reads it.
-pub(crate) async fn begin_browser_sign_in(
-    state: &Arc<AppState>,
-) -> Result<AuthView, String> {
-    let (generation, _device_code, _interval) = state.auth.begin().await?;
-    let view = state.auth.view();
-
-    let poll_state = state.clone();
-    tauri::async_runtime::spawn(async move {
-        match poll_state.auth.wait_for_approval(generation).await {
-            LoginOutcome::Approved => {
-                emit_auth(&poll_state.app, &poll_state.auth.view());
-                poll_state.sync.wake();
-                poll_state.relay.wake();
-                refresh_capabilities(&poll_state).await;
-            }
-            LoginOutcome::Cancelled => {
-                emit_auth(&poll_state.app, &poll_state.auth.view());
-            }
-            LoginOutcome::Failed(message) => {
-                poll_state.auth.cancel();
-                let mut view = poll_state.auth.view();
-                view.message = Some(message);
-                emit_auth(&poll_state.app, &view);
-            }
-        }
-    });
-
-    Ok(view)
-}
 
 #[tauri::command]
-pub fn auth_cancel_login(app: AppHandle, state: State<'_, Arc<AppState>>) -> AuthView {
+pub fn auth_cancel_login(state: State<'_, Arc<AppState>>) -> AuthView {
     state.auth.cancel();
     let view = state.auth.view();
-    emit_auth(&app, &view);
+    crate::auth::emit(&state.events, &view);
     view
 }
 
@@ -520,19 +362,18 @@ pub async fn auth_google_config(
 /// the token the same way it checks the browser's.
 #[tauri::command]
 pub async fn auth_google(
-    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     id_token: String,
 ) -> Result<AuthView, String> {
     let state = state.inner().clone();
     let view = state.auth.login_with_google(&id_token).await?;
-    emit_auth(&app, &view);
+    crate::auth::emit(&state.events, &view);
     // A finished sign-in is when the account's conversations start arriving.
     state.sync.wake();
     state.relay.wake();
     let ready = state.clone();
-    tauri::async_runtime::spawn(async move {
-        refresh_capabilities(&ready).await;
+    crate::rt::spawn(async move {
+        crate::provider::refresh_capabilities(&ready).await;
     });
     Ok(view)
 }
@@ -541,22 +382,21 @@ pub async fn auth_google(
 /// is signed out here, before its next message fails.
 #[tauri::command]
 pub async fn auth_refresh(
-    app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<AuthView, String> {
     let state = state.inner().clone();
     match state.auth.refresh().await {
         RefreshOutcome::Valid => {
-            refresh_capabilities(&state).await;
+            crate::provider::refresh_capabilities(&state).await;
             state.sync.wake();
             state.relay.wake();
             Ok(state.auth.view())
         }
         RefreshOutcome::Revoked(message) => {
-            revoke_local(&state);
+            crate::state::revoke_local(&state);
             let mut view = state.auth.view();
             view.message = Some(message);
-            emit_auth(&app, &view);
+            crate::auth::emit(&state.events, &view);
             Ok(view)
         }
         RefreshOutcome::Unreachable(message) => {
@@ -570,14 +410,13 @@ pub async fn auth_refresh(
 
 #[tauri::command]
 pub async fn auth_logout(
-    app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<AuthView, String> {
     let state = state.inner().clone();
     state.auth.logout().await;
-    revoke_local(&state);
+    crate::state::revoke_local(&state);
     let view = state.auth.view();
-    emit_auth(&app, &view);
+    crate::auth::emit(&state.events, &view);
     Ok(view)
 }
 
@@ -620,7 +459,7 @@ pub async fn rename_chat(
             .device_id
             .clone()
             .ok_or("This conversation does not know which machine owns it.")?;
-        let result = remote_rpc(
+        let result = crate::session::remote_rpc(
             state.inner(),
             &device,
             "coding.rename",
@@ -659,29 +498,12 @@ pub async fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Re
             return delete_remote_chat(state.inner(), &chat.meta).await;
         }
     }
-    delete_local_chat(state.inner(), &chat_id)
+    crate::session::delete_local_chat(state.inner(), &chat_id)
 }
 
 /// Remove a conversation this machine owns. Both the local command and the
 /// relay's `coding.delete` end here: a host deletes the same way whichever
 /// device asked.
-pub(crate) fn delete_local_chat(state: &Arc<AppState>, chat_id: &str) -> Result<(), String> {
-    let meta = state.store.load(chat_id).ok().map(|chat| chat.meta);
-    if let Some(meta) = &meta {
-        if meta.is_owned_coding(&state.agents.device_id()) {
-            state.sync.forget_stub(chat_id);
-        }
-    }
-    for agent in state.agents.list() {
-        if agent.chat_id == chat_id && agent.is_live() {
-            let _ = state.agents.stop(&agent.id);
-        }
-    }
-    state.preview.stop_chat(chat_id);
-    state.store.delete(chat_id)?;
-    state.sync.wake();
-    Ok(())
-}
 
 /// Delete a cached conversation on the machine that owns it.
 ///
@@ -797,7 +619,7 @@ pub async fn send_message(
                 .clone()
                 .ok_or("This conversation does not know which machine owns it.")?;
             let message_id = uuid::Uuid::new_v4().to_string();
-            remote_rpc(
+            crate::session::remote_rpc(
                 &app_state,
                 &device,
                 "coding.send",
@@ -823,7 +645,7 @@ pub async fn send_message(
     }
 
     if chat.messages.is_empty() && chat.meta.title == DEFAULT_TITLE && !text.is_empty() {
-        chat.meta.title = derive_title(&text);
+        chat.meta.title = crate::session::derive_title(&text);
     }
     chat.meta.updated_at = now_ms();
     let mut message = Message::new("user", &text, "complete");
@@ -840,66 +662,18 @@ pub async fn send_message(
             .save_image(&chat.meta.id, &mime, &bytes, image.width, image.height, Some("user"))?;
         message.attachments.push(attachment);
     }
-    commit_and_start(state.inner(), &mut chat, message)
+    crate::session::commit_and_start(state.inner(), &mut chat, message)
 }
 
 /// Append `message` to `chat`, save it, and start the turn. The window and the
 /// browser channel both end here, so a message from either looks the same in the
 /// store and in the sync queue.
-pub(crate) fn commit_and_start(
-    state: &Arc<AppState>,
-    chat: &mut Chat,
-    message: Message,
-) -> Result<String, String> {
-    chat.messages.push(message);
-    state.store.save(chat)?;
-    crate::turn::trace("send_message saved");
-    state.sync.wake();
-    crate::turn::trace("sync woken");
-
-    turn::kick(state.clone(), chat.meta.id.clone());
-    // Analytics only: the request has already left, and a personal endpoint is
-    // the one thing Hook's own metering never sees.
-    if state.settings.custom_provider().is_some() && state.auth.required() {
-        crate::analytics::track(state, "byok_turn");
-    }
-    crate::turn::trace("turn kicked");
-    Ok(chat.meta.id.clone())
-}
 
 /// A message typed in Hook Browser's dock: text only, an ordinary chat, and the
 /// same code path the window uses.
-pub(crate) fn send_chat_message(
-    state: &Arc<AppState>,
-    chat_id: &str,
-    text: &str,
-) -> Result<(), String> {
-    let text = text.trim();
-    if text.is_empty() {
-        return Err("Message is empty".into());
-    }
-    let mut chat = state.store.load(chat_id)?;
-    if crate::coding::is_coding(&chat) {
-        return Err("This conversation belongs to a coding agent.".into());
-    }
-    if chat.meta.remote {
-        return Err("This conversation is owned by another machine.".into());
-    }
-    chat.meta.updated_at = now_ms();
-    if chat.messages.is_empty() && chat.meta.title == DEFAULT_TITLE {
-        chat.meta.title = derive_title(text);
-    }
-    commit_and_start(state, &mut chat, Message::new("user", text, "complete"))?;
-    Ok(())
-}
 
 /// Cancel a chat's stream, without the coding/remote branches `stop_stream`
 /// needs: the channel only serves ordinary chats.
-pub(crate) fn stop_chat_turn(state: &Arc<AppState>, chat_id: &str) {
-    if let Some(token) = lock(&state.streams).get(chat_id).cloned() {
-        token.cancel();
-    }
-}
 
 fn coding_needs_plan() -> &'static str {
     "Coding agents are part of a paid plan. Add your own model provider in Settings to use one."
@@ -1023,7 +797,7 @@ pub async fn stop_stream(state: State<'_, Arc<AppState>>, chat_id: String) -> Re
             // the stop over the relay.
             crate::coding::close(state.inner(), &chat_id, "aborted");
             if let Some(device) = chat.meta.device_id.clone() {
-                let _ = remote_rpc(
+                let _ = crate::session::remote_rpc(
                     state.inner(),
                     &device,
                     "coding.stop",
@@ -1090,7 +864,7 @@ pub async fn remote_folders(
 ) -> Result<serde_json::Value, String> {
     remote_ready(state.inner())?;
     require_host(state.inner(), &device_id)?;
-    remote_rpc(
+    crate::session::remote_rpc(
         state.inner(),
         &device_id,
         "folders.browse",
@@ -1112,7 +886,7 @@ pub async fn remote_pin_folder(
 ) -> Result<Vec<String>, String> {
     remote_ready(state.inner())?;
     require_host(state.inner(), &device_id)?;
-    let result = remote_rpc(
+    let result = crate::session::remote_rpc(
         state.inner(),
         &device_id,
         "folders.pin",
@@ -1144,7 +918,7 @@ pub async fn answer_coding_agent(
             .device_id
             .clone()
             .ok_or("This conversation does not know which machine owns it.")?;
-        remote_rpc(
+        crate::session::remote_rpc(
             state.inner(),
             &device,
             "coding.answer",
@@ -1201,19 +975,6 @@ fn require_host(state: &AppState, device_id: &str) -> Result<String, String> {
     Ok(device.name.clone())
 }
 
-pub(crate) async fn remote_rpc(
-    state: &AppState,
-    device_id: &str,
-    method: &str,
-    params: serde_json::Value,
-    timeout: Duration,
-) -> Result<serde_json::Value, String> {
-    state
-        .relay
-        .rpc(device_id, method, params, timeout)
-        .await
-        .map_err(|failure| failure.message)
-}
 
 /// The projects a host can open a coding chat in. Only account projects: a
 /// controller never supplies an arbitrary path on another machine.
@@ -1224,7 +985,7 @@ pub async fn remote_projects(
 ) -> Result<Vec<serde_json::Value>, String> {
     remote_ready(state.inner())?;
     require_host(state.inner(), &device_id)?;
-    let result = remote_rpc(
+    let result = crate::session::remote_rpc(
         state.inner(),
         &device_id,
         "projects.list",
@@ -1246,7 +1007,7 @@ pub async fn remote_create_project(
 ) -> Result<serde_json::Value, String> {
     remote_ready(state.inner())?;
     require_host(state.inner(), &device_id)?;
-    remote_rpc(
+    crate::session::remote_rpc(
         state.inner(),
         &device_id,
         "projects.create",
@@ -1284,7 +1045,7 @@ pub async fn create_remote_coding_chat(
         None if !project.is_empty() => serde_json::json!({ "project": project }),
         None => return Err("Name a project or choose a folder on that machine.".into()),
     };
-    let result = remote_rpc(
+    let result = crate::session::remote_rpc(
         state.inner(),
         &device_id,
         "coding.create",
@@ -1326,7 +1087,7 @@ pub async fn fetch_remote_chat(
         .device_id
         .clone()
         .ok_or("This conversation does not know which machine owns it.")?;
-    let result = remote_rpc(
+    let result = crate::session::remote_rpc(
         state.inner(),
         &device,
         "coding.fetch",
@@ -1454,14 +1215,13 @@ pub async fn set_projects_dir(
 /// tombstone the sync engine sends, so the next pull cannot put it back.
 #[tauri::command]
 pub fn delete_project(
-    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<SettingsView, String> {
     let project = state.projects.delete(&id)?;
     state.sync.project_deleted(&project.id);
     state.sync.wake();
-    let _ = app.emit(
+    state.events.emit(
         "hook://sync",
         serde_json::json!({
             "chats": false,
@@ -1522,8 +1282,8 @@ pub fn set_custom_provider(
     // Share it now rather than on the next cycle: the user just pressed Save.
     state.sync.wake();
     let shared = state.inner().clone();
-    tauri::async_runtime::spawn(async move {
-        refresh_capabilities(&shared).await;
+    crate::rt::spawn(async move {
+        crate::provider::refresh_capabilities(&shared).await;
     });
     crate::analytics::track(state.inner(), "byok_saved");
     Ok(settings_view(&state))
@@ -1536,8 +1296,8 @@ pub fn clear_custom_provider(state: State<'_, Arc<AppState>>) -> Result<Settings
     // The clear has to reach the other devices too.
     state.sync.wake();
     let shared = state.inner().clone();
-    tauri::async_runtime::spawn(async move {
-        refresh_capabilities(&shared).await;
+    crate::rt::spawn(async move {
+        crate::provider::refresh_capabilities(&shared).await;
     });
     crate::analytics::track(state.inner(), "byok_removed");
     Ok(settings_view(&state))
@@ -1582,12 +1342,11 @@ pub async fn custom_models(
 /// the server; the window does not offer the switch to one.
 #[tauri::command]
 pub async fn set_cloud_sync(
-    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     enabled: bool,
 ) -> Result<SettingsView, String> {
     let view = state.auth.set_cloud_sync(enabled).await?;
-    emit_auth(&app, &view);
+    crate::auth::emit(&state.events, &view);
     state.sync.wake();
     if enabled {
         state.relay.wake();
@@ -1858,11 +1617,3 @@ pub async fn install_update(
     crate::update::install(&app, &state.cfg, state.product, state.auth.token()).await
 }
 
-fn derive_title(text: &str) -> String {
-    let first_line = text.lines().next().unwrap_or(text);
-    let cleaned = first_line
-        .trim_start_matches(|c: char| c == '#' || c == '-' || c == '*' || c.is_whitespace())
-        .trim();
-    let candidate = if cleaned.is_empty() { text } else { cleaned };
-    crate::store::truncate(candidate, 72)
-}

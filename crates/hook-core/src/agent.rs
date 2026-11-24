@@ -1251,7 +1251,7 @@ impl AgentManager {
         // from a synchronous IPC command (the user's own message in a
         // coding-agent chat), where this thread has no Tokio context and
         // `tokio::spawn` panics with "there is no reactor running".
-        tauri::async_runtime::spawn(async move {
+        crate::rt::spawn(async move {
             drive(
                 id, chat_id, inner, data_dir, signal_tx, settings, child, stdin, stdout, rx, direct,
                 bridge,

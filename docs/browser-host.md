@@ -1,13 +1,13 @@
 # Hook Browser — its own host process
 
-> **Status: step 1 is in; steps 2–4 are design.** The browser starts its own
-> host when no channel answers (`browser/overlay/src/hook/browser/host/hook_host.cc`
-> — one launch per run, `hook --headless`, a build-time path, a pid that must be
-> the child's, `--hook-no-host` to turn it off). What that means in practice: the
-> browser no longer needs another product *running*, but it still borrows the
-> chat product's binary and data folder. Steps 2–4 below are what makes the host
-> the browser's own — `Product::Browser`, an `EventSink` instead of `AppHandle`,
-> its own `%APPDATA%\app.hook.browser`, and a per-product descriptor.
+> **Status: steps 1–4 are in.** The host is `crates/hook-host`, a plain Rust
+> binary with no Tauri at all; it is `Product::Browser` with its own folder
+> (`%APPDATA%\app.hook.browser`) and its own descriptor
+> (`browser-channel.browser.json`), and the browser starts it when no channel
+> answers (`browser/overlay/src/hook/browser/host/hook_host.cc` — one launch per
+> run, a build-time path, a pid that must be the child's, `--hook-no-host` to turn
+> it off). What that means in practice: Hook Browser needs no other product
+> installed, running, or even built. What is left is packaging (step 5).
 
 ## The question
 
@@ -74,31 +74,40 @@ browser's, and another product's channel is simply another host on the machine.
 
 ## The host binary
 
-Today's `--headless` is the Tauri app with its window hidden: it still creates a
-webview, still carries Wry and the window resources, and is compiled for
-`Product::Chat`. The real host is a plain Rust binary:
+`--headless` *was* the Tauri app with its window hidden: it still created a
+webview, still carried Wry and the window resources, and was compiled for
+`Product::Chat`. That is why the first version of this borrowed the chat app. The
+host is now `crates/hook-host`, a plain Rust binary that links `hook-core` with
+`default-features = false`:
 
 - `hook-core`'s stores, `auth.rs`, `sync.rs`, `turn.rs`, `tools.rs`, the channel
   — everything but `lib.rs`'s Tauri builder.
 - No webview, no tray, no window, no plugins it does not use. Expect roughly the
   size of the desktop backend without the window stack.
-- It writes `browser-channel.json` (`Channel::serve` already does) and runs until
-  it is asked to stop.
+- It writes `browser-channel.browser.json` (`Channel::serve` already does) and
+  runs until it is asked to stop — Ctrl+C, or the browser terminating it.
 
-One refactor is the price of admission: **`AppState` is built around
-`AppHandle`**. Event emission (`emit_auth`, `emit_chat`, the sync and preview
-events) and `tauri::async_runtime::spawn` are used across `commands.rs`,
-`turn.rs`, `sync.rs` and `coding.rs`. Replace the emission with a small trait —
+The refactor that paid for it: **`AppState` was built around `AppHandle`**. Event
+emission (`emit_auth`, `emit_chat`, the sync and preview events) and
+`tauri::async_runtime::spawn` were used across `commands.rs`, `turn.rs`,
+`sync.rs` and `coding.rs`. Now:
 
-```rust
-pub trait EventSink: Send + Sync {
-    fn emit(&self, event: &str, payload: serde_json::Value);
-}
-```
-
-— with the Tauri app implementing it over `AppHandle::emit` and the host
-implementing it as a no-op (or a log line). The spawns become a tokio handle the
-host owns. `ChannelBackend` does not change, and neither do the routes.
+- `events::EventSink` is the trait — `emit_value(&self, event, payload)`, with
+  `EmitExt` restoring the generic `emit` the call sites had, `events::TauriSink`
+  over `AppHandle::emit` behind the `desktop` feature, and `events::NoopSink` for
+  a process with no window. `AppState.events` replaced `AppState.app`.
+- `rt` owns the runtime handle: `rt::set` once at startup (Tauri's handle for a
+  window, the host's own for the browser) and `rt::spawn`/`spawn_blocking`
+  everywhere. `Handle::spawn` needs no reactor, so the "no reactor running" panic
+  that used to abort a window from a command thread cannot happen.
+- `hooks-core`'s Tauri is a feature (`default = ["desktop"]`), so
+  `default-features = false` compiles the backend without `commands.rs`,
+  `update.rs` or any Tauri type. `boot::start(StartOptions)` builds the state for
+  both a window and the host; `lib.rs` keeps only the window.
+- `AppState` moved to `state.rs` and the operations three surfaces share (send,
+  stop, delete, sign-in, an RPC) to `session.rs`, because the channel and the
+  relay call them too. `ChannelBackend` does not change, and neither do the
+  routes.
 
 ## Starting it
 
@@ -115,7 +124,7 @@ The browser starts the host, on demand, once per browser run — implemented in
 2. Wait for the descriptor and require its `pid` to be the child's. A descriptor
    written by another product is not ours to use, and a stale one must not send
    the browser to a dead port.
-3. Launch it with `HOOK_DATA_DIR` set to `<shared dir>/app.hook.chat`. The host
+3. Launch it with `HOOK_DATA_DIR` set to `<shared dir>/app.hook.browser`. The host
    must see the account this browser's gate reads, and a *debug* host would
    otherwise keep its data under `%APPDATA%\hook-dev\app.hook\`
    (`lib.rs::resolve_data_dir`) and publish its channel where the browser never
@@ -145,18 +154,20 @@ Windows' entry point owns (`chrome/app/chrome_exe_main_win.cc`). A browser kille
 outright skips it, which is why "available" is `/health` and not "a file exists"
 — a survivor answers, so the next run reuses it instead of piling up a second one.
 
-## The descriptor becomes per product
+## The descriptor is per product
 
-`browser-channel.json` is one file in a folder every product shares, so the last
-process to start wins it. Two products running (the app in the tray, the
-browser's own host) is the normal case once the browser is a product, and they
-must not fight over the name.
+It was one file in a folder every product shares, so the last process to start won
+it. Two products running (the app in the tray, the browser's own host) is the
+normal case once the browser is a product, and they must not fight over the name.
 
-Change it to `browser-channel.<product>.json` — `browser-channel.chat.json`,
+It is now `browser-channel.<product>.json` — `browser-channel.chat.json`,
 `browser-channel.browser.json` — written by `Channel::serve` from the backend's
-`product()`. The browser reads its own product's file first and falls back to the
-other names (a browser with no host of its own can still use a running app, which
-is today's behaviour and a useful safety net during the transition).
+`product()`, which is `Product::slug()`. `hook_paths::ChannelDescriptorFiles()`
+lists them in the order the browser reads them: its own, then the chat app (which
+hosted this channel before the split), then Workspace, then the bare
+`browser-channel.json` of a host that has not been rebuilt. A file that exists and
+cannot be parsed stops the search — a corrupt descriptor of our own must not send
+the browser to another product's token.
 
 ## What does not change
 
@@ -177,19 +188,21 @@ sentence on the card — "Hook's host is not installed on this computer", "would
 start", "is starting, but it has not published its channel" — instead of the old
 "Hook is not running on this computer, and the browser cannot sign in on its own".
 
-**Still to change.** The card still talks about *the app* on this computer
-because the host still is the chat app: same binary, same data folder. Once steps
-2–3 land, it is the browser's own host and the wording follows — and the dock
-stops borrowing another product's history at all.
+**Changed by steps 2–3.** The card's failures are now about the browser's own
+host ("Hook's host is not installed on this computer", "would not start", "is
+starting, but it has not published its channel"), and the dock reads the
+browser's own folder: a browser with no Hook app installed has its own history,
+which meets the account by syncing like any other product's. A machine that also
+runs Hook keeps both — each publishes its own descriptor (step 4).
 
 ## Order of work
 
 | | Work | Size | Gives |
 | --- | --- | --- | --- |
-| 1 | Browser launches `hook.exe --headless` (chat product) when no host answers; pid-checked; `--hook-no-host` | ~1 session | the browser starting its own process, today — **done** |
-| 2 | `EventSink` + tokio handles, so the backend runs without `AppHandle` | 1–2 sessions | the hard half of the refactor, testable in `cargo test` |
-| 3 | The `hook-host` binary, no Tauri, `Product::Browser`, `app.hook.browser` | 1–2 sessions | the browser as a product, syncing its own folder |
-| 4 | Per-product descriptor files, and the fallback reads | ½ session | two products can run at once |
+| 1 | Browser launches `hook.exe --headless` (chat product) when no host answers; pid-checked; `--hook-no-host` | ~1 session | the browser starting its own process — **done** |
+| 2 | `EventSink` + tokio handles, so the backend runs without `AppHandle` | 1–2 sessions | the hard half of the refactor, testable in `cargo test` — **done** |
+| 3 | The `hook-host` binary, no Tauri, `Product::Browser`, `app.hook.browser` | 1–2 sessions | the browser as a product, syncing its own folder — **done** |
+| 4 | Per-product descriptor files, and the fallback reads | ½ session | two products can run at once — **done** |
 | 5 | Package it: copy beside `chrome.exe`, `scripts/products.mjs` hash, MSIX, release | with the shipping work | one installer, one browser, no other product needed |
 
 Step 1 is deliberately shippable on its own and is what `--headless` was built
@@ -203,7 +216,9 @@ the page, the transport and the routes below are the contract steps 2–4 must k
   duplicated.
 - **Does the browser host sync by default?** With its own folder, yes, or its
   chats never meet the account — but a local-only browser is a coherent
-  privacy stance and the sync switch already exists per account.
+  privacy stance and the sync switch already exists per account. As built, it
+  follows the account: a free account never reaches the network, and the
+  account-wide switch turns it off for every product at once.
 - ~~**What does the browser do when a chat host is also running?**~~ Step 1's
   answer: it uses whichever channel answers and launches nothing, so an app in
   the tray serves the browser until it quits. The browser's own host and the

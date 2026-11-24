@@ -16,10 +16,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+
+use crate::events::{EmitExt, EventSink};
 
 const POLL_LIMIT: Duration = Duration::from_secs(10 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -1172,4 +1174,12 @@ mod tests {
         assert!(base.join("app.hook").join("account.json").exists());
         fs::remove_dir_all(base).ok();
     }
+}
+
+/// Tell the window (or the host's sink) that the account changed.
+///
+/// The event name lives here, next to the view it carries, so the window, the
+/// channel and the sync engine cannot drift apart on it.
+pub(crate) fn emit(events: &Arc<dyn EventSink>, view: &AuthView) {
+    events.emit("hook://auth", view);
 }
