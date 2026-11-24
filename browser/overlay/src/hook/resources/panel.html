@@ -24,6 +24,16 @@
         height: 100%;
       }
 
+      /* Until the channel answers there is no transport to draw. A browser with no
+       * host running starts one, which takes a moment (hook_host.cc); React
+       * replaces this node when the dock mounts. */
+      .dock-boot {
+        color: var(--ink-soft, #6b6257);
+        font: 13px/1.5 var(--font-sans, system-ui, sans-serif);
+        margin: 0;
+        padding: 24px;
+      }
+
       #dock > .dock {
         border: 0;
         border-radius: 0;
@@ -33,7 +43,7 @@
     </style>
   </head>
   <body>
-    <div id="dock"></div>
+    <div id="dock"><p class="dock-boot">Starting Hook…</p></div>
     <script type="module" src="panel.mjs"></script>
   </body>
 </html>

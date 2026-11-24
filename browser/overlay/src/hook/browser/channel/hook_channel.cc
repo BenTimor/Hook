@@ -1,4 +1,4 @@
-// Hook Browser: the client for the running Hook app's loopback channel.
+// Hook Browser: the client for the Hook host's loopback channel.
 
 #include "hook/browser/channel/hook_channel.h"
 
@@ -6,19 +6,17 @@
 #include <optional>
 #include <utility>
 
-#include "base/files/file_path.h"
-#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
-#include "hook/browser/account/hook_paths.h"
+#include "hook/browser/channel/hook_descriptor.h"
+#include "hook/browser/host/hook_host.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -30,6 +28,9 @@
 namespace hook {
 namespace {
 
+// Long enough that a page which asks for the channel, the chat list and one
+// conversation reads the descriptor once; short enough that a host started or
+// quit elsewhere is noticed without a reload.
 constexpr base::TimeDelta kDescriptorLifetime = base::Seconds(5);
 // SimpleURLLoader refuses a larger bound (`kMaxBoundedStringDownloadSize`).
 constexpr size_t kMaxReplyBytes =
@@ -40,9 +41,10 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
         semantics {
           sender: "Hook Browser"
           description:
-            "Reads the chat list and a conversation from a running Hook app on "
-            "this computer, and sends a message to it. The request goes to "
-            "127.0.0.1 only."
+            "Reads the chat list and a conversation from the Hook host on this "
+            "computer, and sends a message to it. The request goes to 127.0.0.1 "
+            "only. The host is a Hook process on this machine: the app if it is "
+            "running, or the one this browser started."
           trigger: "The user opens the Hook chat panel in Hook Browser."
           data:
             "The conversation id, the text the user typed, and the title of the "
@@ -52,50 +54,11 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
         policy {
           cookies_allowed: NO
           setting:
-            "The channel exists while the Hook app is running; quitting Hook "
+            "The channel exists while a Hook host is running; quitting it "
             "removes it."
           policy_exception_justification:
             "Loopback only. Nothing about this request leaves the machine."
         })");
-
-struct Descriptor {
-  std::string port;
-  std::string token;
-  std::string error;
-};
-
-// Runs on a thread pool: the page asks for the channel as soon as it loads, which
-// can be inside the browser's startup tasks, where the UI thread is not allowed to
-// touch a file.
-Descriptor ReadDescriptor() {
-  Descriptor descriptor;
-  const base::FilePath path = paths::ChannelDescriptorFile();
-  if (path.empty()) {
-    descriptor.error = "Hook's data folder is not available on this computer.";
-    return descriptor;
-  }
-  std::string raw;
-  if (!base::ReadFileToString(path, &raw)) {
-    descriptor.error = "Start Hook on this computer to use your chats.";
-    return descriptor;
-  }
-  std::optional<base::Value> parsed =
-      base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
-  if (!parsed || !parsed->is_dict()) {
-    descriptor.error = "Hook published a channel this browser cannot read.";
-    return descriptor;
-  }
-  const base::DictValue& dict = parsed->GetDict();
-  const std::string* token = dict.FindString("token");
-  const std::optional<int> port = dict.FindInt("port");
-  if (!token || token->empty() || !port.has_value() || *port <= 0) {
-    descriptor.error = "Hook published a channel this browser cannot read.";
-    return descriptor;
-  }
-  descriptor.port = base::NumberToString(*port);
-  descriptor.token = *token;
-  return descriptor;
-}
 
 }  // namespace
 
@@ -104,8 +67,10 @@ HookChannel::HookChannel(Profile* profile) : profile_(profile) {}
 HookChannel::~HookChannel() = default;
 
 void HookChannel::Check(AvailableCallback done) {
-  WithDescriptor(base::BindOnce(&HookChannel::Probe,
-                                weak_factory_.GetWeakPtr(), std::move(done)));
+  WithDescriptor(base::BindOnce(
+      &HookChannel::Probe, weak_factory_.GetWeakPtr(),
+      base::BindOnce(&HookChannel::OnProbed, weak_factory_.GetWeakPtr(),
+                     std::move(done))));
 }
 
 void HookChannel::Probe(AvailableCallback done) {
@@ -123,12 +88,42 @@ void HookChannel::Probe(AvailableCallback done) {
                     if (!reply) {
                       std::move(done).Run(
                           false,
-                          "Start Hook on this computer to use your chats.");
+                          "Hook is not answering on this computer.");
                       return;
                     }
                     std::move(done).Run(true, error);
                   },
                   std::move(done)));
+}
+
+void HookChannel::OnProbed(AvailableCallback done,
+                           bool available,
+                           const std::string& reason) {
+  if (available || !host::LaunchingAllowed()) {
+    std::move(done).Run(available, reason);
+    return;
+  }
+  // Nothing answers: start the host this browser is meant to talk to
+  // (docs/browser-host.md, "Starting it"). The launcher is process-wide and
+  // remembers its attempt, so two pages asking at once share one child and no
+  // launch loop is possible.
+  host::EnsureRunning(base::BindOnce(&HookChannel::OnHostStarted,
+                                     weak_factory_.GetWeakPtr(),
+                                     std::move(done), reason));
+}
+
+void HookChannel::OnHostStarted(AvailableCallback done,
+                                const std::string& reason,
+                                bool started,
+                                const std::string& host_reason) {
+  if (!started) {
+    std::move(done).Run(false, host_reason.empty() ? reason : host_reason);
+    return;
+  }
+  // The descriptor is new, so the cached read predates it by definition.
+  read_at_ = base::TimeTicks();
+  WithDescriptor(base::BindOnce(&HookChannel::Probe,
+                                weak_factory_.GetWeakPtr(), std::move(done)));
 }
 
 void HookChannel::WithDescriptor(base::OnceClosure ready) {
@@ -141,10 +136,10 @@ void HookChannel::WithDescriptor(base::OnceClosure ready) {
 
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-      base::BindOnce(&ReadDescriptor),
+      base::BindOnce(&ReadChannelDescriptor),
       base::BindOnce(
           [](base::WeakPtr<HookChannel> self, base::OnceClosure ready,
-             Descriptor descriptor) {
+             ChannelDescriptor descriptor) {
             if (!self) {
               return;
             }

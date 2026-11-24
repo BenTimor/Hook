@@ -305,6 +305,11 @@ void HookPageHandler::OnChannelChecked(std::shared_ptr<SignInLookup> lookup,
                                        bool available,
                                        const std::string& reason) {
   lookup->view->available = available;
+  if (!available && !reason.empty()) {
+    // The reason is what a person needs: no host anywhere, a host that would not
+    // start, a channel file this browser cannot read. The card draws it.
+    lookup->view->message = reason;
+  }
   HookChannel* channel = Channel();
   if (!available || !channel) {
     FinishSignIn(*lookup);

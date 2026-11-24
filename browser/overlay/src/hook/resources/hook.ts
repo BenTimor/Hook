@@ -18,6 +18,9 @@ import type {SignInView, Tab} from './hook.mojom-webui.js';
 
 const gate = document.querySelector<HTMLDivElement>('#gate');
 const seam = document.querySelector<HTMLElement>('#seam');
+// The wait before either is shown: a browser with no host running starts one, and
+// a first answer can take a second or two (`browser/host/hook_host.cc`).
+const boot = document.querySelector<HTMLParagraphElement>('#boot');
 const status = document.querySelector<HTMLParagraphElement>('#status');
 const list = document.querySelector<HTMLOListElement>('#tabs');
 
@@ -146,9 +149,9 @@ async function showGate(view: SignInView): Promise<void> {
         ? 'Signing in happens in the Hook app on this computer, and the browser '
           + 'reads the account it writes. Open the page, check that the code '
           + 'matches, and the web opens again by itself.'
-        : 'Hook is not running on this computer, and the browser cannot sign in '
-          + 'on its own: the account file belongs to the app. Start Hook, then '
-          + 'come back to this tab.',
+        : 'Hook\'s host did not start on this computer, so the browser has no '
+          + 'account to sign in to: the account belongs to Hook. Install Hook, or '
+          + 'start it by hand, then come back to this tab.',
       signInLabel: next.available ? 'Sign in with Hook' : 'Sign in',
       hint: 'Waiting for the app to approve this browser. This tab finishes by '
         + 'itself.',
@@ -205,12 +208,14 @@ async function main(): Promise<void> {
   } catch (failure) {
     // Without a handler there is no gate and no account: show the seam, which
     // is the Step 1 proof, and say what failed.
+    if (boot) boot.hidden = true;
     if (status) {
       status.textContent = `No handler for the sign-in state: ${String(failure)}`;
     }
     if (seam) seam.hidden = false;
     return;
   }
+  if (boot) boot.hidden = true;
   if (view.signedIn) {
     await showBrowser();
     return;

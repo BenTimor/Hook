@@ -76,7 +76,8 @@ round trip.
 | `--side-panel` | opens the dock's side panel (`--hook-side-panel`) and asserts `chrome://hook-panel` drew it |
 | `--signin-state in\|out` | forces the sign-in gate's answer and asserts the matching behaviour — refused and redirected, or committed |
 | `--channel` | asserts the real backend: the page's mojom sees a running Hook app's channel, lists its chats, reads one transcript, and the backend refuses an empty message |
-| `--codecs` | asserts the build decodes H.264, AAC and VP9 — the first two come from `args.gn`, and losing them is invisible until a page shows a black box |
+| `--host` | asserts the browser starting its own host: the descriptor that appears answers `/health`, is not the browser, and is gone once the browser is |
+| `--codecs` | asserts the build decodes H.264, AAC and VP9 — the first two come from `args.gn` in the dev build, and from Media Foundation in a shipped one, so losing either is invisible until a page shows a black box |
 | `--shot <png>` | saves a screenshot (`-panel.png` for the side panel) |
 | `--chrome <path>` | points it at another binary |
 
@@ -84,7 +85,9 @@ Run it **after** a build, never during one: it maps DLLs out of `out/` and the
 linker cannot overwrite a file that is mapped. `--channel` needs the installed
 Hook app running on this machine (see **The channel**: a debug build publishes
 its descriptor under `hook-dev` and stays invisible to the browser); every other
-flag runs alone.
+flag runs alone. Every run passes `--hook-no-host` unless it asks for `--host`, so
+no check leaves a Hook process behind — which also means `--host` needs a machine
+where none is running, and says so instead of passing quietly.
 
 ## The dock bundle
 
@@ -126,16 +129,22 @@ draw a black box. Turning them on rebuilds FFmpeg into `ffmpeg.dll` (1.8 MB →
 6,600 steps, roughly 80 minutes on this machine, not a full tree rebuild.
 
 They are not free to redistribute: the H.264 pool charges nothing below 100,000
-units a year and AAC charges per unit, which is why `docs/browser-poc-plan.md`
-keeps the licence under "What shipping needs" and this is the dev build. A
-release build must also keep `is_component_ffmpeg = true` (dev gets it from
-`is_component_build`) so FFmpeg stays a separate, relinkable DLL — LGPL-2.1+.
+units a year and AAC charges per unit. **The decision is therefore to decode
+through the OS, not through FFmpeg we ship**: the dev build keeps these flags
+because a browser tested against half the web is not a browser, a *release* build
+has neither, and Windows' Media Foundation supplies both decoders — the Firefox
+position since 2013. `docs/browser-os-decoders.md` is the staged plan (stage 1:
+advertise the hardware H.264 the GPU process already decodes; stage 2: AAC through
+Media Foundation), and stages 1–2 are the work item before a public download.
 
-`pnpm browser:smoke --codecs` fails if either half is missing.
+A release build must also keep `is_component_ffmpeg = true` while it still carries
+FFmpeg at all (dev gets it from `is_component_build`) so FFmpeg stays a separate,
+relinkable DLL — LGPL-2.1+.
+
+`pnpm browser:smoke --codecs` fails if either half is missing, whichever half is
+supposed to provide it.
 `browser/tools/codecs.html` is the fuller matrix — point any built browser at the
-file and read what it prints; `docs/browser-os-decoders.md` is the design for
-decoding through Windows' own Media Foundation decoders instead, the way Firefox
-does, if the licence ever outweighs the work.
+file and read what it prints.
 
 ## Switching from a siso build directory
 
@@ -179,6 +188,77 @@ the page fails loudly if either is broken:
 - a poll that finds the turn over emits `done` **instead of** a delta.
 
 Build `chrome`, never `all`: `all` drags in every test binary.
+
+## Testing it yourself
+
+From cheapest to most honest. Everything in the first list works on a checkout
+with no browser built and no tree fetched.
+
+```bash
+pnpm install                      # once: Vite, for the dock bundle
+node browser/tools/verify.mjs     # tag, overlay rule, patch stack, junction
+node browser/tools/build.mjs --gen-only   # the GN graph, ~15 s
+pnpm browser:ui:dev               # the dock at 380px, no tree, no build
+```
+
+`preview.html` is the panel; `transport-test.html` is the same transport driven
+by a fake handler, and it fails visibly if the dock's delta rules ever break.
+Neither needs Chromium and neither has a model behind it.
+
+The compiler checks the parts that are C++ without a full build: after
+`--gen-only`, `ninja -C out/Dev hook/browser:browser hook/resources:resources`
+compiles the whole overlay source set and lints/packs the WebUI resources —
+minutes, because it builds only those targets' objects. Run it under the same two
+variables `build.mjs` sets (`DEPOT_TOOLS_WIN_TOOLCHAIN=0`,
+`vs2022_install=<VS install>`): a `BUILD.gn` edit makes ninja re-run `gn gen`, and
+`gn` cannot find a VS 2022 BuildTools install without the second one.
+
+**A built browser.** `node browser/tools/build.mjs` — hours from cold, the reason
+`browser/README.md` asks for the Defender and indexing exclusions first. After
+that:
+
+```bash
+node browser/tools/smoke.mjs                  # the seam, the dock, one send
+node browser/tools/smoke.mjs --side-panel     # chrome://hook-panel, pinned
+node browser/tools/smoke.mjs --newtab         # Ctrl+T's page, and the first tab
+node browser/tools/smoke.mjs --signin-state out   # the gate refuses, card drawn
+node browser/tools/smoke.mjs --codecs         # H.264, AAC, VP9 all decode
+node browser/tools/smoke.mjs --host           # the browser starts its own host
+node browser/tools/smoke.mjs --channel        # the dock on real conversations
+```
+
+`--host` is the one that needs a second binary: close Hook first (a host that is
+already answering means nothing is launched), and give it something to launch.
+`pnpm app` (a debug build, `apps/chat/src-tauri/target/debug/hook.exe`) or
+`pnpm app:build` (release, `target/release/`, the one that behaves like an
+installed product) — either is picked up by `build.mjs`, which writes the path
+into `out/Dev/args.gn` at `gn gen` time, so **re-run `build.mjs --gen-only` after
+building Hook** if you built the browser first. A debug host is fine: the browser
+launches it with `HOOK_DATA_DIR` pinned to the shared data folder, so it does not
+vanish into `%APPDATA%\hook-dev\` (`docs/browser-host.md`, "Starting it").
+
+Two failure paths are worth provoking on purpose, because both are what a person
+will actually see:
+
+- rename `target/release/hook.exe` (or the debug one) and `--host` must fail with
+  "Hook's host is not installed on this computer" on the card, not a hang;
+- run `pnpm browser:smoke` with no `--host` and confirm no `hook.exe` survives it
+  (`--hook-no-host` is passed, so a check leaves nothing behind).
+
+**By hand**, which is what a tester actually does. Launch the binary with a
+throwaway profile so it never touches a real one:
+
+```bash
+"C:\Dev\cr\out\Dev\chrome.exe" --user-data-dir=%TEMP%\hb --hook-side-panel
+```
+
+Then look at: the sign-in card (signed out, with "Starting Hook…" for the second
+the host takes); Ctrl+T (Hook's new tab, not Chrome's); the side panel's dock at
+380px, and one message sent into it; the tab strip (narrower, rounded, opaque
+selection); a typed URL while signed out, which returns to `chrome://hook`.
+`chrome://hook` itself shows the live tab list and the dock side by side — that
+page is the seam, and it is the fastest way to see whether a change reached a
+window.
 
 ## Traps
 
@@ -277,23 +357,29 @@ against a running Hook app is the demonstration: it listed 33 real conversations
 read a 48-message transcript, and got the backend's refusal for an empty message.
 
 The interim host is `hook --headless`: the same app and the same channel with no
-window and no tray icon, so a shortcut or a script can start the process the
-browser talks to. It is not yet the sidecar the plan describes — that one is a
-separate binary that owns auth and the turn without Tauri, started by the browser
-itself, with its own product and data folder. The design, the two shapes it
-considered and the order of work are in `docs/browser-host.md`. Until it exists
-the browser needs a Hook process running, and says so on the sign-in card.
+window and no tray icon. **The browser starts it itself** when no channel answers
+(`overlay/src/hook/browser/host/hook_host.cc`): one launch per browser run (again
+if the host it started exits), a path fixed at build time, and the descriptor
+accepted only when its `pid` is the child's. `--hook-no-host` turns it off, and
+`pnpm browser:smoke --host` asserts it.
+It is not yet the sidecar the plan describes — that one is a separate binary that
+owns auth and the turn without Tauri, with its own product and data folder. The
+design, the two shapes it considered and the order of work are in
+`docs/browser-host.md`; step 1 (this launch) is in, steps 2–4 are not.
 
-`pnpm browser:smoke` passes for all of it, so the answer to the POC's question —
+`pnpm browser:smoke` is the check for all of it, so the answer to the POC's question —
 does our overlay reach Chromium, and can the Hook chat surface live inside it — is
 yes.
 
 ## The channel
 
-The dock's real backend is a *running* Hook app, not a server: `hook-core`'s
+The dock's real backend is a *running* Hook host, not a server: `hook-core`'s
 `channel.rs` binds an ephemeral loopback port and writes
 `%APPDATA%\app.hook\browser-channel.json` (`port`, `token`, `pid`, `product`,
-`version`) beside the shared account file, atomically and `0600` on unix. A debug
+`version`) beside the shared account file, atomically and `0600` on unix. That
+host is whichever Hook process is running; when none answers, **the browser
+starts one** (`overlay/src/hook/browser/host/hook_host.cc`, `hook --headless`). A
+debug
 build (`pnpm app`) writes the descriptor with its own data instead, under
 `%APPDATA%\hook-dev\app.hook\`, so a development Hook never takes over the
 installed app's channel — and the browser, which reads the installed path, does

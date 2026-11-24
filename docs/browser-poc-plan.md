@@ -12,11 +12,12 @@
 > has no account (`hook_sign_in_throttle.cc`, the fifth patch). `--hook-signin-state`
 > exists so the refusal is provable on a machine that *is* signed in.
 >
-> **Step 2's first two surfaces are in.** The dock from `packages/chat` at 380px,
-> built by Vite and served from our pak, is both a pane of `chrome://hook` and a
-> Views side-panel entry of its own (`chrome://hook-panel`, pinned action id and
-> all). What is left of Step 2 is the New Tab page, the shared sign-in card, and
-> the tabstrip restyling that comes last.
+> **Step 2 is complete.** The dock from `packages/chat` at 380px, built by Vite
+> and served from our pak, is both a pane of `chrome://hook` and a Views
+> side-panel entry of its own (`chrome://hook-panel`, pinned action id and all);
+> the signed-out page is the shared `SignInCard`, driven through the channel's
+> `/auth/*` routes; Ctrl+T, the plus button and a first window land on
+> `chrome://hook-newtab`; and the tabstrip is restyled (patch 0010).
 >
 > **Step 3's cheap proof is in, and so is page context.** A *running* Hook app
 > publishes a loopback channel (`crates/hook-core/src/channel.rs`) beside the
@@ -24,15 +25,23 @@
 > chat list, a conversation, and to send a message. The page cannot: Chromium
 > terminates a `chrome://` renderer for a cross-scheme request ("Incorrect
 > scheme"), which is why the call is made in the browser process and handed over
-> mojom, and why the token never reaches the page. The shipping shape — a
-> Tauri-free sidecar that owns auth and the turn — is still the follow-up, and
-> `browser/ui/transport.ts` is the only file that changes when it lands.
+> mojom, and why the token never reaches the page.
+>
+> **The browser now starts the host it talks to.** When no channel answers it
+> launches `hook --headless` itself, once per run, from a path fixed at build
+> time, and only accepts a descriptor naming its own child
+> (`browser/host/hook_host.cc`; `docs/browser-host.md`, step 1). `--hook-no-host`
+> turns that off and every other smoke flag passes it, so no check leaves a
+> process behind. The shipping shape — a Tauri-free sidecar that owns auth and
+> the turn — is still steps 2–3 of that document, and `browser/ui/transport.ts`
+> is the only file that changes when it lands.
 >
 > Everything above is verified, not just built: `pnpm browser:smoke` launches
 > `out/Dev/chrome.exe` with a throwaway profile and asserts the live tab list, the
 > dock at 380px, one send round trip, the sign-in gate in both directions, the
-> side panel, and — with `--channel` and Hook running — 31 real conversations, a
-> real transcript, and the backend refusing an empty message.
+> side panel, and — with `--channel` and Hook running — a real chat list, a real
+> transcript, and the backend refusing an empty message. `--host` asserts the
+> launch; `--codecs` asserts H.264 and AAC decode.
 >
 > `docs/browser-architecture.md` holds the standing decisions about the fork
 > itself; this file holds the order of work for the first proof of concept, and
@@ -51,8 +60,8 @@ not the product surface — it is the seam.
 | Precursor shell | **No** | A WebView2/Electron shell that browses today would diverge from the fork and pull Tauri into a UI that must not have it. The UX questions are cheap to answer after the seam works, and expensive to answer twice. |
 | Order of work | **Seam first, UI second** | The risky part is the overlay reaching the browser (GN wiring, WebUI resources, mojom, a navigation throttle). Components written against a mock contract are written against a guess. |
 | Surface prototypes | **No** | A panel prototyped against mocked mojo, auth and chat is written twice: once against the mock, then again against the real host. The one-time rebuild is the smaller cost, so the panel and its host are built once. |
-| Codecs | **On in the dev build** | H.264 and AAC are what the web's MP4s are made of; without them only VP9/AV1 content plays. Both pools are owed by whoever distributes a build, so the flags are on for testing and the licence sits in "What shipping needs". `pnpm browser:smoke --codecs` keeps them from being lost in a merge. |
-| Panel UI build | **Vite bundle served from the overlay** | `packages/chat` is React; Chromium's WebUI pipeline is Lit/TypeScript and ships no React. The browser builds the shared packages with Vite and packs the output as a static resource. Rewriting `ChatDock` in Lit would fork the surface all three products share. For the POC the bundle is committed (`browser/ui/` → `overlay/src/hook/resources/panel.mjs`); a build-time action is the follow-up. |
+| Codecs | **The OS decoders, for anything shipped** | H.264 and AAC are what the web's MP4s are made of, and both pools charge whoever distributes a build that contains a decoder. Windows already has both in Media Foundation, so the shipped browser calls the OS's decoder instead of shipping one (the Firefox position since 2013, sized in `docs/browser-os-decoders.md`). The **dev build keeps FFmpeg's** (`proprietary_codecs`, `ffmpeg_branding = "Chrome"`) so the seam and the panel are tested against a browser that plays everything; stages 1–2 of the decoder document land before a public download, and the release `args.gn` then drops those two flags. `pnpm browser:smoke --codecs` asserts the capability, whichever half provides it. |
+| Panel UI build | **Vite bundle served from the overlay** | `packages/chat` is React; Chromium's WebUI pipeline is Lit/TypeScript and ships no React. The browser builds the shared packages with Vite and packs the output as a static resource. Rewriting `ChatDock` in Lit would fork the surface all three products share. The bundle is generated by `browser/tools/build.mjs` (Vite before ninja) and gitignored: `build_webui` resolves `static_files` against the source tree, and GN cannot declare `node_modules` as an input. |
 | Where the tree lives | **Outside the repo**, overlay junctioned in | See "Where things live". |
 | Sign-in gate | **Blocks the whole browser** | Matches Hook and Hook Workspace: signed out means the window is the sign-in card and navigation is refused. Implemented as a `ContentBrowserClient` throttle, not a `//content` patch. |
 | Browser tools | **None** | No tab or navigation tools in `tools.rs` or `bridge.rs`. The agent is told the page it is looking at; it cannot act on it. |
@@ -208,7 +217,7 @@ overlay serves from its pak; `build_webui` packages the output instead of
 compiling the components. Chromium's own WebUI pipeline has no React, and
 rewriting `ChatDock` in Lit would fork the surface Hook and Hook Workspace
 already share. `browser/README.md`, "The dock bundle", holds the details
-(`.mjs`, inlined stylesheet, committed output, and why each).
+(.mjs`, inlined stylesheet, generated output, and why each).
 
 Tabstrip restyling came last, after the WebUI surfaces worked, and it is the
 smallest change of the six: two constants and a colour blend. It is Views, so it
@@ -236,7 +245,19 @@ Streaming is polling while a turn runs (`busy` on the chat, one `getChat` per
 route less than SSE, and the dock's event contract does not change when a real
 stream arrives.
 
-The shipping shape is the sidecar from the architecture doc. Its cost is bounded:
+**The browser also starts the host itself** when nothing answers
+(`browser/host/hook_host.cc`): one launch per browser run, `hook --headless`, from
+a path fixed at build time — beside `chrome.exe` for a packaged build, the
+repository's debug binary for a dev tree, which `browser/tools/build.mjs` writes
+into `out/Dev/args.gn` (`hook_host_path`) so no machine-specific path is
+committed and nothing a page or the environment says can name an executable. It
+accepts the descriptor only when its `pid` is the child's, so a host another
+product started is never mistaken for ours, and it terminates the child on an
+orderly exit. `--hook-no-host` turns the whole thing off; so does
+`--hook-signin-state`, in either direction, because a check must not leave a
+process behind. `pnpm browser:smoke --host` is the assertion.
+
+The shipping shape is the sidecar from `docs/browser-host.md`. Its cost is bounded:
 `AppState.app: AppHandle` plus ~28 references across four files, plus the
 `generate_handler!` list moving into the Tauri crates behind an `Events` trait.
 A focused change, not a rewrite — and it replaces the transport without changing
@@ -246,19 +267,19 @@ the contract the WebUI sees.
 
 The one-time rebuild gated every C++ change: the side panel, the mojom tab read,
 the binder-map line, the navigation throttle. All four are in, and so is the
-channel that makes them useful. What the browser still cannot do is be the place
-a signed-out person signs in, or replace the New Tab page — those are surfaces,
-not plumbing:
+channel that makes them useful. The list below is what was left after that
+rebuild; three of the four items are now closed:
 
 1. ~~**Finish Step 1.**~~ Done: the tab list over mojom, the binder line, and the
    throttle that turns a signed-out navigation into the sign-in card.
-2. ~~**The channel (Step 3).**~~ Done as the cheap proof: a running Hook app
-   publishes its channel, and the browser process reads it for the page. Left: the
-   sidecar, so the browser does not need the app running, and sign-in/sign-out
-   through `auth.rs`.
-3. **The surfaces (Step 2).** The dock is in, twice (a pane and a side panel).
-   Left: the shared sign-in card, the New Tab page, and the tabstrip restyling
-   that comes last.
+2. ~~**The channel (Step 3).**~~ Done as the cheap proof, and the browser now
+   starts its own host when nothing answers (`browser/host/hook_host.cc`;
+   `docs/browser-host.md`, step 1). Left: the sidecar, so the browser stops
+   borrowing the chat product's process and data folder.
+3. ~~**The surfaces (Step 2).**~~ Done: the dock (twice), the shared sign-in card,
+   the New Tab page, and the tabstrip restyling.
+4. **Before a public download:** the OS decoders (`docs/browser-os-decoders.md`,
+   stages 1–2) and the release plumbing — not surfaces, and not the seam.
 
 ## Page context
 
@@ -349,18 +370,19 @@ any later evening.
 
 ## What shipping needs
 
-Steps 1–3 are code that a session can finish. This list is what stands between
-the POC and a browser someone installs, split by what only a decision can unblock.
+Steps 1–3 are code that a session can finish, and all three now are (the browser
+starts its own host). This list is what stands between the POC and a browser
+someone installs, split by what only a decision can unblock.
 
 **Decisions (yours, not the code's):**
 
-- **Codecs.** On for the dev build (`args.gn`), and a licence to acquire before a
-  public one: H.264 is free under 100,000 units a year, AAC is not, and AAC's
-  small-entity entry fee is $1,000. A release build also keeps
-  `is_component_ffmpeg = true` so FFmpeg stays a separate DLL for LGPL.
-  **The alternative is designed but not built:** decoding through Windows' own
-  Media Foundation decoders, the way Firefox does, which is `docs/browser-os-decoders.md`
-  — staged, sized, and worth revisiting at volume.
+- **Codecs.** Decided: the shipped browser decodes through the OS's Media
+  Foundation, not through a decoder we ship — so the dev build's `args.gn` flags
+  (`proprietary_codecs`, `ffmpeg_branding = "Chrome"`) come off for a release
+  build, and `docs/browser-os-decoders.md`'s stages 1–2 are the work item. Until
+  they land, the FFmpeg build is what a tester runs, and the release build does
+  not exist. A build that ever keeps both is the licensed configuration with
+  extra steps, which is the one thing the decision rules out.
 - **Widevine.** A separate licence from Google. Without it, Netflix, Disney+ and
   Spotify web do not work; licensing it is a contract, not a patch.
 - **The vault.** Local-only with the OS keychain, or synced — and if synced, on
@@ -402,8 +424,11 @@ the POC and a browser someone installs, split by what only a decision can unbloc
 - Chromium release channel, and how security patch releases are tracked.
 - ~~Whether the tabstrip is restyled in Views or left close to upstream.~~
   Restyled, minimally (patch 0010); it can go further or stay where it is.
-- The sidecar proper: a binary that owns auth and the turn without Tauri, so the
-  browser starts its own host and needs no other product running. Designed in
-  `docs/browser-host.md` (`Product::Browser`, an `EventSink`, a per-product
-  descriptor); `hook --headless` is the interim host.
+- ~~How H.264 and AAC reach a shipped build.~~ Decided: through Windows' Media
+  Foundation (`docs/browser-os-decoders.md`), not through FFmpeg we ship. The dev
+  build keeps FFmpeg until stages 1–2 land.
+- ~~Whether the browser can run without another product's daemon.~~ It starts its
+  own host now (step 1); what is left is the host *being* the browser's —
+  `Product::Browser`, its own data folder, no Tauri — which is
+  `docs/browser-host.md`, steps 2–3.
 - Which surfaces ship as WebUI beyond New Tab, the dock and sign-in.

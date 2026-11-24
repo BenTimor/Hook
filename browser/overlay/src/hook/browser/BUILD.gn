@@ -5,6 +5,12 @@
 # That is deliberate: the overlay is inert in a stock checkout, and the patch is
 # the one line that wakes it up.
 
+declare_args() {
+  # Empty is the packaged answer: the host sits beside the browser. Only a dev
+  # tree sets it (browser/tools/build.mjs, from apps/chat's debug binary).
+  hook_host_path = ""
+}
+
 source_set("browser") {
   sources = [
     "account/hook_account.cc",
@@ -13,6 +19,10 @@ source_set("browser") {
     "account/hook_paths.h",
     "channel/hook_channel.cc",
     "channel/hook_channel.h",
+    "channel/hook_descriptor.cc",
+    "channel/hook_descriptor.h",
+    "host/hook_host.cc",
+    "host/hook_host.h",
     "navigation/hook_sign_in_throttle.cc",
     "navigation/hook_sign_in_throttle.h",
     "tabs/hook_tabs.cc",
@@ -35,6 +45,16 @@ source_set("browser") {
     "//content/public/browser",
     "//ui/webui",
   ]
+
+  # The host the browser starts when no channel answers (docs/browser-host.md,
+  # "Starting it"). A packaged browser ships it beside chrome.exe and never reads
+  # this. A dev tree has no such file, so `browser/tools/build.mjs` writes the
+  # path to the repository's build into the GN args instead of committing a
+  # machine-specific one. A path fixed at build time is the only kind the browser
+  # may execute; never one from a page, a preference or the environment.
+  if (hook_host_path != "") {
+    defines = [ "HOOK_HOST_PATH=\"$hook_host_path\"" ]
+  }
 
   deps = [
     "//base",

@@ -36,6 +36,21 @@ body {
   padding: 24px;
 }
 
+/* The wait before the page knows whether there is an account. It is centered like
+ * the card that replaces it, and removed the moment there is something to show. */
+.boot {
+  align-self: center;
+  color: var(--ink-soft, #6b6257);
+  flex: 1;
+  font-size: 13px;
+  margin: 0;
+  text-align: center;
+}
+
+.boot[hidden] {
+  display: none;
+}
+
 .gate > .signin-card {
   width: 100%;
   max-width: 392px;

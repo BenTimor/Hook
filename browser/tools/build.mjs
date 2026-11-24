@@ -42,6 +42,32 @@ import {
 
 const ARGS_FILE = join(browserDir, "args.gn");
 
+/**
+ * Where the browser should start its Hook host from (`docs/browser-host.md`,
+ * "Starting it").
+ *
+ * A packaged browser finds `hook.exe` beside itself and never reads this. A dev
+ * tree has no such file, so the path to the repository's binary is written into
+ * `out/Dev/args.gn` — computed per machine rather than committed, because
+ * `browser/args.gn` has to stay the same file on every checkout. It is resolved
+ * once, at build time, which is what keeps the launcher from ever executing a
+ * path a page or the environment named; an absent binary just means the browser
+ * says it cannot start a host.
+ */
+function hostArg() {
+  // Release first: that is the binary `pnpm app:build` leaves behind, and it is
+  // the one that behaves like an installed product's. A debug build works too —
+  // the browser names the host's data folder when it launches it, so a
+  // `%APPDATA%\hook-dev\` build still publishes where the browser looks.
+  const base = join(browserDir, "..", "apps", "chat", "src-tauri", "target");
+  const binary = ["release", "debug"]
+    .map((kind) => join(base, kind, process.platform === "win32" ? "hook.exe" : "hook"))
+    .find((candidate) => existsSync(candidate));
+  if (!binary) return "";
+  const slash = resolve(binary).replaceAll("\\", "/");
+  return `\n# written by browser/tools/build.mjs: the browser starts this host itself\nhook_host_path = "${slash}"\n`;
+}
+
 export async function main(argv) {
   const { flags } = parseArgs(argv, { switches: ["gen-only"] });
   const root = treeRoot(flags);
@@ -131,7 +157,7 @@ export async function main(argv) {
 
   const out = resolve(join(src, outRel));
   mkdirSync(out, { recursive: true });
-  const argsGn = readFileSync(ARGS_FILE, "utf8");
+  const argsGn = readFileSync(ARGS_FILE, "utf8") + hostArg();
   writeFileSync(join(out, "args.gn"), argsGn);
 
   // A directory built by siso keeps a marker that depot_tools' ninja wrapper

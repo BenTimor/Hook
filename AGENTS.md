@@ -324,9 +324,11 @@ bash.
 - `browser/` — Hook Browser's build environment, and the only part of the browser
   that is in this repository. `VERSION` is the one pinned Chromium tag,
   `args.gn` the dev GN args (`proprietary_codecs` and `ffmpeg_branding="Chrome"`
-  are on: H.264 and AAC are what the web's MP4s are made of, and the pool licence
-  for them is a shipping item, not a dev one — `pnpm browser:smoke --codecs` fails
-  if the flags are lost), `overlay/src/hook/` the new paths that are
+  are on: H.264 and AAC are what the web's MP4s are made of, and a shipped build
+  does not carry them — it decodes through Windows' Media Foundation instead, the
+  decision in `docs/browser-os-decoders.md`, whose stages 1–2 are the work before
+  a public download; `pnpm browser:smoke --codecs` fails either way if the build
+  loses the capability), `overlay/src/hook/` the new paths that are
   junctioned into the checkout as `src/hook`, `patches/series` the small edits to
   upstream files that survive a rebase, and `tools/{sync,build,verify,patch,smoke}.mjs`
   the whole interface. `browser/ui/` is the dock's own Vite project: it builds
@@ -341,13 +343,20 @@ bash.
   a side-panel entry (`chrome://hook-panel`, `--hook-side-panel`),
   `browser/ui/webui/hook_newtab_ui.*` is the New Tab page (a new tab is ours via
   `ChromeUINewTabURLAsGURL`, patch 0009), and
-  `browser/channel/` is the client for a *running* Hook app's loopback channel
+  `browser/channel/` is the client for a *running* Hook host's loopback channel
   (`crates/hook-core/src/channel.rs`) — the browser process makes those calls
   because a `chrome://` renderer is killed for a cross-scheme request, and that is
-  also why its token never reaches the page. `pnpm browser:smoke` is the check:
+  also why its token never reaches the page — and `browser/host/` starts that host
+  when none answers: one launch per browser run, `hook --headless`, a path fixed
+  at build time (`hook_host_path` in the GN args, written by `build.mjs`; beside
+  `chrome.exe` in a packaged build), a descriptor accepted only when its `pid` is
+  the child's, and `--hook-no-host` to turn it off (`docs/browser-host.md`).
+  `pnpm browser:smoke` is the check:
   the tab list, the dock, the gate both ways (the card is on the page), the side
-  panel, `--newtab`, `--codecs`, and `--channel` against a running app — or
-  against `hook --headless`, the host with no window. The ~100 GB checkout itself never
+  panel, `--newtab`, `--codecs`, `--host` for the launch, and `--channel` against
+  a running app — or against `hook --headless`, the host with no window. Every
+  other flag passes `--hook-no-host`, so no check leaves a process behind. The
+  ~100 GB checkout itself never
   enters the repo and `browser/README.md` carries the dev loop, the toolchain
   prerequisites and the traps. `args.gn` pins `use_siso = false`: siso cannot read
   the overlay junction, so the tree builds with ninja (`browser/README.md`,
@@ -607,12 +616,15 @@ Changing one side of a boundary is the most common way to break this repo.
   "Product" in this repo means a business product sharing the account — Hook,
   Hook Workspace, HookCode on a phone, and the future browser — not every
   `apps/*` directory.
-- **Browser channel change (the dock's link to a running Hook app):**
+- **Browser channel change (the dock's link to a running Hook host):**
   `crates/hook-core/src/channel.rs` (route, token, descriptor, the JSON shape) →
   `browser/overlay/src/hook/browser/channel/hook_channel.{h,cc}` (the browser
   process makes the call) → `hook_page_handler.cc` (JSON → mojom) →
   `common/hook.mojom` → `browser/ui/transport.ts` (the `ChatTransport`) →
-  `pnpm browser:smoke --channel` with Hook running. The token is a credential:
+  `pnpm browser:smoke --channel` with Hook running. A route that a host must offer
+  is also a line in `docs/browser-host.md`: the browser may start that host, so a
+  missing route has to read as "this host is too old", not as a broken turn. The
+  token is a credential:
   never log it, never send it to a page, and keep the routes read-and-send only —
   a channel that can rename or delete is a second window into the account. The
   descriptor sits beside the account file, so a debug build publishes it under
@@ -620,8 +632,23 @@ Changing one side of a boundary is the most common way to break this repo.
   `pnpm app` (`browser/README.md`, **The channel**). A
   `chrome://` renderer cannot make these requests itself (Chromium kills it for
   "Incorrect scheme"), so the call stays in the browser process, and the
-  descriptor is read on a thread pool because the page asks during startup, where
-  blocking work is a DCHECK.
+  descriptor (`channel/hook_descriptor.{h,cc}`) is read on a thread pool because
+  the page asks during startup, where blocking work is a DCHECK.
+- **Browser host launch change:** `browser/overlay/src/hook/browser/host/hook_host.{h,cc}`
+  (which switch turns it off, how long it waits, what it kills on exit) → the
+  `hook_host_path` GN arg in `browser/overlay/src/hook/browser/BUILD.gn` and how
+  `browser/tools/build.mjs` fills it (release binary first, then debug; written
+  into `out/Dev/args.gn` at `gn gen`, so building Hook after the browser needs
+  `build.mjs --gen-only` again) → `pnpm browser:smoke --host`. The executable
+  path is resolved at build time and never from a page, a preference or the
+  environment, the descriptor is accepted only when its `pid` is the child's, and
+  every smoke flag but `--host` passes `--hook-no-host` so a check leaves nothing
+  running. The launch sets `HOOK_DATA_DIR` to `<shared>/app.hook.chat`
+  (`kHostProductFolder`), because a *debug* host would otherwise publish its
+  channel under `%APPDATA%\hook-dev\` where the browser never looks — a host whose
+  data folder is not beside the account the gate reads is a host this browser
+  cannot use. The launch itself is `hook --headless` today; `Product::Browser`
+  and the sidecar replace the binary and that folder name, not this file.
 
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
   `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`

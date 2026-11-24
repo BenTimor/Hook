@@ -1,9 +1,13 @@
 # Hook Browser — its own host process
 
-> **Status: design only.** Nothing here is built. Today the browser starts no
-> process at all, and `hook --headless` is the interim host a person (or a
-> shortcut) starts by hand. This document is the answer to "can the browser work
-> by itself, without another product's daemon, and what does it cost".
+> **Status: step 1 is in; steps 2–4 are design.** The browser starts its own
+> host when no channel answers (`browser/overlay/src/hook/browser/host/hook_host.cc`
+> — one launch per run, `hook --headless`, a build-time path, a pid that must be
+> the child's, `--hook-no-host` to turn it off). What that means in practice: the
+> browser no longer needs another product *running*, but it still borrows the
+> chat product's binary and data folder. Steps 2–4 below are what makes the host
+> the browser's own — `Product::Browser`, an `EventSink` instead of `AppHandle`,
+> its own `%APPDATA%\app.hook.browser`, and a per-product descriptor.
 
 ## The question
 
@@ -21,9 +25,10 @@ is not obvious, because the channel is started in `hook-core`'s shared `setup()`
 - **The browser ignores which one answered.** `/health` reports `"product"`, and
   nothing in `browser/channel/` reads it.
 
-So the honest statement today is: the browser needs *a* Hook process, any product
-will do, and the content depends on which one it is. That is a coincidence of
-where the channel was put, not a design.
+So the honest statement today is: the browser needs *a* Hook process, and since
+step 1 it starts one itself when none answers — but the content still depends on
+which product's binary it started, and that is a coincidence of where the channel
+was put, not a design.
 
 The preferred shape, and the one this document specifies, is:
 
@@ -97,22 +102,34 @@ host owns. `ChannelBackend` does not change, and neither do the routes.
 
 ## Starting it
 
-The browser starts the host, on demand, once per browser run:
+The browser starts the host, on demand, once per browser run — implemented in
+`browser/overlay/src/hook/browser/host/hook_host.cc`:
 
-1. `HookChannel::Check()` fails **and** no descriptor exists → launch the host
-   with `base::LaunchProcess` (no shell), from a **fixed path** resolved at build
-   time (beside `chrome.exe`; the dev tree points at the repository's build). A
-   path that comes from a page, a preference or an environment variable is not
-   something the browser may execute.
+1. `/health` did not answer → launch the host with `base::LaunchProcess` (no
+   shell), from a **fixed path** resolved at build time: `hook.exe` beside
+   `chrome.exe` for a packaged build, and `hook_host_path` from the GN args for a
+   dev tree (`browser/tools/build.mjs` writes the repository's debug binary into
+   `out/Dev/args.gn`, so `browser/args.gn` stays machine-agnostic). A path that
+   comes from a page, a preference or an environment variable is not something
+   the browser may execute.
 2. Wait for the descriptor and require its `pid` to be the child's. A descriptor
    written by another product is not ours to use, and a stale one must not send
    the browser to a dead port.
-3. `--hook-no-host` disables the launch entirely, so the signed-out card and the
-   smoke (`--signin-state out`) can still be proven without a host.
-4. Never during `--hook-signin-state=in|out`: those are test seams, and a test run
-   must not leave processes behind.
+3. Launch it with `HOOK_DATA_DIR` set to `<shared dir>/app.hook.chat`. The host
+   must see the account this browser's gate reads, and a *debug* host would
+   otherwise keep its data under `%APPDATA%\hook-dev\app.hook\`
+   (`lib.rs::resolve_data_dir`) and publish its channel where the browser never
+   looks. Naming the folder makes a dev host and a packaged browser agree, which
+   is what makes `pnpm browser:smoke --host` testable in a dev tree at all.
+4. `--hook-no-host` disables the launch entirely, so a machine that runs Hook by
+   hand and the smoke check can prove the signed-out card without a host. Any
+   `--hook-signin-state` does too: a test seam must not leave processes behind.
+5. The attempt is remembered for the life of the process: one launch, no loop. A
+   second page asking at the same moment shares the same wait. If the host it
+   started exits, the next ask launches again — otherwise closing a stray host
+   would need a browser restart.
 
-Exit policy is a decision, not a detail:
+Exit policy, decided: **kill with the browser**.
 
 - **Kill with its browser** keeps the machine clean and makes the host an
   implementation detail, but a turn still streaming when the window closes dies
@@ -122,9 +139,11 @@ Exit policy is a decision, not a detail:
   (a descriptor whose pid is gone reads as "not running").
 
 The channel's `Check()` is already that reaper — the descriptor's `pid` is written
-today (`Channel::write_descriptor`), so both policies are cheap. The recommendation
-is kill-on-exit for the first version: one browser, one host, no orphans, and the
-turn is a foreground action.
+today (`Channel::write_descriptor`) — so either policy was cheap. Step 1 takes
+the first: the child is terminated from the process-wide `AtExitManager`, which
+Windows' entry point owns (`chrome/app/chrome_exe_main_win.cc`). A browser killed
+outright skips it, which is why "available" is `/health` and not "a file exists"
+— a survivor answers, so the next run reuses it instead of piling up a second one.
 
 ## The descriptor becomes per product
 
@@ -151,33 +170,44 @@ is today's behaviour and a useful safety net during the transition).
 
 ## What changes for the person using it
 
-The signed-out card stops saying "Hook is not running on this computer". With its
-own host, the browser starts one and shows the device code; the "start Hook first"
-branch becomes the fallback for a broken or missing install, not the normal state.
-The dock stops saying "Hook is not running" for the same reason.
+**Changed by step 1.** The browser no longer needs someone to start Hook first: it
+launches one, and the page says "Starting Hook…" for the second that takes
+(`hook.html`'s `#boot`, `panel.html`'s `.dock-boot`). A launch that fails is a
+sentence on the card — "Hook's host is not installed on this computer", "would not
+start", "is starting, but it has not published its channel" — instead of the old
+"Hook is not running on this computer, and the browser cannot sign in on its own".
+
+**Still to change.** The card still talks about *the app* on this computer
+because the host still is the chat app: same binary, same data folder. Once steps
+2–3 land, it is the browser's own host and the wording follows — and the dock
+stops borrowing another product's history at all.
 
 ## Order of work
 
 | | Work | Size | Gives |
 | --- | --- | --- | --- |
-| 1 | Browser launches `hook.exe --headless` (chat product) when no host answers; pid-checked; `--hook-no-host` | ~1 session | the browser starting its own process, today |
+| 1 | Browser launches `hook.exe --headless` (chat product) when no host answers; pid-checked; `--hook-no-host` | ~1 session | the browser starting its own process, today — **done** |
 | 2 | `EventSink` + tokio handles, so the backend runs without `AppHandle` | 1–2 sessions | the hard half of the refactor, testable in `cargo test` |
 | 3 | The `hook-host` binary, no Tauri, `Product::Browser`, `app.hook.browser` | 1–2 sessions | the browser as a product, syncing its own folder |
 | 4 | Per-product descriptor files, and the fallback reads | ½ session | two products can run at once |
 | 5 | Package it: copy beside `chrome.exe`, `scripts/products.mjs` hash, MSIX, release | with the shipping work | one installer, one browser, no other product needed |
 
 Step 1 is deliberately shippable on its own and is what `--headless` was built
-for; it can land before the refactor and be replaced by it without touching the
-page.
+for; it can be replaced by the refactor without touching the page. It is in, so
+the page, the transport and the routes below are the contract steps 2–4 must keep.
 
 ## Open decisions
 
-- **Kill with the browser, or outlive it?** Recommended: kill, first version.
+- ~~**Kill with the browser, or outlive it?**~~ Kill, for the first version — step
+  1 terminates the child on an orderly exit, and a survivor is reused rather than
+  duplicated.
 - **Does the browser host sync by default?** With its own folder, yes, or its
   chats never meet the account — but a local-only browser is a coherent
   privacy stance and the sync switch already exists per account.
-- **What does the browser do when a chat host is also running?** Use its own;
-  fall back to the other products' descriptors only while step 1 is the state.
+- ~~**What does the browser do when a chat host is also running?**~~ Step 1's
+  answer: it uses whichever channel answers and launches nothing, so an app in
+  the tray serves the browser until it quits. The browser's own host and the
+  per-product descriptor (step 4) replace that coincidence.
 - **Version coupling.** The host speaks the channel, so the browser and the host
   can version separately as long as the routes are append-only; a missing route
   must read as "this host is too old", not as a broken turn.

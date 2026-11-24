@@ -8,6 +8,11 @@
     <link rel="stylesheet" href="hook.css">
   </head>
   <body>
+    <!-- Until the page knows whether there is an account, there is nothing to
+         draw: the first answer can take a second or two, because a browser with
+         no host running starts one (browser/host/hook_host.cc). Say so rather
+         than showing an empty window. -->
+    <p class="boot" id="boot">Starting Hook…</p>
     <!-- One of these two is shown. The gate is the shared sign-in card, mounted
          from panel.mjs; the seam is the Step 1 proof plus the dock, and only a
          signed-in page ever creates the dock. -->

@@ -11,8 +11,13 @@
  *   node browser/tools/smoke.mjs --codecs              # H.264 and AAC decode
  *   node browser/tools/smoke.mjs --newtab              # the new tab page, and that
  *                                                    # a new tab is ours at all
+ *   node browser/tools/smoke.mjs --host                # the browser starts its own
+ *                                                    # Hook host when none answers
  *   node browser/tools/smoke.mjs --shot hook.png       # screenshots too
  *   node browser/tools/smoke.mjs --chrome <path to chrome.exe>
+ *
+ * Every run passes `--hook-no-host` unless it asks for `--host`: a check must not
+ * leave a Hook process behind, and the sign-in gate's seams must not spawn one.
  *
  * It launches the binary with a throwaway profile and the DevTools protocol on a
  * loopback port, opens `chrome://hook`, and reads what the page drew: the tab
@@ -120,21 +125,60 @@ const problemsOf = (client) =>
  * The account file the browser's gate reads, so the check knows what to expect
  * when nothing forces the answer. Only the presence of a token matters.
  */
-function machineSignedIn() {
+function sharedDir() {
   const dir =
     process.platform === "win32"
       ? process.env.APPDATA
       : process.platform === "darwin"
         ? join(process.env.HOME ?? "", "Library", "Application Support")
         : (process.env.XDG_DATA_HOME ?? join(process.env.HOME ?? "", ".local", "share"));
+  return dir ? join(dir, "app.hook") : null;
+}
+
+function machineSignedIn() {
+  const dir = sharedDir();
   if (!dir) return false;
-  const path = join(dir, "app.hook", "account.json");
+  const path = join(dir, "account.json");
   if (!existsSync(path)) return false;
   try {
     const account = JSON.parse(readFileSync(path, "utf8"));
     return typeof account?.session?.token === "string" && account.session.token.length > 0;
   } catch {
     return false;
+  }
+}
+
+// The descriptor a running Hook host publishes (`crates/hook-core/src/channel.rs`).
+function readDescriptor() {
+  const dir = sharedDir();
+  if (!dir) return null;
+  try {
+    const descriptor = JSON.parse(readFileSync(join(dir, "browser-channel.json"), "utf8"));
+    return typeof descriptor?.port === "number" && descriptor.port > 0 ? descriptor : null;
+  } catch {
+    return null;
+  }
+}
+
+// A descriptor outlives a killed host, so "published" is not "running": the
+// health route is, exactly as the browser decides it.
+async function descriptorAlive(descriptor) {
+  if (!descriptor) return null;
+  try {
+    const health = await (await fetch(`http://127.0.0.1:${descriptor.port}/health`)).json();
+    return health?.ok ? health : null;
+  } catch {
+    return null;
+  }
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (failure) {
+    // EPERM is a process that exists and is not ours to signal.
+    return failure?.code === "EPERM";
   }
 }
 
@@ -183,6 +227,7 @@ export async function main(argv) {
   const channelCheck = flags.get("channel") === true;
   const codecCheck = flags.get("codecs") === true;
   const newTabCheck = flags.get("newtab") === true;
+  const hostCheck = flags.get("host") === true;
   const signin = flags.get("signin-state");
   if (signin !== undefined && signin !== "in" && signin !== "out") {
     console.error(fail("--signin-state takes in or out"));
@@ -199,6 +244,10 @@ export async function main(argv) {
   }
 
   const profile = mkdtempSync(join(tmpdir(), "hook-smoke-"));
+  // A host that is already answering is not the one this run means to prove, so
+  // the launch check needs an empty channel: it says so instead of pretending.
+  const existing = hostCheck ? await descriptorAlive(readDescriptor()) : null;
+  let hostPid = 0;
   step(`launching ${bold(binary)}`);
   const child = spawn(
     binary,
@@ -214,6 +263,7 @@ export async function main(argv) {
       "--disable-renderer-backgrounding",
       "--disable-features=CalculateNativeWinOcclusion",
       `--remote-debugging-port=${port}`,
+      ...(hostCheck ? [] : ["--hook-no-host"]),
       ...(signin ? [`--hook-signin-state=${signin}`] : []),
       ...(sidePanel ? ["--hook-side-panel"] : []),
       PAGE,
@@ -391,6 +441,48 @@ export async function main(argv) {
       }
     }
 
+    // ---- the browser starting its own host -----------------------------------
+    //
+    // `docs/browser-host.md`, step 1. The page asks for the channel as it loads;
+    // nothing answered, so the browser process launches one (`host/hook_host.cc`,
+    // `hook --headless`) and only accepts the descriptor that names its child.
+    // The pid is the assertion: a descriptor that was already there is not this
+    // run's, and one that survives the browser is not "kill on exit".
+    if (hostCheck) {
+      if (existing) {
+        console.error(warn(
+          `a Hook host is already running (pid ${existing.pid}): --host proves a launch, ` +
+            `so close it and run again to check this`,
+        ));
+      } else {
+        const deadline = Date.now() + 30000;
+        let started = null;
+        let health = null;
+        while (Date.now() < deadline) {
+          const descriptor = readDescriptor();
+          if (descriptor?.pid) {
+            health = await descriptorAlive(descriptor);
+            if (health) {
+              started = descriptor;
+              break;
+            }
+          }
+          await sleep(500);
+        }
+        if (!started) {
+          failures.push(
+            "--host was set, but the browser started no host: no descriptor answered /health",
+          );
+        } else {
+          hostPid = started.pid;
+          console.log(`    host: pid ${hostPid}, ${health.product} ${health.version}`);
+          if (processAlive(child.pid) && hostPid === child.pid) {
+            failures.push("the descriptor names the browser itself, not a host");
+          }
+        }
+      }
+    }
+
     // ---- the codecs the build has to carry -----------------------------------
     //
     // `args.gn` turns on `proprietary_codecs` and `ffmpeg_branding = "Chrome"`.
@@ -408,8 +500,8 @@ export async function main(argv) {
         };
       })()`);
       console.log(`    codecs: ${JSON.stringify(codecs)}`);
-      if (!codecs?.h264) failures.push("H.264 does not decode: args.gn needs proprietary_codecs");
-      if (!codecs?.aac) failures.push('AAC does not decode: args.gn needs ffmpeg_branding = "Chrome"');
+      if (!codecs?.h264) failures.push('H.264 does not decode: the dev build gets it from args.gn (proprietary_codecs), a shipped build from Media Foundation');
+      if (!codecs?.aac) failures.push('AAC does not decode: the dev build gets it from args.gn (ffmpeg_branding = "Chrome"), a shipped build from Media Foundation');
       if (!codecs?.vp9) failures.push("VP9 does not decode, which is wider than the codec flags");
     }
 
@@ -522,6 +614,14 @@ export async function main(argv) {
   } finally {
     stop();
     await sleep(500);
+    if (hostPid) {
+      await sleep(1500);
+      if (processAlive(hostPid)) {
+        failures.push(`the host (pid ${hostPid}) outlived the browser`);
+      } else {
+        console.log(`    host: pid ${hostPid} went with the browser`);
+      }
+    }
     try {
       rmSync(profile, { recursive: true, force: true });
     } catch {

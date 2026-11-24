@@ -307,7 +307,8 @@ stays affordable. They are also another slow loop; run them in CI, not locally.
 - **Google API keys** are ours to obtain (Safe Browsing, geolocation, timezone,
   translate). Shipping without Safe Browsing is not acceptable.
 - **Codecs are off by default** (`proprietary_codecs`, `ffmpeg_branding`). Without
-  them H.264 and AAC do not play.
+  them H.264 and AAC do not play. Chosen: decode through the OS's Media Foundation
+  instead of shipping a decoder — `docs/browser-os-decoders.md`.
 - **Widevine is a separate licence from Google.** Without it, Netflix, Disney+
   and Spotify web do not work. This is a decision to make consciously, not to
   discover after launch.
@@ -332,8 +333,11 @@ Still open:
 
 - Widevine: license it, or ship without DRM playback.
 - Vault scope: local-only, or synced — and if synced, on which construction.
-- Whether the tabstrip is restyled in Views or left close to upstream.
 - Chromium release channel and how security patch releases are tracked.
+
+Settled later than this document: the tabstrip is restyled in Views, minimally
+(patch 0010), and H.264/AAC reach a shipped build through Windows' Media
+Foundation rather than an FFmpeg we ship (`docs/browser-os-decoders.md`).
 
 ## Non-goals for now
 

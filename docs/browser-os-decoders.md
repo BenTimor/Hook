@@ -1,15 +1,16 @@
 # Hook Browser — decoding with the OS
 
-> **Status: design only, not started.** Written after the codec decision of
-> November 2025 so the option survives the beta. Every claim below was read out of
-> the tree at `159.0.8154.13`; line numbers move with the tag, so the file and
-> symbol names are the reference.
+> **Status: decided, not started.** The shipped browser decodes H.264 and AAC
+> through Windows' Media Foundation — not through an FFmpeg we ship — and stages 1
+> and 2 below are the work that makes that real before a public download. Until
+> they land the dev build keeps `proprietary_codecs = true` and
+> `ffmpeg_branding = "Chrome"` (`browser/args.gn`), because a browser tested
+> against half the web is not a browser; a *release* build must have neither flag,
+> or it is the licensed configuration with extra steps (see "The licensing
+> position").
 >
-> Meanwhile the dev build ships with `proprietary_codecs = true` and
-> `ffmpeg_branding = "Chrome"` (`browser/args.gn`), which decodes H.264 and AAC
-> through FFmpeg. That is the state we test in. Nothing in this document changes
-> until the licence arithmetic at volume makes it worth doing — see "When it would
-> be worth it".
+> Every claim below was read out of the tree at `159.0.8154.13`; line numbers move
+> with the tag, so the file and symbol names are the reference.
 
 ## The question this answers
 
@@ -235,7 +236,16 @@ one. Three honest caveats:
    decoder is in-box in Windows rather than a separately licensed package? What is
    the exposure if the pool disagrees — a licence back-dated to first distribution?
 
-## When it would be worth it
+## When it is worth it
+
+The decision is taken on grounds that do not depend on volume: the pools charge
+whoever distributes a build containing a decoder, Hook Browser would be paying
+that per install, and the OS route is a client of a decoder someone else already
+licenses. The table below is the arithmetic that would have mattered had the
+choice been "pay or ship a worse browser"; it is kept because it is also the
+reason the *stages* are ordered the way they are — stage 2 is the one that removes
+the expensive half (AAC), and stage 3 is only worth its size if machines without
+GPU decode turn out to be a real share.
 
 | Installs distributed per year | Licence cost (AAC at $0.98, H.264 free to 100k) | This project |
 | --- | --- | --- |
@@ -245,10 +255,10 @@ one. Three honest caveats:
 | 100,000 | ~$99,000 | **clearly worth it** |
 
 Add the rebase cost: `media/` changes on every four-week milestone, and this is
-the most rebase-prone code in a fork. The realistic read is that stages 1–2 are
-worth doing when the beta becomes a public download, because they also make the
-build smaller and remove the OpenH264 compile — and stage 3 only if volume makes
-$99k real.
+the most rebase-prone code in a fork. That is why stages 1–2 are the committed
+work item before a public download and stage 3 is conditional: together they cover
+any machine with GPU H.264 decode (nearly all of them) plus OS AAC, which is the
+combination that makes the common MP4 play.
 
 ## How it would be verified
 
@@ -288,10 +298,12 @@ $99k real.
 
 ## Open questions
 
-- Which stage do we actually need? If the public beta is small, stage 1 alone
-  removes nothing that matters and stage 2 is the real target.
+- ~~Which stage do we actually need?~~ Stages 1–2 before a public download; stage 3
+  if the no-GPU share of real machines justifies it.
 - Does the pool accept the OS route for AAC, where the decoder is an in-box Windows
-  component rather than a separately licensed package?
-- Do we keep `proprietary_codecs` in a separate "licensed" build for users who want
-  guaranteed playback, or is one build enough?
+  component rather than a separately licensed package? This is the open legal
+  question, and it is the one that matters — AAC is the expensive half.
+- ~~Do we keep `proprietary_codecs` in a separate "licensed" build for users who
+  want guaranteed playback, or is one build enough?~~ One build, OS decoders. A
+  second licensed build doubles what has to be tested and ships a decoder anyway.
 - Does anything need this at all before 100k installs?

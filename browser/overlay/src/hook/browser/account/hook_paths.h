@@ -20,7 +20,9 @@ base::FilePath SharedDir();
 // The account every Hook product shares: `SharedDir()/account.json`.
 base::FilePath AccountFile();
 
-// The running Hook app's channel: `SharedDir()/browser-channel.json`.
+// The loopback channel a Hook host publishes while it runs:
+// `SharedDir()/browser-channel.json`. Which host is not this file's business —
+// the app in the tray, or the one the browser started itself.
 base::FilePath ChannelDescriptorFile();
 
 }  // namespace hook::paths

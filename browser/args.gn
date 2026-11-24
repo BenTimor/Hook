@@ -25,8 +25,11 @@ v8_symbol_level = 0
 # H.264 and AAC do not decode, which is every MP4 on the web (X, Instagram,
 # TikTok, Vimeo, Teams, most .mp4 links). The H.264 pool charges nothing below
 # 100,000 units a year; AAC charges per unit. Both are owed by whoever distributes
-# a build, which is why this is dev-facing and the licence decision is tracked in
-# docs/browser-poc-plan.md ("What shipping needs"). A release build must keep
-# `is_component_ffmpeg = true` so FFmpeg stays a separate DLL (LGPL-2.1+).
+# a build, so the dev build carries them and a *release* build does not: it decodes
+# through Windows' Media Foundation instead (`docs/browser-os-decoders.md`, the
+# decision and its stages). Keeping both in a shipped build is the licensed
+# configuration with extra steps, which is the one thing that decision rules out.
+# A release build still links FFmpeg for demuxing and keeps `is_component_ffmpeg =
+# true`, so it stays a separate, relinkable DLL (LGPL-2.1+).
 proprietary_codecs = true
 ffmpeg_branding = "Chrome"

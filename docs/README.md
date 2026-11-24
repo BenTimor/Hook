@@ -69,8 +69,8 @@ obvious fix is sometimes wrong.
 | [Remote control status](remote-control-status.md) | What exists today, what is left, and the decisions behind it |
 | [Browser architecture](browser-architecture.md) | Hook Browser: designed, not built |
 | [Browser POC plan](browser-poc-plan.md) | The build order behind that design |
-| [Browser host](browser-host.md) | The browser's own host process: designed, sized, not started |
-| [OS decoders](browser-os-decoders.md) | The platform-decoder path for H.264/AAC: designed, sized, not started |
+| [Browser host](browser-host.md) | The browser's own host process: step 1 in, the sidecar still designed |
+| [OS decoders](browser-os-decoders.md) | The platform-decoder path for H.264/AAC: decided, not started |
 | [Browser dev loop](../browser/README.md) | `browser/`: the checkout, the overlay, the patch stack, the tools |
 
 ## Repository root
