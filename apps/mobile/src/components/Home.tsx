@@ -119,6 +119,7 @@ export function Home({
           loadProjects={mobile.remoteProjects}
           createProject={mobile.createRemoteProject}
           loadFolders={mobile.remoteFolders}
+          pinFolder={mobile.pinRemoteFolder}
           onCreate={(deviceId, target) =>
             newRemoteCodingChat(deviceId, target)
           }

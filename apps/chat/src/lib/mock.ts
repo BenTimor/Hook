@@ -477,17 +477,35 @@ const MOCK_FOLDER_TREE: Record<string, string[]> = {
 };
 
 const MOCK_FOLDER_PLACES: RemoteFolder[] = [
-  { name: "Home", path: "C:\\Users\\you" },
-  { name: "Projects", path: "C:\\Users\\you\\Hook Projects" },
-  { name: "C:", path: "C:\\" },
+  { name: "Home", path: "C:\\Users\\you", pinned: false },
+  { name: "Projects", path: "C:\\Users\\you\\Hook Projects", pinned: false },
+  { name: "C:", path: "C:\\", pinned: false },
 ];
 
+/** What the mock host has starred; the browser walk shows the same list. */
+let MOCK_PINNED_FOLDERS: string[] = [];
+
 function mockFolderListing(path: string | null): RemoteFolders {
+  const starred = (path: string) =>
+    MOCK_PINNED_FOLDERS.some(
+      (entry) => entry.toLowerCase() === path.toLowerCase(),
+    );
   if (!path) {
+    const shortcuts = MOCK_PINNED_FOLDERS.map((pinned) => {
+      const name = pinned.replace(/\\+$/, "").split("\\").pop() || pinned;
+      return {
+        name: MOCK_FOLDER_PLACES.find((place) => place.path === pinned)?.name ?? name,
+        path: pinned,
+        pinned: true,
+      };
+    });
     return {
       path: null,
       parent: null,
-      entries: clone(MOCK_FOLDER_PLACES),
+      entries: [
+        ...shortcuts,
+        ...clone(MOCK_FOLDER_PLACES).filter((place) => !starred(place.path)),
+      ],
       truncated: false,
     };
   }
@@ -502,6 +520,7 @@ function mockFolderListing(path: string | null): RemoteFolders {
     entries: (MOCK_FOLDER_TREE[path] ?? []).map((name) => ({
       name,
       path: `${path}${separator}${name}`,
+      pinned: starred(`${path}${separator}${name}`),
     })),
     truncated: false,
   };
@@ -1172,6 +1191,23 @@ export const mock = {
     path: string | null,
   ): Promise<RemoteFolders> {
     return mockFolderListing(path);
+  },
+
+  async pinRemoteFolder(
+    _deviceId: string,
+    path: string,
+    pinned: boolean,
+  ): Promise<string[]> {
+    const known = MOCK_PINNED_FOLDERS.some(
+      (entry) => entry.toLowerCase() === path.toLowerCase(),
+    );
+    if (pinned && !known) MOCK_PINNED_FOLDERS.push(path);
+    if (!pinned) {
+      MOCK_PINNED_FOLDERS = MOCK_PINNED_FOLDERS.filter(
+        (entry) => entry.toLowerCase() !== path.toLowerCase(),
+      );
+    }
+    return [...MOCK_PINNED_FOLDERS];
   },
 
   async createRemoteProject(

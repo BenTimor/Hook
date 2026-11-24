@@ -653,21 +653,23 @@ pub fn set_pinned(
 }
 
 #[tauri::command]
-pub fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
-    let meta = state.store.load(&chat_id).ok().map(|chat| chat.meta);
-    if let Some(meta) = &meta {
-        if meta.remote {
-            let machine = meta
-                .device_name
-                .clone()
-                .or_else(|| meta.device_id.clone())
-                .unwrap_or_else(|| "another machine".into());
-            return Err(format!(
-                "This conversation lives on {machine}. Delete it there."
-            ));
+pub async fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(), String> {
+    if let Ok(chat) = state.store.load(&chat_id) {
+        if chat.meta.remote {
+            return delete_remote_chat(state.inner(), &chat.meta).await;
         }
+    }
+    delete_local_chat(state.inner(), &chat_id)
+}
+
+/// Remove a conversation this machine owns. Both the local command and the
+/// relay's `coding.delete` end here: a host deletes the same way whichever
+/// device asked.
+pub(crate) fn delete_local_chat(state: &Arc<AppState>, chat_id: &str) -> Result<(), String> {
+    let meta = state.store.load(chat_id).ok().map(|chat| chat.meta);
+    if let Some(meta) = &meta {
         if meta.is_owned_coding(&state.agents.device_id()) {
-            state.sync.forget_stub(&chat_id);
+            state.sync.forget_stub(chat_id);
         }
     }
     for agent in state.agents.list() {
@@ -675,8 +677,45 @@ pub fn delete_chat(state: State<'_, Arc<AppState>>, chat_id: String) -> Result<(
             let _ = state.agents.stop(&agent.id);
         }
     }
-    state.preview.stop_chat(&chat_id);
-    state.store.delete(&chat_id)?;
+    state.preview.stop_chat(chat_id);
+    state.store.delete(chat_id)?;
+    state.sync.wake();
+    Ok(())
+}
+
+/// Delete a cached conversation on the machine that owns it.
+///
+/// Its folder, engine and session only exist there, so the original is removed
+/// by its host; deleting this copy alone would be undone by the next stub sync.
+/// The relay only reaches a machine that is running, which is why this works
+/// while the host is online and says so, by name, when it is not.
+async fn delete_remote_chat(state: &Arc<AppState>, meta: &ChatMeta) -> Result<(), String> {
+    let device = meta
+        .device_id
+        .clone()
+        .ok_or("This conversation does not know which machine owns it.")?;
+    remote_ready(state)?;
+    require_host(state, &device)?;
+    match state
+        .relay
+        .rpc(
+            &device,
+            "coding.delete",
+            serde_json::json!({ "chatId": meta.id }),
+            Duration::from_secs(20),
+        )
+        .await
+    {
+        Ok(_) => {}
+        // The host says it has no such conversation: it is already gone there,
+        // so the copy here is the only thing left to remove.
+        Err(failure) if failure.code == "unknown_chat" => {}
+        Err(failure) => return Err(failure.message),
+    }
+    state.preview.stop_chat(&meta.id);
+    // Nothing to keep in the trash: the owner's transcript is gone, so a
+    // restored copy would be a cache of a conversation that no longer exists.
+    state.store.remove_synced(&meta.id);
     state.sync.wake();
     Ok(())
 }
@@ -1051,6 +1090,36 @@ pub async fn remote_folders(
         Duration::from_secs(20),
     )
     .await
+}
+
+/// Star or unstar a folder on another machine. The star is stored on that
+/// machine, so the shortcut is there for every device that browses it — the
+/// same list the phone and Workspace see. The answer is the whole pinned list.
+#[tauri::command]
+pub async fn remote_pin_folder(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    path: String,
+    pinned: bool,
+) -> Result<Vec<String>, String> {
+    remote_ready(state.inner())?;
+    require_host(state.inner(), &device_id)?;
+    let result = remote_rpc(
+        state.inner(),
+        &device_id,
+        "folders.pin",
+        serde_json::json!({ "path": path, "pinned": pinned }),
+        Duration::from_secs(20),
+    )
+    .await?;
+    Ok(result["pinned"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| entry.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// Answer a question a directly-driven coding agent is blocked on.

@@ -102,6 +102,31 @@ pub struct Settings {
     /// account to sync it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_provider_account: Option<String>,
+    /// Folders a controller starred in this machine's folder picker, as absolute
+    /// paths on *this* computer. They are the shortcuts the relay's
+    /// `folders.browse` lists before Home and Projects, so a controller that
+    /// starts chats in the same three folders does not walk to them every time.
+    /// Not account data: a path exists here or nowhere, so it lives in this
+    /// product's settings rather than in the account.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_folders: Vec<String>,
+}
+
+/// How many starred folders one machine keeps. A longer list is a folder tree,
+/// not a shortcut, and every `folders.browse` root answer would carry it.
+pub const MAX_PINNED_FOLDERS: usize = 12;
+
+/// Whether two stored paths name the same folder. Windows paths are case
+/// insensitive, and a controller may send the path back with other casing.
+pub fn same_path(a: &str, b: &str) -> bool {
+    #[cfg(windows)]
+    {
+        a.eq_ignore_ascii_case(b)
+    }
+    #[cfg(not(windows))]
+    {
+        a == b
+    }
 }
 
 pub struct SettingsStore {
@@ -194,6 +219,49 @@ impl SettingsStore {
         data.projects_dir = Some(canonical.to_string_lossy().to_string());
         self.save_locked(&data)?;
         Ok(canonical)
+    }
+
+    /// The folders this machine offers as shortcuts in the relay's picker, in
+    /// the order they were starred.
+    pub fn pinned_folders(&self) -> Vec<String> {
+        lock(&self.data).pinned_folders.clone()
+    }
+
+    /// Star or unstar one of this machine's folders. `path` is the host's own
+    /// canonical string (see `commands::remote_pin_folder`), so it is stored as
+    /// it arrived; a path that is no longer a folder is still stored, because a
+    /// drive that is unplugged today is the same folder tomorrow. Returns the
+    /// list after the change.
+    pub fn set_pinned_folder(&self, path: &str, pinned: bool) -> Result<Vec<String>, String> {
+        let path = path.trim();
+        if path.is_empty() {
+            return Err("Choose a folder first.".into());
+        }
+        let mut data = lock(&self.data);
+        let existing = data
+            .pinned_folders
+            .iter()
+            .position(|entry| same_path(entry, path));
+        let mut changed = false;
+        if pinned {
+            if existing.is_none() {
+                if data.pinned_folders.len() >= MAX_PINNED_FOLDERS {
+                    return Err(format!(
+                        "A machine keeps {MAX_PINNED_FOLDERS} pinned folders. Unpin one first."
+                    ));
+                }
+                data.pinned_folders.push(path.to_string());
+                changed = true;
+            }
+        } else if let Some(index) = existing {
+            data.pinned_folders.remove(index);
+            changed = true;
+        }
+        let list = data.pinned_folders.clone();
+        if changed {
+            self.save_locked(&data)?;
+        }
+        Ok(list)
     }
 
     /// Whether the chat agent may use long-term memory. On unless the user
@@ -360,6 +428,33 @@ mod tests {
         assert!(!store.memory_enabled());
         let reopened = SettingsStore::new(&tmp);
         assert!(!reopened.memory_enabled());
+    }
+
+    #[test]
+    fn pinned_folders_are_this_machines_shortcuts() {
+        let tmp = std::env::temp_dir().join(format!("hook-settings-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let store = SettingsStore::new(&tmp);
+        assert!(store.pinned_folders().is_empty());
+        let list = store.set_pinned_folder("C:\\work\\hook", true).unwrap();
+        assert_eq!(list, vec!["C:\\work\\hook"]);
+        // Starring it again is not a second entry.
+        let again = store.set_pinned_folder("C:\\work\\hook", true).unwrap();
+        assert_eq!(again.len(), 1);
+        // The list is a shortcut, not a tree: the cap is refused, not trimmed.
+        for index in 0..MAX_PINNED_FOLDERS {
+            let _ = store.set_pinned_folder(&format!("C:\\work\\{index}"), true);
+        }
+        assert_eq!(store.pinned_folders().len(), MAX_PINNED_FOLDERS);
+        assert!(store.set_pinned_folder("C:\\work\\one-too-many", true).is_err());
+        // Unpinning is by path, and survives a restart.
+        store.set_pinned_folder("C:\\work\\hook", false).unwrap();
+        let reopened = SettingsStore::new(&tmp);
+        assert_eq!(reopened.pinned_folders().len(), MAX_PINNED_FOLDERS - 1);
+        assert!(!reopened.pinned_folders().iter().any(|p| p == "C:\\work\\hook"));
+        // A settings.json written before pins existed reads as none.
+        fs::write(tmp.join("settings.json"), r#"{ "memory": true }"#).unwrap();
+        assert!(SettingsStore::new(&tmp).pinned_folders().is_empty());
     }
 
     #[test]

@@ -272,6 +272,7 @@ export function Sidebar() {
           loadProjects={api.remoteProjects}
           createProject={api.createRemoteProject}
           loadFolders={api.remoteFolders}
+          pinFolder={api.pinRemoteFolder}
           onCreate={(deviceId, target) =>
             newRemoteCodingChat(deviceId, target)
           }

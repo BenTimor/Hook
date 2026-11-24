@@ -12,6 +12,8 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { Dialog } from "@hook/ui";
+
 import { api } from "../lib/bridge";
 import type { ChatMeta } from "../lib/types";
 import { isCodingChat } from "../lib/utils";
@@ -34,10 +36,14 @@ export function ChatRow({ chat, active, streaming }: Props) {
   const devices = useChatStore((s) => s.devices?.devices);
 
   const coding = isCodingChat(chat);
-  const knownMachine = devices?.find((device) => device.id === chat.deviceId)?.name;
+  const known = devices?.find((device) => device.id === chat.deviceId);
   const machine = chat.remote
-    ? knownMachine ?? chat.deviceName ?? "another machine"
+    ? known?.name ?? chat.deviceName ?? "another machine"
     : null;
+  // A remote conversation is deleted where it lives, so the host has to be
+  // running. Until that is known (the device list has not arrived) the item
+  // stays enabled and the command says what is wrong.
+  const hostOnline = chat.remote ? (known?.hostOnline ?? true) : true;
   // A coding chat is local by design (its folder and engine live on this
   // computer), so the cloud mark is about ordinary conversations only. When
   // sync is off, every one of them stays here until the account allows it.
@@ -46,6 +52,7 @@ export function ChatRow({ chat, active, streaming }: Props) {
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(chat.title);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const cancelled = useRef(false);
 
   const beginRename = () => {
@@ -203,22 +210,60 @@ export function ChatRow({ chat, active, streaming }: Props) {
                 <SquareTerminal strokeWidth={1.8} />
                 Lives on {machine}
               </DropdownMenu.Item>
-            ) : (
-              <>
-                <DropdownMenu.Separator className="menu-sep" />
-                <DropdownMenu.Item
-                  className="menu-item"
-                  data-danger="true"
-                  onSelect={() => void remove(chat.id)}
-                >
-                  <Trash2 strokeWidth={1.8} />
-                  Delete
-                </DropdownMenu.Item>
-              </>
-            )}
+            ) : null}
+            <DropdownMenu.Separator className="menu-sep" />
+            <DropdownMenu.Item
+              className="menu-item"
+              data-danger="true"
+              disabled={!hostOnline}
+              title={
+                hostOnline
+                  ? undefined
+                  : `Start Hook on ${machine} to delete it there.`
+              }
+              onSelect={() => {
+                // A local chat keeps a copy in the trash, so its toast can
+                // offer Undo. A remote one is gone from the machine that owns
+                // it, and there is nothing here to restore: ask first.
+                if (chat.remote) {
+                  setConfirmingDelete(true);
+                  return;
+                }
+                void remove(chat.id);
+              }}
+            >
+              <Trash2 strokeWidth={1.8} />
+              Delete
+            </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+
+      <Dialog
+        open={confirmingDelete}
+        title="Delete this conversation?"
+        description={`It lives on ${machine}. The conversation is removed there and here; the folder itself stays on that computer. This cannot be undone.`}
+        onClose={() => setConfirmingDelete(false)}
+        footer={
+          <>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setConfirmingDelete(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setConfirmingDelete(false);
+                void remove(chat.id);
+              }}
+            >
+              Delete on {machine}
+            </button>
+          </>
+        }
+      />
     </div>
   );
 }

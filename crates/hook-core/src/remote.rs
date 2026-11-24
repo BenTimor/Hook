@@ -108,6 +108,15 @@ struct BrowseParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PinParams {
+    /// A full path this machine handed out in a listing.
+    path: String,
+    /// True to star it, false to remove the star.
+    pinned: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CodingSendParams {
     chat_id: String,
     text: String,
@@ -157,6 +166,7 @@ pub async fn handle(
         "projects.list" => projects(state),
         "projects.create" => projects_create(state, decode(params)?),
         "folders.browse" => folders_browse(state, decode(params)?),
+        "folders.pin" => folders_pin(state, decode(params)?),
         "sessions.list" => sessions(state, decode(params)?),
         "coding.create" => coding_create(state, decode(params)?),
         "coding.fetch" => coding_fetch(state, decode(params)?),
@@ -164,6 +174,7 @@ pub async fn handle(
         "coding.stop" => coding_stop(state, decode(params)?),
         "coding.answer" => coding_answer(state, decode(params)?),
         "coding.rename" => coding_rename(state, decode(params)?),
+        "coding.delete" => coding_delete(state, decode(params)?),
         _ => Err(fail(
             "unknown_method",
             format!("Hook does not handle {method}."),
@@ -440,25 +451,102 @@ fn folder_path(raw: &str) -> Result<PathBuf, RpcFailure> {
 }
 
 fn folders_browse(state: &Arc<AppState>, params: BrowseParams) -> Result<Value, RpcFailure> {
+    let starred = state.settings.pinned_folders();
+    let pinned: HashSet<String> = starred.iter().cloned().collect();
     match params
         .path
         .as_deref()
         .map(str::trim)
         .filter(|path| !path.is_empty())
     {
-        Some(path) => folder_listing(path),
+        Some(path) => folder_listing(path, &pinned),
         None => Ok(json!({
             "path": null,
             "parent": null,
-            "entries": places(home_dir(), state.settings.projects_dir()),
+            "entries": starting_points(
+                &starred,
+                home_dir(),
+                state.settings.projects_dir(),
+            ),
             "truncated": false,
         })),
     }
 }
 
+/// Star or unstar a folder on this machine. A star is a shortcut in the
+/// controller's picker, so the answer is the machine's whole list: the caller
+/// can redraw without asking for the root level again.
+fn folders_pin(state: &Arc<AppState>, params: PinParams) -> Result<Value, RpcFailure> {
+    let list = if params.pinned {
+        // Only a folder this machine can see is worth a shortcut.
+        let path = folder_path(&params.path)?;
+        state
+            .settings
+            .set_pinned_folder(&path.to_string_lossy(), true)
+    } else {
+        // Unstarring does not need the folder to exist: a drive that is not
+        // mounted still has to be removable from the list.
+        state.settings.set_pinned_folder(&params.path, false)
+    }
+    .map_err(|error| fail("pin_failed", error))?;
+    Ok(json!({ "pinned": list }))
+}
+
+/// Where browsing starts: the folders starred on this machine first, then home,
+/// the projects folder and the drives. A place that is already starred is
+/// listed once, in the pinned half, so the same folder never appears twice.
+fn starting_points(starred: &[String], home: Option<PathBuf>, projects: PathBuf) -> Vec<Value> {
+    let pinned: HashSet<String> = starred.iter().cloned().collect();
+    let places = places(home, projects);
+    let mut entries: Vec<Value> = Vec::new();
+    for path in starred {
+        let folder = PathBuf::from(path);
+        // A starred folder can sit on a drive that is not mounted right now.
+        // It stays starred and simply waits until it is back.
+        if !folder.is_dir() {
+            continue;
+        }
+        // A starred place keeps the name the picker already gave it, so Home
+        // does not reappear as the folder it happens to live in.
+        let name = places
+            .iter()
+            .find(|place| {
+                place["path"]
+                    .as_str()
+                    .map(|known| crate::settings::same_path(known, path))
+                    .unwrap_or(false)
+            })
+            .and_then(|place| place["name"].as_str().map(str::to_string))
+            .or_else(|| {
+                folder
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| path.clone());
+        entries.push(json!({ "name": name, "path": path, "pinned": true }));
+    }
+    for place in places {
+        let already = place["path"]
+            .as_str()
+            .map(|path| is_pinned(&pinned, path))
+            .unwrap_or(false);
+        if !already {
+            entries.push(place);
+        }
+    }
+    entries
+}
+
+fn is_pinned(pinned: &HashSet<String>, path: &str) -> bool {
+    pinned
+        .iter()
+        .any(|entry| crate::settings::same_path(entry, path))
+}
+
 /// One level of a folder: its subfolders, the way back up, and the path itself
-/// so the controller never has to build one.
-fn folder_listing(raw: &str) -> Result<Value, RpcFailure> {
+/// so the controller never has to build one. Each entry says whether this
+/// machine has it starred, which is what the picker's star shows.
+fn folder_listing(raw: &str, pinned: &HashSet<String>) -> Result<Value, RpcFailure> {
     let path = folder_path(raw)?;
     let mut entries: Vec<Value> = Vec::new();
     let mut truncated = false;
@@ -477,9 +565,11 @@ fn folder_listing(raw: &str) -> Result<Value, RpcFailure> {
             truncated = true;
             break;
         }
+        let child = crate::store::strip_verbatim(&child).to_string_lossy().to_string();
         entries.push(json!({
             "name": entry.file_name().to_string_lossy(),
-            "path": crate::store::strip_verbatim(&child).to_string_lossy(),
+            "path": child,
+            "pinned": is_pinned(pinned, &child),
         }));
     }
     entries.sort_by_key(|entry| {
@@ -518,6 +608,7 @@ fn place(name: &str, path: &Path) -> Value {
     json!({
         "name": name,
         "path": crate::store::strip_verbatim(path).to_string_lossy(),
+        "pinned": false,
     })
 }
 
@@ -694,6 +785,24 @@ fn coding_rename(state: &Arc<AppState>, params: CodingRenameParams) -> Result<Va
     serde_json::to_value(meta).map_err(|error| fail("serialize", error.to_string()))
 }
 
+/// Delete a direct coding chat because the controller asked for it.
+///
+/// The folder, the engine and the session live here, so the original can only
+/// be removed here; removing the controller's cache alone would be undone by
+/// the next stub sync. The stub tombstone is queued by the same local delete,
+/// which is what takes the chat off the other devices.
+fn coding_delete(state: &Arc<AppState>, params: ChatParams) -> Result<Value, RpcFailure> {
+    let chat_id = params.chat_id.trim();
+    let chat = state
+        .store
+        .load(chat_id)
+        .map_err(|_| fail("unknown_chat", "No such conversation on this machine."))?;
+    host_chat(state, &chat)?;
+    crate::commands::delete_local_chat(state, chat_id)
+        .map_err(|error| fail("delete_failed", error))?;
+    Ok(json!({ "chatId": chat_id, "deleted": true }))
+}
+
 /// Merge a controller's copy of a conversation into this machine's store.
 ///
 /// Messages are unioned by id, the same rule the server uses. The caller may be
@@ -794,7 +903,8 @@ mod tests {
     #[test]
     fn a_listing_holds_folders_only_and_in_order() {
         let dir = scratch();
-        let listing = folder_listing(&dir.to_string_lossy()).unwrap();
+        let pinned: HashSet<String> = [dir.join("beta").to_string_lossy().to_string()].into();
+        let listing = folder_listing(&dir.to_string_lossy(), &pinned).unwrap();
         let names: Vec<&str> = listing["entries"]
             .as_array()
             .unwrap()
@@ -802,6 +912,9 @@ mod tests {
             .map(|entry| entry["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["alpha", "beta"]);
+        // The star travels with the entry, so the picker can draw it.
+        assert_eq!(listing["entries"][0]["pinned"], false);
+        assert_eq!(listing["entries"][1]["pinned"], true);
         assert_eq!(
             listing["entries"][0]["path"].as_str().unwrap(),
             folder_path(&dir.join("alpha").to_string_lossy())
@@ -828,6 +941,41 @@ mod tests {
             .collect();
         assert_eq!(names.first(), Some(&"Home"));
         assert!(!names.contains(&"Projects"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_starred_folder_is_a_shortcut_at_the_top_and_a_starred_place_is_listed_once() {
+        let dir = scratch();
+        let shortcut = folder_path(&dir.join("alpha").to_string_lossy())
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let home = folder_path(&dir.to_string_lossy()).unwrap();
+        let starred = vec![
+            shortcut.clone(),
+            home.to_string_lossy().to_string(),
+            // A folder on a drive that is not there right now stays starred
+            // but is not offered.
+            dir.join("unmounted").to_string_lossy().to_string(),
+        ];
+        let missing = dir.join("unmounted").to_string_lossy().to_string();
+        let entries = starting_points(&starred, Some(home.clone()), dir.join("missing"));
+        assert_eq!(entries[0]["pinned"], true, "the shortcut comes first");
+        assert_eq!(entries[0]["name"], "alpha");
+        assert_eq!(entries[0]["path"], shortcut);
+        assert_eq!(entries[1]["pinned"], true, "the starred home is next");
+        assert_eq!(entries[1]["name"], "Home");
+        assert!(
+            !entries.iter().skip(2).any(|entry| entry["path"] == entries[1]["path"]),
+            "a starred place is listed in the pinned half only"
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry["path"].as_str() == Some(missing.as_str())),
+            "a missing folder is not offered"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -558,6 +558,16 @@ export const api = {
       ? invoke<RemoteFolders>("remote_folders", { deviceId, path })
       : mock.remoteFolders(deviceId, path),
 
+  /** Star or unstar a folder on another machine; answers its pinned paths. */
+  pinRemoteFolder: (
+    deviceId: string,
+    path: string,
+    pinned: boolean,
+  ): Promise<string[]> =>
+    isTauri()
+      ? invoke<string[]>("remote_pin_folder", { deviceId, path, pinned })
+      : mock.pinRemoteFolder(deviceId, path, pinned),
+
   /** Answer a question a directly-driven coding agent is blocked on. */
   answerCodingAgent: (chatId: string, answer: string): Promise<void> =>
     isTauri()

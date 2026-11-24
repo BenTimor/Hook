@@ -1251,3 +1251,73 @@
   height: 14px;
   color: var(--ink-3);
 }
+
+/* Starring a folder on the host makes it a shortcut in the picker's top level.
+   The star is a sibling of the row, not a child: a button inside a button is
+   not a control a browser can deliver. */
+.remote-folder-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.remote-folder-line .remote-project {
+  flex: 1;
+  min-width: 0;
+}
+
+.remote-pin,
+.remote-star {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--ivory);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.remote-pin {
+  width: 34px;
+  height: 34px;
+}
+
+.remote-star {
+  width: 26px;
+  height: 26px;
+}
+
+.remote-pin svg,
+.remote-star svg {
+  width: 14px;
+  height: 14px;
+}
+
+.remote-pin:hover:not(:disabled),
+.remote-star:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.remote-pin[data-on="true"],
+.remote-star[data-on="true"] {
+  color: var(--accent);
+  border-color: var(--line-strong);
+}
+
+.remote-pin:disabled,
+.remote-star:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.remote-group {
+  padding: 4px 2px 1px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}

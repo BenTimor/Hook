@@ -186,8 +186,10 @@ bash.
   (`/api/auth/me`, `/api/auth/preferences`).
 - `crates/hook-core/src/settings.rs` — this *product's* `settings.json`: the
   projects folder, the memory switch, this device's answer for advanced mode (a
-  fallback when the account has none), and the personal model endpoint with the
-  stamp of when it was last set or cleared. The key is never in the account
+  fallback when the account has none), the personal model endpoint with the
+  stamp of when it was last set or cleared, and the folders a controller starred
+  in this machine's remote folder picker (`pinned_folders`: paths on this
+  computer, so they are not account data). The key is never in the account
   file; it reaches the other products only through `server/provider.mjs`, which
   keeps it encrypted for a paid account whose sync switch is on.
 - `server/plans.mjs` — the entitlement in one place: what `free` limits, the
@@ -529,16 +531,27 @@ Changing one side of a boundary is the most common way to break this repo.
   (`push_remote_stubs`, `pending_stub_deletes`, the `remoteChat` pull arm) →
   `server/api.mjs` (`sync_remote_chats`) and `server/sync.mjs`
   (`/remote-chats`, the `/changes` union; a full `kind: "coding"` chat is
-  refused) → `remote.rs` (`coding.create/fetch/send/stop/answer/rename`,
-  `projects.create`, `folders.browse`) →
+  refused) → `remote.rs` (`coding.create/fetch/send/stop/answer/rename/delete`,
+  `projects.create`, `folders.browse`, `folders.pin`) →
   `commands.rs` (`create_remote_coding_chat`, `fetch_remote_chat`,
-  `remote_projects`, `remote_folders`, remote branches in `send_message`/
-  `stop_stream`/`rename_chat`/`answer_coding_agent`) → `bridge.ts` / `types.ts` /
-  `mock.ts` →
+  `remote_projects`, `remote_folders`, `remote_pin_folder`, remote branches in
+  `send_message`/`stop_stream`/`rename_chat`/`answer_coding_agent`, and
+  `delete_chat` → `delete_remote_chat`/`delete_local_chat`) → `bridge.ts` /
+  `types.ts` / `mock.ts` →
   `RemoteChatDialog` (`packages/chat`) → the Sidebar's New chat menu and the
   phone's Home. The viewer's cache is `remote: true` and `is_local_only`, so
-  `push_chats` never uploads it; the owner's delete queues a tombstone. Do not
-  let a viewer delete or change the folder: those belong to the host.
+  `push_chats` never uploads it; the owner's delete queues a tombstone. A
+  viewer's delete is an RPC to the host (`coding.delete`) followed by dropping
+  the cache — never a local delete alone, which the next stub sync would undo.
+  Changing the folder stays a host action.
+- **Starred remote folders:** `settings.rs` (`pinned_folders`,
+  `set_pinned_folder`, `MAX_PINNED_FOLDERS`, `same_path`) → `remote.rs`
+  (`folders.browse` returns the starred folders first and marks every entry,
+  `folders.pin` toggles one) → `commands.rs` (`remote_pin_folder`) →
+  `bridge.ts` / `types.ts` / `mock.ts` → `RemoteChatDialog`. The star is the
+  host's (`settings.json`), not the account's: a path exists on one machine.
+  Unstarring must work for a folder that is not there right now, so only
+  pinning validates the path.
 - **Remote preview:** the host publishes a `preview` event (the same
   `PreviewView`); `relay.rs` mints a ticket through `POST
   /api/remote/preview/ticket`, `server/preview-tunnel.mjs` serves the subdomain,

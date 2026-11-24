@@ -225,6 +225,7 @@ pub fn builder(
             commands::remote_projects,
             commands::remote_create_project,
             commands::remote_folders,
+            commands::remote_pin_folder,
             commands::devices_list,
             commands::subscribe_chat,
             commands::unsubscribe_chat,

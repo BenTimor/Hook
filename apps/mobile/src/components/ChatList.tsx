@@ -209,25 +209,39 @@ export function ChatList({
                   <SquareTerminal strokeWidth={1.8} />
                   Lives on {actionsFor.deviceName ?? "another machine"}
                 </button>
-              ) : (
-                <button
-                  className="action action-danger"
-                  onClick={() => {
-                    if (!confirmingDelete) {
-                      // A phone deletes with a thumb, so the second tap is the
-                      // confirmation. The desktop has an undo in its toast; there
-                      // is nowhere to put one here.
-                      setConfirmingDelete(true);
-                      return;
-                    }
-                    void removeChat(actionsFor.id);
-                    closeActions();
-                  }}
-                >
-                  <Trash2 strokeWidth={1.8} />
-                  {confirmingDelete ? "Delete permanently" : "Delete"}
-                </button>
-              )}
+              ) : null}
+              <button
+                className="action action-danger"
+                disabled={
+                  actionsFor.remote &&
+                  devices?.find((device) => device.id === actionsFor.deviceId)
+                    ?.hostOnline === false
+                }
+                onClick={() => {
+                  if (!confirmingDelete) {
+                    // A phone deletes with a thumb, so the second tap is the
+                    // confirmation. The desktop has an undo in its toast; there
+                    // is nowhere to put one here, and nothing to undo for a
+                    // conversation that lives on another machine.
+                    setConfirmingDelete(true);
+                    return;
+                  }
+                  void removeChat(actionsFor.id);
+                  closeActions();
+                }}
+              >
+                <Trash2 strokeWidth={1.8} />
+                {confirmingDelete
+                  ? actionsFor.remote
+                    ? `Delete on ${
+                        devices?.find((device) => device.id === actionsFor.deviceId)
+                          ?.name ??
+                        actionsFor.deviceName ??
+                        "that machine"
+                      }`
+                    : "Delete permanently"
+                  : "Delete"}
+              </button>
             </div>
           </div>
         </div>

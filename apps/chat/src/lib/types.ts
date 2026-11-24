@@ -87,11 +87,14 @@ export interface RemoteProject {
 export interface RemoteFolder {
   name: string;
   path: string;
+  /** This machine has it starred, so the picker draws a filled star. */
+  pinned?: boolean;
 }
 
 /**
  * One level of a host's folders. `path` is null at the top, where the entries
- * are the places browsing starts from: home, the projects folder, the drives.
+ * are the folders starred on that machine followed by the places browsing
+ * starts from: home, the projects folder, the drives.
  */
 export interface RemoteFolders {
   path: string | null;

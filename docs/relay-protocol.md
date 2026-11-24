@@ -100,37 +100,47 @@ renderer does not learn that the run is remote.
   answers.
 - An unanswered RPC expires after 60 seconds and the caller gets `rpc_timeout`.
 - `agent.start`, `agent.steer`, `agent.answer`, `agent.stop`, `agent.status`,
-  `agent.list`, `projects.list`, `folders.browse`, `sessions.list`,
-  `coding.create`,
+  `agent.list`, `projects.list`, `folders.browse`, `folders.pin`,
+  `sessions.list`, `coding.create`,
   `coding.fetch`, `coding.send`, `coding.stop`, `coding.answer`,
-  `coding.rename`, `projects.create`, `preview.open` are the method names v1
-  uses.
+  `coding.rename`, `coding.delete`, `projects.create`, `preview.open` are the
+  method names v1 uses.
 - A `coding.*` method is handled by the machine that owns the direct coding
   chat. `coding.fetch` returns the whole conversation and marks the chat as
   watched, so its records are mirrored from then on. `coding.create` accepts
   either a `project` (resolved inside the host's projects folder) or a `folder`
   (a full path the controller reached through `folders.browse`): the host
   resolves and validates the folder in both cases, and a folder outside the
-  projects directory is allowed. `projects.create` creates a folder there from
+  projects directory is allowed. `coding.delete` removes the original on the
+  host — an owner's delete also queues the stub tombstone, which is what takes
+  the chat off every other device. `projects.create` creates a folder there from
   a name and an optional description; the host chooses the path.
 - `folders.browse` walks the host's directories one level per call, so a
   controller can start a chat in a folder that is not one of the account's
   projects. `{path}` is a full path; an empty or missing `path` answers the
-  places browsing starts from (`Home`, `Projects`, and on Windows the drives).
-  The answer is directories only:
+  places browsing starts from: the host's starred folders, then `Home`,
+  `Projects`, and on Windows the drives. The answer is directories only:
 
   ```json
   {
     "path": "C:\\Users\\me",
     "parent": "C:\\Users",
-    "entries": [{ "name": "Documents", "path": "C:\\Users\\me\\Documents" }],
+    "entries": [
+      { "name": "Documents", "path": "C:\\Users\\me\\Documents", "pinned": true }
+    ],
     "truncated": false
   }
   ```
 
-  `truncated` says the level held more folders than one answer carries. No
-  method returns a file's contents, and the caller never has to build a path:
-  `parent` and each entry's `path` are the host's own canonical strings.
+  `truncated` says the level held more folders than one answer carries, and
+  `pinned` says the host has starred that folder. No method returns a file's
+  contents, and the caller never has to build a path: `parent` and each entry's
+  `path` are the host's own canonical strings.
+- `folders.pin` stars one directory so every controller sees it first next
+  time: `{path, pinned}` answers `{ "pinned": ["C:\\Users\\me\\work", …] }`,
+  the host's whole list in its own order. The star is stored on the host (in its
+  `settings.json`, at most 12), never on the account, because a folder exists on
+  one machine or nowhere.
 
 ### Presence
 

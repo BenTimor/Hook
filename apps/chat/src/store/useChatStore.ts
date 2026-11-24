@@ -908,6 +908,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     remove: async (id) => {
       const previous = get().chats;
+      const chat = previous.find((c) => c.id === id);
       const wasActive = get().activeId === id;
       set((state) => {
         const streams = { ...state.streams };
@@ -926,6 +927,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
       } catch (error) {
         set({ chats: previous });
         toast.error(textOf(error));
+        return;
+      }
+      // A copy of a remote conversation has no trash to come back from: the
+      // original is deleted on its host, so there is nothing to undo to.
+      if (chat?.remote) {
+        toast("Chat deleted", {
+          description: `Removed on ${chat.deviceName ?? "its machine"}.`,
+        });
         return;
       }
       toast("Chat deleted", {

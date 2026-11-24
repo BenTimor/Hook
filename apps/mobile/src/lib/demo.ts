@@ -47,17 +47,37 @@ const DEMO_FOLDER_TREE: Record<string, string[]> = {
 };
 
 const DEMO_FOLDER_PLACES: RemoteFolder[] = [
-  { name: "Home", path: "C:\\Users\\you" },
-  { name: "Projects", path: "C:\\Users\\you\\Hook Projects" },
-  { name: "C:", path: "C:\\" },
+  { name: "Home", path: "C:\\Users\\you", pinned: false },
+  { name: "Projects", path: "C:\\Users\\you\\Hook Projects", pinned: false },
+  { name: "C:", path: "C:\\", pinned: false },
 ];
 
+/** What the demo host has starred; the browser walk shows the same list. */
+let DEMO_PINNED_FOLDERS: string[] = [];
+
 function demoFolderListing(path: string | null): RemoteFolders {
+  const starred = (candidate: string) =>
+    DEMO_PINNED_FOLDERS.some(
+      (entry) => entry.toLowerCase() === candidate.toLowerCase(),
+    );
   if (!path) {
+    const shortcuts = DEMO_PINNED_FOLDERS.map((pinned) => {
+      const name = pinned.replace(/\\+$/, "").split("\\").pop() || pinned;
+      return {
+        name: DEMO_FOLDER_PLACES.find((place) => place.path === pinned)?.name ?? name,
+        path: pinned,
+        pinned: true,
+      };
+    });
     return {
       path: null,
       parent: null,
-      entries: structuredClone(DEMO_FOLDER_PLACES),
+      entries: [
+        ...shortcuts,
+        ...structuredClone(DEMO_FOLDER_PLACES).filter(
+          (place) => !starred(place.path),
+        ),
+      ],
       truncated: false,
     };
   }
@@ -72,6 +92,7 @@ function demoFolderListing(path: string | null): RemoteFolders {
     entries: (DEMO_FOLDER_TREE[path] ?? []).map((name) => ({
       name,
       path: `${path}${separator}${name}`,
+      pinned: starred(`${path}${separator}${name}`),
     })),
     truncated: false,
   };
@@ -402,6 +423,23 @@ export const demo = {
     path: string | null,
   ): Promise<RemoteFolders> {
     return demoFolderListing(path);
+  },
+
+  async pinRemoteFolder(
+    _deviceId: string,
+    path: string,
+    pinned: boolean,
+  ): Promise<string[]> {
+    const known = DEMO_PINNED_FOLDERS.some(
+      (entry) => entry.toLowerCase() === path.toLowerCase(),
+    );
+    if (pinned && !known) DEMO_PINNED_FOLDERS.push(path);
+    if (!pinned) {
+      DEMO_PINNED_FOLDERS = DEMO_PINNED_FOLDERS.filter(
+        (entry) => entry.toLowerCase() !== path.toLowerCase(),
+      );
+    }
+    return [...DEMO_PINNED_FOLDERS];
   },
 
   async createRemoteProject(

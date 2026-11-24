@@ -124,15 +124,21 @@ The contract is `docs/relay-protocol.md`.
 - `remote.rs`
   - Host-side RPC methods: `agent.start`, `agent.status`, `agent.list`,
     `agent.steer`, `agent.answer`, `agent.stop`, `agent.stopChat`,
-    `projects.list`, `folders.browse`, `sessions.list`.
+    `projects.list`, `folders.browse`, `folders.pin`, `sessions.list`.
   - `coding.create`, `coding.fetch`, `coding.send`, `coding.stop`,
-    `coding.answer`, `coding.rename`: the host half of a direct chat. `create`
-    takes a project name or a folder path; `fetch` marks the chat watched so
-    its records are mirrored from then on.
+    `coding.answer`, `coding.rename`, `coding.delete`: the host half of a direct
+    chat. `create` takes a project name or a folder path; `fetch` marks the chat
+    watched so its records are mirrored from then on; `delete` removes the
+    original here (and queues its stub tombstone) on behalf of any device of the
+    account that can reach this one.
   - `folders.browse`: one level of this machine's folders, directories only,
     for a controller that starts a chat outside the projects list. An empty
-    `path` lists the places browsing starts from; the answer is never a file's
-    contents.
+    `path` lists the folders starred on this machine and then the places
+    browsing starts from; every entry says whether it is starred. The answer is
+    never a file's contents.
+  - `folders.pin`: star or unstar one of those folders. The star is this
+    machine's own (`settings.json`, so it survives a restart and is the same
+    list for every controller), and the answer is the whole list.
   - `projects.create`: create a project folder on the host from a name and an
     optional description. The host chooses the path; the caller cannot send
     one. The folder joins the account through the normal project sync.
@@ -251,9 +257,10 @@ device rows and the test stub were removed afterwards.
 ### 4.1 Direct coding chats on a remote machine (implemented; limits)
 
 A controller can now create a direct chat on a host, see it in the list from any
-device, fetch its transcript over the relay, watch it live, send, steer, stop
-and rename. The host's project must already exist, or a folder is picked on it
-through `folders.browse`. The implementation follows
+device, fetch its transcript over the relay, watch it live, send, steer, stop,
+rename and delete. The host's project must already exist, or a folder is picked
+on it through `folders.browse` (folders starred there open the list). The
+implementation follows
 the shape above:
 
 1. `projects.create` on the host creates a project folder from a name and an
@@ -274,8 +281,10 @@ the shape above:
 6. Sending uses `coding.send` with a generated message id; stopping and
    answering use the matching RPCs. If the host is off, the cache still opens
    and the chip says **offline**; a new message reports the failure.
-7. Deleting on the host queues a stub tombstone, which removes the cache from
-   the other devices. A viewer cannot delete the original.
+7. Deleting goes to the host: `coding.delete` removes the original there and
+   queues the stub tombstone, and the controller then drops its cache. The
+   viewer needs the host to be online, because the folder and the session are
+   there; a viewer's delete used to be refused outright.
 
 Known limits (do not mistake them for bugs):
 
@@ -285,14 +294,16 @@ Known limits (do not mistake them for bugs):
   an optional description; the host chooses the folder under its projects
   directory. A remote *folder* is a path the controller reached through
   `folders.browse`, which lists directories only and never a file's contents;
-  `coding.create` accepts either. Changing an existing chat's folder stays a
-  host action.
+  `coding.create` accepts either. Folders starred on the host (`folders.pin`)
+  come first in that list, so the picker opens on the folders a person actually
+  starts chats in. Changing an existing chat's folder stays a host action.
 - **Coarse durable state.** The stub records `idle`, `running` or `error` from
   the last message. `needs_input` and the live plan come from the relay while
   the chat is open; a late viewer may see `idle` until it fetches.
-- **The cache is not deletable on the viewer.** Delete lives on the host, where
-  the folder and session are. Hiding a stub locally without deleting the
-  original would just come back on the next sync.
+- **The cache is a cache.** Deleting a cached conversation asks its host to
+  delete the original, and removes the copy here once that succeeded. With the
+  host offline the command says so and the copy stays; there is no
+  "hide it here" mode, because the next stub sync would bring it back.
 - **No automatic "continue on this machine".** Opening a cached chat never
   starts a local engine; that would be a second owner.
 - **The host does not need advanced mode for a remote create.** The controller's

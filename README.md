@@ -1635,14 +1635,21 @@ agent themselves.
   picker could reach (directories are listed one level at a time, never a
   file's contents). A folder picked that way is not registered as a project —
   it is the chat's folder, exactly as **Coding agent…** does on this computer.
+  A folder's star in that picker pins it **on the host**: it is the same
+  shortcut from every device of the account, and it is where the picker opens
+  next time (Home, Projects and the drives follow it). Pins live in that
+  machine's `settings.json`, so they are per-machine, at most twelve, and
+  survive a restart.
   The host keeps the folder, the engine and the
   session. Only a small stub syncs — title, machine, live
   state, message count — never the transcript, a path or a session id. Opening
   the chat on another device fetches the conversation over the relay and caches
   it locally; that cache never uploads. If the host is offline, the cached copy
   opens instead. Steering, stopping and renaming still reach the host; changing
-  the folder or deleting the chat happens on the machine that owns it, because
-  the folder and the engine only exist there.
+  the folder happens on the machine that owns it, because the folder and the
+  engine only exist there. Deleting a cached chat also goes to the host — it
+  removes the original there and queues the stub, which is why it needs that
+  machine to be online — and then drops the copy here.
 
 ## Coding agents
 

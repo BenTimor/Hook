@@ -115,6 +115,16 @@ export const mobile = {
       ? invoke<RemoteFolders>("remote_folders", { deviceId, path })
       : demo.remoteFolders(deviceId, path),
 
+  /** Star or unstar a folder on another machine; answers its pinned paths. */
+  pinRemoteFolder: (
+    deviceId: string,
+    path: string,
+    pinned: boolean,
+  ): Promise<string[]> =>
+    isTauri()
+      ? invoke<string[]>("remote_pin_folder", { deviceId, path, pinned })
+      : demo.pinRemoteFolder(deviceId, path, pinned),
+
   remoteProjects: (deviceId: string): Promise<RemoteProject[]> =>
     isTauri()
       ? invoke<RemoteProject[]>("remote_projects", { deviceId })
