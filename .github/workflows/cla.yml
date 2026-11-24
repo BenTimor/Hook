@@ -18,9 +18,9 @@ name: CLA
 #      script that talks to the GitHub API and nothing else.
 #
 # Signatures live in `.github/cla-signatures.json` on the default branch. A
-# commit that touches only that file matches no `paths:` filter in
-# `deploy-waitlist.yml` or `checks.yml`, so recording a signature deploys
-# nothing and starts no build.
+# commit that touches only that file matches no `paths:` filter in `checks.yml`,
+# and `deploy-waitlist.yml` runs only on a `deploy-*` tag, so recording a
+# signature starts no build and deploys nothing.
 #
 # To make the check blocking, add "CLA" as a required status check in the
 # branch protection rule for `main`.

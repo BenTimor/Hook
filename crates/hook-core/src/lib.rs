@@ -40,6 +40,7 @@ mod version;
 mod workspace;
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
@@ -342,6 +343,49 @@ fn install_tray(app: &mut tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Where this process keeps its own data: chats, settings, the agent home.
+///
+/// The account file, memory and the browser-channel descriptor live one level
+/// up from a product's folder (`auth.rs`, `memory.rs`, `channel.rs`), so two
+/// running builds of the *same* product would share all of it — the chats, the
+/// sync cursor and the device id. That is exactly what a debug build must not
+/// do to an installed one: `coding::recover` turns a running agent's "streaming"
+/// reply into an error the next time either process starts, and the relay would
+/// see one machine connected twice.
+///
+/// A debug build (`pnpm app`, `cargo run`) therefore keeps its data one folder
+/// deeper, in `%APPDATA%\hook-dev\<identifier>`, which moves the account file
+/// with it: its own sign-in, its own device id, its own chats. A release build
+/// is the installed product and keeps `%APPDATA%\<identifier>`.
+///
+/// `HOOK_DATA_DIR` overrides both: point it at an installed product's folder to
+/// read its data from a debug build, or at an empty folder to walk through a
+/// fresh install.
+fn resolve_data_dir(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(dir) = std::env::var_os("HOOK_DATA_DIR").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
+    let dir = app.path().app_data_dir()?;
+    if !cfg!(debug_assertions) {
+        return Ok(dir);
+    }
+    Ok(dev_data_dir(&dir).unwrap_or(dir))
+}
+
+/// `%APPDATA%\app.hook.chat` → `%APPDATA%\hook-dev\app.hook.chat`.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn dev_data_dir(dir: &Path) -> Option<PathBuf> {
+    let parent = dir.parent()?;
+    Some(parent.join("hook-dev").join(dir.file_name()?))
+}
+
+/// A phone's data folder is its own container and its parent belongs to the
+/// system (`auth.rs`), so there is no sibling folder to nest under.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn dev_data_dir(_dir: &Path) -> Option<PathBuf> {
+    None
+}
+
 fn setup(
     app: &mut tauri::App,
     product: Product,
@@ -351,7 +395,7 @@ fn setup(
     // First, so anything that logs or reports "this build" during startup
     // names the product's version rather than hook-core's.
     version::set(version);
-    let data_dir = app.path().app_data_dir()?;
+    let data_dir = resolve_data_dir(app)?;
     std::fs::create_dir_all(&data_dir)?;
     install_panic_log(&data_dir);
 
@@ -693,5 +737,24 @@ pub fn on_exit(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<Arc<AppState>>() {
         state.agents.kill_all_sync();
         state.preview.stop();
+    }
+}
+
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+mod tests {
+    use super::dev_data_dir;
+    use std::path::Path;
+
+    /// The dev folder has to sit *below* the roaming folder that holds the
+    /// products, not beside `app.hook.chat`: `auth.rs` and `memory.rs` take the
+    /// parent of the data folder as the shared `app.hook` one, which is what
+    /// keeps a debug build's account file away from the installed one.
+    #[test]
+    fn a_debug_build_keeps_its_data_beside_the_products() {
+        let installed = Path::new("roaming").join("app.hook.chat");
+        let dev = dev_data_dir(&installed).expect("a dev folder");
+        assert_eq!(dev, Path::new("roaming").join("hook-dev").join("app.hook.chat"));
+        // The account file follows the parent, so it lands in hook-dev too.
+        assert_eq!(dev.parent(), Some(Path::new("roaming/hook-dev")));
     }
 }

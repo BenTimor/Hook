@@ -13,9 +13,10 @@ pushed. Stop there and report what changed.
   either.
 - Do not run `pnpm version:bump` unless asked: a bump is the first step of a
   release, not part of a code change.
-- Do not push to `main` to "see if CI passes". A push to `main` deploys
-  hookcode.io and can publish a Windows installer for both products, and every
-  run costs twenty-plus minutes of build minutes.
+- Do not push to `main` to "see if CI passes". A push to `main` runs the checks;
+  hookcode.io is deployed by a `deploy-*` tag on the tip of `main`, and an
+  installer is published by `pnpm release`. Both are deliberate, separate
+  actions, not a side effect of a merge.
 
 ## What this is
 
@@ -28,7 +29,7 @@ single pnpm + Cargo workspace.
 | **Hook** (AI chat + coding agents) | `apps/chat/` | `pnpm app` | `pnpm app:build` / `pnpm app:portable` | `pnpm release` |
 | **Hook Workspace** (projects, boards, tasks, docs) | `apps/workspace/` | `pnpm workspace:app` | `pnpm workspace:app:build` | `pnpm release` |
 | **HookCode** (phone: chat + Workspace, no coding agents) | `apps/mobile/` | `pnpm mobile:android` / `pnpm mobile:ios` | `pnpm mobile:build` | App Store Connect / Play Console |
-| Landing page | `waitlist/` | `pnpm waitlist:dev` → :5173 | `pnpm waitlist:build` → `dist-waitlist/` | `.github/workflows/deploy-waitlist.yml` |
+| Landing page | `waitlist/` | `pnpm waitlist:dev` → :5173 | `pnpm waitlist:build` → `dist-waitlist/` | `.github/workflows/deploy-waitlist.yml`, on a `deploy-*` tag |
 | Account service | `server/` | `pnpm waitlist:start` | Docker image | `scripts/deploy-waitlist.sh` |
 
 Shared, and the reason the products look and behave alike:
@@ -108,6 +109,14 @@ pnpm browser:test
 pnpm mock
 ```
 
+A **debug build** (`pnpm app`, `cargo run`) keeps its data in
+`%APPDATA%\hook-dev\<identifier>`, one folder deeper than an installed product's,
+with its own `app.hook\account.json` beside it: its own sign-in, device id, chats
+and sync cursor. That is what lets a dev Hook and the Store one run at the same
+time. `HOOK_DATA_DIR` overrides the folder — point it at `%APPDATA%\app.hook.chat`
+to read the installed app's data from a debug build. A release build is the
+installed product and is never redirected on its own.
+
 No ESLint, Prettier or rustfmt config. Match the file you are editing.
 
 Commands run under bash on Windows, not `cmd.exe`, so redirect to
@@ -153,7 +162,10 @@ bash.
   description this machine registers. `docs/relay-protocol.md` is the contract;
   `docs/remote-control-status.md` is the handoff (what exists, what is left).
 - `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
-  builder every product calls. A capability trims the prompt and the toolset; it
+  builder every product calls. `resolve_data_dir` is the one place that decides
+  where a process keeps its data: `%APPDATA%\<identifier>` for an installed
+  build, `%APPDATA%\hook-dev\<identifier>` for a debug one, `HOOK_DATA_DIR` over
+  both (see **Commands**). A capability trims the prompt and the toolset; it
   must never change the data model. The six fields are places an answer can
   appear or things a device can reach: `preview_pages` (an HTML file served from
   a project), `preview_workspace` (a board, task or document — just account
@@ -549,7 +561,10 @@ Changing one side of a boundary is the most common way to break this repo.
   `common/hook.mojom` → `browser/ui/transport.ts` (the `ChatTransport`) →
   `pnpm browser:smoke --channel` with Hook running. The token is a credential:
   never log it, never send it to a page, and keep the routes read-and-send only —
-  a channel that can rename or delete is a second window into the account. A
+  a channel that can rename or delete is a second window into the account. The
+  descriptor sits beside the account file, so a debug build publishes it under
+  `%APPDATA%\hook-dev\app.hook\` and `--channel` follows the installed app, not
+  `pnpm app` (`browser/README.md`, **The channel**). A
   `chrome://` renderer cannot make these requests itself (Chromium kills it for
   "Incorrect scheme"), so the call stays in the browser process, and the
   descriptor is read on a thread pool because the page asks during startup, where
@@ -574,7 +589,8 @@ Changing one side of a boundary is the most common way to break this repo.
   logged — never allowed to 400 the batch.
 - **A turn that seems to never answer:** run the app with `HOOK_DEBUG_TURN=1`
   and watch stderr — every step (placeholder saved, calling the model, model
-  returned) is logged. `%APPDATA%\app.hook.chat\panic.log` catches panics.
+  returned) is logged. `%APPDATA%\app.hook.chat\panic.log` catches panics (a
+  debug build keeps it in `%APPDATA%\hook-dev\app.hook.chat\panic.log`).
   `finish()` converts any message still marked `streaming` into an error, so a
   dead turn can no longer leave the window spinning.
 - **Git/sync behavior:** `server/sync.mjs` + `server/git.mjs` (limits, merge
@@ -712,7 +728,11 @@ Changing one side of a boundary is the most common way to break this repo.
   below. `%APPDATA%\app.hook\memory\` is the same kind of shared,
   account-scoped data: one file per account, atomic writes with a unique temp
   name, and never uploaded to a different account (the file name is a hash of
-  the account).
+  the account). The shared folder is the *parent* of a product's data folder
+  (`auth.rs::shared_account_path`), which is why a debug build's data lives in
+  `%APPDATA%\hook-dev\<identifier>`: its account file, device id and memory move
+  with it (`lib.rs::resolve_data_dir`). Do not flatten that nesting — a debug
+  build beside an installed one would join its account and its chats.
 - **A personal model key is a credential, and the account keeps only ciphertext.**
   It reaches another product only through `server/provider.mjs`: AES-256-GCM with
   the account subject as additional data, the key derived from
@@ -768,11 +788,13 @@ Changing one side of a boundary is the most common way to break this repo.
   `apps/*/src-tauri/resources/pi-runtime/` (restored by `pnpm engine`),
   `apps/*/src-tauri/resources/git/` (restored by `pnpm git`), `dist/`,
   `dist-waitlist/`, `release/`.
-- **A push to `main` deploys production.** `deploy-waitlist.yml` ships
-  hookcode.io when the site or the server changed; an installer is published by
-  `pnpm release`, which uploads the versioned file and swaps the index last. Do
-  not push unless the user asked, and never run `pnpm release` without being
-  asked for that release.
+- **A `deploy-*` tag on the tip of `main` deploys production.** A push to `main`
+  only runs the checks. `deploy-waitlist.yml` refuses a tag that main has moved
+  past, so a merge cannot deploy by accident and an old commit cannot roll the
+  site back; `./scripts/deploy-waitlist.sh` is the same deploy without a tag, for
+  an emergency. An installer is published by `pnpm release`, which uploads the
+  versioned file and swaps the index last. Do not tag, release or deploy unless
+  the user asked for that release.
 - **Never edit a version by hand.** Run `pnpm version:bump patch|minor|major`
   (add `--product workspace` for the second product); it updates that product's
   `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` together. The

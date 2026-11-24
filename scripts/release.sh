@@ -11,7 +11,7 @@
 #
 # Why here and not in CI: a release is a deliberate act, and the Windows build
 # it replaces ran on every push whether or not anything shipped. The checks stay
-# in `.github/workflows/checks.yml`; the website still deploys on push.
+# in `.github/workflows/checks.yml`; the website deploys on a `deploy-*` tag.
 #
 # It refuses to release from anything but a clean, pushed `main`, refuses a
 # version the index already has with different source, and runs the checks

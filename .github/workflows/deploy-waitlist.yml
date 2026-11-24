@@ -1,9 +1,24 @@
 name: Deploy waitlist
 
-# Pushes to main that can change https://hookcode.io deploy it. Reuses
-# scripts/deploy-waitlist.sh so CI and a local deploy stay identical; the only
+# A `deploy-*` tag on the tip of main deploys https://hookcode.io. A push to
+# main only runs the checks; production moves when a person tags the commit they
+# mean to ship, so a merge cannot deploy by accident and a stale commit cannot
+# roll production back (the `gate` job refuses a tag main has moved past).
+#
+# Tag format is only the prefix; pick a name you can find again:
+#
+#   git switch main && git pull
+#   git tag deploy-$(date +%Y-%m-%d)     # or deploy-2, deploy-auth-fix
+#   git push origin deploy-$(date +%Y-%m-%d)
+#
+# To deploy without a tag — an emergency, or a server fix that cannot wait for
+# the next merge — run `./scripts/deploy-waitlist.sh` from the repository. It
+# needs no GitHub at all, and it is the same script this workflow calls.
+#
+# Reuses that script so CI and a local deploy stay identical; the only
 # difference is that the built site is passed from the verify job instead of
-# being rebuilt (SKIP_BUILD=1).
+# being rebuilt (SKIP_BUILD=1). Path filters are gone on purpose: they do not
+# apply to tag pushes, and a tag is already a deliberate choice.
 #
 # The script fingerprints what the server container runs and rebuilds the image
 # only when that changed, so copy, layout and stylesheet changes ship a tarball
@@ -19,26 +34,8 @@ name: Deploy waitlist
 # update both secrets. Nothing else needs to change.
 on:
   push:
-    branches: [main]
-    paths:
-      - "waitlist/**"
-      - "public/**"
-      - "packages/ui/**"
-      - "server/**"
-      - "infra/**"
-      - "release.config.json"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "tsconfig.base.json"
-      - "tsconfig.waitlist.json"
-      - "waitlist.vite.config.mjs"
-      - "scripts/deploy-waitlist.sh"
-      - "scripts/site-source-hash.mjs"
-      - ".github/workflows/deploy-waitlist.yml"
-  workflow_dispatch:
+    tags:
+      - "deploy-*"
 
 permissions:
   contents: read
@@ -51,8 +48,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The tag is the whole gate, so it has to mean something: main is the only
+  # branch whose checks ran, and a tag on an older commit would ship that older
+  # tree over a newer one. Both are one comparison away, before anything is
+  # built or uploaded. A merge landing between the tag and this run fails the
+  # deploy instead of shipping a tree main has already moved past; re-tag the
+  # new tip.
+  gate:
+    name: Tag is on the tip of main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare the tagged commit with main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          tip="$(git rev-parse FETCH_HEAD)"
+          tagged="$(git rev-parse HEAD)"
+          if [ "$tagged" != "$tip" ]; then
+            echo "::error::$GITHUB_REF_NAME is $tagged, but main is at $tip. A deploy tag must point at the tip of main: merge first, then tag the merge commit."
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME is the tip of main ($tagged)."
+
   verify:
     name: Verify build & tests
+    needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

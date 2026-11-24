@@ -81,8 +81,10 @@ round trip.
 | `--chrome <path>` | points it at another binary |
 
 Run it **after** a build, never during one: it maps DLLs out of `out/` and the
-linker cannot overwrite a file that is mapped. `--channel` needs the Hook app
-running on this machine; every other flag runs alone.
+linker cannot overwrite a file that is mapped. `--channel` needs the installed
+Hook app running on this machine (see **The channel**: a debug build publishes
+its descriptor under `hook-dev` and stays invisible to the browser); every other
+flag runs alone.
 
 ## The dock bundle
 
@@ -291,9 +293,12 @@ yes.
 The dock's real backend is a *running* Hook app, not a server: `hook-core`'s
 `channel.rs` binds an ephemeral loopback port and writes
 `%APPDATA%\app.hook\browser-channel.json` (`port`, `token`, `pid`, `product`,
-`version`) beside the shared account file, atomically and `0600` on unix. Quitting
-Hook removes it; a killed process leaves it behind, which is why "available" means
-**`/health` answered**, not "a file exists".
+`version`) beside the shared account file, atomically and `0600` on unix. A debug
+build (`pnpm app`) writes the descriptor with its own data instead, under
+`%APPDATA%\hook-dev\app.hook\`, so a development Hook never takes over the
+installed app's channel — and the browser, which reads the installed path, does
+not see it. Quitting Hook removes it; a killed process leaves it behind, which is
+why "available" means **`/health` answered**, not "a file exists".
 
 Routes, all requiring `Authorization: Bearer <token>` except `/health`: `/chats`,
 `/chats/{id}`, `POST /chats`, `POST /chats/{id}/send`, `POST /chats/{id}/stop`.

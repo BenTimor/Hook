@@ -93,15 +93,25 @@ The page is live at **[hookcode.io](https://hookcode.io)** on the MoonRock VPS
 ./scripts/deploy-waitlist.sh     # build → upload site (and source, if the image changed) → probe
 ```
 
-#### Automatic deploys (GitHub Actions)
+#### Deploys (GitHub Actions)
 
-Pushes to `main` that can change the site or the server deploy automatically.
-`.github/workflows/deploy-waitlist.yml` runs `pnpm waitlist:test` +
-`pnpm waitlist:build` on a clean runner, then calls the same
-`scripts/deploy-waitlist.sh` over SSH with `SKIP_BUILD=1` (it reuses the artifact the
-verify job built). Pull requests run the checks without deploying
-(`.github/workflows/checks.yml`). Deploys are serialized; a running deploy is never
-cancelled by the next push.
+A tag decides. `.github/workflows/deploy-waitlist.yml` runs on a `deploy-*` tag,
+refuses it unless it points at the tip of `main`, then runs `pnpm waitlist:test` +
+`pnpm waitlist:build` on a clean runner and calls the same
+`scripts/deploy-waitlist.sh` over SSH with `SKIP_BUILD=1` (it reuses the artifact
+the verify job built). A push to `main` only runs the checks
+(`.github/workflows/checks.yml`), so a merge cannot deploy by accident and a tag
+on an old commit cannot roll the site back. Deploys are serialized; a running
+deploy is never cancelled by the next tag.
+
+```bash
+git switch main && git pull
+git tag deploy-$(date +%Y-%m-%d) && git push origin deploy-$(date +%Y-%m-%d)
+```
+
+The prefix is the only rule; `deploy-2` and `deploy-auth-fix` work too. To
+deploy without a tag — an emergency, or a server fix that cannot wait for the
+next merge — run `./scripts/deploy-waitlist.sh` from the repository.
 
 The script fingerprints what the container runs (`scripts/site-source-hash.mjs`:
 the server, `waitlist/content.json`, `release.config.json`, the manifests and
@@ -501,6 +511,10 @@ clone, copy `harness.config.ci.toml` (the config a release is built with) or
 approved account. For UI work without the service, use the mock provider below.
 The config file must exist before building — it is compiled into the binary, so a
 missing file is a compile error by design.
+
+`pnpm app` is a debug build, so it keeps its own data under
+`%APPDATA%\hook-dev\` and is signed out the first time it starts. See **Where the
+data lives**.
 
 No API key yet? Use the bundled mock provider:
 
@@ -1273,7 +1287,22 @@ see it:
                            list) and `memory.txt` (the pinned memories its
                            prompt starts with)
   hook-guard.mjs           the guard loaded into every coding agent
+
+%APPDATA%\hook-dev\          only a debug build: `pnpm app`, `cargo run`
+  app.hook\                  account.json, memory\ and the browser channel
+  app.hook.chat\             the product folder, laid out exactly as above
 ```
+
+A **debug build** — `pnpm app`, `pnpm workspace:app`, `cargo run` — uses those
+`hook-dev` folders instead, one level deeper, so it has its own sign-in, device
+id, chats, sync cursor and agent home. Two live Hooks that shared a folder would
+write over each other — the second one to start turns a running coding agent's
+reply into an error (`coding.rs::recover`), the sync cursor flips back and forth,
+and the relay sees one machine connected twice. Signing in there registers a
+second machine on the account under the same computer name, so rename the dev
+one in Settings. `HOOK_DATA_DIR` picks the folder explicitly, for a debug build
+that does have to read the installed data; delete `%APPDATA%\hook-dev\` to reset
+it.
 
 Hook Workspace writes to `%APPDATA%\app.hook.workspace\` and reads the same
 `%APPDATA%\app.hook\account.json`, so the two products never ask for a sign-in
@@ -1283,7 +1312,8 @@ twice; its cached data and the service it talks to are documented in
 The Microsoft Store (MSIX) build writes to the same `%APPDATA%\app.hook.chat`
 folder: its manifest opts out of AppData virtualization so Store and direct
 installs share chats and sign-in. In-app updates download installers to
-`%TEMP%\hook-update\`; nothing else is written outside this folder.
+`%TEMP%\hook-update\`; nothing else is written outside this folder. A debug build
+is not part of either channel; it uses `%APPDATA%\hook-dev\` above.
 
 ## Sync between computers
 
@@ -1982,7 +2012,8 @@ Two things only break in an installed app, never in `tauri dev`:
 
 Both are covered by tests, and the portable zip is verified with
 `src-tauri/resources/pi-runtime` moved aside so the dev copy cannot mask a
-packaging bug. Agents write their stderr to `%APPDATA%\app.hook.chat\logs\`.
+packaging bug. Agents write their stderr to `%APPDATA%\app.hook.chat\logs\`
+(`%APPDATA%\hook-dev\app.hook.chat\logs\` for a debug build).
 
 ## License
 

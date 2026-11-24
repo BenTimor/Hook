@@ -2,7 +2,10 @@
 
 Reference copies of the server-side configuration for the **Hook landing page**
 (`hookcode.io`). Everything here is uploaded by `./scripts/deploy-waitlist.sh`
-on every deploy — edit it *here*, not on the server.
+on every deploy — edit it *here*, not on the server. CI runs that script on a
+`deploy-*` tag on the tip of `main` (`.github/workflows/deploy-waitlist.yml`), so
+an ordinary push changes nothing here; run the script yourself for a manual
+deploy.
 
 | File | Lives on the server at | Purpose |
 |------|------------------------|---------|
