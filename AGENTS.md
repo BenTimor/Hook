@@ -639,7 +639,14 @@ Changing one side of a boundary is the most common way to break this repo.
   account's id for a folder it already owns, and a push that comes back
   `duplicate_name` adopts `conflictId` instead of retrying forever. One project
   the account refuses (a >64-character or reserved name) is skipped locally and
-  logged — never allowed to 400 the batch.
+  logged — never allowed to 400 the batch. A project is deleted by removing its
+  folder or through `delete_project`: `list` drops a note whose folder is gone,
+  `take_dropped` hands it to the sync engine, and `push_projects` sends
+  `{deleted: true}` — without that tombstone the account's row survives and the
+  next pull creates the folder again. The folder itself is deleted only when it
+  holds nothing but `.git` (`is_reusable`), so Hook never removes the user's
+  work; a deletion on one computer keeps another computer's copy, which pushes
+  the project back.
 - **A turn that seems to never answer:** run the app with `HOOK_DEBUG_TURN=1`
   and watch stderr — every step (placeholder saved, calling the model, model
   returned) is logged. `%APPDATA%\app.hook.chat\panic.log` catches panics (a

@@ -20,6 +20,7 @@ import type {
   Message,
   PlanStep,
   PreviewView,
+  Project,
   RemoteFolder,
   RemoteFolders,
   RemoteProject,
@@ -405,6 +406,30 @@ const demoLogin = () =>
  * the desktop one. `?advanced=1` starts with it on. */
 let MOCK_ADVANCED =
   new URLSearchParams(window.location.search).get("advanced") === "1";
+
+/** Coding projects, in the tab only. Removing one drops it from this list, so
+ * the settings screen can be clicked through without the desktop shell. */
+let MOCK_PROJECTS: Project[] = [
+  {
+    id: "pj_mock_invoice",
+    name: "invoice-parser",
+    path: "C:/Users/you/Documents/Hook/invoice-parser",
+    description:
+      "Python CLI that turns supplier PDFs into line items. pdfplumber plus a sqlite cache.",
+    createdAt: Date.now() - 9 * DAY,
+    updatedAt: Date.now() - 2 * DAY,
+    isGit: true,
+  },
+  {
+    id: "pj_mock_site",
+    name: "site",
+    path: "C:/Users/you/Documents/Hook/site",
+    description: "Personal site: Astro, Tailwind, Cloudflare Pages.",
+    createdAt: Date.now() - 30 * DAY,
+    updatedAt: Date.now() - 5 * HOUR,
+    isGit: true,
+  },
+];
 
 /**
  * Browser preview only. The desktop keeps memories in the shared account folder
@@ -897,33 +922,18 @@ export const mock = {
       plan: MOCK_PLAN,
       cloudSync: MOCK_CLOUD_SYNC,
       customProvider: MOCK_PROVIDER,
-      projects: [
-        {
-          id: "pj_mock_invoice",
-          name: "invoice-parser",
-          path: "C:/Users/you/Documents/Hook/invoice-parser",
-          description:
-            "Python CLI that turns supplier PDFs into line items. pdfplumber plus a sqlite cache.",
-          createdAt: Date.now() - 9 * DAY,
-          updatedAt: Date.now() - 2 * DAY,
-          isGit: true,
-        },
-        {
-          id: "pj_mock_site",
-          name: "site",
-          path: "C:/Users/you/Documents/Hook/site",
-          description: "Personal site: Astro, Tailwind, Cloudflare Pages.",
-          createdAt: Date.now() - 30 * DAY,
-          updatedAt: Date.now() - 5 * HOUR,
-          isGit: true,
-        },
-      ],
+      projects: MOCK_PROJECTS,
     };
   },
 
   async setProjectsDir(path: string): Promise<SettingsView> {
     const view = await mock.getSettings();
     return { ...view, projectsDir: path };
+  },
+
+  async deleteProject(id: string): Promise<SettingsView> {
+    MOCK_PROJECTS = MOCK_PROJECTS.filter((project) => project.id !== id);
+    return mock.getSettings();
   },
 
   async setAdvancedMode(enabled: boolean): Promise<SettingsView> {

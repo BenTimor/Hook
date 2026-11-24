@@ -49,6 +49,15 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// The id shape the account accepts (`server/sync.mjs`), checked before an id is
+/// sent so one bad entry cannot reject a whole batch.
+fn project_id_ok(id: &str) -> bool {
+    (4..=64).contains(&id.len())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct SyncState {
@@ -65,6 +74,11 @@ struct SyncState {
     media: Vec<String>,
     /// Projects whose repository is prepared on this machine.
     prepared: Vec<String>,
+    /// Projects deleted here whose row on the account still exists. Sent once,
+    /// then forgotten; without the tombstone the next pull creates the folder
+    /// again and the account's copy can never be removed.
+    #[serde(default)]
+    pending_project_deletes: Vec<String>,
     /// Fingerprint of each owned direct chat's stub as last accepted, so an
     /// unchanged stub is not pushed every cycle.
     #[serde(default)]
@@ -965,6 +979,26 @@ impl SyncEngine {
     async fn push_projects(&self, token: &str) -> Result<(), String> {
         let root = self.settings.projects_dir();
         let projects = self.projects.list(&root)?;
+        // A folder that went away is a project deleted here. The account has to
+        // hear about it: its row would otherwise survive and the next pull would
+        // create the folder again — a project nobody can delete.
+        let dropped = self.projects.take_dropped();
+        if !dropped.is_empty() {
+            {
+                let mut state = lock(&self.state);
+                for project in dropped {
+                    if !state.pending_project_deletes.contains(&project.id) {
+                        state.pending_project_deletes.push(project.id.clone());
+                    }
+                    state.project_versions.remove(&project.id);
+                    state.prepared.retain(|id| id != &project.id);
+                }
+            }
+            self.save_state()?;
+        }
+        if let Err(error) = self.push_project_deletes(token).await {
+            eprintln!("hook: project deletions: {error}");
+        }
         let mut sends: Vec<(String, String)> = Vec::new();
         let mut unsyncable: Vec<(String, String)> = Vec::new();
         {
@@ -1068,6 +1102,68 @@ impl SyncEngine {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    /// Queue a tombstone for a project removed through `delete_project`. The
+    /// note is already gone; this is what stops the account, and every other
+    /// computer, from putting it back.
+    pub fn project_deleted(&self, id: &str) {
+        if !project_id_ok(id) {
+            return;
+        }
+        {
+            let mut state = lock(&self.state);
+            if !state.pending_project_deletes.iter().any(|entry| entry == id) {
+                state.pending_project_deletes.push(id.to_string());
+            }
+            state.project_versions.remove(id);
+            state.prepared.retain(|entry| entry != id);
+        }
+        let _ = self.save_state();
+    }
+
+    /// Tell the account which projects this device removed. Ten per request,
+    /// like every other push, and an id is forgotten once the account agrees.
+    async fn push_project_deletes(&self, token: &str) -> Result<(), String> {
+        let pending = {
+            let mut state = lock(&self.state);
+            // An id the account cannot parse would 400 the whole batch and wedge
+            // every later cycle, so an unparseable one is dropped here.
+            state.pending_project_deletes.retain(|id| project_id_ok(id));
+            state.pending_project_deletes.clone()
+        };
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let now = now_ms();
+        for batch in pending.chunks(MAX_BATCH) {
+            let body = json!({
+                "projects": batch.iter().map(|id| json!({
+                    "id": id,
+                    "deleted": true,
+                    "updatedAt": now,
+                })).collect::<Vec<_>>()
+            });
+            let response = self.post(token, "/api/sync/projects", body).await?;
+            let mut landed: Vec<String> = Vec::new();
+            if let Some(results) = response["results"].as_array() {
+                for result in results {
+                    if result["ok"].as_bool() != Some(true) {
+                        continue;
+                    }
+                    if let Some(id) = result["id"].as_str() {
+                        landed.push(id.to_string());
+                    }
+                }
+            }
+            if !landed.is_empty() {
+                lock(&self.state)
+                    .pending_project_deletes
+                    .retain(|id| !landed.contains(id));
+                self.save_state()?;
+            }
+        }
+        Ok(())
     }
 
     /// Entries changed on this machine. One small batch is enough: memory is a
@@ -1324,30 +1420,53 @@ impl SyncEngine {
                             }
                         }
                     }
-                    "project" if change["deleted"].as_bool() != Some(true) => {
-                        let id = change["id"].as_str().unwrap_or_default();
-                        let name = change["name"].as_str().unwrap_or_default();
-                        let description = change["description"].as_str().unwrap_or_default();
-                        let created_at = change["createdAt"].as_i64().unwrap_or(0);
-                        let updated_at = change["updatedAt"].as_i64().unwrap_or(0);
-                        match self.projects.bind(
-                            &self.settings.projects_dir(),
-                            id,
-                            name,
-                            description,
-                            created_at,
-                            updated_at,
-                        ) {
-                            Ok(project) => {
-                                // It came from the account; pushing it straight
-                                // back would only bump the cursor for everyone.
-                                lock(&self.state).project_versions.insert(
-                                    project.id,
-                                    format!("{}|{}", project.name, project.description),
-                                );
+                    "project" => {
+                        let id = change["id"].as_str().unwrap_or_default().to_string();
+                        if change["deleted"].as_bool() == Some(true) {
+                            // Deleted on another computer: the row is gone for
+                            // good, so a note whose folder no longer exists goes
+                            // with it. A folder that is still here is this
+                            // machine's copy of the project, and its next push
+                            // puts it back rather than deleting someone's work
+                            // by proxy.
+                            if self.projects.forget_missing(&id) {
                                 projects_changed = true;
                             }
-                            Err(error) => eprintln!("hook: could not bind a synced project: {error}"),
+                            lock(&self.state).project_versions.remove(&id);
+                        } else if lock(&self.state)
+                            .pending_project_deletes
+                            .iter()
+                            .any(|entry| entry == &id)
+                        {
+                            // Our own tombstone has not landed yet. Binding the
+                            // row now would recreate the folder we just removed.
+                        } else {
+                            let name = change["name"].as_str().unwrap_or_default();
+                            let description =
+                                change["description"].as_str().unwrap_or_default();
+                            let created_at = change["createdAt"].as_i64().unwrap_or(0);
+                            let updated_at = change["updatedAt"].as_i64().unwrap_or(0);
+                            match self.projects.bind(
+                                &self.settings.projects_dir(),
+                                &id,
+                                name,
+                                description,
+                                created_at,
+                                updated_at,
+                            ) {
+                                Ok(project) => {
+                                    // It came from the account; pushing it straight
+                                    // back would only bump the cursor for everyone.
+                                    lock(&self.state).project_versions.insert(
+                                        project.id,
+                                        format!("{}|{}", project.name, project.description),
+                                    );
+                                    projects_changed = true;
+                                }
+                                Err(error) => {
+                                    eprintln!("hook: could not bind a synced project: {error}")
+                                }
+                            }
                         }
                     }
                     "memory" => match serde_json::from_value::<Entry>(change["entry"].clone()) {
@@ -1972,6 +2091,118 @@ mod tests {
             ids.iter().any(|id| id == "pj_account_copy"),
             "the second cycle must push the account's id: {ids:?}"
         );
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn a_removed_project_folder_is_tombstoned_once() {
+        // The folder going away is a deletion, and the account has to hear it.
+        // Its row would otherwise survive, and the next pull would create the
+        // folder again: a project nobody can get rid of.
+        let (url, seen) = mock_server(|method, path, body| {
+            match (method, path.split('?').next()) {
+                ("POST", Some("/api/sync/projects")) => {
+                    let projects = body["projects"].as_array().cloned().unwrap_or_default();
+                    serde_json::json!({
+                        "results": projects
+                            .iter()
+                            .map(|project| serde_json::json!({
+                                "id": project["id"].clone(),
+                                "ok": true,
+                                "deleted": true
+                            }))
+                            .collect::<Vec<_>>()
+                    })
+                }
+                ("POST", Some("/api/sync/chats")) => {
+                    serde_json::json!({ "results": [], "cursor": 0 })
+                }
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        let root = fixture.settings.projects_dir();
+        let project = fixture.projects.create(&root, "doomed", "").unwrap();
+        // Work in the folder makes it the user's: Hook refuses and keeps the note.
+        fs::write(root.join("doomed").join("index.html"), "<h1>hi</h1>").unwrap();
+        assert!(fixture.projects.delete(&project.id).is_err());
+        // Deleting it outside Hook is the way that works, and the note follows.
+        fs::remove_dir_all(root.join("doomed")).unwrap();
+
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.cycle().await.expect("one cycle");
+
+        let posts: Vec<Value> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "POST" && path == "/api/sync/projects")
+            .map(|(_, _, body)| body.clone())
+            .collect();
+        assert_eq!(posts.len(), 1, "one tombstone, not a project push");
+        assert_eq!(posts[0]["projects"][0]["id"], project.id);
+        assert_eq!(posts[0]["projects"][0]["deleted"], true);
+        assert!(fixture.projects.list(&root).unwrap().is_empty());
+
+        // The account took it, so a quiet cycle sends nothing more.
+        seen.lock().unwrap().clear();
+        engine.cycle().await.expect("second cycle");
+        assert!(
+            seen.lock()
+                .unwrap()
+                .iter()
+                .all(|(_, path, _)| path != "/api/sync/projects"),
+            "a deletion is sent once"
+        );
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn a_project_being_deleted_is_not_recreated_by_a_pull() {
+        // The account has not taken the tombstone yet and still lists the
+        // project. Binding the row now would recreate the folder just removed.
+        let (url, _seen) = mock_server(|method, path, _body| {
+            match (method, path.split('?').next()) {
+                // Nothing lands: the deletion stays queued for the next cycle.
+                ("POST", Some("/api/sync/projects")) => serde_json::json!({ "results": [] }),
+                ("POST", Some("/api/sync/chats")) => {
+                    serde_json::json!({ "results": [], "cursor": 0 })
+                }
+                ("GET", Some("/api/sync/changes")) => serde_json::json!({
+                    "cursor": 3,
+                    "hasMore": false,
+                    "changes": [{
+                        "kind": "project",
+                        "id": "pj_doomed",
+                        "seq": 3,
+                        "deleted": false,
+                        "updatedAt": 3,
+                        "name": "doomed",
+                        "description": "",
+                        "createdAt": 1
+                    }]
+                }),
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+        engine.project_deleted("pj_doomed");
+        engine.cycle().await.expect("one cycle");
+
+        let root = fixture.settings.projects_dir();
+        assert!(
+            !root.join("doomed").exists(),
+            "a queued deletion must win over the account's row"
+        );
+        assert!(fixture.projects.list(&root).unwrap().is_empty());
         fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }
 

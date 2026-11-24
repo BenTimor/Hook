@@ -52,7 +52,16 @@ struct NotesFile {
 pub struct ProjectsStore {
     path: PathBuf,
     notes: Mutex<Vec<ProjectNote>>,
+    /// Notes whose folder disappeared, taken by the sync engine so the account
+    /// hears about the deletion. Without that tombstone the next pull would
+    /// create the folder again.
+    dropped: Mutex<Vec<Project>>,
 }
+
+/// How many dropped notes are remembered for the sync engine. A bulk delete is
+/// one listing; anything larger means the projects folder itself went away and
+/// is not a deletion to upload at all.
+const MAX_DROPPED: usize = 500;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -223,6 +232,7 @@ impl ProjectsStore {
         Self {
             path,
             notes: Mutex::new(notes),
+            dropped: Mutex::new(Vec::new()),
         }
     }
 
@@ -351,8 +361,40 @@ impl ProjectsStore {
                 }
                 out.push(Self::project_from(note));
             }
+            // A folder removed outside Hook (Explorer, a `git clean`, a project
+            // moved away) is a project that no longer exists, so its note goes
+            // too. Keeping the note would leave the account's row alive forever
+            // and let the next pull create the folder again — a project that
+            // cannot be deleted. Notes for another projects folder are left
+            // alone: switching the folder is not a deletion.
+            let root_key = key_of(&canonical(root));
+            let mut gone: Vec<Project> = Vec::new();
+            notes.retain(|note| {
+                let inside = Path::new(&note.path)
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().eq_ignore_ascii_case(&root_key))
+                    .unwrap_or(false);
+                if !inside || Path::new(&note.path).is_dir() {
+                    return true;
+                }
+                // A note without an id was never on the account, so there is no
+                // row to remove for it.
+                if !note.id.is_empty() {
+                    gone.push(Self::project_from(note));
+                }
+                changed = true;
+                false
+            });
             if changed {
                 self.save_locked(&notes)?;
+            }
+            if !gone.is_empty() {
+                let mut queue = lock(&self.dropped);
+                queue.extend(gone);
+                if queue.len() > MAX_DROPPED {
+                    let excess = queue.len() - MAX_DROPPED;
+                    queue.drain(..excess);
+                }
             }
         }
         out.sort_by(|a, b| {
@@ -466,7 +508,71 @@ impl ProjectsStore {
     pub fn clear_notes(&self) -> Result<(), String> {
         let mut notes = lock(&self.notes);
         notes.clear();
+        lock(&self.dropped).clear();
         self.save_locked(&notes)
+    }
+
+    /// The notes `list` dropped because their folders are gone. Taken once, so
+    /// the sync engine can send a tombstone for each.
+    pub fn take_dropped(&self) -> Vec<Project> {
+        std::mem::take(&mut *lock(&self.dropped))
+    }
+
+    /// Remove a project from this computer.
+    ///
+    /// The note goes, so the project leaves Hook and, through the tombstone the
+    /// caller queues, the account. The folder itself is removed only when it
+    /// holds nothing but Hook's own `.git` — the empty clone `bind` makes for a
+    /// project that arrived from another computer. Work in a folder belongs to
+    /// the user, so Hook refuses rather than guess; delete the folder and `list`
+    /// drops the note (and the account's row) on its own.
+    pub fn delete(&self, id: &str) -> Result<Project, String> {
+        if id.is_empty() {
+            return Err("No project specified.".into());
+        }
+        let note = {
+            let notes = lock(&self.notes);
+            notes.iter().find(|note| note.id == id).cloned()
+        };
+        let Some(note) = note else {
+            return Err("That project is not on this computer.".into());
+        };
+        let project = Self::project_from(&note);
+        let path = PathBuf::from(&note.path);
+        if path.is_dir() && !is_reusable(&path) {
+            return Err(format!(
+                "\"{}\" has files in it, and Hook never deletes your work. Delete the folder yourself and the project goes with it.",
+                project.name
+            ));
+        }
+        // The folder first: a failed delete then leaves the note (and the
+        // project) exactly as it was, instead of orphaning a folder that the
+        // next listing would bring back as a new project.
+        if path.is_dir() {
+            fs::remove_dir_all(&path)
+                .map_err(|e| format!("Could not delete {}: {e}", project.name))?;
+        }
+        {
+            let mut notes = lock(&self.notes);
+            notes.retain(|note| note.id != id);
+            self.save_locked(&notes)?;
+        }
+        Ok(project)
+    }
+
+    /// Forget a project whose folder is already gone, because the account says
+    /// it was deleted on another computer. A folder that is still here is the
+    /// user's copy: its note stays, and the next push puts the project back on
+    /// the account instead of deleting somebody's work by proxy.
+    pub fn forget_missing(&self, id: &str) -> bool {
+        let mut notes = lock(&self.notes);
+        let before = notes.len();
+        notes.retain(|note| note.id != id || Path::new(&note.path).is_dir());
+        if notes.len() == before {
+            return false;
+        }
+        let _ = self.save_locked(&notes);
+        true
     }
 
     /// Bind a project that arrived from the account to a folder on this
@@ -855,6 +961,86 @@ mod tests {
         let reopened = ProjectsStore::new(&base);
         let second = reopened.list(&root).unwrap();
         assert_eq!(second[0].id, id);
+    }
+
+    #[test]
+    fn a_folder_removed_outside_hook_is_dropped_for_the_sync_engine() {
+        // Deleting the folder in Explorer is how a project is deleted. The note
+        // has to go with it: kept, the account's row survives forever and the
+        // next pull creates the folder again, so the project cannot be removed.
+        let (base, root, store) = temp_store();
+        let project = store.create(&root, "gone", "notes").unwrap();
+        fs::remove_dir_all(root.join("gone")).unwrap();
+
+        assert!(store.list(&root).unwrap().is_empty());
+        assert_eq!(
+            store
+                .take_dropped()
+                .iter()
+                .map(|project| project.id.as_str())
+                .collect::<Vec<_>>(),
+            [project.id.as_str()]
+        );
+        // Taken once, and the note really is gone: a restart must not turn the
+        // folder into a new project.
+        assert!(store.take_dropped().is_empty());
+        drop(store);
+        let reopened = ProjectsStore::new(&base);
+        assert!(reopened.list(&root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn switching_the_projects_folder_is_not_a_deletion() {
+        // Notes for another root are not this root's projects, and dropping them
+        // would tombstone every project on the account when the folder moves.
+        let (base, root, store) = temp_store();
+        store.create(&root, "kept", "").unwrap();
+        let other = base.join("elsewhere");
+        fs::create_dir_all(&other).unwrap();
+
+        assert!(store.list(&other).unwrap().is_empty());
+        assert!(store.take_dropped().is_empty());
+        assert_eq!(store.list(&root).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_an_empty_clone_removes_its_folder() {
+        // The folder Hook makes for a project from another computer is an empty
+        // clone on disk; that one is Hook's to remove.
+        let (_base, root, store) = temp_store();
+        let bound = store.bind(&root, "pj_clone", "clone", "", 1, 2).unwrap();
+        fs::create_dir_all(Path::new(&bound.path).join(".git")).unwrap();
+
+        let removed = store.delete("pj_clone").unwrap();
+        assert_eq!(removed.id, bound.id);
+        assert!(!Path::new(&bound.path).exists());
+        assert!(store.list(&root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_a_folder_with_work_refuses_and_keeps_the_note() {
+        let (_base, root, store) = temp_store();
+        let project = store.create(&root, "real", "").unwrap();
+        fs::write(Path::new(&project.path).join("index.html"), "<h1>hi</h1>").unwrap();
+
+        assert!(store.delete(&project.id).is_err());
+        assert!(Path::new(&project.path).join("index.html").exists());
+        assert_eq!(store.list(&root).unwrap()[0].id, project.id);
+    }
+
+    #[test]
+    fn a_delete_on_another_computer_keeps_a_folder_that_is_still_here() {
+        // The account says the project went away elsewhere. This machine still
+        // has the folder, so the files stay and the project returns on the next
+        // push; only a note whose folder is gone is forgotten.
+        let (_base, root, store) = temp_store();
+        let here = store.create(&root, "here", "").unwrap();
+        let gone = store.create(&root, "gone", "").unwrap();
+        fs::remove_dir_all(root.join("gone")).unwrap();
+
+        assert!(!store.forget_missing(&here.id));
+        assert!(store.forget_missing(&gone.id));
+        assert!(store.list(&root).unwrap().iter().any(|p| p.id == here.id));
     }
 
     #[test]

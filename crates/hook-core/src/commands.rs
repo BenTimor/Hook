@@ -1445,6 +1445,34 @@ pub async fn set_projects_dir(
     Ok(settings_view(&state))
 }
 
+/// Remove a project from this computer and from the account.
+///
+/// The folder itself goes only when it holds nothing but Hook's own `.git` — the
+/// empty clone that stands in for a project which arrived from another computer.
+/// A folder with work in it is the user's, so `ProjectsStore::delete` refuses
+/// rather than guess. Either way the account's row is removed, through the
+/// tombstone the sync engine sends, so the next pull cannot put it back.
+#[tauri::command]
+pub fn delete_project(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<SettingsView, String> {
+    let project = state.projects.delete(&id)?;
+    state.sync.project_deleted(&project.id);
+    state.sync.wake();
+    let _ = app.emit(
+        "hook://sync",
+        serde_json::json!({
+            "chats": false,
+            "projects": true,
+            "memory": false,
+            "at": now_ms(),
+        }),
+    );
+    Ok(settings_view(&state))
+}
+
 /// Turn the debugging view on or off.
 ///
 /// It is account state, not product state: the setting lives on the account so

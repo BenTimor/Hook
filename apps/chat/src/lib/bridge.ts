@@ -352,6 +352,16 @@ export const api = {
       ? invoke<SettingsView>("set_projects_dir", { path })
       : mock.setProjectsDir(path),
 
+  /**
+   * Remove a project from this computer and from the account. The folder itself
+   * only goes when it holds nothing but Hook's `.git`; a folder with work in it
+   * is refused, so Hook never deletes someone's files.
+   */
+  deleteProject: (id: string): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("delete_project", { id })
+      : mock.deleteProject(id),
+
   setAdvancedMode: (enabled: boolean): Promise<SettingsView> =>
     isTauri()
       ? invoke<SettingsView>("set_advanced_mode", { enabled })

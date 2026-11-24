@@ -10,11 +10,13 @@ import {
   KeyRound,
   LogOut,
   RefreshCw,
+  Trash2,
   UserRound,
   X,
 } from "lucide-react";
 
 import { api, openExternal } from "../lib/bridge";
+import type { Project } from "../lib/types";
 import { useChatStore } from "../store/useChatStore";
 import { useUpdateStore } from "../store/useUpdateStore";
 import { ImportSection } from "./ImportSection";
@@ -44,6 +46,112 @@ function untilReset(iso: string | null | undefined): string {
   if (minutes < 60) return `in ${minutes}m`;
   const hours = Math.ceil(minutes / 60);
   return `in ${hours}h`;
+}
+
+/**
+ * The projects folder's contents, with a way to remove one.
+ *
+ * Removing is how a project leaves the account: deleting the folder in Explorer
+ * only reset this device, because the account's row stayed and the next pull
+ * created the folder again. The folder itself goes only when it holds nothing
+ * but Hook's own `.git` (the empty clone a project from another computer makes
+ * here). A folder with work in it is the user's, and the backend refuses rather
+ * than guess — that refusal is what the message under the list says.
+ */
+function ProjectList({ projects }: { projects: Project[] }) {
+  const deleteProject = useChatStore((s) => s.deleteProject);
+  const [removing, setRemoving] = useState<Project | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!projects.length) {
+    return (
+      <p className="sheet-help muted">
+        No projects yet. Ask for something and the chat agent will create one.
+      </p>
+    );
+  }
+
+  const remove = async (project: Project) => {
+    setBusy(true);
+    setError("");
+    try {
+      await deleteProject(project.id);
+      setRemoving(null);
+    } catch (reason) {
+      setError(textOf(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <ul className="project-list">
+        {projects.map((project) => (
+          <li key={project.id}>
+            <div className="project-head">
+              <div className="project-copy">
+                <div className="project-name">
+                  {project.name}
+                  {project.isGit && (
+                    <span className="badge">
+                      <GitBranch strokeWidth={2} />
+                      git
+                    </span>
+                  )}
+                </div>
+                <div className="project-desc">
+                  {project.description || (
+                    <span className="muted">No description yet</span>
+                  )}
+                </div>
+              </div>
+              <button
+                className="project-remove"
+                title={`Remove ${project.name}`}
+                aria-label={`Remove ${project.name}`}
+                onClick={() => {
+                  setError("");
+                  setRemoving(project);
+                }}
+              >
+                <Trash2 strokeWidth={1.9} />
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {removing && (
+        <div className="project-confirm">
+          <p>
+            Remove <strong>{removing.name}</strong> from Hook? It leaves this list
+            and your account. The folder itself is deleted only when it holds
+            nothing but Hook's <code>.git</code>; a folder with files in it stays
+            on disk, and Hook says so instead.
+          </p>
+          {error && <p className="project-error">{error}</p>}
+          <div className="project-confirm-actions">
+            <button
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => setRemoving(null)}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={() => void remove(removing)}
+            >
+              {busy ? "Removing…" : "Remove"}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 /**
@@ -594,26 +702,7 @@ export function SettingsSheet() {
             </div>
 
             {settings?.projects.length ? (
-              <ul className="project-list">
-                {settings.projects.map((project) => (
-                  <li key={project.path}>
-                    <div className="project-name">
-                      {project.name}
-                      {project.isGit && (
-                        <span className="badge">
-                          <GitBranch strokeWidth={2} />
-                          git
-                        </span>
-                      )}
-                    </div>
-                    <div className="project-desc">
-                      {project.description || (
-                        <span className="muted">No description yet</span>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <ProjectList projects={settings.projects} />
             ) : (
               <p className="sheet-help muted">
                 No projects yet. Ask for something and the chat agent will create one.

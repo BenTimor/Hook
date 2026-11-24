@@ -1389,13 +1389,23 @@ over 64 characters, or one Windows reserves — stays on that machine and is
 skipped by itself, so one impossible name cannot stop the rest of the account
 from syncing.
 
+A project is deleted by deleting its folder or with **Remove** in Settings. The
+note goes with it and the account gets a tombstone, so the next pull cannot
+create the folder again — the two together are what make a deletion stick. The
+folder itself is removed only when it holds nothing but Hook's `.git`, an empty
+clone made for a project that arrived from another computer; a folder with work
+in it is the user's, and Hook refuses rather than guess. A deletion on one
+computer never deletes another computer's copy: that folder is still there, and
+its next push puts the project back on the account.
+
 On Windows, Hook runs the Git commands for startup and background project sync
 without opening terminal windows.
 
 Quotas: 250 MB of conversation JSON, 250 MB of chat pictures, 5,000 chats,
 200 projects and 1,000 memories per account. Limits are server constants in `server/sync.mjs` and
-`server/git.mjs`. Deleting the local folder only resets the device; sign-out
-leaves the account's data in place. `DELETE /api/sync/account` (app token)
+`server/git.mjs`. A project folder that disappears takes its project off the
+account with it (a tombstone, not a missing row); sign-out leaves the account's
+data in place. `DELETE /api/sync/account` (app token)
 removes the account's chats, pictures, memories and repositories, and it keeps
 working for an account that has gone free or turned sync off.
 

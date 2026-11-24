@@ -128,6 +128,9 @@ interface ChatStore {
   /** Reload the sidebar after something wrote chats outside a turn. */
   refreshChats: () => Promise<void>;
   chooseProjectsDir: () => Promise<void>;
+  /** Remove a project from this computer and from the account. Throws when the
+   * folder holds files, so the settings sheet can say why. */
+  deleteProject: (id: string) => Promise<void>;
   /** Stop every coding agent working in the active chat, right now. */
   stopChatAgents: () => Promise<void>;
 }
@@ -1096,6 +1099,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
       } catch (error) {
         toast.error(textOf(error));
       }
+    },
+
+    deleteProject: async (id) => {
+      // No toast and no catch: the row disappears once the backend agrees, and a
+      // refusal (a folder with the user's work in it) is the sheet's to explain.
+      const settings = await api.deleteProject(id);
+      set({ settings });
     },
 
     stopChatAgents: async () => {

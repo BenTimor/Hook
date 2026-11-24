@@ -1673,6 +1673,83 @@ body[data-preview-dragging="true"] iframe {
   border: 1px solid var(--line-soft);
 }
 
+.project-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.project-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-remove {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--ink-4);
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+
+.project-list li:hover .project-remove,
+.project-remove:focus-visible {
+  opacity: 1;
+}
+
+.project-remove:hover {
+  color: var(--danger);
+  background: rgba(192, 57, 43, 0.09);
+}
+
+.project-remove svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The one confirmation before a project leaves the account. It says what
+   happens to the folder, because that is the part a person cannot undo. */
+.project-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--panel);
+}
+
+.project-confirm p {
+  margin: 0;
+  font-size: 12.2px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.project-confirm code {
+  font-family: var(--font-mono);
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(var(--ink-rgb), 0.05);
+  font-size: 11.5px;
+}
+
+.project-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.project-error {
+  color: var(--danger) !important;
+}
+
 .project-name {
   display: flex;
   align-items: center;
