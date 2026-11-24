@@ -613,21 +613,21 @@ A packaged Microsoft Store build uses its own pair (`store.latest` /
 ```json
 {
   "minimumVersion": "0.6.1",
-  "store": { "latest": "0.6.0", "minimumVersion": "0.6.1" }
+  "store": { "latest": "0.6.1", "minimumVersion": "0.6.1" }
 }
 ```
 
-`store.latest` names the last version Microsoft certified (0.6.0) and moves only
-after the next submission is certified; an empty value means Store builds are
-never told an update exists. Both floors are already `0.6.1`, but the server
-clamps a floor to the newest build its channel actually has — 0.6.0 in the
+`store.latest` names the version Microsoft has certified (0.6.1) and moves again
+only after the next submission is certified; an empty value means Store builds
+are never told an update exists. The floors are `0.6.1` too, but the server
+clamps a floor to the newest build its channel actually has — 0.6.1 in the
 Store, 0.3.9 on the direct channel while no newer installer is published — so
-today they force anything below those builds to update. Set `store.latest` to
-`0.6.1` once it is certified: every Store install below it then has to update,
-because the floor is `0.6.1`. A direct build reaches 0.6.1 only when a direct
-installer is published (`pnpm release`), which is why the direct floor stays
-clamped until then. The Store's own install has a constraint the direct channel
-does not: see [Updating a Store install](#updating-a-store-install).
+today every Store install below 0.6.1 is required to update to it, and the
+direct floor forces anything below 0.3.9. A direct build reaches 0.6.1 only
+when a direct installer is published (`pnpm release`), which is why the direct
+floor stays clamped until then. The Store's own install has a constraint the
+direct channel does not: see
+[Updating a Store install](#updating-a-store-install).
 
 "Update now" downloads the installer with the signed-in token, checks it against
 the published SHA-256, and hands it to the NSIS installer in passive update mode
