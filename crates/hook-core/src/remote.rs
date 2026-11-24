@@ -903,7 +903,15 @@ mod tests {
     #[test]
     fn a_listing_holds_folders_only_and_in_order() {
         let dir = scratch();
-        let pinned: HashSet<String> = [dir.join("beta").to_string_lossy().to_string()].into();
+        // A star is stored the way the pin RPC stores it: the folder it resolves
+        // to, which is the path a listing hands out. Building it from `dir`
+        // directly would be the un-canonical path, and on Linux the temp dir can
+        // be a link (`/tmp` on the CI runner), which made this test fail there.
+        let pinned: HashSet<String> = [folder_path(&dir.join("beta").to_string_lossy())
+            .unwrap()
+            .to_string_lossy()
+            .to_string()]
+        .into();
         let listing = folder_listing(&dir.to_string_lossy(), &pinned).unwrap();
         let names: Vec<&str> = listing["entries"]
             .as_array()
@@ -966,8 +974,13 @@ mod tests {
         assert_eq!(entries[0]["path"], shortcut);
         assert_eq!(entries[1]["pinned"], true, "the starred home is next");
         assert_eq!(entries[1]["name"], "Home");
-        assert!(
-            !entries.iter().skip(2).any(|entry| entry["path"] == entries[1]["path"]),
+        let home_path = entries[1]["path"].as_str().unwrap().to_string();
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| entry["path"].as_str() == Some(home_path.as_str()))
+                .count(),
+            1,
             "a starred place is listed in the pinned half only"
         );
         assert!(
