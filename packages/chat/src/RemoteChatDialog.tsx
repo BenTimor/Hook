@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, Monitor, X } from "lucide-react";
+import { ArrowUp, Check, ChevronRight, Monitor, X } from "lucide-react";
 
 import "./chat.css";
 import "./report.css";
@@ -22,12 +22,36 @@ export interface RemoteProjectOption {
   git?: boolean;
 }
 
+/** One folder on the host, as the browse RPC lists it. */
+export interface RemoteFolderOption {
+  name: string;
+  path: string;
+}
+
+/**
+ * One level of a host's folders. `path` is null at the top, where the entries
+ * are the places browsing starts from: home, the projects folder, the drives.
+ */
+export interface RemoteFolderListing {
+  path: string | null;
+  parent: string | null;
+  entries: RemoteFolderOption[];
+  truncated: boolean;
+}
+
+/** Where the conversation should start on its host. */
+export interface RemoteChatTarget {
+  project?: string;
+  folder?: string;
+}
+
 /**
  * Choosing where a direct coding chat lives.
  *
  * The conversation is created on the host, next to its folder and engine; this
- * window only keeps a cache. That is why the picker never asks for a path: it
- * offers the projects the host already knows, and the host resolves the folder.
+ * window only keeps a cache. A project is a name the account already knows; a
+ * folder is a path the controller walked to through the host, one level at a
+ * time. Either way the host resolves the folder, so no path is ever guessed.
  * Shared by the desktop window and the phone so both ask the same question.
  */
 export function RemoteChatDialog({
@@ -36,6 +60,7 @@ export function RemoteChatDialog({
   onClose,
   loadProjects,
   createProject,
+  loadFolders,
   onCreate,
 }: {
   devices: RemoteMachine[];
@@ -49,7 +74,12 @@ export function RemoteChatDialog({
     name: string,
     description: string,
   ) => Promise<RemoteProjectOption>;
-  onCreate: (deviceId: string, project: string) => Promise<void>;
+  /** Walk the host's folders one level at a time. Absent without a host. */
+  loadFolders?: (
+    deviceId: string,
+    path: string | null,
+  ) => Promise<RemoteFolderListing>;
+  onCreate: (deviceId: string, target: RemoteChatTarget) => Promise<void>;
 }) {
   const machines = devices.filter(
     (machine) =>
@@ -70,6 +100,10 @@ export function RemoteChatDialog({
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
+  const [mode, setMode] = useState<"project" | "folder">("project");
+  const [folder, setFolder] = useState<string | null>(null);
+  const [listing, setListing] = useState<RemoteFolderListing | null>(null);
+  const [folderLoading, setFolderLoading] = useState(false);
 
   useEffect(() => {
     if (!machines.some((machine) => machine.id === machineId)) {
@@ -88,6 +122,8 @@ export function RemoteChatDialog({
     setLoading(true);
     setProjects(null);
     setProject(null);
+    setFolder(null);
+    setListing(null);
     setError(null);
     setCreating(false);
     setNewName("");
@@ -120,6 +156,28 @@ export function RemoteChatDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // One level of the host's folders, re-read whenever the walk moves.
+  useEffect(() => {
+    if (mode !== "folder" || !machineId || !loadFolders) return;
+    let alive = true;
+    setFolderLoading(true);
+    setListing(null);
+    setError(null);
+    void loadFolders(machineId, folder)
+      .then((level) => {
+        if (alive) setListing(level);
+      })
+      .catch((caught) => {
+        if (alive) setError(textOf(caught));
+      })
+      .finally(() => {
+        if (alive) setFolderLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [mode, machineId, folder, loadFolders]);
+
   const create = async () => {
     if (!machineId || !createProject || !newName.trim() || projectBusy) return;
     setProjectBusy(true);
@@ -146,11 +204,11 @@ export function RemoteChatDialog({
   };
 
   const start = async () => {
-    if (!machineId || !project || busy || creating || projectBusy) return;
+    if (!machineId || !target || busy || creating || projectBusy) return;
     setBusy(true);
     setError(null);
     try {
-      await onCreate(machineId, project);
+      await onCreate(machineId, target);
       onClose();
     } catch (caught) {
       setError(textOf(caught));
@@ -160,6 +218,14 @@ export function RemoteChatDialog({
   };
 
   const machine = machines.find((entry) => entry.id === machineId);
+  const target: RemoteChatTarget | null =
+    mode === "folder"
+      ? listing?.path
+        ? { folder: listing.path }
+        : null
+      : project
+        ? { project }
+        : null;
 
   return createPortal(
     <div className="report-backdrop" onMouseDown={onClose}>
@@ -220,21 +286,106 @@ export function RemoteChatDialog({
             </div>
 
             <div className="remote-project-head">
-              <span className="remote-label">Project</span>
-              {createProject && !creating ? (
-                <button
-                  type="button"
-                  className="remote-link"
-                  onClick={() => {
-                    setCreating(true);
-                    setError(null);
-                  }}
-                >
-                  New project
-                </button>
-              ) : null}
+              <span className="remote-label">
+                {mode === "folder" ? "Folder" : "Project"}
+              </span>
+              <div className="remote-head-links">
+                {mode === "folder" ? (
+                  <button
+                    type="button"
+                    className="remote-link"
+                    onClick={() => {
+                      setMode("project");
+                      setError(null);
+                    }}
+                  >
+                    Projects
+                  </button>
+                ) : null}
+                {loadFolders && mode === "project" ? (
+                  <button
+                    type="button"
+                    className="remote-link"
+                    onClick={() => {
+                      setMode("folder");
+                      setCreating(false);
+                      setError(null);
+                    }}
+                  >
+                    Browse folders…
+                  </button>
+                ) : null}
+                {createProject && !creating && mode === "project" ? (
+                  <button
+                    type="button"
+                    className="remote-link"
+                    onClick={() => {
+                      setCreating(true);
+                      setError(null);
+                    }}
+                  >
+                    New project
+                  </button>
+                ) : null}
+              </div>
             </div>
-            {creating ? (
+            {mode === "folder" ? (
+              <div className="remote-browser">
+                <div className="remote-path">
+                  <button
+                    type="button"
+                    className="remote-up"
+                    disabled={!listing?.parent || folderLoading}
+                    title="Up one level"
+                    onClick={() => setFolder(listing?.parent ?? null)}
+                  >
+                    <ArrowUp strokeWidth={2} />
+                  </button>
+                  <span
+                    className="remote-path-text"
+                    title={listing?.path ?? undefined}
+                  >
+                    {listing?.path ?? "Places"}
+                  </span>
+                </div>
+                {folderLoading && !listing ? (
+                  <p className="remote-note">
+                    Reading folders on {machine?.name}…
+                  </p>
+                ) : listing && listing.entries.length ? (
+                  <div
+                    className="remote-projects"
+                    role="listbox"
+                    aria-label="Folder"
+                  >
+                    {listing.entries.map((entry) => (
+                      <button
+                        key={entry.path}
+                        className="remote-project remote-folder"
+                        role="option"
+                        aria-selected={false}
+                        onClick={() => setFolder(entry.path)}
+                      >
+                        <span>
+                          <strong>{entry.name}</strong>
+                        </span>
+                        <ChevronRight strokeWidth={1.8} />
+                      </button>
+                    ))}
+                  </div>
+                ) : listing ? (
+                  <p className="remote-note">
+                    This folder has no folders inside it. Start here anyway, or
+                    go back up.
+                  </p>
+                ) : null}
+                {listing?.truncated ? (
+                  <p className="remote-note">
+                    Only the first {listing.entries.length} folders are shown.
+                  </p>
+                ) : null}
+              </div>
+            ) : creating ? (
               <div className="remote-project-form">
                 <input
                   className="remote-input"
@@ -328,10 +479,14 @@ export function RemoteChatDialog({
           </button>
           <button
             className="btn btn-primary"
-            disabled={!machineId || !project || busy}
+            disabled={!machineId || !target || busy}
             onClick={() => void start()}
           >
-            {busy ? "Starting…" : "Start chat"}
+            {busy
+              ? "Starting…"
+              : mode === "folder"
+                ? "Start in this folder"
+                : "Start chat"}
           </button>
         </div>
       </div>

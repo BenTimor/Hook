@@ -91,7 +91,19 @@ struct ProjectCreateParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodingCreateParams {
+    #[serde(default)]
     project: String,
+    /// A full path, when the controller picked a folder instead of a project.
+    #[serde(default)]
+    folder: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowseParams {
+    /// Empty lists the places to start from: home, projects, and the drives.
+    #[serde(default)]
+    path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,6 +156,7 @@ pub async fn handle(
         "agent.stopChat" => stop_chat(state, decode(params)?),
         "projects.list" => projects(state),
         "projects.create" => projects_create(state, decode(params)?),
+        "folders.browse" => folders_browse(state, decode(params)?),
         "sessions.list" => sessions(state, decode(params)?),
         "coding.create" => coding_create(state, decode(params)?),
         "coding.fetch" => coding_fetch(state, decode(params)?),
@@ -388,6 +401,167 @@ fn project_folder(state: &Arc<AppState>, reference: &str) -> Result<PathBuf, Rpc
     Ok(canonical)
 }
 
+// ── folders ────────────────────────────────────────────────────────────
+//
+// A controller may start a direct chat in a folder that is not one of the
+// account's projects — the same freedom the local picker has. It cannot guess
+// a path from another machine, so it walks this one level at a time. The
+// answer is directory names and paths only: never a file's contents.
+
+/// How many folders one level returns before it stops and says so.
+const MAX_FOLDERS: usize = 400;
+
+/// A full path on this machine. A bare name is refused: it would mean a
+/// different folder on every device the account signs in on.
+fn folder_path(raw: &str) -> Result<PathBuf, RpcFailure> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err(fail("bad_params", "Name a folder on this machine."));
+    }
+    if raw.len() > 4096 {
+        return Err(fail("bad_params", "That path is too long."));
+    }
+    if !Path::new(raw).is_absolute() {
+        return Err(fail("bad_params", "Send the folder's full path."));
+    }
+    let path = PathBuf::from(raw).canonicalize().map_err(|_| {
+        fail(
+            "unknown_folder",
+            format!("\"{raw}\" is not a folder on this machine."),
+        )
+    })?;
+    if !path.is_dir() {
+        return Err(fail(
+            "unknown_folder",
+            format!("\"{raw}\" is not a folder on this machine."),
+        ));
+    }
+    Ok(PathBuf::from(crate::store::strip_verbatim(path)))
+}
+
+fn folders_browse(state: &Arc<AppState>, params: BrowseParams) -> Result<Value, RpcFailure> {
+    match params
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => folder_listing(path),
+        None => Ok(json!({
+            "path": null,
+            "parent": null,
+            "entries": places(home_dir(), state.settings.projects_dir()),
+            "truncated": false,
+        })),
+    }
+}
+
+/// One level of a folder: its subfolders, the way back up, and the path itself
+/// so the controller never has to build one.
+fn folder_listing(raw: &str) -> Result<Value, RpcFailure> {
+    let path = folder_path(raw)?;
+    let mut entries: Vec<Value> = Vec::new();
+    let mut truncated = false;
+    let read = std::fs::read_dir(&path)
+        .map_err(|error| fail("folder_unreadable", format!("Could not read it: {error}")))?;
+    for entry in read.flatten() {
+        let child = entry.path();
+        // Follows a link: a folder that opens in Explorer is a folder the
+        // agent can start in.
+        if !child.is_dir() {
+            continue;
+        }
+        // Folders only, so a level full of files still lists every folder in
+        // it: the cap counts what the answer carries, not what was scanned.
+        if entries.len() >= MAX_FOLDERS {
+            truncated = true;
+            break;
+        }
+        entries.push(json!({
+            "name": entry.file_name().to_string_lossy(),
+            "path": crate::store::strip_verbatim(&child).to_string_lossy(),
+        }));
+    }
+    entries.sort_by_key(|entry| {
+        entry["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_lowercase()
+    });
+    let parent = path
+        .parent()
+        .map(|parent| crate::store::strip_verbatim(parent).to_string_lossy().to_string());
+    Ok(json!({
+        "path": crate::store::strip_verbatim(&path).to_string_lossy(),
+        "parent": parent,
+        "entries": entries,
+        "truncated": truncated,
+    }))
+}
+
+/// Where browsing starts. A controller that has never seen this machine begins
+/// at its home, its projects folder and its drives, then walks down from there.
+fn places(home: Option<PathBuf>, projects: PathBuf) -> Vec<Value> {
+    let mut places = Vec::new();
+    if let Some(home) = home {
+        places.push(place("Home", &home));
+    }
+    if projects.is_dir() {
+        places.push(place("Projects", &projects));
+    }
+    #[cfg(windows)]
+    places.extend(drives(std::time::Duration::from_millis(1200)));
+    places
+}
+
+fn place(name: &str, path: &Path) -> Value {
+    json!({
+        "name": name,
+        "path": crate::store::strip_verbatim(path).to_string_lossy(),
+    })
+}
+
+fn home_dir() -> Option<PathBuf> {
+    let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+}
+
+/// The drive letters that answer, probed on their own thread: a mapped drive
+/// that is disconnected can block for seconds, and the window should not wait
+/// for it. A missing letter answers instantly, so this is only slow when the
+/// machine really does have a drive that went away.
+#[cfg(windows)]
+fn drives(budget: std::time::Duration) -> Vec<Value> {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let (tx, rx) = mpsc::channel::<Value>();
+    std::thread::spawn(move || {
+        for letter in b'A'..=b'Z' {
+            let name = format!("{}:", letter as char);
+            let root = PathBuf::from(format!("{name}\\"));
+            if root.is_dir() && tx.send(place(&name, &root)).is_err() {
+                return;
+            }
+        }
+    });
+    let deadline = Instant::now() + budget;
+    let mut found = Vec::new();
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left == Duration::ZERO {
+            break;
+        }
+        match rx.recv_timeout(left) {
+            Ok(drive) => found.push(drive),
+            Err(_) => break,
+        }
+    }
+    found
+}
+
 fn host_chat(state: &Arc<AppState>, chat: &Chat) -> Result<(), RpcFailure> {
     if !chat.meta.is_coding() {
         return Err(fail("not_coding", "That is not a coding-agent chat."));
@@ -410,11 +584,26 @@ fn host_chat(state: &Arc<AppState>, chat: &Chat) -> Result<(), RpcFailure> {
 }
 
 fn coding_create(state: &Arc<AppState>, params: CodingCreateParams) -> Result<Value, RpcFailure> {
-    let project = params.project.trim();
-    if project.is_empty() {
-        return Err(fail("bad_params", "Name a project on this machine."));
-    }
-    let path = project_folder(state, project)?;
+    // A controller either picks one of the account's projects, or walks this
+    // machine's folders with `folders.browse` and names the path it reached.
+    let path = match params
+        .folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|folder| !folder.is_empty())
+    {
+        Some(folder) => folder_path(folder)?,
+        None => {
+            let project = params.project.trim();
+            if project.is_empty() {
+                return Err(fail(
+                    "bad_params",
+                    "Name a project or a folder on this machine.",
+                ));
+            }
+            project_folder(state, project)?
+        }
+    };
     let meta = crate::coding::create_on_host(state, &path.to_string_lossy())
         .map_err(|error| fail("create_failed", error))?;
     serde_json::to_value(meta).map_err(|error| fail("serialize", error.to_string()))
@@ -562,4 +751,83 @@ pub fn publish_overview(state: &AppState, chat_id: &str) {
         chat_id,
         json!({ "type": "agents", "overview": payload }),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hook-folders-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("alpha").join("nested")).unwrap();
+        std::fs::create_dir_all(dir.join("beta")).unwrap();
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_folder_must_be_a_full_path() {
+        assert_eq!(folder_path("alpha").unwrap_err().code, "bad_params");
+        assert_eq!(folder_path("  ").unwrap_err().code, "bad_params");
+        assert_eq!(folder_path("..").unwrap_err().code, "bad_params");
+    }
+
+    #[test]
+    fn a_file_is_not_a_folder() {
+        let dir = scratch();
+        let file = dir.join("notes.txt");
+        assert_eq!(
+            folder_path(&file.to_string_lossy()).unwrap_err().code,
+            "unknown_folder"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_picked_folder_is_not_verbatim() {
+        let dir = scratch();
+        let resolved = folder_path(&dir.to_string_lossy()).unwrap();
+        assert!(!resolved.to_string_lossy().starts_with(r"\?\"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_listing_holds_folders_only_and_in_order() {
+        let dir = scratch();
+        let listing = folder_listing(&dir.to_string_lossy()).unwrap();
+        let names: Vec<&str> = listing["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["alpha", "beta"]);
+        assert_eq!(
+            listing["entries"][0]["path"].as_str().unwrap(),
+            folder_path(&dir.join("alpha").to_string_lossy())
+                .unwrap()
+                .to_string_lossy()
+        );
+        assert_eq!(
+            listing["parent"].as_str().unwrap(),
+            folder_path(&std::env::temp_dir().to_string_lossy())
+                .unwrap()
+                .to_string_lossy()
+        );
+        assert_eq!(listing["truncated"], false);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn browsing_starts_at_the_places_that_exist() {
+        let dir = scratch();
+        let listed = places(Some(dir.clone()), dir.join("missing"));
+        let names: Vec<&str> = listed
+            .iter()
+            .map(|place| place["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names.first(), Some(&"Home"));
+        assert!(!names.contains(&"Projects"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

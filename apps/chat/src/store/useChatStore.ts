@@ -18,6 +18,7 @@ import type {
   DraftImage,
   Message,
   PreviewView,
+  RemoteTarget,
   SettingsView,
   StreamEvent,
   SyncView,
@@ -84,7 +85,7 @@ interface ChatStore {
    */
   newCodingChat: () => Promise<void>;
   /** Start a direct coding chat on another machine, in one of its projects. */
-  newRemoteCodingChat: (deviceId: string, project: string) => Promise<void>;
+  newRemoteCodingChat: (deviceId: string, target: RemoteTarget) => Promise<void>;
   /** Point a coding chat at another folder (a moved or renamed project). */
   changeCodingFolder: (id: string) => Promise<void>;
   /** Answer a question the active coding agent is blocked on. */
@@ -635,13 +636,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
     },
 
-    newRemoteCodingChat: async (deviceId, project) => {
+    newRemoteCodingChat: async (deviceId, target) => {
       if (!get().auth?.signedIn) {
         toast.error("Sign in to Hook to start a coding agent.");
         return;
       }
       try {
-        const meta = await api.createRemoteCodingChat(deviceId, project);
+        const meta = await api.createRemoteCodingChat(deviceId, target);
         set((state) => ({
           chats: upsertMeta(state.chats, meta),
           activeId: meta.id,
@@ -702,20 +703,31 @@ export const useChatStore = create<ChatStore>((set, get) => {
             .fetchRemoteChat(id)
             .then((remote) => {
               if (get().activeId !== id) return;
-              set((state) => ({
-                messages: settle(
-                  mergeMessages(state.messages, remote.messages),
-                  Boolean(
-                    state.streams[id] ||
-                      state.activity[id] ||
-                      remote.messages.some(
-                        (message) => message.status === "streaming",
-                      ),
+              set((state) => {
+                // The owner's copy is the truth for a remote chat: when it is
+                // not streaming any more, the turn is over here too, even if
+                // the turn's last frame never arrived over the relay. Without
+                // this the activity line stays under a finished answer.
+                const running = remote.messages.some(
+                  (message) => message.status === "streaming",
+                );
+                const streams = { ...state.streams };
+                const activity = { ...state.activity };
+                if (!running) {
+                  delete streams[id];
+                  delete activity[id];
+                }
+                return {
+                  streams,
+                  activity,
+                  messages: settle(
+                    mergeMessages(state.messages, remote.messages),
+                    running,
                   ),
-                ),
-                chats: upsertMeta(state.chats, remote.meta),
-                remoteErrors: without(state.remoteErrors, id),
-              }));
+                  chats: upsertMeta(state.chats, remote.meta),
+                  remoteErrors: without(state.remoteErrors, id),
+                };
+              });
             })
             .catch((error) => {
               if (get().activeId === id) {

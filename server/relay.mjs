@@ -19,7 +19,12 @@ import { deviceViews } from "./devices.mjs";
  */
 
 const MAX_FRAME = 8 * 1024 * 1024;
+// A controller asks questions every now and then. A host also streams the turn
+// it is running — deltas, steps and RPC answers — which is far more traffic from
+// a connection that is already trusted to run agents on the account's machines.
+// A host that outruns this is cut off, and the frames it lost are never resent.
 const MAX_FRAMES_PER_MINUTE = 240;
+const MAX_HOST_FRAMES_PER_MINUTE = 1200;
 const MAX_PENDING_PER_CONNECTION = 32;
 const MAX_SUBSCRIPTIONS = 100;
 const RPC_TIMEOUT_MS = 60_000;
@@ -201,7 +206,7 @@ export function createRelay({ server, db, presence, previewTunnel }) {
           conn.frames = 0;
         }
         conn.frames += 1;
-        if (conn.frames > MAX_FRAMES_PER_MINUTE) {
+        if (conn.frames > frameBudget(conn)) {
           ws.close(1008, "Too many frames.");
           return;
         }
@@ -221,6 +226,10 @@ export function createRelay({ server, db, presence, previewTunnel }) {
       ws.on("close", () => cleanup(conn));
       ws.on("error", () => cleanup(conn));
     });
+  }
+
+  function frameBudget(conn) {
+    return conn.role === "host" ? MAX_HOST_FRAMES_PER_MINUTE : MAX_FRAMES_PER_MINUTE;
   }
 
   function handle(conn, frame) {

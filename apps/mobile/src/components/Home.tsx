@@ -118,8 +118,9 @@ export function Home({
           onClose={() => setRemoteOpen(false)}
           loadProjects={mobile.remoteProjects}
           createProject={mobile.createRemoteProject}
-          onCreate={(deviceId, project) =>
-            newRemoteCodingChat(deviceId, project)
+          loadFolders={mobile.remoteFolders}
+          onCreate={(deviceId, target) =>
+            newRemoteCodingChat(deviceId, target)
           }
         />
       )}

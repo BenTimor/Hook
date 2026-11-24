@@ -144,7 +144,11 @@ bash.
   and nothing else, and everything volatile (coding-agent notes, memory frames,
   the live hint, window context) is a message appended after it. See
   "Never rewrite the request prefix" below before touching `system_message`,
-  `build_history` or `ensure_memory_frames`.
+  `build_history` or `ensure_memory_frames`. `emit` is the one way an event
+  reaches the window; for a chat a controller is watching it publishes to the
+  relay too, coalesced to one frame per 400 ms. Never publish a delta per token:
+  the server closes a host that outruns its frame budget, and the frames it
+  missed are never replayed.
 - `crates/hook-core/src/memory.rs` — what the chat agent remembers between
   conversations: entries (text, kind, pin, source chat), the pinned block, the
   frames that carry it into a chat, `memory_search`, and per-account files in
@@ -158,7 +162,8 @@ bash.
   advanced inspector; it is read-only.
 - `crates/hook-core/src/{relay,remote,devices}.rs` — the account relay client
   (presence, RPC, subscriptions, reconnect), the commands a controller sends to
-  a host (`agent.start/steer/stop`, `projects.list`, `sessions.list`) and the
+  a host (`agent.start/steer/stop`, `projects.list`, `folders.browse`,
+  `sessions.list`, `coding.*`) and the
   description this machine registers. `docs/relay-protocol.md` is the contract;
   `docs/remote-control-status.md` is the handoff (what exists, what is left).
 - `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
@@ -514,7 +519,10 @@ Changing one side of a boundary is the most common way to break this repo.
   `MachinesSection` and the agent board. A controller sends an RPC; the host
   executes it. Never let a controller run a local `AgentManager`. Project
   creation is a host RPC too (`projects.create`); the caller supplies a name,
-  never a path.
+  never a path. A direct chat's folder is the one path a controller may name,
+  and it reaches it through `folders.browse` (one level per call, directories
+  only, never a file's contents), so a remote chat can start anywhere the
+  local picker can — the host still canonicalizes and validates it.
 - **Remote direct coding chat:** the host keeps the folder, engine and session;
   only a stub travels. `store.rs` (`deviceId`, `deviceName`, `remote`,
   `stubState`, `is_owned_coding`, `apply_stub`) → `sync.rs`
@@ -522,10 +530,11 @@ Changing one side of a boundary is the most common way to break this repo.
   `server/api.mjs` (`sync_remote_chats`) and `server/sync.mjs`
   (`/remote-chats`, the `/changes` union; a full `kind: "coding"` chat is
   refused) → `remote.rs` (`coding.create/fetch/send/stop/answer/rename`,
-  `projects.create`) →
+  `projects.create`, `folders.browse`) →
   `commands.rs` (`create_remote_coding_chat`, `fetch_remote_chat`,
-  `remote_projects`, remote branches in `send_message`/`stop_stream`/
-  `rename_chat`/`answer_coding_agent`) → `bridge.ts` / `types.ts` / `mock.ts` →
+  `remote_projects`, `remote_folders`, remote branches in `send_message`/
+  `stop_stream`/`rename_chat`/`answer_coding_agent`) → `bridge.ts` / `types.ts` /
+  `mock.ts` →
   `RemoteChatDialog` (`packages/chat`) → the Sidebar's New chat menu and the
   phone's Home. The viewer's cache is `remote: true` and `is_local_only`, so
   `push_chats` never uploads it; the owner's delete queues a tombstone. Do not

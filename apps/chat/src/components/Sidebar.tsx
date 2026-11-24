@@ -271,8 +271,9 @@ export function Sidebar() {
           onClose={() => setRemoteOpen(false)}
           loadProjects={api.remoteProjects}
           createProject={api.createRemoteProject}
-          onCreate={(deviceId, project) =>
-            newRemoteCodingChat(deviceId, project)
+          loadFolders={api.remoteFolders}
+          onCreate={(deviceId, target) =>
+            newRemoteCodingChat(deviceId, target)
           }
         />
       )}

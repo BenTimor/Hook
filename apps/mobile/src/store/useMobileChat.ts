@@ -8,6 +8,7 @@ import type {
   DevicesView,
   Message,
   PreviewView,
+  RemoteTarget,
   SettingsView,
   StreamEvent,
   SyncEvent,
@@ -62,7 +63,7 @@ interface MobileState {
   open: (chatId: string) => Promise<void>;
   newChat: () => void;
   /** Start a direct coding chat on another machine. */
-  newRemoteCodingChat: (deviceId: string, project: string) => Promise<void>;
+  newRemoteCodingChat: (deviceId: string, target: RemoteTarget) => Promise<void>;
   back: () => void;
   setDraft: (value: string) => void;
   addDraftImages: (images: DraftImage[]) => void;
@@ -211,10 +212,27 @@ export const useMobileChat = create<MobileState>((set, get) => ({
           .fetchRemoteChat(chatId)
           .then((remote) => {
             if (get().activeId !== chatId) return;
-            set((state) => ({
-              messages: mergeMessages(state.messages, remote.messages),
-              chats: upsert(state.chats, remote.meta),
-            }));
+            set((state) => {
+              // The owner's transcript decides whether a turn is still running.
+              // A turn whose last frame never reached this phone leaves the
+              // activity line ("Thinking…") under a finished answer for good,
+              // and the composer on Stop; the owner knows, so ask it.
+              const running = remote.messages.some(
+                (message) => message.status === "streaming",
+              );
+              const streams = { ...state.streams };
+              const activity = { ...state.activity };
+              if (!running) {
+                delete streams[chatId];
+                delete activity[chatId];
+              }
+              return {
+                streams,
+                activity,
+                messages: mergeMessages(state.messages, remote.messages),
+                chats: upsert(state.chats, remote.meta),
+              };
+            });
           })
           .catch(() => undefined);
       }
@@ -229,8 +247,8 @@ export const useMobileChat = create<MobileState>((set, get) => ({
     set({ activeId: null, messages: [], draft: "", error: null });
   },
 
-  async newRemoteCodingChat(deviceId, project) {
-    const meta = await mobile.createRemoteCodingChat(deviceId, project);
+  async newRemoteCodingChat(deviceId, target) {
+    const meta = await mobile.createRemoteCodingChat(deviceId, target);
     set((state) => ({
       chats: upsert(state.chats, meta),
       activeId: meta.id,
@@ -596,8 +614,15 @@ export const useMobileChat = create<MobileState>((set, get) => ({
       case "done": {
         const streams = { ...state.streams };
         delete streams[chatId];
+        // A reply that ended in a tool call hands the turn to the next model
+        // call, so the activity line keeps what it has — otherwise the fold
+        // collapses and reopens on every tool round. Anything else is the end
+        // of the turn. The desktop store makes the same distinction.
+        const last = [...event.messages]
+          .reverse()
+          .find((message) => message.role === "assistant");
         const activity = { ...state.activity };
-        delete activity[chatId];
+        if (!last || !last.toolCalls?.length) delete activity[chatId];
         set({
           streams,
           activity,

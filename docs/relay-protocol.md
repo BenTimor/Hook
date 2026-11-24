@@ -56,7 +56,11 @@ but refuses commands.
 ## Frames
 
 Every frame is one JSON object, tagged by `kind`. The server caps a frame at
-512 KB and a connection at 240 frames per minute.
+512 KB, a controller at 240 frames per minute and a host at 1200: a host is the
+connection that mirrors a running turn, and it coalesces deltas (`turn::emit`,
+one relay frame per 400 ms) so a fast model cannot outrun that budget. A
+connection over its cap is closed with `1008` and the frames it never sent are
+gone — the host reconnects, but the gap is not replayed.
 
 Client → server:
 
@@ -96,16 +100,37 @@ renderer does not learn that the run is remote.
   answers.
 - An unanswered RPC expires after 60 seconds and the caller gets `rpc_timeout`.
 - `agent.start`, `agent.steer`, `agent.answer`, `agent.stop`, `agent.status`,
-  `agent.list`, `projects.list`, `sessions.list`, `coding.create`,
+  `agent.list`, `projects.list`, `folders.browse`, `sessions.list`,
+  `coding.create`,
   `coding.fetch`, `coding.send`, `coding.stop`, `coding.answer`,
   `coding.rename`, `projects.create`, `preview.open` are the method names v1
   uses.
 - A `coding.*` method is handled by the machine that owns the direct coding
   chat. `coding.fetch` returns the whole conversation and marks the chat as
-  watched, so its records are mirrored from then on. `coding.create` accepts a
-  project name, never an arbitrary path: the host resolves it inside its
-  projects folder. `projects.create` creates a folder there from a name and an
-  optional description; the host chooses the path.
+  watched, so its records are mirrored from then on. `coding.create` accepts
+  either a `project` (resolved inside the host's projects folder) or a `folder`
+  (a full path the controller reached through `folders.browse`): the host
+  resolves and validates the folder in both cases, and a folder outside the
+  projects directory is allowed. `projects.create` creates a folder there from
+  a name and an optional description; the host chooses the path.
+- `folders.browse` walks the host's directories one level per call, so a
+  controller can start a chat in a folder that is not one of the account's
+  projects. `{path}` is a full path; an empty or missing `path` answers the
+  places browsing starts from (`Home`, `Projects`, and on Windows the drives).
+  The answer is directories only:
+
+  ```json
+  {
+    "path": "C:\\Users\\me",
+    "parent": "C:\\Users",
+    "entries": [{ "name": "Documents", "path": "C:\\Users\\me\\Documents" }],
+    "truncated": false
+  }
+  ```
+
+  `truncated` says the level held more folders than one answer carries. No
+  method returns a file's contents, and the caller never has to build a path:
+  `parent` and each entry's `path` are the host's own canonical strings.
 
 ### Presence
 
@@ -179,6 +204,8 @@ the next cycle.
 - Presence is in memory; `lastSeen` is in SQLite. A restart shows devices
   offline until they reconnect.
 - Live frames are best-effort. A viewer that falls behind reloads the chat from
-  `store`/sync instead of trying to replay a gap.
+  `store`/sync instead of trying to replay a gap. That is also why a finished
+  turn is never inferred from silence: the owner's transcript decides whether
+  anything is still streaming.
 - Nothing in a frame is logged. The relay logs connection counts and error
   codes only.

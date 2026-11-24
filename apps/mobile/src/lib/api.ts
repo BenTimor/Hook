@@ -11,7 +11,9 @@ import type {
   DeviceView,
   DevicesView,
   PreviewEvent,
+  RemoteFolders,
   RemoteProject,
+  RemoteTarget,
   SettingsView,
   StreamEvent,
   SyncEvent,
@@ -90,14 +92,28 @@ export const mobile = {
       ? invoke<Chat>("fetch_remote_chat", { chatId })
       : demo.fetchRemoteChat(chatId),
 
-  /** Start a direct coding chat on another machine. */
+  /** Start a direct coding chat on another machine: in one of its projects,
+   * or in a folder it walked to. */
   createRemoteCodingChat: (
     deviceId: string,
-    project: string,
+    target: RemoteTarget,
   ): Promise<ChatMeta> =>
     isTauri()
-      ? invoke<ChatMeta>("create_remote_coding_chat", { deviceId, project })
-      : demo.createRemoteCodingChat(deviceId, project),
+      ? invoke<ChatMeta>("create_remote_coding_chat", {
+          deviceId,
+          project: target.project ?? null,
+          folder: target.folder ?? null,
+        })
+      : demo.createRemoteCodingChat(deviceId, target),
+
+  /** One level of a machine's folders. `path: null` lists the places. */
+  remoteFolders: (
+    deviceId: string,
+    path: string | null,
+  ): Promise<RemoteFolders> =>
+    isTauri()
+      ? invoke<RemoteFolders>("remote_folders", { deviceId, path })
+      : demo.remoteFolders(deviceId, path),
 
   remoteProjects: (deviceId: string): Promise<RemoteProject[]> =>
     isTauri()

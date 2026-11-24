@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
@@ -153,14 +153,85 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// How often a streaming turn may publish to the relay.
+///
+/// A turn emits one `Delta` per token and a direct coding agent one per
+/// `message_update`, so mirroring each of them closed the host's relay socket
+/// every few seconds (`server/relay.mjs` allows 240 frames a minute per
+/// connection) and quietly cut a controller's stream off mid-answer. Nothing is
+/// dropped: text accumulates here and goes out on the next step or on the next
+/// tick, and the closing `Done` flushes whatever is left before it. The window
+/// on the machine that owns the chat still gets every delta.
+const MIRROR_INTERVAL_MS: i64 = 400;
+
+/// Deltas waiting for the next relay frame, per chat.
+#[derive(Default)]
+pub struct MirrorState {
+    frames: Mutex<HashMap<String, MirrorFrame>>,
+}
+
+#[derive(Default)]
+struct MirrorFrame {
+    text: String,
+    reasoning: String,
+    /// When the last frame went out. None publishes the first delta at once.
+    sent_at: Option<i64>,
+}
+
+/// One relay frame's worth of a stream: the thinking and the answer text that
+/// arrived since the last one.
+#[derive(Debug, PartialEq)]
+struct MirrorBatch {
+    reasoning: String,
+    text: String,
+}
+
+impl MirrorState {
+    /// Buffer one delta. What comes back is due to be published now; a delta
+    /// inside the interval just waits for the next frame.
+    fn push(&self, chat_id: &str, text_part: bool, text: &str, now: i64) -> Option<MirrorBatch> {
+        let mut frames = lock(&self.frames);
+        let frame = frames.entry(chat_id.to_string()).or_default();
+        if text_part {
+            frame.text.push_str(text);
+        } else {
+            frame.reasoning.push_str(text);
+        }
+        if let Some(sent_at) = frame.sent_at {
+            if now - sent_at < MIRROR_INTERVAL_MS {
+                return None;
+            }
+        }
+        Some(frame.take(now))
+    }
+
+    /// Everything buffered for this chat, for a step that must not overtake it.
+    fn take(&self, chat_id: &str, now: i64) -> Option<MirrorBatch> {
+        let mut frames = lock(&self.frames);
+        let frame = frames.get_mut(chat_id)?;
+        if frame.text.is_empty() && frame.reasoning.is_empty() {
+            return None;
+        }
+        Some(frame.take(now))
+    }
+}
+
+impl MirrorFrame {
+    fn take(&mut self, now: i64) -> MirrorBatch {
+        self.sent_at = Some(now);
+        MirrorBatch {
+            reasoning: std::mem::take(&mut self.reasoning),
+            text: std::mem::take(&mut self.text),
+        }
+    }
+}
+
 pub(crate) fn emit(state: &AppState, chat_id: &str, event: StreamEvent) {
     // A controller watching this chat gets the same stream the local window
-    // gets. The relay is per chat and drops the frame when nobody is watching.
-    let mirror = if crate::remote::is_remote(state, chat_id) {
-        serde_json::to_value(&event).ok()
-    } else {
-        None
-    };
+    // gets, coalesced so a fast model cannot outrun the relay's frame budget.
+    if crate::remote::is_remote(state, chat_id) {
+        mirror(state, chat_id, &event);
+    }
     let _ = state.app.emit(
         "hook://chat",
         ChatEvent {
@@ -168,8 +239,43 @@ pub(crate) fn emit(state: &AppState, chat_id: &str, event: StreamEvent) {
             event,
         },
     );
-    if let Some(payload) = mirror {
-        let _ = state.relay.publish(chat_id, payload);
+}
+
+fn mirror(state: &AppState, chat_id: &str, event: &StreamEvent) {
+    let now = now_ms();
+    match event {
+        StreamEvent::Delta { text } => {
+            publish_mirror(state, chat_id, state.mirror.push(chat_id, true, text, now))
+        }
+        StreamEvent::Reasoning { text } => {
+            publish_mirror(state, chat_id, state.mirror.push(chat_id, false, text, now))
+        }
+        // Anything else is a step, not a character. Whatever is still buffered
+        // belongs before it, or a `Done` would overtake the text it completes.
+        other => {
+            publish_mirror(state, chat_id, state.mirror.take(chat_id, now));
+            if let Ok(payload) = serde_json::to_value(other) {
+                let _ = state.relay.publish(chat_id, payload);
+            }
+        }
+    }
+}
+
+fn publish_mirror(state: &AppState, chat_id: &str, batch: Option<MirrorBatch>) {
+    let Some(batch) = batch else {
+        return;
+    };
+    // Thinking first: the thread keeps the two apart, and a reasoning frame
+    // costs the same as a text one.
+    if !batch.reasoning.is_empty() {
+        let _ = state
+            .relay
+            .publish(chat_id, json!({ "kind": "reasoning", "text": batch.reasoning }));
+    }
+    if !batch.text.is_empty() {
+        let _ = state
+            .relay
+            .publish(chat_id, json!({ "kind": "delta", "text": batch.text }));
     }
 }
 
@@ -2338,6 +2444,61 @@ mod tests {
         turns.queue("c1");
         assert!(turns.release("c1"));
         assert!(turns.begin("c1"));
+    }
+
+    #[test]
+    fn a_burst_of_deltas_becomes_one_frame() {
+        let mirror = MirrorState::default();
+        // The first delta opens the stream at once, so a slow model still
+        // starts filling the conversation immediately.
+        assert_eq!(
+            mirror.push("chat", true, "Hel", 1_000),
+            Some(MirrorBatch { reasoning: String::new(), text: "Hel".into() })
+        );
+        // Then the rest of the burst waits: one frame per interval, not one
+        // per token.
+        for (index, text) in ["lo", ", ", "wor", "ld"].iter().enumerate() {
+            assert_eq!(mirror.push("chat", true, text, 1_200 + index as i64), None);
+        }
+        assert_eq!(
+            mirror.push("chat", true, "!", 6_000),
+            Some(MirrorBatch { reasoning: String::new(), text: "lo, world!".into() })
+        );
+    }
+
+    #[test]
+    fn thinking_and_answer_travel_together_but_apart() {
+        let mirror = MirrorState::default();
+        assert_eq!(
+            mirror.push("chat", false, "Looking", 0),
+            Some(MirrorBatch { reasoning: "Looking".into(), text: String::new() })
+        );
+        // Inside the interval the text waits with the frame that follows it.
+        assert_eq!(mirror.push("chat", true, "Half an", 10), None);
+        assert_eq!(
+            mirror.push("chat", true, " answer", MIRROR_INTERVAL_MS),
+            Some(MirrorBatch { reasoning: String::new(), text: "Half an answer".into() })
+        );
+    }
+
+    #[test]
+    fn a_step_flushes_what_is_waiting_and_nothing_else() {
+        let mirror = MirrorState::default();
+        assert_eq!(mirror.take("chat", 10), None);
+        assert!(mirror.push("chat", true, "first", 0).is_some());
+        // Buffered behind the frame that just went out.
+        assert_eq!(mirror.push("chat", true, " and second", 10), None);
+        assert_eq!(
+            mirror.take("chat", 20),
+            Some(MirrorBatch {
+                reasoning: String::new(),
+                text: " and second".into()
+            })
+        );
+        // A `Done` right after a flush publishes itself, not an empty delta.
+        assert_eq!(mirror.take("chat", 30), None);
+        // Chats do not share a buffer.
+        assert_eq!(mirror.take("other", 30), None);
     }
 }
 

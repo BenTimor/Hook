@@ -8,7 +8,10 @@ import type {
   DevicesView,
   Message,
   PreviewEvent,
+  RemoteFolder,
+  RemoteFolders,
   RemoteProject,
+  RemoteTarget,
   SettingsView,
   StreamEvent,
   SyncView,
@@ -31,6 +34,48 @@ const DEMO_REMOTE_PROJECTS: RemoteProject[] = [
   { project: "hook", description: "The desktop and phone products", git: true },
   { project: "website", description: "Landing page", git: true },
 ];
+
+/** The demo host's folders, so the browser can be walked in a plain browser. */
+const DEMO_FOLDER_TREE: Record<string, string[]> = {
+  "C:\\": ["Program Files", "src", "Users"],
+  "C:\\Users": ["you"],
+  "C:\\Users\\you": ["Documents", "Hook Projects", "src"],
+  "C:\\Users\\you\\Documents": ["notes"],
+  "C:\\Users\\you\\Hook Projects": ["hook", "website"],
+  "C:\\Users\\you\\Hook Projects\\hook": ["crates", "packages"],
+  "C:\\Users\\you\\src": ["api", "app"],
+};
+
+const DEMO_FOLDER_PLACES: RemoteFolder[] = [
+  { name: "Home", path: "C:\\Users\\you" },
+  { name: "Projects", path: "C:\\Users\\you\\Hook Projects" },
+  { name: "C:", path: "C:\\" },
+];
+
+function demoFolderListing(path: string | null): RemoteFolders {
+  if (!path) {
+    return {
+      path: null,
+      parent: null,
+      entries: structuredClone(DEMO_FOLDER_PLACES),
+      truncated: false,
+    };
+  }
+  const trimmed = path.endsWith("\\") ? path.slice(0, -1) : path;
+  const parent = trimmed.includes("\\")
+    ? trimmed.slice(0, trimmed.lastIndexOf("\\"))
+    : null;
+  const separator = path.endsWith("\\") ? "" : "\\";
+  return {
+    path,
+    parent: parent === "C:" ? "C:\\" : parent,
+    entries: (DEMO_FOLDER_TREE[path] ?? []).map((name) => ({
+      name,
+      path: `${path}${separator}${name}`,
+    })),
+    truncated: false,
+  };
+}
 
 const demoDevices: DeviceView[] = [
   {
@@ -322,13 +367,17 @@ export const demo = {
 
   async createRemoteCodingChat(
     deviceId: string,
-    project: string,
+    target: RemoteTarget,
   ): Promise<ChatMeta> {
     const device = demoDevices.find((entry) => entry.id === deviceId);
     if (!device) throw new Error("That machine is no longer on this account.");
+    const title =
+      target.folder?.split(/[\\/]/).filter(Boolean).pop() ??
+      target.project ??
+      "Coding agent";
     const meta: ChatMeta = {
       id: `chat_${(seq += 1)}`,
-      title: project,
+      title,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       pinned: false,
@@ -346,6 +395,13 @@ export const demo = {
 
   async remoteProjects(_deviceId: string): Promise<RemoteProject[]> {
     return structuredClone(DEMO_REMOTE_PROJECTS);
+  },
+
+  async remoteFolders(
+    _deviceId: string,
+    path: string | null,
+  ): Promise<RemoteFolders> {
+    return demoFolderListing(path);
   },
 
   async createRemoteProject(

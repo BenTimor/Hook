@@ -44,6 +44,9 @@ pub struct AppState {
     /// events are mirrored to the relay; a chat used only here never leaves the
     /// process.
     pub remote_chats: Arc<Mutex<HashSet<String>>>,
+    /// Deltas waiting for the next relay frame of a chat this machine hosts.
+    /// Coalesced so a fast model cannot outrun the relay's frame budget.
+    pub mirror: turn::MirrorState,
     /// Whether the model can see images, taken from its `/models` card.
     pub vision: Arc<std::sync::atomic::AtomicBool>,
     /// Set when the endpoint rejects image parts anyway, so later turns stop
@@ -1029,6 +1032,27 @@ pub fn set_coding_chat_folder(
     Ok(meta)
 }
 
+/// Walk a host's folders so a controller can start a direct chat outside the
+/// projects list. One level per call; the answer is names and paths, never a
+/// file's contents. `path: None` lists the places to start from.
+#[tauri::command]
+pub async fn remote_folders(
+    state: State<'_, Arc<AppState>>,
+    device_id: String,
+    path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    remote_ready(state.inner())?;
+    require_host(state.inner(), &device_id)?;
+    remote_rpc(
+        state.inner(),
+        &device_id,
+        "folders.browse",
+        serde_json::json!({ "path": path }),
+        Duration::from_secs(20),
+    )
+    .await
+}
+
 /// Answer a question a directly-driven coding agent is blocked on.
 #[tauri::command]
 pub async fn answer_coding_agent(
@@ -1160,23 +1184,34 @@ pub async fn remote_create_project(
 
 /// Create a direct coding chat on another machine. The host keeps the folder,
 /// the engine and the session; this device only stores a cache that is flagged
-/// as remote, so sync can never upload its messages.
+/// as remote, so sync can never upload its messages. The target is one of the
+/// host's projects, or a folder it walked to with `remote_folders`.
 #[tauri::command]
 pub async fn create_remote_coding_chat(
     state: State<'_, Arc<AppState>>,
     device_id: String,
-    project: String,
+    project: Option<String>,
+    folder: Option<String>,
 ) -> Result<ChatMeta, String> {
     remote_ready(state.inner())?;
     if device_id == state.relay.device_id() {
         return Err("Use Coding agent… to start a chat on this computer.".into());
     }
     let name = require_host(state.inner(), &device_id)?;
+    let folder = folder
+        .map(|folder| folder.trim().to_string())
+        .filter(|folder| !folder.is_empty());
+    let project = project.unwrap_or_default().trim().to_string();
+    let target = match folder {
+        Some(folder) => serde_json::json!({ "folder": folder }),
+        None if !project.is_empty() => serde_json::json!({ "project": project }),
+        None => return Err("Name a project or choose a folder on that machine.".into()),
+    };
     let result = remote_rpc(
         state.inner(),
         &device_id,
         "coding.create",
-        serde_json::json!({ "project": project }),
+        target,
         Duration::from_secs(30),
     )
     .await?;

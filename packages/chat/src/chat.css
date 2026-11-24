@@ -1178,3 +1178,76 @@
   gap: 8px;
   margin-top: 2px;
 }
+
+.remote-head-links {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Walking a host's folders: the path bar, and the rows that open one level. */
+.remote-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  background: var(--panel);
+}
+
+.remote-up {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--ivory);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.remote-up svg {
+  width: 13px;
+  height: 13px;
+}
+
+.remote-up:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.remote-up:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.remote-path-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* A path reads left to right even in a right-to-left document. */
+  direction: ltr;
+  text-align: start;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.remote-folder svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--ink-3);
+}

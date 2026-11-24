@@ -20,7 +20,10 @@ import type {
   Message,
   PlanStep,
   PreviewView,
+  RemoteFolder,
+  RemoteFolders,
   RemoteProject,
+  RemoteTarget,
   SearchHit,
   SettingsView,
   StreamEvent,
@@ -461,6 +464,48 @@ const MOCK_REMOTE_PROJECTS: RemoteProject[] = [
   { project: "hook", description: "The desktop and phone products", git: true },
   { project: "website", description: "Landing page", git: true },
 ];
+
+/** The mock host's folders, so the browser can be walked in a plain browser. */
+const MOCK_FOLDER_TREE: Record<string, string[]> = {
+  "C:\\": ["Program Files", "src", "Users"],
+  "C:\\Users": ["you"],
+  "C:\\Users\\you": ["Documents", "Hook Projects", "src"],
+  "C:\\Users\\you\\Documents": ["notes"],
+  "C:\\Users\\you\\Hook Projects": ["hook", "website"],
+  "C:\\Users\\you\\Hook Projects\\hook": ["crates", "packages"],
+  "C:\\Users\\you\\src": ["api", "app"],
+};
+
+const MOCK_FOLDER_PLACES: RemoteFolder[] = [
+  { name: "Home", path: "C:\\Users\\you" },
+  { name: "Projects", path: "C:\\Users\\you\\Hook Projects" },
+  { name: "C:", path: "C:\\" },
+];
+
+function mockFolderListing(path: string | null): RemoteFolders {
+  if (!path) {
+    return {
+      path: null,
+      parent: null,
+      entries: clone(MOCK_FOLDER_PLACES),
+      truncated: false,
+    };
+  }
+  const trimmed = path.endsWith("\\") ? path.slice(0, -1) : path;
+  const parent = trimmed.includes("\\")
+    ? trimmed.slice(0, trimmed.lastIndexOf("\\"))
+    : null;
+  const separator = path.endsWith("\\") ? "" : "\\";
+  return {
+    path,
+    parent: parent === "C:" ? "C:\\" : parent,
+    entries: (MOCK_FOLDER_TREE[path] ?? []).map((name) => ({
+      name,
+      path: `${path}${separator}${name}`,
+    })),
+    truncated: false,
+  };
+}
 
 const MOCK_DEVICES: DeviceView[] = [
   {
@@ -1067,16 +1112,20 @@ export const mock = {
 
   async createRemoteCodingChat(
     deviceId: string,
-    project: string,
+    target: RemoteTarget,
   ): Promise<ChatMeta> {
     const device = MOCK_DEVICES.find((entry) => entry.id === deviceId);
     if (!device) throw "That machine is no longer on this account.";
     if (!device.hostOnline) throw `${device.name} is not online.`;
+    const name =
+      target.folder?.split(/[\\/]/).filter(Boolean).pop() ??
+      target.project ??
+      "Coding agent";
     const now = Date.now();
     const chatId = id("coding");
     const meta: ChatMeta = {
       id: chatId,
-      title: project,
+      title: name,
       createdAt: now,
       updatedAt: now,
       pinned: false,
@@ -1116,6 +1165,13 @@ export const mock = {
 
   async remoteProjects(_deviceId: string): Promise<RemoteProject[]> {
     return clone(MOCK_REMOTE_PROJECTS);
+  },
+
+  async remoteFolders(
+    _deviceId: string,
+    path: string | null,
+  ): Promise<RemoteFolders> {
+    return mockFolderListing(path);
   },
 
   async createRemoteProject(

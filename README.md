@@ -1630,8 +1630,12 @@ agent themselves.
   it cannot reach another machine.
 - **Direct coding chats** (the user talking to `pi` themselves) can live on
   another machine too. The New chat menu offers **Coding agent on another
-  machine…**; choose a host and one of its projects, or create a new project
-  there from the same dialog. The host keeps the folder, the engine and the
+  machine…**; choose a host and one of its projects, create a new project
+  there, or **Browse folders…** to start anywhere on that machine the local
+  picker could reach (directories are listed one level at a time, never a
+  file's contents). A folder picked that way is not registered as a project —
+  it is the chat's folder, exactly as **Coding agent…** does on this computer.
+  The host keeps the folder, the engine and the
   session. Only a small stub syncs — title, machine, live
   state, message count — never the transcript, a path or a session id. Opening
   the chat on another device fetches the conversation over the relay and caches

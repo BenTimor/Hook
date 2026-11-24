@@ -46,6 +46,30 @@ export interface RemoteProject {
   git?: boolean;
 }
 
+/** One folder on a host, as `remote_folders` lists it. */
+export interface RemoteFolder {
+  name: string;
+  path: string;
+}
+
+/**
+ * One level of a host's folders. `path` is null at the top, where the entries
+ * are the places browsing starts from: home, the projects folder, the drives.
+ */
+export interface RemoteFolders {
+  path: string | null;
+  parent: string | null;
+  entries: RemoteFolder[];
+  /** The level held more folders than one answer may carry. */
+  truncated: boolean;
+}
+
+/** Where a remote coding chat should start on its host. */
+export interface RemoteTarget {
+  project?: string;
+  folder?: string;
+}
+
 export interface Chat {
   meta: ChatMeta;
   messages: Message[];

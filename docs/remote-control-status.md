@@ -124,11 +124,15 @@ The contract is `docs/relay-protocol.md`.
 - `remote.rs`
   - Host-side RPC methods: `agent.start`, `agent.status`, `agent.list`,
     `agent.steer`, `agent.answer`, `agent.stop`, `agent.stopChat`,
-    `projects.list`, `sessions.list`.
+    `projects.list`, `folders.browse`, `sessions.list`.
   - `coding.create`, `coding.fetch`, `coding.send`, `coding.stop`,
     `coding.answer`, `coding.rename`: the host half of a direct chat. `create`
-    takes a project name, never a path; `fetch` marks the chat watched so its
-    records are mirrored from then on.
+    takes a project name or a folder path; `fetch` marks the chat watched so
+    its records are mirrored from then on.
+  - `folders.browse`: one level of this machine's folders, directories only,
+    for a controller that starts a chat outside the projects list. An empty
+    `path` lists the places browsing starts from; the answer is never a file's
+    contents.
   - `projects.create`: create a project folder on the host from a name and an
     optional description. The host chooses the path; the caller cannot send
     one. The folder joins the account through the normal project sync.
@@ -248,13 +252,16 @@ device rows and the test stub were removed afterwards.
 
 A controller can now create a direct chat on a host, see it in the list from any
 device, fetch its transcript over the relay, watch it live, send, steer, stop
-and rename. The host's project must already exist. The implementation follows
+and rename. The host's project must already exist, or a folder is picked on it
+through `folders.browse`. The implementation follows
 the shape above:
 
 1. `projects.create` on the host creates a project folder from a name and an
    optional description; `coding.create` resolves an existing project inside
-   the host's projects folder and creates the chat there. Neither accepts an
-   arbitrary path.
+   the host's projects folder and creates the chat there. Or the controller
+   walks the host's folders with `folders.browse` and passes the path it
+   reached, so a remote chat can start anywhere the local picker can. A
+   project is still a name only: the caller never sends its path.
 2. The host pushes a stub (id, title, machine, state, message count) through
    `POST /api/sync/remote-chats`. A full coding chat is refused by the server.
 3. A viewing device gets the stub as a `remoteChat` change, stores a chat with
@@ -274,9 +281,12 @@ Known limits (do not mistake them for bugs):
 
 - **Full transcript, not windowed.** A very large direct chat could exceed the
   relay's 8 MB frame. Windowing is the next hardening step.
-- **No folder browser.** A remote project is a name plus an optional
-  description; the host chooses the folder under its projects directory.
-  Changing an existing chat's folder stays a host action.
+- **A folder browser, one level at a time.** A remote project is a name plus
+  an optional description; the host chooses the folder under its projects
+  directory. A remote *folder* is a path the controller reached through
+  `folders.browse`, which lists directories only and never a file's contents;
+  `coding.create` accepts either. Changing an existing chat's folder stays a
+  host action.
 - **Coarse durable state.** The stub records `idle`, `running` or `error` from
   the last message. `needs_input` and the live plan come from the relay while
   the chat is open; a late viewer may see `idle` until it fetches.

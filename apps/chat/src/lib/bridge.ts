@@ -19,7 +19,9 @@ import type {
   MemoryView,
   PreviewEvent,
   PreviewView,
+  RemoteFolders,
   RemoteProject,
+  RemoteTarget,
   ReportRequest,
   SearchHit,
   SettingsView,
@@ -507,14 +509,19 @@ export const api = {
       ? invoke<ChatMeta>("set_coding_chat_folder", { chatId, folder })
       : mock.setCodingChatFolder(chatId, folder),
 
-  /** Create a direct coding chat on another machine. */
+  /** Create a direct coding chat on another machine: in one of its projects,
+   * or in a folder it walked to. */
   createRemoteCodingChat: (
     deviceId: string,
-    project: string,
+    target: RemoteTarget,
   ): Promise<ChatMeta> =>
     isTauri()
-      ? invoke<ChatMeta>("create_remote_coding_chat", { deviceId, project })
-      : mock.createRemoteCodingChat(deviceId, project),
+      ? invoke<ChatMeta>("create_remote_coding_chat", {
+          deviceId,
+          project: target.project ?? null,
+          folder: target.folder ?? null,
+        })
+      : mock.createRemoteCodingChat(deviceId, target),
 
   /** Read the transcript from the machine that owns a cached chat. */
   fetchRemoteChat: (chatId: string): Promise<Chat> =>
@@ -541,6 +548,15 @@ export const api = {
           description,
         })
       : mock.createRemoteProject(deviceId, name, description),
+
+  /** One level of a machine's folders. `path: null` lists the places to start. */
+  remoteFolders: (
+    deviceId: string,
+    path: string | null,
+  ): Promise<RemoteFolders> =>
+    isTauri()
+      ? invoke<RemoteFolders>("remote_folders", { deviceId, path })
+      : mock.remoteFolders(deviceId, path),
 
   /** Answer a question a directly-driven coding agent is blocked on. */
   answerCodingAgent: (chatId: string, answer: string): Promise<void> =>
