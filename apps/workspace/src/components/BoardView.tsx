@@ -97,6 +97,7 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
     <div className="ws-board-page">
       <header className="ws-page-head">
         <div className="ws-page-title">
+          <span className="ws-page-kicker">Board</span>
           <h1>{board.name}</h1>
           {board.description ? <p>{board.description}</p> : null}
         </div>

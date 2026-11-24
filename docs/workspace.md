@@ -142,11 +142,13 @@ rows written before this rule are adopted when the service starts.
 - **A roadmap is a project item; milestones live inside it.** A roadmap sits in
   the tree and the project overview like a board or document. It opens as a
   horizontal timeline where each milestone is a large circle carrying its date,
-  status, title and description preview, connected by a line and scrolling left
-  to right; the page can also be dragged sideways. Clicking a circle opens a
-  Motion-animated drawer for editing that milestone, and the New milestone
-  button or dashed circle at the end adds another one. Milestones themselves
-  are not tree items.
+  status, title and description preview, connected by a line. It scrolls left
+  to right with momentum and elastic edges, supports drag from anywhere and
+  Ctrl + wheel zoom, and keeps the clicked circle in view instead of jumping
+  back to the start. Clicking a circle opens a Motion-animated drawer for
+  editing that milestone. Hovering a gap or using the always-visible right-edge
+  button adds another milestone there, dated one day after the milestone before
+  it. Milestones themselves are not tree items.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,
   and an agent comment carries the conversation it came from, so a teammate sees
   "via Hook agent" instead of mistaking it for something the user typed. The

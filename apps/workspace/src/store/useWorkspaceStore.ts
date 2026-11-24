@@ -123,7 +123,11 @@ interface WorkspaceState {
   renameRoadmap: (id: string, name: string) => Promise<void>;
   deleteRoadmap: (id: string) => Promise<void>;
 
-  createMilestone: (roadmapId: string, title: string) => Promise<Milestone | null>;
+  createMilestone: (
+    roadmapId: string,
+    title: string,
+    options?: { dueDate?: string | null; position?: number },
+  ) => Promise<Milestone | null>;
   loadMilestone: (id: string) => Promise<Milestone | null>;
   updateMilestone: (id: string, patch: Partial<Milestone>) => Promise<boolean>;
   deleteMilestone: (id: string) => Promise<void>;
@@ -808,9 +812,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async createMilestone(roadmapId, title) {
+  async createMilestone(roadmapId, title, options = {}) {
     try {
-      const created = await api.createMilestone(roadmapId, { title });
+      const created = await api.createMilestone(roadmapId, { title, ...options });
       const projectId = created.milestone.projectId;
       set((state) => ({
         milestones: {

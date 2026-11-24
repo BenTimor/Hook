@@ -441,18 +441,21 @@ function DocumentPage({
   return (
     <div className="ws-document">
       <div className="ws-document-bar">
-        <input
-          className="ws-document-title"
-          dir={direction}
-          value={title}
-          readOnly={readOnly}
-          onChange={(event) => setTitle(event.target.value)}
-          onBlur={() => {
-            if (title.trim() && title !== loaded.title) {
-              void saveDocument(id, { title: title.trim() });
-            }
-          }}
-        />
+        <div className="ws-document-heading">
+          <span className="ws-page-kicker">Document</span>
+          <input
+            className="ws-document-title"
+            dir={direction}
+            value={title}
+            readOnly={readOnly}
+            onChange={(event) => setTitle(event.target.value)}
+            onBlur={() => {
+              if (title.trim() && title !== loaded.title) {
+                void saveDocument(id, { title: title.trim() });
+              }
+            }}
+          />
+        </div>
         <span className="ws-document-state" data-dirty={dirty} title={dirty ? "Saving changes" : `Saved · revision ${baseRev.current}`} aria-live="polite">
           {!dirty && <Check aria-hidden="true" />}
           {dirty ? "Saving…" : "Saved"}

@@ -562,7 +562,7 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
           description: String(payload.description ?? ""),
           dueDate: typeof payload.dueDate === "string" ? payload.dueDate : null,
           status: payload.status === "done" || payload.status === "active" ? payload.status : "planned",
-          position: demoSeq,
+          position: Number.isSafeInteger(payload.position) ? Number(payload.position) : demoSeq,
           createdAt: demoNow(),
           updatedAt: demoNow(),
           seq: demoSeq,
@@ -868,6 +868,7 @@ export const api = {
       description?: string;
       dueDate?: string | null;
       status?: Milestone["status"];
+      position?: number;
     },
   ) => call<{ milestone: Milestone }>("POST", `/roadmaps/${roadmapId}/milestones`, milestone),
   updateMilestone: (id: string, patch: Partial<Milestone>) =>
