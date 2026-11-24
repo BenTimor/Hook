@@ -318,12 +318,21 @@ Known limits (do not mistake them for bugs):
 
 ### 4.2 Headless `hookd` and Linux
 
-- No daemon crate yet. The plan is a `hookd` binary over the same `hook-core`,
-  with the Tauri-specific event sink/data-dir/commands split out, `hookd login`
-  (device flow), `hookd run`, systemd/Docker packaging.
+- **The prerequisite is done**, and not by a `hookd` binary: Hook Browser's host
+  (`crates/hook-host`) needed the same thing, so the split was made for it.
+  `AppState` holds `events::EventSink` instead of an `AppHandle`, `rt` owns the
+  tokio handle, `boot::start(StartOptions)` builds the whole backend, `state.rs`
+  and `session.rs` hold what the IPC, the channel and the relay all drive, and
+  Tauri is an optional `desktop` feature (`cargo test -p hook-core
+  --no-default-features` is the windowless gate). `hook-core` now runs with no
+  window, and `crates/hook-host` is a working example of a windowless binary
+  linking it — see `docs/browser-host.md`.
+- `hookd` itself is still not written. What it needs beyond `hook-host`: a
+  `Product`/`Capabilities` pair for "this machine hosts agents" (`can_host`), the
+  device-flow `hookd login` printed on a terminal, `hookd run` in the foreground,
+  and systemd/Docker packaging. Copying `crates/hook-host/src/main.rs` is the
+  starting point, not a rewrite.
 - Linux desktop (deb/AppImage) is deferred; headless first.
-- The relay host code is in `hook-core` but still uses `tauri::async_runtime`
-  and `AppState.app: AppHandle`; the headless split is the prerequisite.
 
 ### 4.3 Smaller gaps
 
@@ -407,16 +416,20 @@ Certificate renewal is already installed. Check it with:
 
 ## 6. Recommended next step
 
-**Headless `hookd`**, because the direct-chat path now demonstrates that a host
-does not need a window:
+**Headless `hookd`**, because the direct-chat path demonstrates that a host does
+not need a window — and because the split it used to be blocked on is now real:
 
-1. Split the Tauri-specific parts of `hook-core` behind a small runtime trait:
-   event sink, data directory, tray/window, and the IPC surface. `SyncEngine`,
-   `RelayClient`, `AgentManager`, `PreviewManager` and `coding` already use
-   callbacks and a data dir; this is mostly wiring.
+1. ~~Split the Tauri-specific parts of `hook-core` behind a small runtime trait:
+   event sink, data directory, tray/window, and the IPC surface.~~ Done in
+   `crates/hook-host`'s change: `events.rs`, `rt.rs`, `state.rs`, `session.rs`,
+   `boot.rs`, and Tauri behind the `desktop` feature. `SyncEngine`,
+   `RelayClient`, `AgentManager`, `PreviewManager` and `coding` needed no change
+   beyond the event sink.
 2. Add a `hookd` binary with `hookd login` (device flow, printing the code),
    `hookd run` and a foreground mode for systemd/Docker. It registers the same
-   `DeviceProfile` with `product: "headless"` and `can_host`.
+   `DeviceProfile` with `product: "headless"` and `can_host`. `crates/hook-host`
+   is the template: a `tokio` runtime, `rt::set`, `product_data_dir`, `start`,
+   `shutdown` on ctrl-c.
 3. Run the same relay host, sync engine, agent manager and direct-chat handlers.
    No tray, no window, no installer; closing the terminal stops it.
 4. Package it (systemd unit and a tiny Docker image), then smoke-test the phone

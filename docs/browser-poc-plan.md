@@ -407,6 +407,9 @@ someone installs, split by what only a decision can unblock.
   EasyList/EasyPrivacy bundled (CC BY-SA attribution), not a home-grown engine.
 - **Release plumbing:** a `scripts/products.mjs` entry, `msix/<product>/`, and
   `pnpm release` building the browser — today all three deliberately ignore it.
+  The one piece that exists is `pnpm browser:host`, which builds the release
+  `hook-host` the archive has to ship beside `chrome.exe`
+  (`docs/browser-host.md`, "Step 5 — what packaging means").
 - **Default-browser registration**, which is fiddly and fiddlier under MSIX.
 - **CI:** Chromium's `browser_tests` and `content_browsertests` on a self-hosted
   runner with a persistent `out/`; they are inherited for free and are the reason

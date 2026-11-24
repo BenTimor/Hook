@@ -204,7 +204,7 @@ function deniedTerm(expression) {
 
 /** The project's own crates and packages: their license is the point. */
 const OWN_PACKAGE =
-  /^(@hook\/|hook(-core|-workspace|-mobile)?@|tauri-plugin-google-signin@|tauri-plugin-mobile-shell@)/;
+  /^(@hook\/|hook(-core|-workspace|-mobile|-host)?@|tauri-plugin-google-signin@|tauri-plugin-mobile-shell@)/;
 
 /** Returns null when fine, or a reason string. */
 function checkOne(name, license) {

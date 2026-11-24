@@ -32,6 +32,7 @@
     "release": "bash scripts/release.sh",
     "browser:sync": "node browser/tools/sync.mjs",
     "browser:build": "node browser/tools/build.mjs",
+    "browser:host": "cargo build --release -p hook-host",
     "browser:verify": "node browser/tools/verify.mjs",
     "browser:smoke": "node browser/tools/smoke.mjs",
     "browser:patch": "node browser/tools/patch.mjs",

@@ -13,7 +13,6 @@
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
@@ -24,6 +23,7 @@
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "content/public/browser/browser_thread.h"
 #include "hook/browser/account/hook_account.h"
 #include "hook/browser/account/hook_paths.h"
 #include "hook/browser/channel/hook_descriptor.h"
@@ -45,7 +45,7 @@ constexpr char kDataDirVariable[] = "HOOK_DATA_DIR";
 #endif
 
 // The browser's own host, so the browser's own folder: `Product::Browser` in
-// `hook-core` keeps its chats in `%APPDATA%pp.hook.browser`, beside the account
+// `hook-core` keeps its chats in `%APPDATA%\app.hook.browser`, beside the account
 // every product shares. Naming it here is what keeps the browser's gate and the
 // channel looking at one account even when this host is a dev build (which would
 // otherwise nest itself under `hook-dev`).
@@ -77,7 +77,42 @@ class Launcher {
   Launcher(const Launcher&) = delete;
   Launcher& operator=(const Launcher&) = delete;
 
-  void EnsureRunning(StartedCallback done) {
+  // Any sequence: the ask comes from the page handler (UI thread) and from the
+  // channel's probe, whose reply can land on the pool. The launcher's own state
+  // belongs to the UI thread, so an ask from elsewhere is handed over.
+  void Ask(StartedCallback done) {
+    const scoped_refptr<base::SequencedTaskRunner> ui =
+        content::GetUIThreadTaskRunner({});
+    if (ui->RunsTasksInCurrentSequence()) {
+      EnsureRunning(std::move(done), ui);
+      return;
+    }
+    // `base::Unretained` rather than a weak pointer on purpose: the launcher is a
+    // process-lifetime singleton (`NoDestructor` below), so there is no lifetime
+    // to guard, and a `WeakPtr` would be the thing that breaks here — this ask can
+    // arrive on a pool thread (the channel's `/health` reply), and a weak
+    // reference made there is bound to that sequence, so the UI thread may not
+    // dereference it.
+    ui->PostTask(FROM_HERE, base::BindOnce(&Launcher::EnsureRunning,
+                                           base::Unretained(this), std::move(done),
+                                           ui));
+  }
+
+ private:
+  enum class State { kIdle, kStarting, kRunning, kFailed };
+
+  // Answers go back on the sequence that asked. A caller is `WeakPtr`-bound to its
+  // own sequence, and running its callback from another one trips the weak
+  // reference's sequence check — which is how a host that launched correctly still
+  // took the browser down.
+  struct Waiter {
+    scoped_refptr<base::SequencedTaskRunner> runner;
+    StartedCallback done;
+  };
+
+  void EnsureRunning(StartedCallback done,
+                     scoped_refptr<base::SequencedTaskRunner> runner) {
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
     // A host this browser started can be closed or crash while the window stays
     // open. That is not a success to remember: the next ask is a fresh attempt,
     // or the user would have to restart the browser to get a host back.
@@ -86,38 +121,64 @@ class Launcher {
     }
     switch (state_) {
       case State::kRunning:
-        std::move(done).Run(true, std::string());
+        Answer(std::move(runner), std::move(done), true, std::string());
         return;
       case State::kFailed:
         // Sticky on purpose: a binary that is not installed will not appear in
         // the next second, and relaunching on every page load would only repeat
         // the sentence the card already shows.
-        std::move(done).Run(false, failure_);
+        Answer(std::move(runner), std::move(done), false, failure_);
         return;
       case State::kStarting:
-        waiters_.push_back(std::move(done));
+        waiters_.push_back({std::move(runner), std::move(done)});
         return;
       case State::kIdle:
         break;
     }
-    waiters_.push_back(std::move(done));
+    waiters_.push_back({std::move(runner), std::move(done)});
     Start();
   }
 
- private:
-  enum class State { kIdle, kStarting, kRunning, kFailed };
+  static void Answer(scoped_refptr<base::SequencedTaskRunner> runner,
+                     StartedCallback done,
+                     bool started,
+                     const std::string& reason) {
+    std::string copy = reason;
+    runner->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(done), started, std::move(copy)));
+  }
+
+  // What a launch attempt produced: the child, or the sentence the card shows.
+  struct LaunchOutcome {
+    std::optional<base::Process> child;
+    std::string reason;
+  };
 
   void Start() {
     DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
     state_ = State::kStarting;
-    // The thread the answers belong to. `EnsureRunning` is only called from the
-    // page handler, which is the UI thread.
-    runner_ = base::SequencedTaskRunner::GetCurrentDefault();
 
+    // Everything below touches the disk, and the ask can arrive during startup
+    // tasks — the gate probes the channel while the first navigation is being
+    // throttled, and that scope forbids blocking (`BrowserMainLoop`'s
+    // `DisallowUnresponsiveTasks`). So the path, the environment and the launch
+    // run on a pool that may block, and the child comes back here.
+    base::ThreadPool::PostTaskAndReplyWithResult(
+        FROM_HERE,
+        {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+        base::BindOnce(&Launcher::LaunchNow),
+        base::BindOnce(&Launcher::OnLaunched, base::Unretained(this)));
+  }
+
+  // The blocking half of `Start`, and static so it owns nothing the UI thread
+  // owns: resolving the host stats two files, and the launch itself reads the
+  // environment it copies.
+  static LaunchOutcome LaunchNow() {
     const base::FilePath path = ResolveHostPath();
     if (path.empty()) {
-      Finish(false, "Hook's host is not installed on this computer.");
-      return;
+      return {std::nullopt, "Hook's host is not installed on this computer."};
     }
 
     // No switches: `hook-host` has no window to suppress and no mode to choose.
@@ -146,11 +207,22 @@ class Launcher {
 
     base::Process launched = base::LaunchProcess(command_line, options);
     if (!launched.IsValid()) {
-      Finish(false, "Hook's host would not start on this computer.");
+      return {std::nullopt, "Hook's host would not start on this computer."};
+    }
+    return {std::move(launched), std::string()};
+  }
+
+  void OnLaunched(LaunchOutcome outcome) {
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+    if (state_ != State::kStarting) {
+      // The browser went away while the child was being started.
       return;
     }
-    pid_ = launched.Pid();
-    child_ = std::move(launched);
+    if (!outcome.child.has_value()) {
+      Finish(false, outcome.reason);
+      return;
+    }
+    pid_ = outcome.child->Pid();
     started_at_ = base::TimeTicks::Now();
 
 #if BUILDFLAG(IS_WIN)
@@ -162,9 +234,10 @@ class Launcher {
     // answers. The duplicate keeps `IsRunning()` working on `child_`.
     base::AtExitManager::RegisterTask(
         base::BindOnce([](base::Process child) { child.Terminate(0, false); },
-                       child_->Duplicate()));
+                       outcome.child->Duplicate()));
 #endif
 
+    child_ = std::move(*outcome.child);
     SchedulePoll();
   }
 
@@ -173,7 +246,7 @@ class Launcher {
   void SchedulePoll() {
     base::ThreadPool::PostDelayedTask(
         FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-        base::BindOnce(&Launcher::ReadOnPool, weak_factory_.GetWeakPtr()),
+        base::BindOnce(&Launcher::ReadOnPool, base::Unretained(this)),
         kPollInterval);
   }
 
@@ -181,9 +254,9 @@ class Launcher {
     const ChannelDescriptor descriptor = ReadChannelDescriptor();
     const bool ours =
         descriptor.pid != 0 && descriptor.pid == static_cast<int>(pid_);
-    runner_->PostTask(
+    content::GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE, base::BindOnce(&Launcher::OnPolled,
-                                  weak_factory_.GetWeakPtr(), ours));
+                                  base::Unretained(this), ours));
   }
 
   void OnPolled(bool ours) {
@@ -220,10 +293,10 @@ class Launcher {
     failure_ = reason;
     // Drain into a local first: a callback may call `EnsureRunning` again, and it
     // has to see the finished state rather than the vector being walked.
-    std::vector<StartedCallback> waiters = std::move(waiters_);
+    std::vector<Waiter> waiters = std::move(waiters_);
     waiters_.clear();
-    for (StartedCallback& waiter : waiters) {
-      std::move(waiter).Run(started, reason);
+    for (Waiter& waiter : waiters) {
+      Answer(std::move(waiter.runner), std::move(waiter.done), started, reason);
     }
   }
 
@@ -232,11 +305,8 @@ class Launcher {
   std::optional<base::Process> child_;
   base::TimeTicks started_at_;
   std::string failure_;
-  std::vector<StartedCallback> waiters_;
-  scoped_refptr<base::SequencedTaskRunner> runner_;
+  std::vector<Waiter> waiters_;
   base::ThreadChecker thread_checker_;
-
-  base::WeakPtrFactory<Launcher> weak_factory_{this};
 };
 
 }  // namespace
@@ -254,7 +324,7 @@ bool LaunchingAllowed() {
 
 void EnsureRunning(StartedCallback done) {
   static base::NoDestructor<Launcher> launcher;
-  launcher->EnsureRunning(std::move(done));
+  launcher->Ask(std::move(done));
 }
 
 }  // namespace hook::host

@@ -20,7 +20,7 @@ on:
       - "apps/workspace/**"
       - "apps/mobile/**"
       - "packages/**"
-      - "crates/hook-core/**"
+      - "crates/**"
       - "harness.config.ci.toml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -153,3 +153,15 @@ jobs:
       # and the guard test only needs `node`.
       - name: Rust tests
         run: cargo test -p hook-core
+
+      # The same tests with the window taken out. Tauri is a feature, and this is
+      # the build `crates/hook-host` links: without it in CI, a change that
+      # reaches for an `AppHandle` below `lib.rs` compiles everywhere until the
+      # browser's own host is built, which no runner here does.
+      - name: Rust tests without the window
+        run: cargo test -p hook-core --no-default-features
+
+      # The browser's host binary: no Tauri, no window, a loopback channel. It is
+      # not packaged here (that is a Chromium build), but it has to keep linking.
+      - name: Build the browser host
+        run: cargo build -p hook-host

@@ -7,7 +7,11 @@
 > answers (`browser/overlay/src/hook/browser/host/hook_host.cc` — one launch per
 > run, a build-time path, a pid that must be the child's, `--hook-no-host` to turn
 > it off). What that means in practice: Hook Browser needs no other product
-> installed, running, or even built. What is left is packaging (step 5).
+> installed, running, or even built. Steps 1–4 are verified by running them, not
+> just by compiling: `node browser/tools/smoke.mjs --host` launches the host from
+> the browser, reads the child's own `browser-channel.browser.json`, gets
+> `product: "browser"` back from `/health`, and watches the host die with the
+> browser. What is left is packaging (step 5).
 
 ## The question
 
@@ -203,11 +207,60 @@ runs Hook keeps both — each publishes its own descriptor (step 4).
 | 2 | `EventSink` + tokio handles, so the backend runs without `AppHandle` | 1–2 sessions | the hard half of the refactor, testable in `cargo test` — **done** |
 | 3 | The `hook-host` binary, no Tauri, `Product::Browser`, `app.hook.browser` | 1–2 sessions | the browser as a product, syncing its own folder — **done** |
 | 4 | Per-product descriptor files, and the fallback reads | ½ session | two products can run at once — **done** |
-| 5 | Package it: copy beside `chrome.exe`, `scripts/products.mjs` hash, MSIX, release | with the shipping work | one installer, one browser, no other product needed |
+| 5 | Package it: copy beside `chrome.exe`, `scripts/products.mjs` hash, MSIX, release | with the shipping work | one installer, one browser, no other product needed — **not started**, see below |
 
 Step 1 is deliberately shippable on its own and is what `--headless` was built
 for; it can be replaced by the refactor without touching the page. It is in, so
 the page, the transport and the routes below are the contract steps 2–4 must keep.
+
+### Two traps this run exposed
+
+Both were found by the first real `--host` launch and both cost the browser its
+process, so they are worth knowing before touching either half.
+
+- **A navigation throttle must never `Resume()` from a callback that can run
+  inline.** `account::RequestSignedIn` answers *immediately* when its cache is
+  fresh, so `HookSignInThrottle::Check` was able to call `Resume()` from inside
+  `WillStartRequest` — before the registry had recorded the `DEFER`. Content
+  CHECKs that (`navigation_throttle_registry_impl.cc`,
+  `ResumeProcessingNavigationEvent`), and the browser dies with
+  `STATUS_BREAKPOINT`. The fix is to ask `account::SignedInIfKnown()` first and
+  answer without deferring; only an unknown answer defers, and that one always
+  arrives on a later task. Every earlier smoke run passed `--hook-no-host`, which
+  raced ahead of the cache and hid this; the host's launch delay made the cache
+  fresh in time and exposed it.
+- **A process-wide launcher has no thread of its own.** The ask arrives from the
+  page handler (UI thread) *and* from the channel's `/health` reply, which can
+  run on a pool sequence. Two separate rules follow: the launcher's state lives
+  on the UI thread (`Ask` hands the request over), and **each waiter is answered
+  on the sequence that asked** — a caller's callback holds a `WeakPtr` bound to
+  its own sequence, and running it from another trips the weak reference's check.
+  The `Launcher` itself is a `NoDestructor`, so it uses `base::Unretained` rather
+  than a `WeakPtr`: a weak reference created on a pool thread may not be
+  dereferenced on the UI thread, and that is exactly what it did.
+
+## Step 5 — what packaging means
+
+Nothing in this step exists yet, and it is not code that can be guessed: the
+installer, the release channel and the update policy are decided by whoever ships
+the browser, not by the host.
+
+- **The host beside the browser.** `hook_host.cc` looks for `hook-host.exe` next
+  to the browser binary and only then falls back to the build-time path, so a
+  packaged browser needs no new code — `pnpm browser:host` builds the release
+  binary the archive must contain. What is missing is the archive step that puts
+  it there (and a release build of Chromium to put it beside, which needs the OS
+  decoder stages of `docs/browser-os-decoders.md` so it can be built with
+  `proprietary_codecs = false`).
+- **A product entry.** `scripts/products.mjs` lists what `pnpm release` builds and
+  publishes; the browser deliberately is not in it (no Chromium build runs on a
+  push, and `hooks-host` is not an installer). An entry needs a version, a source
+  hash, an installer format and an update channel, and the last two are open
+  decisions (`docs/browser-poc-plan.md`, "What shipping needs").
+- **MSIX and the default browser.** Default-browser registration under MSIX is
+  what makes an installer more than a zip; `msix/browser/` does not exist.
+- **`hook-host`'s version** is its own (`0.1.0`) and `pnpm version:bump` does not
+  move it, because it is not yet a released artifact.
 
 ## Open decisions
 
@@ -225,6 +278,8 @@ the page, the transport and the routes below are the contract steps 2–4 must k
   per-product descriptor (step 4) replace that coincidence.
 - **Version coupling.** The host speaks the channel, so the browser and the host
   can version separately as long as the routes are append-only; a missing route
-  must read as "this host is too old", not as a broken turn.
+  must read as "this host is too old", not as a broken turn. Today `hook-host` is
+  `0.1.0` and reports that over `/health`; `pnpm version:bump` does not know about
+  it yet, which is part of step 5.
 - **Windows first, again.** macOS would need the same binary in the app bundle;
   Linux is not a target.

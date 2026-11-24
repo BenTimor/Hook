@@ -12,6 +12,7 @@
 #ifndef HOOK_BROWSER_ACCOUNT_HOOK_ACCOUNT_H_
 #define HOOK_BROWSER_ACCOUNT_HOOK_ACCOUNT_H_
 
+#include <optional>
 #include <string>
 
 #include "base/functional/callback.h"
@@ -33,6 +34,15 @@ struct Identity {
 // Whether `account.json` holds a session with a non-empty token. Blocking:
 // thread pool only.
 bool ReadSignedIn();
+
+// The cached answer, if one is still fresh; `nullopt` when it would cost a read.
+// The navigation gate asks this first so it can answer inside a throttle callback:
+// `RequestSignedIn` runs its callback *inline* for a fresh cache, and resuming a
+// navigation from there is a CHECK, because the registry has not recorded the
+// deferral yet (`navigation_throttle_registry_impl.cc`,
+// `ResumeProcessingNavigationEvent`). `RequestSignedIn` is for the other case,
+// where the answer always arrives on a later task.
+std::optional<bool> SignedInIfKnown();
 
 // `ReadSignedIn()` with a few seconds of caching, callable from the UI thread.
 // A burst of callers waits on one read; `force` re-reads now, which is what

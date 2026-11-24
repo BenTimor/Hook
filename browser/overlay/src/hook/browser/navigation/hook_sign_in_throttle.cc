@@ -92,6 +92,19 @@ content::NavigationThrottle::ThrottleCheckResult HookSignInThrottle::Check() {
     return CANCEL_AND_IGNORE;
   }
 
+  // The answer is already in hand: say it now, without deferring. This has to
+  // come before `RequestSignedIn`, which answers a fresh cache *inline* — and a
+  // `Resume()` from inside this callback would fail the registry's CHECK, since
+  // returning DEFER has not been recorded yet. Only an unknown answer defers, and
+  // that one always arrives on a later task.
+  if (std::optional<bool> known = account::SignedInIfKnown()) {
+    if (*known) {
+      return PROCEED;
+    }
+    ShowSignInCard();
+    return CANCEL_AND_IGNORE;
+  }
+
   // The account file has not been read yet (or not recently): hold the
   // navigation until we know, rather than guessing in either direction.
   account::RequestSignedIn(base::BindOnce(
@@ -100,6 +113,8 @@ content::NavigationThrottle::ThrottleCheckResult HookSignInThrottle::Check() {
 }
 
 void HookSignInThrottle::OnAccountStateKnown(bool signed_in) {
+  // Reached only from the deferred path: `Check` answers a fresh cache itself, so
+  // this runs outside a throttle callback and `Resume` is legal here.
   if (signed_in) {
     Resume();
     return;

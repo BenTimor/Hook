@@ -231,8 +231,15 @@ node browser/tools/smoke.mjs --channel        # the dock on real conversations
 host that is already answering means nothing is launched), and build the host.
 
 ```bash
-cargo build -p hook-host        # target/debug/hook-host.exe, seconds once the tree is warm
+pnpm browser:host               # cargo build --release -p hook-host
+cargo build -p hook-host        # the debug one, seconds once the tree is warm
 ```
+
+The release binary is what a packaged browser ships beside `chrome.exe`; `debug`
+is what a dev tree builds, and `build.mjs` prefers `target/release` when both
+exist. When a check fails, the smoke now prints the browser's exit code and the
+last of its stderr instead of an empty target list — a browser that dies during
+startup says why there.
 
 `build.mjs` picks that up and writes its path into `out/Dev/args.gn` at `gn gen`
 time, so **re-run `build.mjs --gen-only` after building the host** if you built
@@ -286,6 +293,20 @@ Each of these cost a night at least once.
   own setup mutex — elevate a wrapper script.
 - **`DEPOT_TOOLS_WIN_TOOLCHAIN=0` is required off Google's network.** The
   downloadable toolchain is Googlers-only, and the tools set this for you.
+- **A navigation throttle must never `Resume()` from a callback that can run
+  inline.** `account::RequestSignedIn` answers immediately for a fresh cache, so
+  resuming from its callback lands inside `WillStartRequest`, before the registry
+  recorded the `DEFER` — content CHECKs that and the browser dies with
+  `STATUS_BREAKPOINT` (0xC0000003) and `navigation_throttle_registry_impl.cc:261`.
+  Ask `account::SignedInIfKnown()` and answer without deferring; only an unknown
+  answer may defer.
+- **A process-wide launcher has no thread of its own.** `hook::host::Launcher` is
+  asked from the UI thread (the page handler) and from the channel's `/health`
+  reply, which can run on a pool sequence. Its state lives on the UI thread, every
+  waiter is answered on the sequence that asked, and it holds `base::Unretained`
+  rather than a `WeakPtr` — a weak reference created on a pool thread may not be
+  dereferenced on the UI thread, and that is a FATAL (`sequence_checker.cc:21`),
+  not a warning.
 - **Siso cannot read the overlay through the junction.** Its hashfs follows a
   Windows junction as an absolute symlink and refuses it (`store resolve next
   dir hook failed`). `args.gn` therefore sets `use_siso = false`, and

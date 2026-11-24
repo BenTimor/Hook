@@ -266,7 +266,8 @@ export async function main(argv) {
   const profile = mkdtempSync(join(tmpdir(), "hook-smoke-"));
   // A host that is already answering is not the one this run means to prove, so
   // the launch check needs an empty channel: it says so instead of pretending.
-  const existing = hostCheck ? await descriptorAlive(readDescriptor()) : null;
+  const existingDescriptor = hostCheck ? readDescriptor() : null;
+  const existing = hostCheck ? await descriptorAlive(existingDescriptor) : null;
   let hostPid = 0;
   step(`launching ${bold(binary)}`);
   const child = spawn(
@@ -288,8 +289,18 @@ export async function main(argv) {
       ...(sidePanel ? ["--hook-side-panel"] : []),
       PAGE,
     ],
-    { stdio: "ignore", windowsHide: false },
+    // Piped, not ignored: a browser that dies during startup says why on stderr,
+    // and "Targets: " is not an explanation. Kept small — at default verbosity it
+    // is a handful of lines.
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: false },
   );
+  const browserLog = [];
+  const keepBrowserLog = (chunk) => {
+    browserLog.push(String(chunk));
+    if (browserLog.length > 60) browserLog.shift();
+  };
+  child.stdout?.on("data", keepBrowserLog);
+  child.stderr?.on("data", keepBrowserLog);
 
   const stop = () => {
     try {
@@ -326,7 +337,14 @@ export async function main(argv) {
     const page = targets.find((target) => target.type === "page" && target.url === PAGE);
     if (!page) {
       const seen = (targets ?? []).map((target) => target.url).join(" | ");
-      console.error(fail(`chrome://hook did not open. Targets: ${seen}`));
+      const why =
+        child.exitCode !== null
+          ? `the browser exited (code ${child.exitCode})`
+          : "the browser is alive but has no such page";
+      console.error(fail(`chrome://hook did not open: ${why}. Targets: ${seen}`));
+      if (browserLog.length) {
+        console.error(browserLog.join("").trimEnd());
+      }
       return 1;
     }
 
@@ -473,8 +491,8 @@ export async function main(argv) {
     if (hostCheck) {
       if (existing) {
         console.error(warn(
-          `a Hook host is already running (pid ${existing.pid}): --host proves a launch, ` +
-            `so close it and run again to check this`,
+          `a Hook host is already running (${existing.product}, pid ${existingDescriptor?.pid}): ` +
+            `--host proves a launch, so close it and run again to check this`,
         ));
       } else {
         const deadline = Date.now() + 30000;

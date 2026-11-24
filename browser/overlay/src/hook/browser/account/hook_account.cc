@@ -107,6 +107,14 @@ bool ReadSignedIn() {
   return token && !token->empty();
 }
 
+std::optional<bool> SignedInIfKnown() {
+  AccountState& state = State();
+  if (!state.IsFresh()) {
+    return std::nullopt;
+  }
+  return *state.signed_in;
+}
+
 void RequestSignedIn(base::OnceCallback<void(bool)> done, bool force) {
   AccountState& state = State();
   if (!force && state.IsFresh()) {

@@ -682,7 +682,17 @@ Changing one side of a boundary is the most common way to break this repo.
   reports the `browser` product and that `browser-channel.browser.json` is the
   file that answered. `hook --headless` still exists as the chat app with no
   window, which is what `--channel` borrows, but nothing in the launch depends on
-  it.
+  it. Two rules keep that launcher alive, and both were learned by crashing a
+  browser that had passed every earlier check (`--hook-no-host` hides them):
+  it is a process-wide singleton with **no thread of its own**, so its state lives
+  on the UI thread, `Ask` hands a request over from the pool, each waiter is
+  answered on the sequence that asked, and it holds `base::Unretained` — a
+  `WeakPtr` created on a pool thread may not be dereferenced on the UI thread;
+  and `hook::account::RequestSignedIn` **may answer inline** for a fresh cache, so
+  a navigation throttle must consult `SignedInIfKnown()` and answer without
+  deferring, because `Resume()` from inside `WillStartRequest` is a CHECK
+  (`navigation_throttle_registry_impl.cc`). `pnpm browser:host` builds the
+  release binary; `browser:smoke --host` is the check that both hold.
 
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
   `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`
