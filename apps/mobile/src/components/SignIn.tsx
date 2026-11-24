@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 
-import { HookMark } from "@hook/ui";
+import { SignInCard } from "@hook/ui";
 
 import { mobile } from "../lib/api";
 import { useMobileChat } from "../store/useMobileChat";
@@ -14,10 +14,14 @@ import { useMobileChat } from "../store/useMobileChat";
  * whether it belongs to an approved account — there is no browser and nothing
  * to come back to.
  *
- * A desktop has no such sheet, and a phone whose server has no Google
- * credentials has nothing to ask, so the device flow stays behind "Use a code
- * instead": ask for a code, open the browser, poll. That path is the one the
- * desktop uses, which is why there is only one of it.
+ * A phone whose server has no Google credentials has nothing to ask, so the
+ * device flow stays behind "Use a code instead": ask for a code, open the
+ * browser, poll. That path is the one the desktop uses, which is why there is
+ * only one of it.
+ *
+ * The card itself is `packages/ui`'s: the four sign-in screens are one screen
+ * with a different sentence on top, and this file is the phone's sentence and
+ * its two calls.
  */
 export function SignIn() {
   const auth = useMobileChat((s) => s.auth);
@@ -29,7 +33,6 @@ export function SignIn() {
   const error = useMobileChat((s) => s.error);
 
   const [google, setGoogle] = useState(false);
-  const [byCode, setByCode] = useState(false);
   const pending = auth?.state === "pending";
 
   useEffect(() => {
@@ -41,79 +44,45 @@ export function SignIn() {
       .catch(() => setGoogle(false));
   }, []);
 
-  const useCode = () => {
-    setByCode(true);
-    // `auth_login` opens the browser itself; it runs on this tap and not on
-    // mount, so the app is never pushed into the background before the person
-    // has asked for anything.
-    void signIn();
-  };
+  // `auth_login` opens the browser itself; it runs on this tap and not on
+  // mount, so the app is never pushed into the background before the person
+  // has asked for anything.
+  const useCode = () => void signIn();
 
   return (
     <section className="screen signin">
-      <div className="signin-card">
-        <div className="signin-mark">
-          <HookMark />
-        </div>
-        <h1>Hook</h1>
-        <p className="signin-copy">
-          Sign in with the account you already use. Your conversations and your
-          Workspace follow you; nothing is installed twice.
-        </p>
-
-        {pending ? (
-          <>
-            <div className="device-code" aria-label="Sign-in code">
-              {auth?.userCode ?? "—"}
-            </div>
-            <button
-              className="btn btn-primary signin-open"
-              onClick={() => {
+      <SignInCard
+        state={pending ? "pending" : auth ? "idle" : "checking"}
+        code={pending ? (auth?.userCode ?? undefined) : undefined}
+        error={auth?.message ?? error ?? undefined}
+        surface={false}
+        kicker={pending ? "Almost there" : "Hook for phones"}
+        title={
+          pending ? "Approve Hook in your browser." : "Sign in to get started."
+        }
+        copy={
+          pending
+            ? "Open the page, sign in with Google, and check that the code matches. This screen finishes on its own."
+            : "Your conversations and your Workspace follow you; nothing is installed twice."
+        }
+        signInLabel={google ? "Continue with Google" : "Sign in"}
+        signInIcon={google ? undefined : <ArrowUpRight size={17} strokeWidth={1.9} />}
+        hint="Waiting for the browser. Come back to this screen after signing in."
+        onSignIn={() => void (google ? signInWithGoogle() : useCode())}
+        onOpenPage={
+          pending && auth?.verificationUrl
+            ? () => {
                 if (auth?.verificationUrl) void mobile.openUrl(auth.verificationUrl);
-              }}
-            >
-              Open the sign-in page
-              <ArrowUpRight strokeWidth={1.9} />
-            </button>
-            <button className="btn signin-cancel" onClick={() => void cancel()}>
-              Cancel
-            </button>
-            <p className="signin-wait">
-              Waiting for the browser. This screen finishes on its own — come
-              back to it after signing in.
-            </p>
-          </>
-        ) : byCode ? (
-          <button className="btn btn-primary signin-open" onClick={useCode}>
-            Get a sign-in code
-            <ArrowUpRight strokeWidth={1.9} />
-          </button>
-        ) : (
-          <>
-            {google ? (
-              <button
-                className="btn btn-primary signin-open"
-                onClick={() => void signInWithGoogle()}
-              >
-                Continue with Google
-              </button>
-            ) : (
-              <button className="btn btn-primary signin-open" onClick={useCode}>
-                Sign in
-                <ArrowUpRight strokeWidth={1.9} />
-              </button>
-            )}
-            {google ? (
-              <button className="btn signin-cancel" onClick={useCode}>
-                Use a code instead
-              </button>
-            ) : null}
-          </>
-        )}
-
-        {auth?.message ? <p className="signin-error">{auth.message}</p> : null}
-        {error ? <p className="signin-error">{error}</p> : null}
-      </div>
+              }
+            : undefined
+        }
+        onCancel={pending ? () => void cancel() : undefined}
+        alternate={
+          google && !pending
+            ? { label: "Use a code instead", onClick: useCode }
+            : undefined
+        }
+      />
     </section>
   );
 }

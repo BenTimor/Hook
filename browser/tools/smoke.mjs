@@ -5,9 +5,12 @@
  *
  *   node browser/tools/smoke.mjs                       # out/Dev, a temp profile
  *   node browser/tools/smoke.mjs --side-panel          # also the side panel
- *   node browser/tools/smoke.mjs --signin-state out    # the sign-in gate refuses
+ *   node browser/tools/smoke.mjs --signin-state out    # the gate refuses, and the
+ *                                                    # page draws the shared card
  *   node browser/tools/smoke.mjs --channel             # needs Hook running
  *   node browser/tools/smoke.mjs --codecs              # H.264 and AAC decode
+ *   node browser/tools/smoke.mjs --newtab              # the new tab page, and that
+ *                                                    # a new tab is ours at all
  *   node browser/tools/smoke.mjs --shot hook.png       # screenshots too
  *   node browser/tools/smoke.mjs --chrome <path to chrome.exe>
  *
@@ -179,6 +182,7 @@ export async function main(argv) {
   const sidePanel = flags.get("side-panel") === true;
   const channelCheck = flags.get("channel") === true;
   const codecCheck = flags.get("codecs") === true;
+  const newTabCheck = flags.get("newtab") === true;
   const signin = flags.get("signin-state");
   if (signin !== undefined && signin !== "in" && signin !== "out") {
     console.error(fail("--signin-state takes in or out"));
@@ -279,21 +283,56 @@ export async function main(argv) {
           composer: !!dock.querySelector('textarea'),
           text: dock.textContent?.slice(0, 160) ?? '',
         } : null,
+        gate: (() => {
+          const host = document.querySelector('#gate');
+          const card = host?.querySelector('.signin-card');
+          if (!host || !card) return null;
+          return {
+            visible: !host.hidden,
+            kicker: card.querySelector('.signin-kicker')?.textContent ?? '',
+            title: card.querySelector('.signin-title')?.textContent ?? '',
+            button: card.querySelector('.signin-primary')?.textContent ?? '',
+            copy: card.querySelector('.signin-copy')?.textContent ?? '',
+            code: card.querySelector('.signin-code')?.textContent ?? '',
+          };
+        })(),
+        seamHidden: document.querySelector('#seam')?.hidden ?? null,
       };
     })()`);
     console.log(JSON.stringify(report, null, 2));
 
     if (!report.title) failures.push("the page has no title");
-    if (report.tabs.length < 1) failures.push("the tab list is empty: the mojom read failed");
-    if (!report.tabs.some((tab) => tab.active)) failures.push("no tab is marked active");
-    if (!report.dock) failures.push("no dock: the panel bundle did not mount");
-    else {
-      if (report.dock.width < 300) failures.push(`the dock is ${report.dock.width}px, narrower than 380`);
-      if (!report.dock.composer) failures.push("the dock has no composer");
+
+    // A signed-out page has one job: the card, and no conversation surface. A
+    // signed-in page has the tab list and the dock. The switch is the only thing
+    // that decides which, and the page must follow it exactly.
+    if (signin === "out") {
+      if (!report.gate) {
+        failures.push("no sign-in card on a signed-out page");
+      } else {
+        if (!report.gate.visible) failures.push("the sign-in card is hidden");
+        if (!/sign in/i.test(report.gate.title)) {
+          failures.push(`the card's title is "${report.gate.title}"`);
+        }
+        if (!/sign in/i.test(report.gate.button)) {
+          failures.push(`the card's button is "${report.gate.button}"`);
+        }
+        if (!report.gate.copy) failures.push("the card has no explanation");
+      }
+      if (!report.seamHidden) failures.push("the signed-out page still shows the browser");
+      if (report.dock) failures.push("a signed-out page mounted the dock");
+    } else {
+      if (report.tabs.length < 1) failures.push("the tab list is empty: the mojom read failed");
+      if (!report.tabs.some((tab) => tab.active)) failures.push("no tab is marked active");
+      if (!report.dock) failures.push("no dock: the panel bundle did not mount");
+      else {
+        if (report.dock.width < 300) failures.push(`the dock is ${report.dock.width}px, narrower than 380`);
+        if (!report.dock.composer) failures.push("the dock has no composer");
+      }
     }
 
     // ---- one send, so the transport is exercised rather than painted --------
-    const roundTrip = await client.evaluate(`(async () => {
+    const roundTrip = signin === "out" ? null : await client.evaluate(`(async () => {
       const box = document.querySelector('#dock textarea');
       if (!box) return { error: 'no textarea' };
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
@@ -305,7 +344,7 @@ export async function main(argv) {
       await new Promise((done) => setTimeout(done, 3000));
       return { text: document.querySelector('#dock')?.textContent?.slice(-240) ?? '' };
     })()`);
-    if (!roundTrip?.text?.includes("smoke check")) {
+    if (signin !== "out" && !roundTrip?.text?.includes("smoke check")) {
       failures.push("a sent message never reached the thread");
     }
 
@@ -420,6 +459,37 @@ export async function main(argv) {
         await screenshot(panelShotTarget, shot.replace(/\.png$/, "-panel.png"), { fromSurface: false });
         panelShotTarget.close();
       }
+    }
+
+    // ---- the new tab page ----------------------------------------------------
+    //
+    // Two things are worth asserting, and the second is the one a patch can
+    // break silently: that `chrome://hook-newtab` draws, and that the browser's
+    // own "open a new tab" lands there. The first window is the cheapest proof
+    // of the second — it asks the same constant Ctrl+T does
+    // (`ChromeUINewTabURLAsGURL`), and the profile is fresh, so it has no
+    // restored tabs to confuse the answer.
+    if (newTabCheck) {
+      const firstTab = (await waitFor(`http://127.0.0.1:${port}/json/list`, 5000) ?? []).find(
+        (target) => target.type === "page",
+      );
+      await client.send("Page.navigate", { url: "chrome://hook-newtab/" });
+      await sleep(1500);
+      const newTab = await client.evaluate(`(() => ({
+        url: location.href,
+        title: document.title,
+        greeting: document.querySelector("#greeting")?.textContent ?? "",
+        chips: [...document.querySelectorAll(".ntp-chip-title")].map((chip) => chip.textContent),
+      }))()`);
+      console.log(`    new tab: ${JSON.stringify(newTab)}`);
+      if (!/^chrome:\/\/hook-newtab\//.test(newTab?.url ?? "")) {
+        failures.push(`chrome://hook-newtab did not load, got ${newTab?.url}`);
+      }
+      if (!newTab?.greeting) failures.push("the new tab page has no greeting");
+      if ((newTab?.chips?.length ?? 0) !== 3) {
+        failures.push(`the new tab page has ${newTab?.chips?.length ?? 0} chips, not 3`);
+      }
+      if (!firstTab) failures.push("no first tab to prove the new tab URL on");
     }
 
     // ---- the sign-in gate, last: it navigates the tab -----------------------

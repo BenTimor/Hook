@@ -457,6 +457,42 @@ pub async fn auth_login(
     Ok(view)
 }
 
+/// Starts the device flow for the browser's sign-in card.
+///
+/// The same flow as `auth_login`, with one difference: the browser is the thing
+/// on screen, so nothing is opened here. The page shows the code and the caller
+/// polls `auth/status`; the poll still runs in this process, because `auth.rs` is
+/// what writes the shared account file, and the browser only reads it.
+pub(crate) async fn begin_browser_sign_in(
+    state: &Arc<AppState>,
+) -> Result<AuthView, String> {
+    let (generation, _device_code, _interval) = state.auth.begin().await?;
+    let view = state.auth.view();
+
+    let poll_state = state.clone();
+    tauri::async_runtime::spawn(async move {
+        match poll_state.auth.wait_for_approval(generation).await {
+            LoginOutcome::Approved => {
+                emit_auth(&poll_state.app, &poll_state.auth.view());
+                poll_state.sync.wake();
+                poll_state.relay.wake();
+                refresh_capabilities(&poll_state).await;
+            }
+            LoginOutcome::Cancelled => {
+                emit_auth(&poll_state.app, &poll_state.auth.view());
+            }
+            LoginOutcome::Failed(message) => {
+                poll_state.auth.cancel();
+                let mut view = poll_state.auth.view();
+                view.message = Some(message);
+                emit_auth(&poll_state.app, &view);
+            }
+        }
+    });
+
+    Ok(view)
+}
+
 #[tauri::command]
 pub fn auth_cancel_login(app: AppHandle, state: State<'_, Arc<AppState>>) -> AuthView {
     state.auth.cancel();

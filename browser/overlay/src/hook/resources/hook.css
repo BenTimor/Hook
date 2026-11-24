@@ -25,6 +25,22 @@ body {
   overflow: hidden;
 }
 
+/* The gate: the shared card on the page's own canvas. `surface={false}` means
+ * the card draws no panel of its own, so this is only the frame around it. */
+.gate {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  min-height: 100%;
+  padding: 24px;
+}
+
+.gate > .signin-card {
+  width: 100%;
+  max-width: 392px;
+}
+
 .seam {
   align-self: center;
   flex: 1;

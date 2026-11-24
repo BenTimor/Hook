@@ -730,6 +730,11 @@ body {
 
 /* ── Sign in ───────────────────────────────────────────────────────────── */
 
+/* The sign-in screen is the shared card (`packages/ui/src/SignInCard.tsx`)
+   standing on the phone's canvas. Its type and spacing were lifted from the
+   chat window, so the phone inherits nearly all of it; what is left is a width
+   the margins set and buttons that stack, because a thumb aims at a row, not
+   at the middle of a sentence. The old screen's own card rules are gone. */
 .signin {
   align-items: center;
   justify-content: center;
@@ -738,92 +743,27 @@ body {
   background: var(--canvas);
 }
 
-.signin-card {
+.signin .signin-card {
   width: 100%;
   max-width: 340px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
 }
 
-/* The desktop puts the mark on a frosted panel; a phone has no room for a
-   second frame, and `HookMark` already draws its own rounded square — putting
-   the accent colour behind it showed two different darks as a box in a box. */
-.signin-mark {
-  display: grid;
-  place-items: center;
-  width: 76px;
-  height: 76px;
-  margin-bottom: 20px;
-  border-radius: 24px;
-  border: 1px solid var(--line);
-  background: var(--ivory);
-  box-shadow: var(--shadow-md);
-}
-
-.signin-mark svg {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
-}
-
-.signin h1 {
-  margin: 0 0 8px;
+.signin .signin-title {
   font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -0.03em;
 }
 
-.signin-copy {
-  margin: 0 0 24px;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--ink-3);
-}
-
-.device-code {
-  margin-bottom: 18px;
-  padding: 12px 20px;
-  border: 1px dashed var(--line-strong);
-  border-radius: 13px;
-  background: var(--ivory);
-  font-family: var(--font-mono);
-  font-size: 22px;
-  letter-spacing: 0.16em;
-  color: var(--ink);
-  user-select: text;
-}
-
-.signin-open {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+.signin .signin-actions {
   width: 100%;
-  height: 46px;
-  font-size: 15px;
+  flex-direction: column;
 }
 
-.signin-cancel {
+.signin .signin-primary,
+.signin .signin-secondary {
   width: 100%;
-  height: 42px;
-  margin-top: 8px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--ink-3);
 }
 
-.signin-wait {
-  margin: 16px 0 0;
-  font-size: 12.5px;
-  color: var(--ink-4);
-}
-
-.signin-error {
-  margin: 16px 0 0;
-  font-size: 13px;
-  color: var(--danger);
+.signin .signin-code {
+  font-size: 26px;
 }
 
 /* ── Toast ─────────────────────────────────────────────────────────────── */

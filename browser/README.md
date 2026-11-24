@@ -92,22 +92,26 @@ browser has for now (local, until the Step 3 sidecar), and `shiki-stub.ts`
 answers `highlight.ts` with Shiki's own fallback so the pak does not grow every
 grammar and theme as a chunk.
 
-`pnpm browser:ui` writes the result to
-`browser/overlay/src/hook/resources/panel.mjs` — one ES module with the
-stylesheet inlined, which `build_webui` packs into `hook_resources.pak`. The
-file is generated but **committed**, and both halves of that are deliberate:
+The bundle is **generated, not committed**. `browser/tools/build.mjs` runs
+`browser/tools/bundle.mjs` (Vite, about half a second) before it calls ninja, and
+the output lands in `browser/overlay/src/hook/resources/panel.mjs`, which
+`build_webui` packs into `hook_resources.pak`. `pnpm browser:ui` runs the same
+bundler by hand. Three things are deliberate:
 
 - Chromium's WebUI build compiles Lit and TypeScript and ships no React, so the
   shared surface cannot be built by `build_webui` itself. `build_webui` also
   refuses `.js` in `static_files` and lints every `.css` it is given against
   Chromium's stylelint config, which a bundle has no reason to satisfy — hence
   `.mjs` and the inlined stylesheet.
-- Committing it keeps `gn gen` hermetic and works before `pnpm install` has ever
-  run for a new contributor. The cost is a generated file: regenerate it in the
-  same commit as any change under `packages/chat/src` or `packages/ui/src`, or
-the panel silently shows the old surface. A build-time `action()` that runs
-Vite into `$root_gen_dir` is the cleaner shape and the follow-up; it needs the
-repository's `node_modules` as a declared input, which GN cannot see.
+- It is not inside GN because it cannot be: `build_webui` resolves `static_files`
+  against the source tree, so a `$root_gen_dir` output is not a valid input,
+  and GN has no way to declare `node_modules` as inputs. A wrapper step is the
+  honest place for "build the JavaScript first".
+- The file is in `.gitignore`. Before this it was committed, and the failure mode
+  was silent: a change to `packages/chat` that nobody re-bundled left the panel
+  showing the old surface, and the diff of a 640 kB generated file is unreadable
+  anyway. Now a stale checkout fails loudly — `panel.mjs` is missing until the
+  build creates it — and the build always creates it.
 
 ## Codecs
 
@@ -225,7 +229,7 @@ and `out/Dev` is a ninja build (`use_siso = false`, because siso cannot read the
 overlay junction). A C++ change is an `autoninja -C out/Dev chrome` away — minutes,
 not hours — and a WebUI-only change is a resource repack.
 
-Step 1 is complete, in `overlay/src/hook/` and eight small patches:
+Step 1 is complete, in `overlay/src/hook/` and ten small patches:
 
 - `chrome://hook`, served from our own `hook_resources.pak`;
 - the live tab list over mojom (`common/hook.mojom`, `browser/tabs/`), registered
@@ -236,18 +240,47 @@ Step 1 is complete, in `overlay/src/hook/` and eight small patches:
   writes it, and `--hook-signin-state=in|out` makes it provable on a signed-in
   machine.
 
-Step 2's first surfaces are in: the dock from `packages/chat` at 380px, on
-`packages/ui` tokens, built by `pnpm browser:ui` and served from the pak — as a
-pane of `chrome://hook` and as a real side-panel entry (`chrome://hook-panel`,
-`browser/ui/views/`, entry id + action item patches). `--hook-side-panel` opens
-it, and the toolbar's pin keeps it. The New Tab page and the shared sign-in card
-are what is left of Step 2.
+Step 2 is in. The dock from `packages/chat` runs at 380px, on `packages/ui`
+tokens, served from the pak — as a pane of `chrome://hook` and as a real
+side-panel entry (`chrome://hook-panel`, `browser/ui/views/`, entry id + action
+item patches). `--hook-side-panel` opens it, and the toolbar's pin keeps it.
+
+The signed-out page is the shared sign-in card from `packages/ui`, mounted from
+the same bundle: it shows the device code, offers the page again, cancels, and
+polls until the app writes the account file — then the page reloads and the gate
+lets the web back in. `StartSignIn`/`CancelSignIn` go through the browser process
+to the running app's channel (`/auth/start`, `/auth/status`, `/auth/cancel`), so
+the page never holds a token. Without an app the card says so and links to
+hookcode.io, which is the one thing a browser cannot do on its own: the account
+file belongs to `auth.rs`.
+
+The New Tab page is `chrome://hook-newtab` (`newtab.html`, `newtab.css`,
+`newtab.ts`: the wordmark, a greeting that is true of the clock, three chips) and
+a new tab opens it because `ChromeUINewTabURLAsGURL()` returns it — one hunk in
+`chrome/common/webui_url_constants.cc`, since Ctrl+T, the plus button, the first
+window and a crash-restore tab all ask that one function. `chrome://newtab` typed
+by hand is still Chrome's own page.
+
+The tab strip is restyled (patch 0010): `chrome/browser/ui/tabs/tab_style.cc` is
+narrower tabs (214 DIP), rounder corners (13/15), and
+`chrome/browser/ui/color/tab_strip_color_mixer.cc` makes the selected tab opaque
+instead of a 75% wash, so it reads as a card in the strip. It is Views and it is
+the most expensive surface to change, which is why it is the last one and the
+smallest diff.
 
 Step 3's cheap proof is in, and so is page context: a **running Hook app**
 publishes a loopback channel (`crates/hook-core/src/channel.rs`) beside the account
 file, and the browser process reads it for the page. `pnpm browser:smoke --channel`
-against a running Hook app is the demonstration: it listed 31 real conversations,
-read an 11-message transcript, and got the backend's refusal for an empty message.
+against a running Hook app is the demonstration: it listed 33 real conversations,
+read a 48-message transcript, and got the backend's refusal for an empty message.
+
+The interim host is `hook --headless`: the same app and the same channel with no
+window and no tray icon, so a shortcut or a script can start the process the
+browser talks to. It is not yet the sidecar the plan describes — that one is a
+separate binary that owns auth and the turn without Tauri, started by the browser
+itself, with its own product and data folder. The design, the two shapes it
+considered and the order of work are in `docs/browser-host.md`. Until it exists
+the browser needs a Hook process running, and says so on the sign-in card.
 
 `pnpm browser:smoke` passes for all of it, so the answer to the POC's question —
 does our overlay reach Chromium, and can the Hook chat surface live inside it — is

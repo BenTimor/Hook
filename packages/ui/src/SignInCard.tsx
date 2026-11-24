@@ -45,6 +45,8 @@ export type SignInCardProps = {
   alternate?: { label: string; onClick: () => void };
   /** A host's own line under everything, which no other host can write. */
   note?: ReactNode;
+  /** What the host can promise about the credential. `null` drops the line. */
+  privacy?: ReactNode | null;
 };
 
 export function SignInCard({
@@ -64,6 +66,7 @@ export function SignInCard({
   onCancel,
   alternate,
   note,
+  privacy,
 }: SignInCardProps) {
   return (
     <section className="signin-card" data-surface={surface} aria-live="polite">
@@ -132,11 +135,17 @@ export function SignInCard({
               <ArrowRight size={14} strokeWidth={1.9} />
             </button>
           )}
-          <p className="signin-privacy">
-            <ShieldCheck size={14} strokeWidth={1.8} aria-hidden="true" />
-            Your Google password never touches Hook. We only receive your name
-            and email.
-          </p>
+          {privacy !== null && (
+            <p className="signin-privacy">
+              <ShieldCheck size={14} strokeWidth={1.8} aria-hidden="true" />
+              {privacy ?? (
+                <>
+                  Your Google password never touches Hook. We only receive your
+                  name and email.
+                </>
+              )}
+            </p>
+          )}
         </>
       )}
 

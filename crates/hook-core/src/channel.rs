@@ -23,8 +23,10 @@
 //! * the channel is read-and-send only. It never renames, deletes, syncs or
 //!   changes a setting — those stay in the window, with the user.
 
+use std::future::Future;
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -57,6 +59,18 @@ pub trait ChannelBackend: Send + Sync {
     /// browser polls `chat` while it runs, so there is no stream to keep alive.
     fn send(&self, id: &str, text: &str, context: &str) -> Result<(), String>;
     fn stop(&self, id: &str) -> Result<(), String>;
+    /// The account, as `auth_signer` sees it: the pending code while the device
+    /// flow waits, and `signed_in` once it has been approved.
+    fn sign_in_state(&self) -> Value;
+    /// Starts the device flow for the browser page. The page shows the code; the
+    /// app keeps polling and is what writes the account file, so the page has
+    /// nothing to hold onto but a number.
+    fn start_sign_in(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>>;
+    /// Abandons a pending flow, so a page that was closed is not left waiting on
+    /// a code the app will never finish.
+    fn cancel_sign_in(&self);
 }
 
 /// The live backend: the running app's store, turn state and account.
@@ -144,6 +158,23 @@ impl ChannelBackend for LiveBackend {
         crate::commands::stop_chat_turn(&self.state, id);
         Ok(())
     }
+
+    fn sign_in_state(&self) -> Value {
+        serde_json::to_value(self.state.auth.view()).unwrap_or(Value::Null)
+    }
+
+    fn cancel_sign_in(&self) {
+        self.state.auth.cancel();
+    }
+
+    fn start_sign_in(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
+        Box::pin(async move {
+            let view = crate::commands::begin_browser_sign_in(&self.state).await?;
+            serde_json::to_value(view).map_err(|error| error.to_string())
+        })
+    }
 }
 
 /// The server itself: one port, one token, one descriptor file.
@@ -202,6 +233,14 @@ impl Channel {
     ///
     /// Separate from `serve` so a test can drive the real HTTP surface without a
     /// descriptor file (and therefore without a data folder).
+    /// Where a client should look, for a log line. Empty until the port is bound.
+    pub fn describe(&self) -> String {
+        match self.port.load(Ordering::SeqCst) {
+            0 => "not started".to_string(),
+            port => format!("http://127.0.0.1:{port}"),
+        }
+    }
+
     fn bind_and_serve(self: &Arc<Self>, backend: Arc<dyn ChannelBackend>) -> std::io::Result<u16> {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
@@ -451,6 +490,39 @@ async fn handle(
         )
         .await;
     }
+    let segments: Vec<&str> = request.path.trim_start_matches('/').split('/').collect();
+
+    // Signing in is the one thing the browser may ask while signed out: it is
+    // the page that shows the code, and the app that polls for the approval.
+    // Everything below this block needs a session.
+    match (request.method.as_str(), segments.as_slice()) {
+        ("GET", ["auth", "status"]) => {
+            return respond(
+                &mut stream,
+                200,
+                &json!({ "ok": true, "signIn": backend.sign_in_state() }),
+            )
+            .await;
+        }
+        ("POST", ["auth", "cancel"]) => {
+            backend.cancel_sign_in();
+            return respond(&mut stream, 200, &json!({ "ok": true })).await;
+        }
+        ("POST", ["auth", "start"]) => {
+            return match backend.start_sign_in().await {
+                Ok(view) => {
+                    respond(&mut stream, 202, &json!({ "ok": true, "signIn": view })).await
+                }
+                Err(error) => {
+                    respond(&mut stream, 400, &json!({ "ok": false, "error": error })).await
+                }
+            };
+        }
+        _ => {}
+    }
+
+    // Everything below needs a session: a signed-out machine has no window into
+    // a previous account's chats.
     if !backend.signed_in() {
         return respond(
             &mut stream,
@@ -460,7 +532,6 @@ async fn handle(
         .await;
     }
 
-    let segments: Vec<&str> = request.path.trim_start_matches('/').split('/').collect();
     match (request.method.as_str(), segments.as_slice()) {
         ("GET", ["chats"]) => match backend.chats() {
             Ok(chats) => respond(&mut stream, 200, &json!({ "ok": true, "chats": chats })).await,
@@ -535,6 +606,8 @@ mod tests {
         }
     }
 
+    const PENDING: &str = r#"{"signedIn":false,"state":"pending","userCode":"K7QM-2XPD","verificationUrl":"https://hookcode.io/authorize"}"#;
+
     impl ChannelBackend for Fake {
         fn product(&self) -> &'static str {
             "chat"
@@ -574,6 +647,19 @@ mod tests {
         fn stop(&self, _id: &str) -> Result<(), String> {
             Ok(())
         }
+        fn sign_in_state(&self) -> Value {
+            if self.signed_in() {
+                json!({ "signedIn": true, "state": "signed_in" })
+            } else {
+                serde_json::from_str(PENDING).unwrap_or(Value::Null)
+            }
+        }
+        fn start_sign_in(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
+            Box::pin(async move { Ok(serde_json::from_str(PENDING).unwrap_or(Value::Null)) })
+        }
+        fn cancel_sign_in(&self) {}
     }
 
     /// Bind the server against a fake backend and return (port, token).
@@ -664,6 +750,29 @@ mod tests {
         let (status, body) = get(port, "/chats", Some("t")).await;
         assert_eq!(status, 403);
         assert_eq!(body["error"], "Sign in to Hook first.");
+    }
+
+    #[tokio::test]
+    async fn signing_in_is_the_one_route_a_signed_out_machine_can_use() {
+        let fake = Fake::new();
+        fake.signed_in.store(false, Ordering::SeqCst);
+        let (port, token) = serve(fake);
+
+        // Signed out: the code, and the code alone.
+        let (status, body) = get(port, "/auth/status", Some(&token)).await;
+        assert_eq!(status, 200);
+        assert_eq!(body["signIn"]["state"], "pending");
+        assert_eq!(body["signIn"]["userCode"], "K7QM-2XPD");
+
+        let (status, body) = call(port, "POST", "/auth/start", Some(&token), Some("{}")).await;
+        assert_eq!(status, 202);
+        assert_eq!(body["signIn"]["userCode"], "K7QM-2XPD");
+
+        // The same machine still has no chats: the gate is only opened for
+        // signing in.
+        let (status, body) = get(port, "/chats", Some(&token)).await;
+        assert_eq!(status, 403);
+        assert!(body["error"].as_str().unwrap_or_default().contains("Sign in"));
     }
 
     #[tokio::test]

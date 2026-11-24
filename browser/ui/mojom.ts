@@ -39,6 +39,19 @@ export interface ChatView {
   messages: ChatMessage[];
 }
 
+export interface SignInView {
+  signedIn: boolean;
+  /** Whether a Hook app answers on this computer. */
+  available: boolean;
+  /** signed_out | pending | signed_in */
+  state: string;
+  userCode: string;
+  verificationUrl: string;
+  email: string;
+  name: string;
+  message: string;
+}
+
 export interface HookPageHandler {
   getTabs(): Promise<{ tabs: Tab[] }>;
   showUI(): void;
@@ -52,6 +65,9 @@ export interface HookPageHandler {
     context: string,
   ): Promise<{ ok: boolean; error: string }>;
   stopMessage(id: string): void;
+  getSignIn(): Promise<SignInView>;
+  startSignIn(): Promise<{ view: SignInView; error: string }>;
+  cancelSignIn(): Promise<void>;
 }
 
 let handler: HookPageHandler | null = null;

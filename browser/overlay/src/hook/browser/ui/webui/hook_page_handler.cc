@@ -8,9 +8,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/weak_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
+#include "hook/browser/account/hook_account.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/web_contents.h"
 #include "hook/browser/tabs/hook_tabs.h"
@@ -36,6 +39,41 @@ mojom::ChatSummaryPtr ToSummary(const base::DictValue& row) {
   summary->busy = row.FindBool("busy").value_or(false);
   summary->unsynced = row.FindBool("unsynced").value_or(false);
   return summary;
+}
+
+}
+
+// One sign-in lookup: the view being filled and the page waiting for it. Shared
+// because every step is a separate asynchronous answer.
+struct SignInLookup {
+  mojom::SignInViewPtr view = mojom::SignInView::New();
+  HookPageHandler::GetSignInCallback done;
+};
+
+namespace {
+
+void FinishSignIn(SignInLookup& lookup) {
+  std::move(lookup.done).Run(std::move(lookup.view));
+}
+
+// The app's answer, merged into the view. The app is authoritative while it is
+// running: it is what will write the account file.
+void MergeSignIn(mojom::SignInView* view, const base::DictValue& sign_in) {
+  // `signedIn` is deliberately not taken from the app: the account file is what
+  // every product reads, and the page has just read it (honouring the test
+  // switch). The app's answer is the *flow* — the code, the page it opened, the
+  // refusal — and that is what is merged here.
+  const auto copy = [&sign_in](const char* key, std::string* field) {
+    if (const std::string* value = sign_in.FindString(key)) {
+      *field = *value;
+    }
+  };
+  copy("state", &view->state);
+  copy("userCode", &view->user_code);
+  copy("verificationUrl", &view->verification_url);
+  copy("email", &view->email);
+  copy("name", &view->name);
+  copy("message", &view->message);
 }
 
 mojom::ChatMessagePtr ToMessage(const base::DictValue& row) {
@@ -232,6 +270,114 @@ void HookPageHandler::StopMessage(const std::string& id) {
   }
   channel->Post(base::StringPrintf("/chats/%s/stop", id.c_str()),
                 base::DictValue(),
+                base::BindOnce([](std::optional<base::DictValue>,
+                                  const std::string&) {}));
+}
+
+void HookPageHandler::GetSignIn(GetSignInCallback callback) {
+  auto lookup = std::make_shared<SignInLookup>();
+  lookup->done = std::move(callback);
+  // Re-read on every call, not from the gate's cache: the page polls this while
+  // the app waits for an approval, and the same cache is what the navigation
+  // gate consults. Refreshing it here is what lets the reload after approval
+  // through, and it notices a sign-out just as quickly.
+  account::RequestSignedIn(
+      base::BindOnce(&HookPageHandler::OnSessionKnown,
+                     weak_factory_.GetWeakPtr(), lookup),
+      /*force=*/true);
+}
+
+void HookPageHandler::OnSessionKnown(std::shared_ptr<SignInLookup> lookup,
+                                     bool signed_in) {
+  lookup->view->signed_in = signed_in;
+  lookup->view->state = signed_in ? "signed_in" : "signed_out";
+
+  HookChannel* channel = Channel();
+  if (!channel) {
+    FinishSignIn(*lookup);
+    return;
+  }
+  channel->Check(base::BindOnce(&HookPageHandler::OnChannelChecked,
+                                weak_factory_.GetWeakPtr(), lookup));
+}
+
+void HookPageHandler::OnChannelChecked(std::shared_ptr<SignInLookup> lookup,
+                                       bool available,
+                                       const std::string& reason) {
+  lookup->view->available = available;
+  HookChannel* channel = Channel();
+  if (!available || !channel) {
+    FinishSignIn(*lookup);
+    return;
+  }
+  channel->Get("/auth/status",
+               base::BindOnce(&HookPageHandler::OnAuthStatus,
+                              weak_factory_.GetWeakPtr(), lookup));
+}
+
+void HookPageHandler::OnAuthStatus(std::shared_ptr<SignInLookup> lookup,
+                                   std::optional<base::DictValue> body,
+                                   const std::string& error) {
+  if (body) {
+    if (const base::DictValue* sign_in = body->FindDict("signIn")) {
+      MergeSignIn(lookup->view.get(), *sign_in);
+    }
+  }
+  FinishSignIn(*lookup);
+}
+
+void HookPageHandler::StartSignIn(StartSignInCallback callback) {
+  HookChannel* channel = Channel();
+  if (!channel) {
+    mojom::SignInViewPtr view = mojom::SignInView::New();
+    std::move(callback).Run(std::move(view),
+                            "This page has no browser context.");
+    return;
+  }
+  channel->Check(base::BindOnce(&HookPageHandler::OnStartChannelChecked,
+                                weak_factory_.GetWeakPtr(),
+                                std::move(callback)));
+}
+
+void HookPageHandler::OnStartChannelChecked(StartSignInCallback callback,
+                                             bool available,
+                                             const std::string& reason) {
+  HookChannel* channel = Channel();
+  if (!available || !channel) {
+    mojom::SignInViewPtr view = mojom::SignInView::New();
+    view->state = "signed_out";
+    std::move(callback).Run(
+        std::move(view),
+        "Start Hook to sign in. The browser borrows its account from the Hook "
+        "app on this computer.");
+    return;
+  }
+  channel->Post("/auth/start", base::DictValue(),
+                base::BindOnce(&HookPageHandler::OnStartReply,
+                               weak_factory_.GetWeakPtr(),
+                               std::move(callback)));
+}
+
+void HookPageHandler::OnStartReply(StartSignInCallback callback,
+                                   std::optional<base::DictValue> body,
+                                   const std::string& error) {
+  mojom::SignInViewPtr view = mojom::SignInView::New();
+  view->available = true;
+  if (body) {
+    if (const base::DictValue* sign_in = body->FindDict("signIn")) {
+      MergeSignIn(view.get(), *sign_in);
+    }
+  }
+  std::move(callback).Run(std::move(view),
+                          body ? std::string() : error);
+}
+
+void HookPageHandler::CancelSignIn() {
+  HookChannel* channel = Channel();
+  if (!channel) {
+    return;
+  }
+  channel->Post("/auth/cancel", base::DictValue(),
                 base::BindOnce([](std::optional<base::DictValue>,
                                   const std::string&) {}));
 }

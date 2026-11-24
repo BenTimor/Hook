@@ -55,6 +55,24 @@ struct ChatView {
   array<ChatMessage> messages;
 };
 
+// The sign-in card's whole state.
+//
+// `available` is whether a Hook app answers on this computer. The browser cannot
+// sign in on its own: the device flow, the account file it writes and the token
+// all belong to `auth.rs`, so without a running app the card can only say so.
+struct SignInView {
+  bool signed_in;
+  bool available;
+  // signed_out | pending | signed_in
+  string state;
+  // The code the person types in the browser while the flow waits.
+  string user_code;
+  string verification_url;
+  string email;
+  string name;
+  string message;
+};
+
 interface PageHandler {
   // The live tab list of the browser window that hosts this page.
   GetTabs() => (array<Tab> tabs);
@@ -77,4 +95,14 @@ interface PageHandler {
   // tab), capped by the backend like every other product's.
   SendMessage(string id, string text, string context) => (bool ok, string error);
   StopMessage(string id);
+
+  // The sign-in card: the account file, plus the running app's answer when there
+  // is one. Every call re-reads the file, so a page that has just watched an
+  // approval can reload and be let through.
+  GetSignIn() => (SignInView view);
+  // Starts the device flow through the running app and returns the pending view.
+  // Nothing is opened here: the page shows the code and offers the link.
+  StartSignIn() => (SignInView view, string error);
+  // Abandons a pending flow in the app.
+  CancelSignIn();
 };

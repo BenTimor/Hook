@@ -291,18 +291,24 @@ bash.
   junctioned into the checkout as `src/hook`, `patches/series` the small edits to
   upstream files that survive a rebase, and `tools/{sync,build,verify,patch,smoke}.mjs`
   the whole interface. `browser/ui/` is the dock's own Vite project: it builds
-  `packages/chat` into `overlay/src/hook/resources/panel.mjs`, which is generated
-  but committed because Chromium's WebUI pipeline has no React (`.mjs`, its
-  stylesheet inlined, and `preview.html` to iterate without a rebuild —
-  `browser/README.md`, "The dock bundle"). The overlay is more than the seam now:
-  `browser/navigation/` is the signed-out gate, `browser/ui/views/` is the dock as
-  a side-panel entry (`chrome://hook-panel`, `--hook-side-panel`), and
+  `packages/chat` into `overlay/src/hook/resources/panel.mjs` — generated, not
+  committed (`browser/tools/build.mjs` runs Vite before ninja, because
+  `build_webui` can only pack static files that exist in the source tree and GN
+  cannot list `node_modules`), because Chromium's WebUI pipeline has no React
+  (`.mjs`, its stylesheet inlined, and `preview.html` to iterate without a
+  rebuild — `browser/README.md`, "The dock bundle"). The overlay is more than the seam now:
+  `browser/navigation/` is the signed-out gate, `browser/account/` is the shared
+  account read both the gate and the card use, `browser/ui/views/` is the dock as
+  a side-panel entry (`chrome://hook-panel`, `--hook-side-panel`),
+  `browser/ui/webui/hook_newtab_ui.*` is the New Tab page (a new tab is ours via
+  `ChromeUINewTabURLAsGURL`, patch 0009), and
   `browser/channel/` is the client for a *running* Hook app's loopback channel
   (`crates/hook-core/src/channel.rs`) — the browser process makes those calls
   because a `chrome://` renderer is killed for a cross-scheme request, and that is
   also why its token never reaches the page. `pnpm browser:smoke` is the check:
-  the tab list, the dock, the gate both ways, the side panel, and `--channel`
-  against a running app. The ~100 GB checkout itself never
+  the tab list, the dock, the gate both ways (the card is on the page), the side
+  panel, `--newtab`, `--codecs`, and `--channel` against a running app — or
+  against `hook --headless`, the host with no window. The ~100 GB checkout itself never
   enters the repo and `browser/README.md` carries the dev loop, the toolchain
   prerequisites and the traps. `args.gn` pins `use_siso = false`: siso cannot read
   the overlay junction, so the tree builds with ninja (`browser/README.md`,
@@ -834,7 +840,8 @@ Changing one side of a boundary is the most common way to break this repo.
 - Coverage → **Tests**
 - Hook Browser (designed, not built) → `docs/browser-architecture.md`,
   `docs/browser-poc-plan.md`, `docs/browser-os-decoders.md` (the OS decoder path:
-  designed, sized, not started)
+  designed, sized, not started), `docs/browser-host.md` (the browser's own host
+  process: designed, sized, not started)
 - License, what a fork may do, bundled third-party terms → **License** in
   `README.md`, plus `LICENSE`, `TRADEMARK.md`, `THIRD_PARTY_NOTICES.md`,
   `CONTRIBUTING.md` and `CLA.md`

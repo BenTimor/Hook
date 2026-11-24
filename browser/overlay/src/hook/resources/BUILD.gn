@@ -19,19 +19,25 @@ build_webui("build") {
   # panel.html is the same bundle as a document of its own: the side panel
   # (chrome://hook-panel) draws it, chrome://hook draws it in a pane.
   #
-  # panel.mjs is the dock from packages/chat, built by Vite from
-  # browser/ui/ (`pnpm browser:ui`). Chromium's WebUI pipeline compiles Lit and
-  # TypeScript and ships no React, so the shared surface travels as a prebuilt
-  # bundle. `.mjs` rather than `.js` on purpose: build_webui refuses `.js` in
-  # static_files, and text/javascript is what Chromium serves for `.mjs`.
+  # panel.mjs is the dock from packages/chat, built by `browser/tools/build.mjs`
+  # from browser/ui/ before ninja runs (it is generated, not committed — see the
+  # README's "The dock bundle"). Chromium's WebUI pipeline compiles Lit and TypeScript and ships
+  # no React, so the shared surface travels as a prebuilt bundle. `.mjs` rather
+  # than `.js` on purpose: build_webui refuses `.js` in static_files, and
+  # text/javascript is what Chromium serves for `.mjs`.
   static_files = [
     "hook.css",
     "hook.html",
+    "newtab.css",
+    "newtab.html",
     "panel.html",
     "panel.mjs",
   ]
 
-  ts_files = [ "hook.ts" ]
+  ts_files = [
+    "hook.ts",
+    "newtab.ts",
+  ]
 
   mojo_files_deps = [ "//hook/common:mojom_ts__generator" ]
   mojo_files = [ "$root_gen_dir/hook/common/hook.mojom-webui.ts" ]

@@ -16,6 +16,12 @@ inline constexpr char kHookHost[] = "hook";
 // (hook_sign_in_throttle.cc) and where the browser opens at first run.
 inline constexpr char kHookURL[] = "chrome://hook/";
 
+// The new tab page. `chrome/browser/ui/browser_tabstrip.cc` opens this instead of
+// Chrome's own new tab (browser/patches/, "new tab page"), so Ctrl+T, the plus
+// button and a first window all land here.
+inline constexpr char kHookNewTabHost[] = "hook-newtab";
+inline constexpr char kHookNewTabURL[] = "chrome://hook-newtab/";
+
 // The dock as a side panel. A separate host from chrome://hook because the side
 // panel hosts a *top chrome* WebUI, and the same page should not be both.
 inline constexpr char kHookPanelHost[] = "hook-panel";

@@ -10,9 +10,13 @@
 #define HOOK_BROWSER_UI_WEBUI_HOOK_PAGE_HANDLER_H_
 
 #include <memory>
+#include <optional>
+#include <string>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/values.h"
 #include "hook/browser/channel/hook_channel.h"
 #include "hook/common/hook.mojom.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -22,6 +26,10 @@ class WebContents;
 }  // namespace content
 
 namespace hook {
+
+// One sign-in lookup in flight; defined by the .cc, which is the only place that
+// knows what it carries.
+struct SignInLookup;
 
 class HookPageHandler : public mojom::PageHandler {
  public:
@@ -49,6 +57,26 @@ class HookPageHandler : public mojom::PageHandler {
                    const std::string& context,
                    SendMessageCallback callback) override;
   void StopMessage(const std::string& id) override;
+  void GetSignIn(GetSignInCallback callback) override;
+  void StartSignIn(StartSignInCallback callback) override;
+  void CancelSignIn() override;
+
+  // The two halves of GetSignIn: the account file (which is what the gate reads
+  // too), then the running app's answer, when there is one.
+  void OnSessionKnown(std::shared_ptr<SignInLookup> lookup, bool signed_in);
+  void OnChannelChecked(std::shared_ptr<SignInLookup> lookup,
+                        bool available,
+                        const std::string& reason);
+  void OnAuthStatus(std::shared_ptr<SignInLookup> lookup,
+                    std::optional<base::DictValue> body,
+                    const std::string& error);
+  // StartSignIn: the app must answer before the flow can exist.
+  void OnStartChannelChecked(StartSignInCallback callback,
+                             bool available,
+                             const std::string& reason);
+  void OnStartReply(StartSignInCallback callback,
+                    std::optional<base::DictValue> body,
+                    const std::string& error);
 
   // The channel client, made on first use (it needs the page's profile).
   HookChannel* Channel();
@@ -61,6 +89,8 @@ class HookPageHandler : public mojom::PageHandler {
   std::unique_ptr<HookChannel> channel_;
 
   mojo::Receiver<mojom::PageHandler> receiver_{this};
+
+  base::WeakPtrFactory<HookPageHandler> weak_factory_{this};
 };
 
 }  // namespace hook

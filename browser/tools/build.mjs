@@ -11,12 +11,19 @@
  * first build forces a full recompile.
  *
  * Build `chrome`, never `all` — `all` drags in every test binary.
+ *
+ * Before ninja runs, the dock bundle is rebuilt from `browser/ui/` (Vite, about
+ * half a second). It is generated JavaScript and is not committed; `build_webui`
+ * can only pack static files that exist in the source tree, and GN cannot express
+ * "this output depends on node_modules", so this wrapper is the one place that
+ * keeps the two halves in step.
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   browserDir,
+  repoRoot,
   bold,
   depotToolsBin,
   detectVisualStudio,
@@ -58,6 +65,48 @@ export async function main(argv) {
     if (!sdk.hasDebuggers) {
       console.error(fail(`SDK ${sdk.required} is installed without "Debugging Tools for Windows"; gn gen needs dbghelp.dll.`));
       return 1;
+    }
+  }
+
+  // The bundle before the build: `build_webui` packs `panel.mjs` as a static file
+  // and ninja cannot generate it (build_webui resolves static files against the
+  // source tree, and GN cannot list node_modules as inputs). Vite takes under a
+  // second, so this runs every time rather than trying to be clever about it.
+  if (!existsSync(join(repoRoot, "node_modules", "vite"))) {
+    console.error(fail("node_modules has no vite; run pnpm install."));
+    return 1;
+  }
+  step("bundling the dock");
+  const bundle = await run(
+    process.execPath,
+    [
+      join(browserDir, "tools", "bundle.mjs"),
+      "--out",
+      join(browserDir, "overlay", "src", "hook", "resources"),
+    ],
+    { cwd: repoRoot },
+  );
+  if (bundle.code !== 0) {
+    console.error(fail("the dock bundle failed to build"));
+    return 1;
+  }
+  // Vite's exit is not always the end of its handle on Windows: a scanner or the
+  // esbuild service can hold the new file for a moment, and ninja's first reader
+  // then fails with a sharing violation. Reading it once here is the cheapest
+  // way to wait that out.
+  {
+    const bundlePath = join(browserDir, "overlay", "src", "hook", "resources", "panel.mjs");
+    for (let attempt = 0; ; attempt++) {
+      try {
+        readFileSync(bundlePath, { encoding: "utf8", flag: "r" });
+        break;
+      } catch (failure) {
+        if (attempt >= 20) {
+          console.error(fail(`the dock bundle is unreadable: ${failure.message}`));
+          return 1;
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      }
     }
   }
 

@@ -18,12 +18,44 @@ import { createRoot } from "react-dom/client";
 // preview, the machines list and the remote-chat picker, and a WebUI bundle is
 // a committed file, so it carries only what this page draws.
 import { ChatDock } from "../../packages/chat/src/ChatDock";
+import { SignInCard, type SignInCardProps } from "@hook/ui";
 import "@hook/ui/tokens.css";
 
 import { hookHandler } from "./mojom";
 import { channelTransport, localTransport } from "./transport";
 
 const NO_APP = "Hook is not running on this computer.";
+
+/**
+ * The sign-in card, mounted by `hook.ts` when the page has no session.
+ *
+ * Exported from this bundle rather than built as a second one: Vite would split
+ * the React runtime into a chunk the pak would also have to carry, and a WebUI
+ * resource is addressed by a path, not by a chunk graph.
+ *
+ * The flow belongs to the page, not to the card: `chrome://hook` is what can ask
+ * the browser process for the state and poll the running app's channel, and the
+ * card is only the face of it.
+ */
+export interface MountedSignIn {
+  update(props: SignInCardProps): void;
+}
+
+export function mountSignIn(
+  host: HTMLElement,
+  props: SignInCardProps,
+): MountedSignIn {
+  const root = createRoot(host);
+  const draw = (next: SignInCardProps) => {
+    root.render(
+      <StrictMode>
+        <SignInCard {...next} />
+      </StrictMode>,
+    );
+  };
+  draw(props);
+  return { update: draw };
+}
 
 async function boot(): Promise<void> {
   const host = document.getElementById("dock");

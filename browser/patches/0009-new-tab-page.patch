@@ -1,0 +1,25 @@
+diff --git a/chrome/common/webui_url_constants.cc b/chrome/common/webui_url_constants.cc
+index 9a196abd0a..b03cde6664 100644
+--- a/chrome/common/webui_url_constants.cc
++++ b/chrome/common/webui_url_constants.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "chrome/common/webui_url_constants.h"
++#include "hook/common/hook_url_constants.h"
+ 
+ #include <array>
+ #include <string_view>
+@@ -317,7 +318,11 @@ const GURL& ChromeUINewTabPageURLAsGURL() {
+ }
+ 
+ const GURL& ChromeUINewTabURLAsGURL() {
+-  static base::NoDestructor<GURL> instance(kChromeUINewTabURL);
++  // Hook: every path that opens a new tab asks this function — Ctrl+T, the plus
++  // button, the first window, a crash-restore tab — so this is the one place the
++  // new tab page is ours. chrome://newtab still resolves to Chrome's page if it
++  // is typed; the host is registered separately (`kChromeUINewTabHost`).
++  static base::NoDestructor<GURL> instance(hook::kHookNewTabURL);
+   return *instance;
+ }
+ 

@@ -8,7 +8,11 @@
     <link rel="stylesheet" href="hook.css">
   </head>
   <body>
-    <main class="seam">
+    <!-- One of these two is shown. The gate is the shared sign-in card, mounted
+         from panel.mjs; the seam is the Step 1 proof plus the dock, and only a
+         signed-in page ever creates the dock. -->
+    <div class="gate" id="gate" hidden></div>
+    <main class="seam" id="seam" hidden>
       <div class="mark" aria-hidden="true"></div>
       <h1>Hook</h1>
       <p class="lede">Hook Browser</p>
@@ -18,11 +22,9 @@
         Served from our own pak, reading live browser state over mojom.
       </p>
     </main>
-    <!-- The dock is `ChatDock` from packages/chat, built by Vite into
-         panel.mjs. It is the same panel the chat window and Hook Workspace
-         embed, at the same 380px. -->
-    <div class="panel" id="dock"></div>
+    <!-- panel.mjs is imported by hook.ts, and only when there is a session: it
+         carries the dock *and* the sign-in card, and the page must mount exactly
+         one of them. -->
     <script type="module" src="hook.js"></script>
-    <script type="module" src="panel.mjs"></script>
   </body>
 </html>

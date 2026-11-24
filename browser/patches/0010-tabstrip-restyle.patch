@@ -1,0 +1,58 @@
+diff --git a/chrome/browser/ui/color/tab_strip_color_mixer.cc b/chrome/browser/ui/color/tab_strip_color_mixer.cc
+index 0f6b3e5e38..d77fcd9d62 100644
+--- a/chrome/browser/ui/color/tab_strip_color_mixer.cc
++++ b/chrome/browser/ui/color/tab_strip_color_mixer.cc
+@@ -150,14 +150,18 @@ void AddTabStripColorMixer(ui::ColorProvider* provider,
+       kColorTabForegroundInactiveFrameActive};
+   mixer[kColorTabForegroundInactiveHoverFrameInactive] = {
+       kColorTabForegroundInactiveFrameInactive};
++  // Hook: a selected tab is opaque, not a 75% wash. The window behind it is not
++  // the thing it belongs to any more than the strip is, so it reads as a card
++  // with an edge instead of a tint — and the restyle stays legible in dark mode
++  // because the colours are still derived from the theme.
+   mixer[kColorTabBackgroundSelectedFrameActive] = {
+       ui::AlphaBlend(kColorTabBackgroundActiveFrameActive,
+                      kColorTabBackgroundInactiveFrameActive,
+-                     /* 75% opacity */ 0.75 * SK_AlphaOPAQUE)};
++                     /* 100% opacity */ 1.0 * SK_AlphaOPAQUE)};
+   mixer[kColorTabBackgroundSelectedFrameInactive] = {
+       ui::AlphaBlend(kColorTabBackgroundActiveFrameInactive,
+                      kColorTabBackgroundInactiveFrameInactive,
+-                     /* 75% opacity */ 0.75 * SK_AlphaOPAQUE)};
++                     /* 100% opacity */ 1.0 * SK_AlphaOPAQUE)};
+   mixer[kColorTabBackgroundSelectedHoverFrameActive] = {
+       ui::AlphaBlend(kColorTabBackgroundActiveFrameActive,
+                      kColorTabBackgroundInactiveFrameActive,
+diff --git a/chrome/browser/ui/tabs/tab_style.cc b/chrome/browser/ui/tabs/tab_style.cc
+index 52d26ae7db..04b843f556 100644
+--- a/chrome/browser/ui/tabs/tab_style.cc
++++ b/chrome/browser/ui/tabs/tab_style.cc
+@@ -24,8 +24,10 @@ constexpr int kSeparatorHorizontalMargin = 2;
+ constexpr int kSeparatorHeight = 16;
+ 
+ 
+-// The standard tab width is 232 DIP, excluding separators and overlap.
+-constexpr int kTabWidth = 232;
++// Hook: narrower than Chrome's 232 DIP. The strip is the one piece of stock
++// Chrome a person looks at all day, and a little more air between tabs is the
++// whole restyle (see "Tabstrip restyle" in browser/README.md).
++constexpr int kTabWidth = 214;
+ 
+ }  // namespace
+ 
+@@ -95,11 +97,13 @@ int TabStyle::GetMinimumInactiveWidth() const {
+ }
+ 
+ int TabStyle::GetTopCornerRadius() const {
+-  return 10;
++  // Hook: rounder than Chrome's 10/12. The bottom pair is what makes a selected
++  // tab read as a card sitting in the strip rather than a cut-out of it.
++  return 13;
+ }
+ 
+ int TabStyle::GetBottomCornerRadius() const {
+-  return 12;
++  return 15;
+ }
+ 
+ int TabStyle::GetBottomExtensionWidth() const {

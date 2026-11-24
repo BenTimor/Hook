@@ -7,6 +7,8 @@
 
 source_set("browser") {
   sources = [
+    "account/hook_account.cc",
+    "account/hook_account.h",
     "account/hook_paths.cc",
     "account/hook_paths.h",
     "channel/hook_channel.cc",
@@ -21,6 +23,8 @@ source_set("browser") {
     "ui/webui/hook_data_source.h",
     "ui/webui/hook_page_handler.cc",
     "ui/webui/hook_page_handler.h",
+    "ui/webui/hook_newtab_ui.cc",
+    "ui/webui/hook_newtab_ui.h",
     "ui/webui/hook_panel_ui.cc",
     "ui/webui/hook_panel_ui.h",
     "ui/webui/hook_ui.cc",

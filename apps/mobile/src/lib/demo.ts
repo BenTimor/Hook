@@ -226,12 +226,28 @@ function listMeta(): ChatMeta[] {
     .map((chat) => chat.meta);
 }
 
+/**
+ * The phone's sign-in screen, previewed in a browser.
+ *
+ * `?login=1` opens signed out, the same switch the desktop's demo has;
+ * `?login=pending` opens on the code, so the waiting half can be looked at
+ * without an account in flight.
+ */
+function demoLogin(): "out" | "pending" | null {
+  const value = new URLSearchParams(location.search).get("login");
+  if (value === null) return null;
+  return value === "pending" ? "pending" : "out";
+}
+
 export const demo = {
   async appInfo(): Promise<AppInfo> {
     return { version: "0.1.0-preview", product: "mobile" };
   },
 
   async authStatus(): Promise<AuthView> {
+    const login = demoLogin();
+    if (login === "pending") return this.authLogin();
+    if (login === "out") return this.authLogout();
     return {
       signedIn: true,
       state: "signed_in",

@@ -654,6 +654,24 @@ fn setup(
         }
     });
 
+    // `--headless` is the host without a face: the window is never shown and no
+    // tray icon is installed, so a script or a shortcut can start the process
+    // that serves the browser's channel and keeps agents running, and nothing
+    // appears on the desktop. It is the interim sidecar: the same account, the
+    // same turn, and the same channel the browser already talks to, in a process
+    // that is not the window someone is using.
+    let headless = std::env::args().any(|argument| argument == "--headless");
+    if headless {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.hide();
+        }
+        eprintln!(
+            "hook: headless host, channel {}",
+            state.channel.describe()
+        );
+        return Ok(());
+    }
+
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_focus();
     }
