@@ -6,19 +6,21 @@ WHAT YOU CAN DO
 
 Ask anything in a clean, focused chat.
 
+Keep long conversations healthy. When one grows large, Hook quietly folds the older turns into a summary before the model reads it, so replies keep arriving instead of failing on a full context. Your messages are left where they are; only what the model reads is shortened.
+
 Create projects and brief a coding agent in plain language.
 
 Run a coding agent on any computer signed in to your account, not only the one in front of you.
 
 Watch a run live: its answer, its plan and the page it is building. Steer it mid-run or stop it at any time.
 
-Start a direct coding chat on another computer. The transcript, folder and engine stay there; this computer keeps a readable cache, and only a small stub travels through your account.
+Start a direct coding chat on another computer. The transcript, folder and engine stay there; this computer keeps a readable cache, and only a small stub travels through your account. Open, steer, stop, rename or delete it from any device, and start it in any folder on that computer, not only in a project: the folder picker walks one level at a time and lists the folders you star first.
 
 Create a project on a remote computer from the same picker, without typing a path.
 
 Close the window and Hook keeps running in the tray, so its agents keep working. Quit from the tray to stop them.
 
-Turn on Advanced to see how each answer was made, including the model's thinking and every tool call with its arguments and result. Inspect a running agent's transcript too.
+Turn on Advanced to see how each answer was made, including the model's thinking and every tool call with its arguments and result. Inspect a running agent's transcript too. Advanced also draws where a long conversation was folded into a summary, how many messages and tokens it replaced, and the summary itself, and it enables the command menu: type a slash in the message box to see the available commands and insert one with the arrow keys. /compact summarizes the conversation on demand, in an ordinary chat or in a conversation with a coding agent.
 
 Let Hook remember how you like to work: pinned notes travel in every conversation, the rest is looked up when it matters, and you can edit or forget any of it in Settings.
 

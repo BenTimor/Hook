@@ -1,3 +1,13 @@
+HookCode 0.6.1
+
+Long conversations now stay fast. When a chat grows large, Hook folds the older turns into one summary before the model reads it, so replies keep arriving instead of failing on a full context. The conversation you read is not rewritten. A chat that is still too long for the model is compacted and retried once before it gives up.
+
+Commands arrived with it. With Advanced on, type a slash in the message box to see what is available. /compact summarizes the conversation right away, in an ordinary chat or in a conversation with a coding agent; a coding agent summarizes its own session.
+
+Remote coding chats can start in any folder on that computer, not only in a project. The folder picker walks one level at a time and lists the folders you star first. A remote chat can be deleted from any device now, and its transcript is removed on the computer that owns it.
+
+Streaming from another computer is steadier too: a long reply no longer drops its own connection, the work does not flicker while tools run, and reopening a chat does not leave a finished turn looking busy.
+
 HookCode 0.6.0
 
 Documents in Hook Workspace can be formatted now: colour, highlight, underline, keyboard keys, and callout boxes for notes, tips, warnings and dangers. The formatting is written in the text itself, so it travels with the document to every device, and a document can never contain raw HTML.
