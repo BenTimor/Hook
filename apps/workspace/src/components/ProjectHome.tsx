@@ -2,6 +2,7 @@ import {
   FileText,
   FolderPlus,
   KanbanSquare,
+  Lightbulb,
   Plus,
   Route,
   Star,
@@ -38,12 +39,14 @@ export function ProjectHome({
   onOpenBoard,
   onOpenDocument,
   onOpenRoadmap,
+  onOpenBrainstorm,
 }: {
   project: Project;
   accountEmail: string | null;
   onOpenBoard: (id: string) => void;
   onOpenDocument: (id: string) => void;
   onOpenRoadmap: (id: string) => void;
+  onOpenBrainstorm: (id: string) => void;
 }) {
   const boards = useWorkspaceStore(
     (state) => state.boards[project.id] ?? EMPTY,
@@ -53,6 +56,9 @@ export function ProjectHome({
   );
   const roadmaps = useWorkspaceStore(
     (state) => state.roadmaps[project.id] ?? EMPTY,
+  );
+  const brainstorms = useWorkspaceStore(
+    (state) => state.brainstorms[project.id] ?? EMPTY,
   );
   const milestones = useWorkspaceStore(
     (state) => state.milestones[project.id] ?? EMPTY,
@@ -75,6 +81,9 @@ export function ProjectHome({
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, 4);
   const recentRoadmaps = [...roadmaps]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, 4);
+  const recentBrainstorms = [...brainstorms]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, 4);
 
@@ -150,7 +159,7 @@ export function ProjectHome({
                 <span className="ws-item-card-main">
                   <span className="ws-item-card-title">{item.name}</span>
                   <span className="ws-item-card-note">
-                    {item.kind === "board" ? "Board" : "Document"} · edited{" "}
+                    {item.kind === "board" ? "Board" : "Document"} ֲ· edited{" "}
                     {when(item.updatedAt)}
                   </span>
                 </span>
@@ -243,6 +252,19 @@ export function ProjectHome({
             className="ws-action"
             onClick={() =>
               setCreating({
+                kind: "brainstorm",
+                projectId: project.id,
+                folderId: null,
+              })
+            }
+          >
+            <Lightbulb strokeWidth={1.8} />
+            New brainstorm
+          </button>
+          <button
+            className="ws-action"
+            onClick={() =>
+              setCreating({
                 kind: "folder",
                 projectId: project.id,
                 folderId: null,
@@ -291,7 +313,7 @@ export function ProjectHome({
                     <span className="ws-item-card-main">
                       <span className="ws-item-card-title">{board.name}</span>
                       <span className="ws-item-card-note">
-                        {board.columns.length} columns · edited{" "}
+                        {board.columns.length} columns ֲ· edited{" "}
                         {when(board.updatedAt)}
                       </span>
                     </span>
@@ -412,6 +434,50 @@ export function ProjectHome({
                   <small>
                     {milestones.filter((milestone) => milestone.roadmapId === roadmap.id).length} milestones
                   </small>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="ws-overview-section ws-milestone-overview">
+        <header>
+          <h2>Brainstorms</h2>
+          <span>{brainstorms.length}</span>
+          {canWrite && (
+            <button
+              className="ws-section-add"
+              aria-label="Create brainstorm"
+              title="Create brainstorm"
+              onClick={() =>
+                setCreating({
+                  kind: "brainstorm",
+                  projectId: project.id,
+                  folderId: null,
+                })
+              }
+            >
+              <Plus />
+            </button>
+          )}
+        </header>
+        {recentBrainstorms.length === 0 ? (
+          <p className="ws-overview-empty">No brainstorms yet.</p>
+        ) : (
+          <div className="ws-milestone-cards">
+            {recentBrainstorms.map((brainstorm) => (
+              <button
+                className="ws-milestone-card-link"
+                key={brainstorm.id}
+                onClick={() => onOpenBrainstorm(brainstorm.id)}
+              >
+                <span className="ws-milestone-card-icon">
+                  <Lightbulb />
+                </span>
+                <span className="ws-milestone-card-main">
+                  <strong>{brainstorm.name || "Untitled"}</strong>
+                  <small>edited {when(brainstorm.updatedAt)}</small>
                 </span>
               </button>
             ))}

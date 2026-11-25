@@ -1,13 +1,13 @@
 # Hook Workspace
 
-Projects, boards, tasks, documents, roadmaps, permissions — and the service behind all of it.
+Projects, boards, tasks, documents, roadmaps, permissions ׳’ג‚¬ג€ and the service behind all of it.
 
 ![A document in the preview panel: a callout, a checklist, a table and keyboard keys](assets/hook-document.png)
 
 ![A board in the preview panel, beside the conversation that is discussing it](assets/hook-preview.png)
 
 The second product. A project holds boards of tasks, Markdown documents,
-roadmaps of milestones and the people they are shared with; folders organize
+roadmaps of milestones, brainstorms of ideas and the people they are shared with; folders organize
 them, and can nest. It is its own installer
 (`apps/workspace`, identifier `app.hook.workspace`) with the same window chrome,
 the same account and the same chat beside it.
@@ -19,7 +19,7 @@ project and Plan with Hook. Home and Invites sit near the top of the rail;
 the invite count stays visible while working inside a project.
 
 One rail, one tree: projects read as special folders (they are the unit of
-sharing), and everything inside one — nested folders, boards, documents — is a
+sharing), and everything inside one ׳’ג‚¬ג€ nested folders, boards, documents ׳’ג‚¬ג€ is a
 row under it. Nothing lives in a second column. Right-click anything in the
 tree to rename, delete, create inside it, or move it to another folder; the
 same menu opens from the plus on a project or folder. A board opens as a table
@@ -68,7 +68,7 @@ to write: a device applies `/api/ws/changes` and converges.
 Roles: `viewer` reads, `editor` creates and edits, `manager` also invites
 viewers and editors, `owner` deletes the project and transfers ownership. A
 manager cannot mint another manager, and ownership only moves to someone who
-accepted the invitation and is already a manager — the Workspace dialog says
+accepted the invitation and is already a manager ׳’ג‚¬ג€ the Workspace dialog says
 that it is permanent and cannot be undone.
 
 - **Work is assigned by account, or by address before the account joins.** A
@@ -91,14 +91,14 @@ rows written before this rule are adopted when the service starts.
   checklists, links, inline styles, code blocks, dividers and Markdown tables.
   The formatted editor is the default and lets people edit table cells directly.
 - **Formatting beyond Markdown is a directive, not HTML.** Inline styles are
-  written in the text itself — `:red[…]`, `:green[…]`, `:blue[…]`, `:purple[…]`,
-  `:mark[…]`, `:underline[…]`, `:kbd[…]` — and a callout is a block:
-  `:::note[Title]` … `:::` (also `tip`, `warning`, `danger`). A label holds
+  written in the text itself ׳’ג‚¬ג€ `:red[׳’ג‚¬ֲ¦]`, `:green[׳’ג‚¬ֲ¦]`, `:blue[׳’ג‚¬ֲ¦]`, `:purple[׳’ג‚¬ֲ¦]`,
+  `:mark[׳’ג‚¬ֲ¦]`, `:underline[׳’ג‚¬ֲ¦]`, `:kbd[׳’ג‚¬ֲ¦]` ׳’ג‚¬ג€ and a callout is a block:
+  `:::note[Title]` ׳’ג‚¬ֲ¦ `:::` (also `tip`, `warning`, `danger`). A label holds
   ordinary Markdown, so `:red[a **bold** word]` works, and blocks nest by adding
-  a colon (`::::note[…]` around `:::tip[…]`). A word that is not a registered
+  a colon (`::::note[׳’ג‚¬ֲ¦]` around `:::tip[׳’ג‚¬ֲ¦]`). A word that is not a registered
   rule, an empty label and a block word used in a sentence all stay exactly as
   typed, so prose like `localhost:8080` is never reformatted. Raw HTML is not
-  rendered at all — it is shown as the text it is — which is why every surface
+  rendered at all ׳’ג‚¬ג€ it is shown as the text it is ׳’ג‚¬ג€ which is why every surface
   (the Workspace window, the chat side panel and the phone) draws the same
   document the same way, without a sanitizer.
   **`document-markdown.md` is the syntax**, written for a person and for
@@ -111,11 +111,11 @@ rows written before this rule are adopted when the service starts.
   preview pick it up together. Reading draws the page with `.hook-doc`
   (`packages/ui/src/tokens.css`), whose numbers are the formatted editor's, so
   the chat side panel, the phone sheet and the dashboard tile show a document
-  the way the Workspace window does — direction and line breaks included.
+  the way the Workspace window does ׳’ג‚¬ג€ direction and line breaks included.
   Editing behaves the way a word processor does:
   inline markup is invisible, so an edit only ever changes the text it wraps and
   the markers are put back around whatever survived. The caret stops at the
-  content edge of a run — never on a marker — so an arrow key always crosses a
+  content edge of a run ׳’ג‚¬ג€ never on a marker ׳’ג‚¬ג€ so an arrow key always crosses a
   visible character, a click at the end of a run lands inside it (typing
   continues the run), and Backspace removes a character rather than the colour.
   Delete the whole content and the construct goes with it. A callout or a picture is a unit instead: deleting at
@@ -150,6 +150,12 @@ rows written before this rule are adopted when the service starts.
   Hovering a gap or using the always-visible right-edge button adds another
   milestone there, dated one day after the milestone before it. Milestones
   themselves are not tree items.
+- **A brainstorm is a word with ideas around it.** It sits in the tree and the
+  project overview like a roadmap. The page draws the brainstorm's name in the
+  middle and places every idea around it, connected by a line. Ideas are text
+  only and carry a position; the map is laid out from that order, so two people
+  see the same shape. Adding and removing an idea is immediate for everyone in
+  the project.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,
   and an agent comment carries the conversation it came from, so a teammate sees
   "via Hook agent" instead of mistaking it for something the user typed. The
@@ -168,9 +174,10 @@ rows written before this rule are adopted when the service starts.
   panel. It is a second kind of preview next to the HTML page a coding agent can
   show, and the panel renders it directly instead of in an iframe.
 - **Folders are rows, not a client feature.** A folder carries a name, an
-  optional parent and a position; a board, a document or a roadmap carries a
-  `folderId`. Deleting a folder deletes what it holds — nested folders, boards with their
-  tasks and comments, documents, roadmaps and their milestones — each row a tombstone of its own, and the
+  optional parent and a position; a board, a document, a roadmap or a
+  brainstorm carries a `folderId`. Deleting a folder deletes what it holds ׳’ג‚¬ג€ nested folders, boards with their
+  tasks and comments, documents, roadmaps and their milestones, brainstorms
+  and their ideas ׳’ג‚¬ג€ each row a tombstone of its own, and the
   dialog counts what goes before it happens. Two people see the same tree
   because it is the project's, not theirs.
 - **The window is online-first.** The server is the source of truth, so the app
@@ -182,12 +189,12 @@ rows written before this rule are adopted when the service starts.
   same conversations as Hook (`packages/chat`). It is the chat window at 380px,
   not a reduced panel: the same greeting and suggestions on an empty
   conversation, the same thread and composer, and one button that covers the
-  column with the conversation list — search and new chat included — because a
+  column with the conversation list ׳’ג‚¬ג€ search and new chat included ׳’ג‚¬ג€ because a
   panel inside a panel cannot show both. The thread, the messages and the
   composer are the ones the chat window renders, so there is one chat surface
   to fix, not two. It has no preview panel; a preview is a
   wide, page-shaped thing, and the dock is deliberately narrow. The window tells
-  the backend what it is showing — project, board, open task, selected text — and
+  the backend what it is showing ׳’ג‚¬ג€ project, board, open task, selected text ׳’ג‚¬ג€ and
   that rides on the next request as context, so "summarise this board" means the
   board on screen. The context is never stored in the chat.
 - **Its own download slot.** `/api/releases/workspace` and
@@ -197,4 +204,4 @@ rows written before this rule are adopted when the service starts.
 
 ---
 
-[Documentation](README.md) · [Hook](../README.md)
+[Documentation](README.md) ײ²ֲ· [Hook](../README.md)

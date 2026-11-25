@@ -3,6 +3,8 @@ import { create } from "zustand";
 import { ApiError, api } from "../lib/bridge";
 import type {
   Board,
+  Brainstorm,
+  BrainstormIdea,
   Change,
   Column,
   Comment,
@@ -33,6 +35,7 @@ interface WorkspaceState {
   activeTaskId: string | null;
   activeDocumentId: string | null;
   activeRoadmapId: string | null;
+  activeBrainstormId: string | null;
 
   boards: ById<Board[]>;
   tasks: ById<Task[]>;
@@ -40,6 +43,8 @@ interface WorkspaceState {
   documents: ById<DocumentMeta[]>;
   roadmaps: ById<Roadmap[]>;
   milestones: ById<Milestone[]>;
+  brainstorms: ById<Brainstorm[]>;
+  brainstormIdeas: ById<BrainstormIdea[]>;
   members: ById<Member[]>;
   /** Invitations nobody answered yet: the address is the only handle on them. */
   pending: ById<Invite[]>;
@@ -132,6 +137,20 @@ interface WorkspaceState {
   updateMilestone: (id: string, patch: Partial<Milestone>) => Promise<boolean>;
   deleteMilestone: (id: string) => Promise<void>;
 
+  openBrainstorm: (id: string | null, projectId?: string) => Promise<void>;
+  loadBrainstorm: (id: string) => Promise<Brainstorm | null>;
+  createBrainstorm: (
+    projectId: string,
+    name: string,
+    folderId?: string | null,
+  ) => Promise<Brainstorm | null>;
+  updateBrainstorm: (id: string, patch: Partial<Brainstorm>) => Promise<boolean>;
+  moveBrainstorm: (id: string, folderId: string | null) => Promise<void>;
+  renameBrainstorm: (id: string, name: string) => Promise<void>;
+  deleteBrainstorm: (id: string) => Promise<void>;
+  createBrainstormIdea: (brainstormId: string, text: string) => Promise<BrainstormIdea | null>;
+  deleteBrainstormIdea: (id: string) => Promise<void>;
+
   createFolder: (
     projectId: string,
     name: string,
@@ -173,12 +192,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeTaskId: null,
   activeDocumentId: null,
   activeRoadmapId: null,
+  activeBrainstormId: null,
   boards: {},
   tasks: {},
   comments: {},
   documents: {},
   roadmaps: {},
   milestones: {},
+  brainstorms: {},
+  brainstormIdeas: {},
   members: {},
   pending: {},
   folders: {},
@@ -237,6 +259,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeTaskId: null,
       activeDocumentId: null,
       activeRoadmapId: null,
+      activeBrainstormId: null,
     });
     if (!id) return;
     await get().loadProjectContents(id);
@@ -244,7 +267,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   async loadProjectContents(projectId) {
     try {
-      const [boards, documents, roadmaps, milestones, members, folders] = await Promise.all([
+      const [boards, documents, roadmaps, milestones, brainstorms, ideas, members, folders] = await Promise.all([
         api.boards(projectId),
         api.documents(projectId),
         // An older service has no roadmaps; an empty list keeps the rest of
@@ -255,6 +278,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         }),
         api.milestones(projectId).catch((error) => {
           if (error instanceof ApiError && error.status === 404) return { milestones: [] };
+          throw error;
+        }),
+        api.brainstorms(projectId).catch((error) => {
+          if (error instanceof ApiError && error.status === 404) return { brainstorms: [] };
+          throw error;
+        }),
+        api.brainstormIdeas(projectId).catch((error) => {
+          if (error instanceof ApiError && error.status === 404) return { ideas: [] };
           throw error;
         }),
         api.members(projectId),
@@ -277,6 +308,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           },
           roadmaps: { ...state.roadmaps, [projectId]: roadmaps.roadmaps },
           milestones: { ...state.milestones, [projectId]: milestones.milestones },
+          brainstorms: { ...state.brainstorms, [projectId]: brainstorms.brainstorms },
+          brainstormIdeas: { ...state.brainstormIdeas, [projectId]: ideas.ideas },
           members: { ...state.members, [projectId]: members.members },
           // An older service has no pending list; a project without one simply
           // offers no addresses to assign to.
@@ -335,6 +368,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeTaskId: null,
       activeDocumentId: null,
       activeRoadmapId: null,
+      activeBrainstormId: null,
       ...(owner ? { activeProjectId: owner } : {}),
     });
     if (!id) return;
@@ -591,6 +625,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeBoardId: null,
       activeTaskId: null,
       activeRoadmapId: null,
+      activeBrainstormId: null,
       ...(projectId ? { activeProjectId: projectId } : {}),
     });
     if (!id) return;
@@ -637,6 +672,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           [projectId]: [document, ...(state.documents[projectId] ?? [])],
         },
         activeDocumentId: document.id,
+        activeBrainstormId: null,
       }));
       return document;
     } catch (error) {
@@ -719,6 +755,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeDocumentId: null,
       activeBoardId: null,
       activeTaskId: null,
+      activeBrainstormId: null,
       ...(projectId ? { activeProjectId: projectId } : {}),
     });
     if (!id) return;
@@ -756,6 +793,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeBoardId: null,
         activeTaskId: null,
         activeDocumentId: null,
+        activeBrainstormId: null,
       }));
       return created.roadmap;
     } catch (error) {
@@ -879,6 +917,140 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  async openBrainstorm(id, projectId) {
+    set({
+      activeBrainstormId: id,
+      activeRoadmapId: null,
+      activeDocumentId: null,
+      activeBoardId: null,
+      activeTaskId: null,
+      ...(projectId ? { activeProjectId: projectId } : {}),
+    });
+    if (!id) return;
+    const brainstorm = await get().loadBrainstorm(id);
+    const owner = projectId ?? brainstorm?.projectId;
+    if (owner && brainstorm && !get().members[owner]) await get().loadProjectContents(owner);
+  },
+
+  async loadBrainstorm(id) {
+    try {
+      const result = await api.brainstorm(id);
+      const projectId = result.brainstorm.projectId;
+      set((state) => ({
+        brainstorms: {
+          ...state.brainstorms,
+          [projectId]: sortByPosition(upsert(state.brainstorms[projectId] ?? [], result.brainstorm)),
+        },
+      }));
+      return result.brainstorm;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async createBrainstorm(projectId, name, folderId = null) {
+    try {
+      const created = await api.createBrainstorm(projectId, { name, folderId });
+      set((state) => ({
+        brainstorms: {
+          ...state.brainstorms,
+          [projectId]: sortByPosition([...(state.brainstorms[projectId] ?? []), created.brainstorm]),
+        },
+        activeBrainstormId: created.brainstorm.id,
+        activeRoadmapId: null,
+        activeDocumentId: null,
+        activeBoardId: null,
+        activeTaskId: null,
+      }));
+      return created.brainstorm;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async updateBrainstorm(id, patch) {
+    try {
+      const result = await api.updateBrainstorm(id, patch);
+      const projectId = result.brainstorm.projectId;
+      set((state) => ({
+        brainstorms: {
+          ...state.brainstorms,
+          [projectId]: sortByPosition(upsert(state.brainstorms[projectId] ?? [], result.brainstorm)),
+        },
+      }));
+      return true;
+    } catch (error) {
+      set({ error: message(error) });
+      return false;
+    }
+  },
+
+  async moveBrainstorm(id, folderId) {
+    await get().updateBrainstorm(id, { folderId });
+  },
+
+  async renameBrainstorm(id, name) {
+    await get().updateBrainstorm(id, { name });
+  },
+
+  async deleteBrainstorm(id) {
+    try {
+      await api.deleteBrainstorm(id);
+      set((state) => ({
+        brainstorms: Object.fromEntries(
+          Object.entries(state.brainstorms).map(([project, brainstorms]) => [
+            project,
+            brainstorms.filter((brainstorm) => brainstorm.id !== id),
+          ]),
+        ),
+        brainstormIdeas: Object.fromEntries(
+          Object.entries(state.brainstormIdeas).map(([project, ideas]) => [
+            project,
+            ideas.filter((idea) => idea.brainstormId !== id),
+          ]),
+        ),
+        activeBrainstormId: state.activeBrainstormId === id ? null : state.activeBrainstormId,
+      }));
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  async createBrainstormIdea(brainstormId, text) {
+    try {
+      const created = await api.createBrainstormIdea(brainstormId, text);
+      const projectId = created.idea.projectId;
+      set((state) => ({
+        brainstormIdeas: {
+          ...state.brainstormIdeas,
+          [projectId]: [...(state.brainstormIdeas[projectId] ?? []), created.idea],
+        },
+      }));
+      return created.idea;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async deleteBrainstormIdea(id) {
+    try {
+      await api.deleteBrainstormIdea(id);
+      set((state) => ({
+        brainstormIdeas: Object.fromEntries(
+          Object.entries(state.brainstormIdeas).map(([project, ideas]) => [
+            project,
+            ideas.filter((idea) => idea.id !== id),
+          ]),
+        ),
+      }));
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
   async createFolder(projectId, name, parentId = null) {
     try {
       const created = await api.createFolder(projectId, name, parentId);
@@ -946,6 +1118,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const boards = state.boards[projectId] ?? [];
       const documents = state.documents[projectId] ?? [];
       const roadmaps = state.roadmaps[projectId] ?? [];
+      const brainstorms = state.brainstorms[projectId] ?? [];
       const gone = new Set([...before].filter((boardId) => !boards.some((board) => board.id === boardId)));
       const boardGone = state.activeBoardId !== null && gone.has(state.activeBoardId);
       const documentGone =
@@ -954,6 +1127,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const roadmapGone =
         state.activeRoadmapId !== null &&
         !roadmaps.some((roadmap) => roadmap.id === state.activeRoadmapId);
+      const brainstormGone =
+        state.activeBrainstormId !== null &&
+        !brainstorms.some((brainstorm) => brainstorm.id === state.activeBrainstormId);
       set((current) => ({
         tasks: Object.fromEntries(
           Object.entries(current.tasks).filter(([boardId]) => !gone.has(boardId)),
@@ -962,6 +1138,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeTaskId: boardGone ? null : current.activeTaskId,
         activeDocumentId: documentGone ? null : current.activeDocumentId,
         activeRoadmapId: roadmapGone ? null : current.activeRoadmapId,
+        activeBrainstormId: brainstormGone ? null : current.activeBrainstormId,
       }));
     } catch (error) {
       set({ error: message(error) });
@@ -1229,6 +1406,41 @@ function applyChange(
           [projectId]: change.deleted
             ? (state.milestones[projectId] ?? []).filter((item) => item.id !== change.id)
             : upsert(state.milestones[projectId] ?? [], change as unknown as Milestone),
+        },
+      });
+      return;
+    }
+    case "brainstorm": {
+      const projectId = change.projectId;
+      if (!projectId) return;
+      set({
+        brainstorms: {
+          ...state.brainstorms,
+          [projectId]: change.deleted
+            ? (state.brainstorms[projectId] ?? []).filter((item) => item.id !== change.id)
+            : sortByPosition(
+                upsert(state.brainstorms[projectId] ?? [], change as unknown as Brainstorm),
+              ),
+        },
+        activeBrainstormId:
+          change.deleted && state.activeBrainstormId === change.id
+            ? null
+            : state.activeBrainstormId,
+      });
+      return;
+    }
+    case "brainstorm_idea": {
+      const projectId = change.projectId;
+      if (!projectId) return;
+      set({
+        brainstormIdeas: {
+          ...state.brainstormIdeas,
+          [projectId]: change.deleted
+            ? (state.brainstormIdeas[projectId] ?? []).filter((item) => item.id !== change.id)
+            : upsert(
+                state.brainstormIdeas[projectId] ?? [],
+                change as unknown as BrainstormIdea,
+              ),
         },
       });
       return;

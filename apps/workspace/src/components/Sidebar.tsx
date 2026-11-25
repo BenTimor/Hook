@@ -8,6 +8,7 @@ import {
   FolderPlus,
   House,
   KanbanSquare,
+  Lightbulb,
   Mail,
   MoreHorizontal,
   Plus,
@@ -18,7 +19,7 @@ import {
 
 import { Dialog, HookMark, TextFieldDialog } from "@hook/ui";
 
-import type { Board, DocumentMeta, Folder, Project, Roadmap, Role } from "../lib/types";
+import type { Board, Brainstorm, DocumentMeta, Folder, Project, Roadmap, Role } from "../lib/types";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { PersonAvatar } from "./AssigneesPicker";
 import { CreateItemDialog, type CreateRequest } from "./CreateItem";
@@ -31,7 +32,8 @@ type Target =
   | { kind: "folder"; id: string }
   | { kind: "board"; id: string }
   | { kind: "document"; id: string }
-  | { kind: "roadmap"; id: string };
+  | { kind: "roadmap"; id: string }
+  | { kind: "brainstorm"; id: string };
 
 type Menu = { x: number; y: number; target: Target };
 type Rename = { target: Target; projectId: string; value: string };
@@ -83,32 +85,38 @@ export function Sidebar({
   const boards = useWorkspaceStore((state) => state.boards);
   const documents = useWorkspaceStore((state) => state.documents);
   const roadmaps = useWorkspaceStore((state) => state.roadmaps);
+  const brainstorms = useWorkspaceStore((state) => state.brainstorms);
   const folders = useWorkspaceStore((state) => state.folders);
   const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
   const activeBoardId = useWorkspaceStore((state) => state.activeBoardId);
   const activeDocumentId = useWorkspaceStore((state) => state.activeDocumentId);
   const activeRoadmapId = useWorkspaceStore((state) => state.activeRoadmapId);
+  const activeBrainstormId = useWorkspaceStore((state) => state.activeBrainstormId);
   const displayName = name?.trim() || email?.split("@")[0] || "Account";
 
   const openProject = useWorkspaceStore((state) => state.openProject);
   const openBoard = useWorkspaceStore((state) => state.openBoard);
   const openDocument = useWorkspaceStore((state) => state.openDocument);
   const openRoadmap = useWorkspaceStore((state) => state.openRoadmap);
+  const openBrainstorm = useWorkspaceStore((state) => state.openBrainstorm);
   const loadProjectContents = useWorkspaceStore((state) => state.loadProjectContents);
   const renameProject = useWorkspaceStore((state) => state.renameProject);
   const renameFolder = useWorkspaceStore((state) => state.renameFolder);
   const renameBoard = useWorkspaceStore((state) => state.renameBoard);
   const renameDocument = useWorkspaceStore((state) => state.renameDocument);
   const renameRoadmap = useWorkspaceStore((state) => state.renameRoadmap);
+  const renameBrainstorm = useWorkspaceStore((state) => state.renameBrainstorm);
   const moveBoard = useWorkspaceStore((state) => state.moveBoard);
   const moveDocument = useWorkspaceStore((state) => state.moveDocument);
   const moveRoadmap = useWorkspaceStore((state) => state.moveRoadmap);
+  const moveBrainstorm = useWorkspaceStore((state) => state.moveBrainstorm);
   const moveFolder = useWorkspaceStore((state) => state.moveFolder);
   const deleteProject = useWorkspaceStore((state) => state.deleteProject);
   const deleteFolder = useWorkspaceStore((state) => state.deleteFolder);
   const deleteBoard = useWorkspaceStore((state) => state.deleteBoard);
   const deleteDocument = useWorkspaceStore((state) => state.deleteDocument);
   const deleteRoadmap = useWorkspaceStore((state) => state.deleteRoadmap);
+  const deleteBrainstorm = useWorkspaceStore((state) => state.deleteBrainstorm);
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>(readExpanded);
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -142,7 +150,9 @@ export function Sidebar({
             ? (boards[project.id] ?? []).some((board) => board.id === target.id)
             : target.kind === "document"
               ? (documents[project.id] ?? []).some((document) => document.id === target.id)
-              : (roadmaps[project.id] ?? []).some((roadmap) => roadmap.id === target.id),
+              : target.kind === "roadmap"
+                ? (roadmaps[project.id] ?? []).some((roadmap) => roadmap.id === target.id)
+                : (brainstorms[project.id] ?? []).some((brainstorm) => brainstorm.id === target.id),
     ) ?? null;
 
   const findFolder = (id: string): { folder: Folder; projectId: string } | null => {
@@ -170,6 +180,13 @@ export function Sidebar({
     for (const [projectId, list] of Object.entries(roadmaps)) {
       const roadmap = list.find((candidate) => candidate.id === id);
       if (roadmap) return { roadmap, projectId };
+    }
+    return null;
+  };
+  const findBrainstorm = (id: string): { brainstorm: Brainstorm; projectId: string } | null => {
+    for (const [projectId, list] of Object.entries(brainstorms)) {
+      const brainstorm = list.find((candidate) => candidate.id === id);
+      if (brainstorm) return { brainstorm, projectId };
     }
     return null;
   };
@@ -218,6 +235,9 @@ export function Sidebar({
       roadmaps: (roadmaps[projectId] ?? []).filter(
         (roadmap) => roadmap.folderId && inside.has(roadmap.folderId),
       ).length,
+      brainstorms: (brainstorms[projectId] ?? []).filter(
+        (brainstorm) => brainstorm.folderId && inside.has(brainstorm.folderId),
+      ).length,
     };
   };
 
@@ -237,7 +257,7 @@ export function Sidebar({
     return out;
   };
 
-  const moveEntries = (target: Target, projectId: string, kind: "board" | "document" | "roadmap" | "folder"): MenuEntry[] => {
+  const moveEntries = (target: Target, projectId: string, kind: "board" | "document" | "roadmap" | "brainstorm" | "folder"): MenuEntry[] => {
     const options = folderOptions(projectId);
     const inside = new Set<string>([target.id]);
     if (kind === "folder") {
@@ -259,11 +279,14 @@ export function Sidebar({
           ? findDocument(target.id)?.document.folderId ?? null
           : kind === "roadmap"
             ? findRoadmap(target.id)?.roadmap.folderId ?? null
-            : findFolder(target.id)?.folder.parentId ?? null;
+            : kind === "brainstorm"
+              ? findBrainstorm(target.id)?.brainstorm.folderId ?? null
+              : findFolder(target.id)?.folder.parentId ?? null;
     const move = (folderId: string | null) => {
       if (kind === "board") void moveBoard(target.id, folderId);
       if (kind === "document") void moveDocument(target.id, folderId);
       if (kind === "roadmap") void moveRoadmap(target.id, folderId);
+      if (kind === "brainstorm") void moveBrainstorm(target.id, folderId);
       if (kind === "folder") void moveFolder(projectId, target.id, folderId);
     };
     return [
@@ -318,9 +341,15 @@ export function Sidebar({
               },
               {
                 kind: "action" as const,
-                label: "New roadmap…",
+                label: "New roadmap�?�",
                 icon: <Route />,
                 onSelect: () => startCreate("roadmap", project.id, null),
+              },
+              {
+                kind: "action" as const,
+                label: "New brainstorm�?�",
+                icon: <Lightbulb />,
+                onSelect: () => startCreate("brainstorm", project.id, null),
               },
             ]
           : []),
@@ -375,9 +404,15 @@ export function Sidebar({
               },
               {
                 kind: "action" as const,
-                label: "New roadmap…",
+                label: "New roadmap�?�",
                 icon: <Route />,
                 onSelect: () => startCreate("roadmap", project.id, folder.folder.id),
+              },
+              {
+                kind: "action" as const,
+                label: "New brainstorm�?�",
+                icon: <Lightbulb />,
+                onSelect: () => startCreate("brainstorm", project.id, folder.folder.id),
               },
               { kind: "separator" as const },
               {
@@ -459,6 +494,42 @@ export function Sidebar({
       ];
     }
 
+    if (target.kind === "brainstorm") {
+      const brainstorm = findBrainstorm(target.id)?.brainstorm;
+      if (!brainstorm) return [];
+      return [
+        {
+          kind: "action",
+          label: "Open",
+          onSelect: () => void openBrainstorm(brainstorm.id, project.id),
+        },
+        ...(canWrite
+          ? [
+              { kind: "separator" as const },
+              {
+                kind: "action" as const,
+                label: "Rename brainstorm",
+                onSelect: () =>
+                  setRenaming({
+                    target,
+                    projectId: project.id,
+                    value: brainstorm.name || "Untitled",
+                  }),
+              },
+              { kind: "separator" as const },
+              ...moveEntries(target, project.id, "brainstorm"),
+              { kind: "separator" as const },
+              {
+                kind: "action" as const,
+                label: "Delete brainstorm",
+                danger: true,
+                onSelect: () => setRemoving({ target, projectId: project.id }),
+              },
+            ]
+          : []),
+      ];
+    }
+
     const document = findDocument(target.id)?.document;
     if (!document) return [];
     return [
@@ -492,7 +563,7 @@ export function Sidebar({
 
   const row = (
     options: {
-      kind: "project" | "folder" | "board" | "document" | "roadmap";
+      kind: "project" | "folder" | "board" | "document" | "roadmap" | "brainstorm";
       id: string;
       label: string;
       depth: number;
@@ -630,6 +701,23 @@ export function Sidebar({
         }),
       );
     }
+    for (const brainstorm of (brainstorms[project.id] ?? []).filter(
+      (candidate) => parentOf(project.id, candidate.folderId) === parentId,
+    )) {
+      items.push(
+        row({
+          kind: "brainstorm",
+          id: brainstorm.id,
+          label: brainstorm.name || "Untitled",
+          depth,
+          projectId: project.id,
+          active: brainstorm.id === activeBrainstormId,
+          loaded: true,
+          icon: <Lightbulb strokeWidth={1.8} />,
+          onOpen: () => void openBrainstorm(brainstorm.id, project.id),
+        }),
+      );
+    }
     return items;
   };
 
@@ -678,7 +766,12 @@ export function Sidebar({
               label: project.name,
               depth: 0,
               projectId: project.id,
-              active: project.id === activeProjectId && !activeBoardId && !activeDocumentId && !activeRoadmapId,
+              active:
+                project.id === activeProjectId &&
+                !activeBoardId &&
+                !activeDocumentId &&
+                !activeRoadmapId &&
+                !activeBrainstormId,
               open,
               hasChildren: true,
               loaded,
@@ -720,7 +813,7 @@ export function Sidebar({
           inner.boards > 0 ? " with their tasks" : ""
         }, its documents${inner.documents > 0 ? ` (${inner.documents})` : ""}, its roadmaps${
           inner.roadmaps > 0 ? ` (${inner.roadmaps})` : ""
-        } and any folders inside it are deleted for everyone in the project. This cannot be undone.`,
+        }, its brainstorms${inner.brainstorms > 0 ? ` (${inner.brainstorms})` : ""} and any folders inside it are deleted for everyone in the project. This cannot be undone.`,
         confirm: "Delete everything",
       };
     }
@@ -736,6 +829,13 @@ export function Sidebar({
         title: "Delete this roadmap?",
         description: "Its milestones go with it, for everyone in the project. This cannot be undone.",
         confirm: "Delete roadmap",
+      };
+    }
+    if (removing.target.kind === "brainstorm") {
+      return {
+        title: "Delete this brainstorm?",
+        description: "Its ideas go with it, for everyone in the project. This cannot be undone.",
+        confirm: "Delete brainstorm",
       };
     }
     return {
@@ -856,6 +956,7 @@ export function Sidebar({
           if (pending.target.kind === "board") void renameBoard(pending.target.id, value);
           if (pending.target.kind === "document") void renameDocument(pending.target.id, value);
           if (pending.target.kind === "roadmap") void renameRoadmap(pending.target.id, value);
+          if (pending.target.kind === "brainstorm") void renameBrainstorm(pending.target.id, value);
         }}
       />
 
@@ -881,6 +982,7 @@ export function Sidebar({
                 if (pending.target.kind === "board") void deleteBoard(pending.target.id);
                 if (pending.target.kind === "document") void deleteDocument(pending.target.id);
                 if (pending.target.kind === "roadmap") void deleteRoadmap(pending.target.id);
+                if (pending.target.kind === "brainstorm") void deleteBrainstorm(pending.target.id);
               }}
             >
               {removeCopy?.confirm ?? "Delete"}

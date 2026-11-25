@@ -16,6 +16,7 @@ import { useWorkspaceStore } from "./store/useWorkspaceStore";
 import { BoardPage, TaskPanel } from "./components/BoardView";
 import { DocumentEditor } from "./components/DocumentEditor";
 import { RoadmapPage } from "./components/RoadmapPage";
+import { BrainstormPage } from "./components/BrainstormPage";
 import { InvitesPanel } from "./components/MembersPanel";
 import { ProjectHome } from "./components/ProjectHome";
 import { Sidebar } from "./components/Sidebar";
@@ -60,6 +61,7 @@ function Workspace({
   const activeTaskId = useWorkspaceStore((state) => state.activeTaskId);
   const activeDocumentId = useWorkspaceStore((state) => state.activeDocumentId);
   const activeRoadmapId = useWorkspaceStore((state) => state.activeRoadmapId);
+  const activeBrainstormId = useWorkspaceStore((state) => state.activeBrainstormId);
   const boards = useWorkspaceStore((state) =>
     state.activeProjectId ? (state.boards[state.activeProjectId] ?? EMPTY) : EMPTY,
   );
@@ -69,6 +71,9 @@ function Workspace({
   const roadmaps = useWorkspaceStore((state) =>
     state.activeProjectId ? (state.roadmaps[state.activeProjectId] ?? EMPTY) : EMPTY,
   );
+  const brainstorms = useWorkspaceStore((state) =>
+    state.activeProjectId ? (state.brainstorms[state.activeProjectId] ?? EMPTY) : EMPTY,
+  );
   const tasks = useWorkspaceStore((state) =>
     state.activeBoardId ? (state.tasks[state.activeBoardId] ?? EMPTY) : EMPTY,
   );
@@ -77,6 +82,7 @@ function Workspace({
   const openTask = useWorkspaceStore((state) => state.openTask);
   const openDocument = useWorkspaceStore((state) => state.openDocument);
   const openRoadmap = useWorkspaceStore((state) => state.openRoadmap);
+  const openBrainstorm = useWorkspaceStore((state) => state.openBrainstorm);
   const createProject = useWorkspaceStore((state) => state.createProject);
 
   const [invitesOpen, setInvitesOpen] = useState(false);
@@ -105,6 +111,10 @@ function Workspace({
     () => roadmaps.find((candidate) => candidate.id === activeRoadmapId) ?? null,
     [roadmaps, activeRoadmapId],
   );
+  const brainstormMeta = useMemo(
+    () => brainstorms.find((candidate) => candidate.id === activeBrainstormId) ?? null,
+    [brainstorms, activeBrainstormId],
+  );
   const task = useMemo(
     () => tasks.find((candidate) => candidate.id === activeTaskId) ?? null,
     [tasks, activeTaskId],
@@ -119,7 +129,7 @@ function Workspace({
   // Picking something in the tree leaves the invites list behind.
   useEffect(() => {
     if (activeProjectId) setInvitesOpen(false);
-  }, [activeProjectId, activeBoardId, activeDocumentId, activeRoadmapId]);
+  }, [activeProjectId, activeBoardId, activeDocumentId, activeRoadmapId, activeBrainstormId]);
 
   // The chat agent should know what "this" is. While the dock is open the
   // summary is refreshed on a slow tick, because a text selection is not a
@@ -136,6 +146,7 @@ function Workspace({
       if (task) lines.push(`Open task: ${task.title}`);
       if (activeDocumentId) lines.push(`Document: ${documentMeta?.title || "Untitled"}`);
       if (activeRoadmapId) lines.push(`Roadmap: ${roadmapMeta?.name || "Untitled"}`);
+      if (activeBrainstormId) lines.push(`Brainstorm: ${brainstormMeta?.name || "Untitled"}`);
       const selection = window.getSelection()?.toString().trim();
       if (selection) lines.push(`Selected text: "${selection.slice(0, 800)}"`);
       void setChatContext(lines.join("\n"));
@@ -143,7 +154,18 @@ function Workspace({
     push();
     const timer = window.setInterval(push, 1500);
     return () => window.clearInterval(timer);
-  }, [dockOpen, project, board, task, activeDocumentId, documentMeta, activeRoadmapId, roadmapMeta]);
+  }, [
+    dockOpen,
+    project,
+    board,
+    task,
+    activeDocumentId,
+    documentMeta,
+    activeRoadmapId,
+    roadmapMeta,
+    activeBrainstormId,
+    brainstormMeta,
+  ]);
 
   const suggestions = board
     ? [
@@ -157,7 +179,13 @@ function Workspace({
           "What should be done before the next milestone?",
           "Turn these milestones into tasks",
         ]
-      : activeDocumentId
+      : activeBrainstormId
+        ? [
+            "Add an idea to this brainstorm",
+            "Group these ideas into themes",
+            "Which idea is worth pursuing first?",
+          ]
+        : activeDocumentId
       ? [
           "Summarise this document",
           "Tighten this document's opening",
@@ -182,13 +210,15 @@ function Workspace({
             ? [{ label: board.name, ...(task ? { onClick: () => void openTask(null) } : {}) }, ...(task ? [{ label: task.title }] : [])]
             : roadmapMeta
               ? [{ label: roadmapMeta.name || "Untitled" }]
-              : documentMeta
-                ? [{ label: documentMeta.title || "Untitled" }]
-                : []),
+              : brainstormMeta
+                ? [{ label: brainstormMeta.name || "Untitled" }]
+                : documentMeta
+                  ? [{ label: documentMeta.title || "Untitled" }]
+                  : []),
         ]
       : [{ label: "Home" }];
 
-  const back = Boolean(board || activeDocumentId || activeRoadmapId);
+  const back = Boolean(board || activeDocumentId || activeRoadmapId || activeBrainstormId);
   const showProject = (id: string) => {
     setInvitesOpen(false);
     void openProject(id);
@@ -284,6 +314,12 @@ function Workspace({
             />
           ) : activeRoadmapId ? (
             <RoadmapPage id={activeRoadmapId} project={project} />
+          ) : activeBrainstormId ? (
+            <BrainstormPage
+              id={activeBrainstormId}
+              project={project}
+              onBack={() => void openProject(project.id)}
+            />
           ) : activeDocumentId ? (
             <DocumentPage
               id={activeDocumentId}
@@ -303,6 +339,7 @@ function Workspace({
               onOpenBoard={(id) => void openBoard(id, project.id)}
               onOpenDocument={(id) => void openDocument(id, project.id)}
               onOpenRoadmap={(id) => void openRoadmap(id, project.id)}
+              onOpenBrainstorm={(id) => void openBrainstorm(id, project.id)}
             />
           )}
         </div>

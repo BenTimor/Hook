@@ -47,6 +47,8 @@ export const LIMITS = {
   documentsPerProject: 5_000,
   roadmapsPerProject: 500,
   milestonesPerProject: 5_000,
+  brainstormsPerProject: 500,
+  brainstormIdeasPerBrainstorm: 1_000,
   documentBytes: 512 * 1024,
   commentBytes: 16 * 1024,
   page: 200,
@@ -216,7 +218,34 @@ function migrate(db) {
       seq INTEGER NOT NULL
     ) STRICT;
 
+    CREATE TABLE IF NOT EXISTS ws_brainstorms (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      folder_id TEXT,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER,
+      seq INTEGER NOT NULL
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS ws_brainstorm_ideas (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      brainstorm_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER,
+      seq INTEGER NOT NULL
+    ) STRICT;
+
     CREATE INDEX IF NOT EXISTS ws_roadmaps_project ON ws_roadmaps (project_id, position);
+    CREATE INDEX IF NOT EXISTS ws_brainstorms_project ON ws_brainstorms (project_id, position);
+    CREATE INDEX IF NOT EXISTS ws_brainstorm_ideas_brainstorm ON ws_brainstorm_ideas (brainstorm_id, position);
 
     CREATE INDEX IF NOT EXISTS ws_milestones_project ON ws_milestones (project_id, due_date);
     CREATE INDEX IF NOT EXISTS ws_members_subject ON ws_members (subject);
@@ -908,6 +937,15 @@ export function createWorkspaceRouter({ db, env = {} }) {
           roadmapIds,
         );
       }
+      const brainstormIds = tombstone(db, "ws_brainstorms", `folder_id IN (${marks})`, ids);
+      if (brainstormIds.length > 0) {
+        tombstone(
+          db,
+          "ws_brainstorm_ideas",
+          `brainstorm_id IN (${brainstormIds.map(() => "?").join(",")})`,
+          brainstormIds,
+        );
+      }
       tombstone(db, "ws_folders", `id IN (${marks})`, ids);
     });
     res.json({ ok: true });
@@ -1482,6 +1520,137 @@ export function createWorkspaceRouter({ db, env = {} }) {
     remove(db, "milestones", req.params.id);
     res.json({ ok: true });
   });
+
+  // ── Brainstorms ───────────────────────────────────────────────────────────
+
+  router.get("/projects/:id/brainstorms", (req, res) => {
+    const id = req.params.id;
+    if (!actor(req, res, id, "read")) return;
+    res.json({ brainstorms: list(db, "brainstorms", id) });
+  });
+
+  router.get("/projects/:id/brainstorm-ideas", (req, res) => {
+    const id = req.params.id;
+    if (!actor(req, res, id, "read")) return;
+    const rows = db
+      .prepare(
+        "SELECT * FROM ws_brainstorm_ideas WHERE project_id = ? AND deleted_at IS NULL ORDER BY position, created_at",
+      )
+      .all(id);
+    res.json({ ideas: rows.map(shapeBrainstormIdea) });
+  });
+
+  router.get("/brainstorms/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_brainstorms", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "read")) return;
+    const row = db.prepare("SELECT * FROM ws_brainstorms WHERE id = ?").get(req.params.id);
+    res.json({ brainstorm: shapeBrainstorm(row) });
+  });
+
+  router.post("/projects/:id/brainstorms", (req, res) => {
+    const id = req.params.id;
+    const who = actor(req, res, id, "write");
+    if (!who) return;
+    const total = db
+      .prepare("SELECT COUNT(*) AS total FROM ws_brainstorms WHERE project_id = ? AND deleted_at IS NULL")
+      .get(id).total;
+    if (total >= limit.brainstormsPerProject) {
+      return badRequest(res, "This project has reached its brainstorm limit.", "brainstorm_quota");
+    }
+    const name = text(req.body?.name, 120) ?? "Brainstorm";
+    const description = text(req.body?.description ?? "", 2000);
+    if (description === null) return badRequest(res, "That description is too long.");
+    const row = insert(db, "brainstorms", {
+      project_id: id,
+      folder_id: req.body?.folderId ?? null,
+      name,
+      description,
+      position: Number.isSafeInteger(req.body?.position) ? req.body.position : 0,
+      created_at: now(),
+    });
+    res.status(201).json({ brainstorm: shapeBrainstorm(row) });
+  });
+
+  router.patch("/brainstorms/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_brainstorms", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    const current = db.prepare("SELECT * FROM ws_brainstorms WHERE id = ?").get(req.params.id);
+    const fields = {};
+    if (req.body?.name !== undefined) {
+      const name = text(req.body.name, 120);
+      if (!name) return badRequest(res, "Give the brainstorm a word or name.");
+      fields.name = name;
+    }
+    if (req.body?.description !== undefined) {
+      const description = text(req.body.description, 2000);
+      if (description === null) return badRequest(res, "That description is too long.");
+      fields.description = description;
+    }
+    if (req.body?.folderId !== undefined) fields.folder_id = req.body.folderId ?? null;
+    if (Number.isSafeInteger(req.body?.position)) fields.position = req.body.position;
+    res.json({ brainstorm: shapeBrainstorm(update(db, "brainstorms", current.id, fields)) });
+  });
+
+  router.delete("/brainstorms/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_brainstorms", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    transaction(db, () => {
+      tombstone(db, "ws_brainstorm_ideas", "brainstorm_id = ?", [req.params.id]);
+      tombstone(db, "ws_brainstorms", "id = ?", [req.params.id]);
+    });
+    res.json({ ok: true });
+  });
+
+  router.get("/brainstorms/:id/ideas", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_brainstorms", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "read")) return;
+    const rows = db
+      .prepare(
+        "SELECT * FROM ws_brainstorm_ideas WHERE brainstorm_id = ? AND deleted_at IS NULL ORDER BY position, created_at",
+      )
+      .all(req.params.id);
+    res.json({ ideas: rows.map(shapeBrainstormIdea) });
+  });
+
+  router.post("/brainstorms/:id/ideas", (req, res) => {
+    const brainstormId = req.params.id;
+    const projectId = projectIdOf(req, res, "ws_brainstorms", brainstormId);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    const total = db
+      .prepare(
+        "SELECT COUNT(*) AS total FROM ws_brainstorm_ideas WHERE brainstorm_id = ? AND deleted_at IS NULL",
+      )
+      .get(brainstormId).total;
+    if (total >= limit.brainstormIdeasPerBrainstorm) {
+      return badRequest(res, "This brainstorm has reached its idea limit.", "brainstorm_idea_quota");
+    }
+    const textValue = text(req.body?.text, 500);
+    if (!textValue) return badRequest(res, "Write an idea first.");
+    const row = insert(db, "brainstorm_ideas", {
+      project_id: projectId,
+      brainstorm_id: brainstormId,
+      text: textValue,
+      position: Number.isSafeInteger(req.body?.position)
+        ? req.body.position
+        : total,
+      created_at: now(),
+    });
+    res.status(201).json({ idea: shapeBrainstormIdea(row) });
+  });
+
+  router.delete("/ideas/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_brainstorm_ideas", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    remove(db, "brainstorm_ideas", req.params.id);
+    res.json({ ok: true });
+  });
+
   router.get("/changes", (req, res) => {
     const result = requireApiUser(db, req, res);
     if (!result) return;
@@ -1543,6 +1712,14 @@ export function createWorkspaceRouter({ db, env = {} }) {
         .prepare(`SELECT * FROM ws_milestones WHERE seq > ? AND project_id IN (${mine})`)
         .all(since, subject)
         .map((row) => ({ kind: "milestone", ...row })),
+      ...db
+        .prepare(`SELECT * FROM ws_brainstorms WHERE seq > ? AND project_id IN (${mine})`)
+        .all(since, subject)
+        .map((row) => ({ kind: "brainstorm", ...row })),
+      ...db
+        .prepare(`SELECT * FROM ws_brainstorm_ideas WHERE seq > ? AND project_id IN (${mine})`)
+        .all(since, subject)
+        .map((row) => ({ kind: "brainstorm_idea", ...row })),
       ...db
         // A member row without the account's name is just a subject number on
         // screen, so the feed carries the same profile the members list does.
@@ -1608,6 +1785,8 @@ function list(db, kind, projectId) {
   if (kind === "folders") return rows.map(shapeFolder);
   if (kind === "roadmaps") return rows.map(shapeRoadmap);
   if (kind === "milestones") return rows.map(shapeMilestone);
+  if (kind === "brainstorms") return rows.map(shapeBrainstorm);
+  if (kind === "brainstorm_ideas") return rows.map(shapeBrainstormIdea);
   return kind === "documents" ? rows.map(shapeDocumentMeta) : rows;
 }
 
@@ -1619,6 +1798,8 @@ const PREFIX = {
   documents: "dc",
   roadmaps: "rm",
   milestones: "ms",
+  brainstorms: "bs",
+  brainstorm_ideas: "bi",
 };
 
 function insert(db, kind, values) {
@@ -1963,6 +2144,32 @@ function shapeRoadmap(row) {
   };
 }
 
+function shapeBrainstorm(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    folderId: row.folder_id,
+    name: row.name,
+    description: row.description,
+    position: row.position,
+    updatedAt: row.updated_at,
+    seq: row.seq,
+  };
+}
+
+function shapeBrainstormIdea(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    brainstormId: row.brainstorm_id,
+    text: row.text,
+    position: row.position,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    seq: row.seq,
+  };
+}
+
 function shapeMilestone(row) {
   return {
     id: row.id,
@@ -2076,6 +2283,21 @@ function shapeChange(row) {
         description: row.description,
         dueDate: row.due_date,
         status: ["planned", "active", "done"].includes(row.status) ? row.status : "planned",
+        position: row.position,
+      });
+      break;
+    case "brainstorm":
+      Object.assign(change, {
+        folderId: row.folder_id,
+        name: row.name,
+        description: row.description,
+        position: row.position,
+      });
+      break;
+    case "brainstorm_idea":
+      Object.assign(change, {
+        brainstormId: row.brainstorm_id,
+        text: row.text,
         position: row.position,
       });
       break;

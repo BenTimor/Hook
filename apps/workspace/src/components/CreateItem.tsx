@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { BoardTemplateDialog } from "./BoardTemplateDialog";
 
 export type CreateRequest = {
-  kind: "folder" | "board" | "document" | "roadmap";
+  kind: "folder" | "board" | "document" | "roadmap" | "brainstorm";
   projectId: string;
   folderId: string | null;
 };
@@ -39,10 +39,17 @@ const COPY = {
     placeholder: "Release roadmap",
     confirm: "Create roadmap",
   },
+  brainstorm: {
+    title: "New brainstorm",
+    description:
+      "A central word with ideas around it. Add one idea at a time and watch it join the map.",
+    placeholder: "Name",
+    confirm: "Create brainstorm",
+  },
 } as const;
 
 /**
- * One dialog for the four things a project holds.
+ * One dialog for the five things a project holds.
  *
  * The tree, the overview and the empty states all create the same way, so the
  * flow (and its copy) lives in one place, and a new board, document or roadmap
@@ -60,7 +67,9 @@ export function CreateItemDialog({
   const createRoadmap = useWorkspaceStore((state) => state.createRoadmap);
   const createFolder = useWorkspaceStore((state) => state.createFolder);
   const openDocument = useWorkspaceStore((state) => state.openDocument);
+  const createBrainstorm = useWorkspaceStore((state) => state.createBrainstorm);
   const openRoadmap = useWorkspaceStore((state) => state.openRoadmap);
+  const openBrainstorm = useWorkspaceStore((state) => state.openBrainstorm);
 
   useEffect(() => {
     if (request) setName("");
@@ -94,6 +103,12 @@ export function CreateItemDialog({
         if (request.kind === "roadmap") {
           void createRoadmap(request.projectId, value, request.folderId).then((roadmap) => {
             if (roadmap) void openRoadmap(roadmap.id, request.projectId);
+          });
+          return;
+        }
+        if (request.kind === "brainstorm") {
+          void createBrainstorm(request.projectId, value, request.folderId).then((brainstorm) => {
+            if (brainstorm) void openBrainstorm(brainstorm.id, request.projectId);
           });
           return;
         }

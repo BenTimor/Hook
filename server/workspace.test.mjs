@@ -904,6 +904,60 @@ test("roadmaps hold milestones with their date, status and description", async (
   assert.ok(changes.body.changes.some((change) => change.kind === "milestone"));
 });
 
+test("brainstorms hold ideas and travel through the changes feed", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+
+  const created = await request(`/projects/${project.id}/brainstorms`, {
+    method: "POST",
+    body: { name: "Naming", description: "What is it called?" },
+  });
+  assert.equal(created.status, 201);
+  const brainstorm = created.body.brainstorm;
+  assert.equal(brainstorm.name, "Naming");
+
+  const first = await request(`/brainstorms/${brainstorm.id}/ideas`, {
+    method: "POST",
+    body: { text: "Something short" },
+  });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.idea.brainstormId, brainstorm.id);
+  const second = await request(`/brainstorms/${brainstorm.id}/ideas`, {
+    method: "POST",
+    body: { text: "Something plain" },
+  });
+  assert.equal(second.status, 201);
+
+  const list = await request(`/projects/${project.id}/brainstorm-ideas`);
+  assert.deepEqual(
+    list.body.ideas.map((idea) => idea.text),
+    ["Something short", "Something plain"],
+  );
+
+  const single = await request(`/brainstorms/${brainstorm.id}`);
+  assert.equal(single.body.brainstorm.id, brainstorm.id);
+  const ideas = await request(`/brainstorms/${brainstorm.id}/ideas`);
+  assert.equal(ideas.body.ideas.length, 2);
+
+  const renamed = await request(`/brainstorms/${brainstorm.id}`, {
+    method: "PATCH",
+    body: { name: "The name" },
+  });
+  assert.equal(renamed.body.brainstorm.name, "The name");
+
+  const removed = await request(`/ideas/${first.body.idea.id}`, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const remaining = await request(`/brainstorms/${brainstorm.id}/ideas`);
+  assert.deepEqual(
+    remaining.body.ideas.map((idea) => idea.text),
+    ["Something plain"],
+  );
+
+  const changes = await request("/changes?since=0&limit=300");
+  assert.ok(changes.body.changes.some((change) => change.kind === "brainstorm"));
+  assert.ok(changes.body.changes.some((change) => change.kind === "brainstorm_idea"));
+});
+
 test("the changes feed is one cursor, filtered by membership, tombstones included", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);
@@ -1035,7 +1089,7 @@ test("deleting the account removes its projects and its memberships elsewhere", 
   assert.equal(feed.body.changes.length, 0);
 });
 
-test("deleting a folder removes its roadmaps and their milestones", async (t) => {
+test("deleting a folder removes its roadmaps, milestones, brainstorms and ideas", async (t) => {
   const { request } = await setup(t);
   const { body: created } = await request("/projects", {
     method: "POST",
@@ -1056,12 +1110,26 @@ test("deleting a folder removes its roadmaps and their milestones", async (t) =>
     body: { title: "Launch" },
   });
   assert.equal(milestone.status, 201);
+  const brainstorm = await request(`/projects/${project.id}/brainstorms`, {
+    method: "POST",
+    body: { name: "Launch names", folderId: folder.body.folder.id },
+  });
+  assert.equal(brainstorm.status, 201);
+  const idea = await request(`/brainstorms/${brainstorm.body.brainstorm.id}/ideas`, {
+    method: "POST",
+    body: { text: "A short name" },
+  });
+  assert.equal(idea.status, 201);
 
   await request(`/folders/${folder.body.folder.id}`, { method: "DELETE" });
   const roadmaps = await request(`/projects/${project.id}/roadmaps`);
   assert.deepEqual(roadmaps.body.roadmaps, []);
   const list = await request(`/projects/${project.id}/milestones`);
   assert.deepEqual(list.body.milestones, []);
+  const brainstorms = await request(`/projects/${project.id}/brainstorms`);
+  assert.deepEqual(brainstorms.body.brainstorms, []);
+  const ideas = await request(`/projects/${project.id}/brainstorm-ideas`);
+  assert.deepEqual(ideas.body.ideas, []);
 });
 
 test("folders organize boards and documents, and deleting one keeps its contents", async (t) => {

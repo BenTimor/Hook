@@ -123,6 +123,28 @@ export interface Roadmap {
   seq: number;
 }
 
+export interface Brainstorm {
+  id: string;
+  projectId: string;
+  folderId: string | null;
+  name: string;
+  description: string;
+  position: number;
+  updatedAt: number;
+  seq: number;
+}
+
+export interface BrainstormIdea {
+  id: string;
+  projectId: string;
+  brainstormId: string;
+  text: string;
+  position: number;
+  createdAt: number;
+  updatedAt: number;
+  seq: number;
+}
+
 export type MilestoneStatus = "planned" | "active" | "done";
 
 export interface Milestone {
@@ -189,6 +211,8 @@ export type ChangeKind =
   | "document"
   | "roadmap"
   | "milestone"
+  | "brainstorm"
+  | "brainstorm_idea"
   | "member"
   | "invite";
 

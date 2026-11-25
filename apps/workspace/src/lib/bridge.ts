@@ -4,6 +4,8 @@ import { isTauri } from "@hook/ui";
 
 import type {
   Board,
+  Brainstorm,
+  BrainstormIdea,
   ChangesPage,
   Column,
   Comment,
@@ -204,6 +206,50 @@ const demo = {
       seq: 9,
     },
   ] as Milestone[],
+  brainstorms: [
+    {
+      id: "bs_demo",
+      projectId: DEMO_PROJECT.id,
+      folderId: null,
+      name: "Name",
+      description: "What should the product be called?",
+      position: 0,
+      updatedAt: demoNow(),
+      seq: 10,
+    },
+  ] as Brainstorm[],
+  brainstormIdeas: [
+    {
+      id: "bi_demo1",
+      projectId: DEMO_PROJECT.id,
+      brainstormId: "bs_demo",
+      text: "Hook",
+      position: 0,
+      createdAt: demoNow(),
+      updatedAt: demoNow(),
+      seq: 11,
+    },
+    {
+      id: "bi_demo2",
+      projectId: DEMO_PROJECT.id,
+      brainstormId: "bs_demo",
+      text: "Heimdall",
+      position: 1,
+      createdAt: demoNow(),
+      updatedAt: demoNow(),
+      seq: 12,
+    },
+    {
+      id: "bi_demo3",
+      projectId: DEMO_PROJECT.id,
+      brainstormId: "bs_demo",
+      text: "Ladybugs",
+      position: 2,
+      createdAt: demoNow(),
+      updatedAt: demoNow(),
+      seq: 13,
+    },
+  ] as BrainstormIdea[],
   folders: [
     {
       id: "fd_demo",
@@ -300,6 +346,14 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
           return {
             roadmaps: demo.roadmaps.filter((roadmap) => roadmap.projectId === id),
           };
+        case "brainstorms":
+          return {
+            brainstorms: demo.brainstorms.filter((brainstorm) => brainstorm.projectId === id),
+          };
+        case "brainstorm-ideas":
+          return {
+            ideas: demo.brainstormIdeas.filter((idea) => idea.projectId === id),
+          };
         case "folders":
           return { folders: demo.folders.filter((folder) => folder.projectId === id) };
         case "members":
@@ -375,6 +429,20 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       demo.roadmaps = [...demo.roadmaps, roadmap];
       return { roadmap };
     }
+    if (resource === "brainstorms") {
+      const brainstorm: Brainstorm = {
+        id: demoId("bs"),
+        projectId: id,
+        folderId: (payload.folderId as string | null) ?? null,
+        name: String(payload.name ?? "Brainstorm"),
+        description: String(payload.description ?? ""),
+        position: demoSeq,
+        updatedAt: demoNow(),
+        seq: demoSeq,
+      };
+      demo.brainstorms = [...demo.brainstorms, brainstorm];
+      return { brainstorm };
+    }
     return { ok: true };
   }
 
@@ -402,6 +470,13 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       demo.documents = demo.documents.filter(
         (document) => !(document.folderId && inside.has(document.folderId)),
       );
+      const brainstorms = new Set(
+        demo.brainstorms
+          .filter((brainstorm) => brainstorm.folderId && inside.has(brainstorm.folderId))
+          .map((brainstorm) => brainstorm.id),
+      );
+      demo.brainstormIdeas = demo.brainstormIdeas.filter((idea) => !brainstorms.has(idea.brainstormId));
+      demo.brainstorms = demo.brainstorms.filter((brainstorm) => !brainstorms.has(brainstorm.id));
       demo.folders = demo.folders.filter((folder) => !inside.has(folder.id));
       return { ok: true };
     }
@@ -544,6 +619,52 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
       return { ok: true };
     }
     return { document: demo.documents.find((document) => document.id === id) };
+  }
+
+  if (root === "brainstorms") {
+    const brainstorm = demo.brainstorms.find((candidate) => candidate.id === id);
+    if (!brainstorm) return { ok: true };
+    if (resource === "ideas") {
+      if (method === "GET") {
+        return {
+          ideas: demo.brainstormIdeas.filter((idea) => idea.brainstormId === id),
+        };
+      }
+      if (method === "POST") {
+        const idea: BrainstormIdea = {
+          id: demoId("bi"),
+          projectId: brainstorm.projectId,
+          brainstormId: brainstorm.id,
+          text: String(payload.text ?? ""),
+          position: demoSeq,
+          createdAt: demoNow(),
+          updatedAt: demoNow(),
+          seq: demoSeq,
+        };
+        demo.brainstormIdeas = [...demo.brainstormIdeas, idea];
+        return { idea };
+      }
+    }
+    if (method === "PATCH") {
+      demo.brainstorms = demo.brainstorms.map((candidate) =>
+        candidate.id === id ? { ...candidate, ...payload, updatedAt: demoNow() } : candidate,
+      );
+      return { brainstorm: demo.brainstorms.find((candidate) => candidate.id === id) };
+    }
+    if (method === "DELETE") {
+      demo.brainstorms = demo.brainstorms.filter((candidate) => candidate.id !== id);
+      demo.brainstormIdeas = demo.brainstormIdeas.filter((idea) => idea.brainstormId !== id);
+      return { ok: true };
+    }
+    return { brainstorm };
+  }
+
+  if (root === "ideas") {
+    if (method === "DELETE") {
+      demo.brainstormIdeas = demo.brainstormIdeas.filter((idea) => idea.id !== id);
+      return { ok: true };
+    }
+    return { ok: true };
   }
 
   if (root === "roadmaps") {
@@ -856,6 +977,23 @@ export const api = {
   updateRoadmap: (id: string, patch: Partial<Roadmap>) =>
     call<{ roadmap: Roadmap }>("PATCH", `/roadmaps/${id}`, patch),
   deleteRoadmap: (id: string) => call<{ ok: true }>("DELETE", `/roadmaps/${id}`),
+  brainstorms: (projectId: string) =>
+    call<{ brainstorms: Brainstorm[] }>("GET", `/projects/${projectId}/brainstorms`),
+  brainstormIdeas: (projectId: string) =>
+    call<{ ideas: BrainstormIdea[] }>("GET", `/projects/${projectId}/brainstorm-ideas`),
+  brainstorm: (id: string) =>
+    call<{ brainstorm: Brainstorm }>("GET", `/brainstorms/${id}`),
+  createBrainstorm: (
+    projectId: string,
+    brainstorm: { name: string; description?: string; folderId?: string | null },
+  ) => call<{ brainstorm: Brainstorm }>("POST", `/projects/${projectId}/brainstorms`, brainstorm),
+  updateBrainstorm: (id: string, patch: Partial<Brainstorm>) =>
+    call<{ brainstorm: Brainstorm }>("PATCH", `/brainstorms/${id}`, patch),
+  deleteBrainstorm: (id: string) => call<{ ok: true }>("DELETE", `/brainstorms/${id}`),
+  createBrainstormIdea: (brainstormId: string, text: string) =>
+    call<{ idea: BrainstormIdea }>("POST", `/brainstorms/${brainstormId}/ideas`, { text }),
+  deleteBrainstormIdea: (id: string) =>
+    call<{ ok: true }>("DELETE", `/ideas/${id}`),
   milestones: (projectId: string) =>
     call<{ milestones: Milestone[] }>("GET", `/projects/${projectId}/milestones`),
   milestone: (id: string) => call<{ milestone: Milestone }>("GET", `/milestones/${id}`),

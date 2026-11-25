@@ -1,5 +1,5 @@
 /* Hook Workspace's own layout. Everything that makes it look like the same
-   family — tokens, window chrome, buttons, inputs, prose — comes from
+   family ג€” tokens, window chrome, buttons, inputs, prose ג€” comes from
    @hook/ui/tokens.css; only this product's arrangement lives here. */
 
 .shell {
@@ -732,7 +732,7 @@
   }
 }
 
-/* ── Rail: projects ───────────────────────────────────────────────────────── */
+/* ג”€ג”€ Rail: projects ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-new {
   display: flex;
@@ -781,7 +781,7 @@
   text-align: center;
 }
 
-/* ── The rail's tree ──────────────────────────────────────────────────────── */
+/* ג”€ג”€ The rail's tree ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-tree {
   flex: 1;
@@ -929,7 +929,7 @@
   color: var(--ink-4);
 }
 
-/* ── Project overview ────────────────────────────────────────────────────── */
+/* ג”€ג”€ Project overview ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-overview {
   flex: 1;
@@ -1228,7 +1228,7 @@
   color: var(--ink-3);
 }
 
-/* ── A page inside a project: boards and documents ───────────────────────── */
+/* ג”€ג”€ A page inside a project: boards and documents ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-board-page {
   display: flex;
@@ -1320,7 +1320,7 @@
   box-shadow: 0 1px 2px rgba(var(--ink-rgb), 0.07);
 }
 
-/* ── Table view ──────────────────────────────────────────────────────────── */
+/* ג”€ג”€ Table view ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-table-wrap {
   flex: 1;
@@ -1591,7 +1591,7 @@
   color: var(--ink-4);
 }
 
-/* ── Menus ───────────────────────────────────────────────────────────────── */
+/* ג”€ג”€ Menus ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-menu {
   position: fixed;
@@ -1803,7 +1803,7 @@
 .ws-filter-foot button { color: var(--ink-3); font-size: 10.5px; }
 .ws-filter-foot button:hover { color: var(--accent); }
 
-/* ── Board ────────────────────────────────────────────────────────────────── */
+/* ג”€ג”€ Board ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-board {
   display: flex;
@@ -1926,7 +1926,7 @@
   color: var(--ink-4);
 }
 
-/* ── Task panel ──────────────────────────────────────────────────────────── */
+/* ג”€ג”€ Task panel ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-task {
   flex: 1;
@@ -2293,7 +2293,7 @@
 }
 
 .ws-task-empty { margin: 0 0 10px; padding: 12px; border-radius: 9px; background: rgba(var(--ink-rgb), 0.03); color: var(--ink-4); font-size: 12px; }
-/* ── People ───────────────────────────────────────────────────────────────── */
+/* ג”€ג”€ People ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-people {
   flex: 1;
@@ -2439,7 +2439,7 @@
   color: #8f2f24;
 }
 
-/* ── Documents ───────────────────────────────────────────────────────────── */
+/* ג”€ג”€ Documents ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-document {
   display: flex;
@@ -2703,7 +2703,7 @@
   padding: 24px;
 }
 
-/* ── Editor: live preview ─────────────────────────────────────────────────── */
+/* ג”€ג”€ Editor: live preview ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .cm-editor {
   height: 100%;
@@ -2774,7 +2774,7 @@
   font-size: 0.88em;
 }
 
-/* ── Error banner ────────────────────────────────────────────────────────── */
+/* ג”€ג”€ Error banner ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 .ws-error {
   display: flex;
@@ -2799,7 +2799,7 @@
   color: var(--ink-4);
 }
 
-/* ── Narrow windows ──────────────────────────────────────────────────────── */
+/* ג”€ג”€ Narrow windows ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */
 
 @media (max-width: 1180px) {
   .ws-task-layout { grid-template-columns: minmax(0, 1fr) 260px; gap: 28px; }
@@ -2818,7 +2818,7 @@
   .ws-task-head-actions { width: 100%; margin-left: 0; justify-content: flex-end; padding-top: 0; }
 }
 
-/* ── Account settings (plan, sync, a personal model endpoint) ─────────────
+/* ג”€ג”€ Account settings (plan, sync, a personal model endpoint) ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
    Workspace's first settings surface. It is deliberately about the chat half
    of the account: projects, boards and tasks are the product and need no
    switch. */
@@ -3201,3 +3201,30 @@
 @media (max-width: 800px) {
   .ws-template-picker { grid-template-columns: minmax(0, 1fr); }
   .ws-template-preview { padding: 16px 0 0; border-top: 1px solid var(--line); border-left: 0; }}
+
+.ws-brainstorm { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.ws-brainstorm .ws-page-head { align-items: center; justify-content: flex-start; }
+.ws-brainstorm-body { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 0 clamp(14px, 3vw, 28px) clamp(14px, 3vw, 24px); }
+.ws-brainstorm-map { position: relative; flex: 1; min-height: 320px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: radial-gradient(ellipse at 50% 46%, rgba(var(--accent-rgb), 0.07), transparent 58%), var(--ivory); }
+.ws-brainstorm-links { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ws-brainstorm-links line { stroke: var(--line-strong); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.ws-brainstorm-center, .ws-brainstorm-node { position: absolute; transform: translate(-50%, -50%); }
+.ws-brainstorm-center { z-index: 2; display: flex; max-width: 190px; align-items: center; gap: 8px; padding: 12px 18px; border: 1px solid rgba(var(--accent-rgb), 0.34); border-radius: 999px; background: var(--ivory); box-shadow: 0 18px 44px rgba(36, 36, 30, 0.12); color: var(--ink); font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+.ws-brainstorm-center svg { width: 17px; height: 17px; color: var(--accent); flex: 0 0 auto; }
+.ws-brainstorm-center span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-brainstorm-node { z-index: 1; display: flex; width: 156px; align-items: flex-start; gap: 6px; padding: 9px 10px 9px 12px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); box-shadow: 0 8px 22px rgba(36, 36, 30, 0.07); color: var(--ink-2); font-size: 12px; line-height: 1.35; }
+.ws-brainstorm-node > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ws-brainstorm-node-remove { display: grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--ink-4); opacity: 0; transition: opacity 120ms ease, background 120ms ease; }
+.ws-brainstorm-node:hover .ws-brainstorm-node-remove, .ws-brainstorm-node-remove:focus-visible { opacity: 1; }
+.ws-brainstorm-node-remove:hover { background: var(--line-soft); color: var(--ink); }
+.ws-brainstorm-node-remove svg { width: 12px; height: 12px; }
+.ws-brainstorm-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-4); font-size: 12.5px; }
+.ws-brainstorm-composer { display: flex; align-items: center; gap: 8px; padding-top: 12px; }
+.ws-brainstorm-composer input { flex: 1; min-width: 0; height: 38px; padding: 0 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--ivory); color: var(--ink); font: inherit; font-size: 13px; outline: none; }
+.ws-brainstorm-composer input:focus { border-color: rgba(var(--accent-rgb), 0.5); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.1); }
+.ws-brainstorm-composer .btn { display: inline-flex; height: 38px; align-items: center; gap: 6px; }
+.ws-brainstorm-composer .btn svg { width: 14px; height: 14px; }
+@media (max-width: 700px) {
+  .ws-brainstorm-node { width: 122px; font-size: 11px; }
+  .ws-brainstorm-center { max-width: 150px; padding: 10px 14px; font-size: 12.5px; }
+}
