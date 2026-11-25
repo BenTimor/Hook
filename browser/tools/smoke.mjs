@@ -273,6 +273,12 @@ export function componentsProblems(listed) {
 // day a new piece of Chromium phones home — the NTP component extension, the AI
 // mode eligibility check and the search prewarm were all found that way.
 //
+// The name is historical and the browser is not anti-Google: the rule is that no
+// traffic arrives without a decision, and Translate — a feature people use — is
+// deliberately not on this list's business at all, since it only talks when asked
+// (docs/browser-branding.md, "What this work is for"). An entry here is a cost we
+// accepted, with the reason written beside it.
+//
 // Allowed, each with the reason it is still here; anything else that resolves to a
 // Google host fails the run. Preconnects are allowed and reported: no request
 // carries content on one, and they follow the default search engine.

@@ -71,7 +71,7 @@ obvious fix is sometimes wrong.
 | [Browser POC plan](browser-poc-plan.md) | The build order behind that design |
 | [Browser host](browser-host.md) | The browser's own host process: step 1 in, the sidecar still designed |
 | [OS decoders](browser-os-decoders.md) | The platform-decoder path for H.264/AAC: decided, not started |
-| [De-Googling the browser](browser-branding.md) | Name, icon and Google's AI: done; the services, with Safe Browsing still a decision |
+| [The browser's name, and what it carries](browser-branding.md) | Why anything gets removed (lean, not anti-Google), the name and icon, the services, Safe Browsing, Widevine |
 | [Browser dev loop](../browser/README.md) | `browser/`: the checkout, the overlay, the patch stack, the tools |
 
 ## Repository root

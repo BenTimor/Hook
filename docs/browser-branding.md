@@ -1,14 +1,57 @@
-# De-Googling the browser
+# Hook Browser: the name, and what it carries
 
-What it took to make Hook Browser stop presenting itself as Chromium and stop
-carrying Google's AI, and what is still left. Written against `159.0.8154.13`:
-every tier below is built and verified in that tree, except where a line says
-otherwise.
+What it took to make Hook Browser present itself as Hook instead of Chromium, what it
+still carries, and why each thing that was removed went. Written against
+`159.0.8154.13`: every tier below is built and verified in that tree, except where a
+line says otherwise.
 
-Landed as five patches — `0011-branding`, `0012-no-google-ai`,
-`0013-no-google-services`, `0014-safe-browsing-off`, `0015-no-google-at-startup` —
-plus one rule in `browser/tools/patch.mjs` (`--binary`, so an icon replacement
-round-trips). The stack is 15 patches.
+Landed as seven patches — `0011-branding`, `0012-no-google-ai`,
+`0013-no-google-services`, `0014-safe-browsing-off`, `0015-no-google-at-startup`,
+`0016-wordmark`, `0017-component-allowlist` — plus one rule in
+`browser/tools/patch.mjs` (`--binary`, so an icon replacement round-trips). The stack
+is 17 patches.
+
+## What this work is for
+
+**The browser is not an anti-Google project, and nothing here should be read as one.**
+The reason to remove anything is the reason to remove anything from any Hook product:
+what nobody uses still costs memory, CPU, startup time, bytes on disk and attention,
+and Google's services happened to be the largest single collection of such things —
+installed by default, talking to servers we cannot inspect, serving features this
+product does not present.
+
+So the standard for a dependency is not *whose* it is. It is three questions:
+
+1. **Does someone use it?** Translate does. Indigo's wallpaper catalogue, which this
+   build shows nowhere, does not.
+2. **What does it cost the people who don't?** A component that is registered but
+   never used still polls, still reserves state, still appears in a list of things to
+   keep working across a Chromium upgrade.
+3. **Does it earn its keep when used?** Safe Browsing did not (it was a shield over a
+   list that never updated), and the component updater's 20 extra components did not
+   (they served AI models, hint lists and origin trials this build has no feature for).
+
+That is why the work below exists, and it is what decides the next one. Consequences
+already settled under it:
+
+- **Translate stays.** It is a feature people ask for, it costs nothing until someone
+  uses it, and when it runs it does exactly what was requested. It reaches Google
+  because translation is a network service; that is the feature, not a leak.
+- **Search stays Google** for now, on the same rule: the preconnect is a small cost,
+  the engine is a large benefit (see "Default search engine" below).
+- **Safe Browsing is off** because it was inert, not because of the name on it. The
+  replacement is ours when it exists ("Safe Browsing replacement" below).
+- **The updater is an allowlist of three** because 20 of its 23 components served
+  features this build does not have; the three that remain decide whether a
+  certificate is accepted ("The component updater" above).
+- **Things that stay even though Google runs them**, once they pay for themselves: a
+  Web Risk feed if it replaces Safe Browsing, Widevine once licensed, and Google's
+  index as the search default while it is the best default.
+
+The instrument is `--no-google`, and its name is historical. What it proves is that no
+**new** traffic arrived without a decision — a budget on chatter, not a purity test.
+When a Google service earns its place, the check's allowlist entry is where that
+becomes visible, with the reason written next to it.
 
 ## What it says now
 
@@ -337,13 +380,14 @@ Nothing here forks a subsystem, which is what keeps the 4-week train affordable
 
 ## What must stay
 
-De-Googling is not de-licensing. Chromium is BSD-3: every redistribution keeps the
-copyright notice and the disclaimer, which is why `chrome://credits` and
-`LICENSES.chromium.html` are part of the build and are not candidates for removal,
-and why `BRANDING`'s `COPYRIGHT` still carries *The Chromium Authors* beside ours.
-What went is the *product identity* — a name, an icon, a set of sentences — and the
-Google services we do not want to talk to. No attribution was removed and
-`THIRD_PARTY_NOTICES.md` does not change (see "Hard constraints" in `AGENTS.md`).
+Removing a product identity is not removing a licence. Chromium is BSD-3: every
+redistribution keeps the copyright notice and the disclaimer, which is why
+`chrome://credits` and `LICENSES.chromium.html` are part of the build and are not
+candidates for removal, and why `BRANDING`'s `COPYRIGHT` still carries *The Chromium
+Authors* beside ours. What went is the *product identity* — a name, an icon, a set of
+sentences — and the parts of Chromium whose features this build does not present. No
+attribution was removed and `THIRD_PARTY_NOTICES.md` does not change (see "Hard
+constraints" in `AGENTS.md`).
 
 `is_chrome_branded` stays `false`. Turning it on is not "more branded", it is a
 build that needs assets we cannot have — and it is the flag that would *add*
@@ -367,6 +411,23 @@ What staying costs: the preconnect in `--no-google` stays allowed, the omnibox s
 suggestions to Google (with `client=chrome-omni` in the URL), and the "no Google
 traffic" claim keeps one documented exception. That is the price of the deferral, and
 it is small.
+
+### Translate: stays, and it is not a de-Googling exception
+
+Settled by the rule at the top of this document rather than case by case: Translate is
+a feature a person asks for, it costs nothing until asked, and when it answers it
+answers with what was requested. It sends page text to
+`translate.googleapis.com/translate_a/element.js`, and that is what the feature *is* —
+not a background call nobody chose.
+
+The earlier framing ("remove the feature, or leave it and say so") was the wrong test:
+it treated a used feature as a compromise. The test that replaces it is in **What this
+work is for**, and Translate is the first entry that fails it in the direction of
+*keeping* something Google runs.
+
+What would change the answer: if a translation model ran on-device (WASM or the OS) at
+comparable quality, the network call becomes optional — but that is a feature
+decision, not a hygiene one, and the bar is "as good as what people have now".
 
 ### Component updater: narrow to the security set
 

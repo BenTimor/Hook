@@ -342,8 +342,8 @@ will actually see:
 - run `pnpm browser:smoke` with no `--host` and confirm no `hook-host.exe`
   survives it (`--hook-no-host` is passed, so a check leaves nothing behind).
 
-**By hand**, which is what a tester actually does. Launch the binary with a
-throwaway profile so it never touches a real one:
+**By hand**, with a throwaway profile, when the question is "did this change reach a
+window":
 
 ```bash
 "C:\Dev\cr\out\Dev\chrome.exe" --user-data-dir=%TEMP%\hb --hook-side-panel
@@ -356,6 +356,84 @@ selection); a typed URL while signed out, which returns to `chrome://hook`.
 `chrome://hook` itself shows the live tab list and the dock side by side — that
 page is the seam, and it is the fastest way to see whether a change reached a
 window.
+
+## Testing it like a person
+
+The checks above prove the seams. They do not prove the browser: a fork breaks in
+places no script looks — a dialog that lost its layout, a download that never
+starts, a page that renders in Times because a font token was undefined. That pass
+has its own rules.
+
+**Use the build that ships.** `out/NoComp` once it exists. `out/Dev` is a *component*
+build: hundreds of DLLs, `DCHECK`s on. That is better for finding bugs (an invariant
+violation aborts instead of sailing on) and worse for anything perceptual — startup,
+memory, frame pacing. Never quote a performance number measured on it, and expect
+first paint to feel slower than it will.
+
+**Use the real profile.** The browser's is Chromium's default,
+`%LOCALAPPDATA%\Chromium\User Data`; it shares nothing with Chrome's, which is the
+point of the product name in `BRANDING`. Real use means cookies, history, saved
+passwords and a session that has to restore — so test on it, not on a temp folder.
+For the first-run pass (an empty dock, the gate's device flow) move that folder
+aside first, then put it back: a *warm* profile is where the interesting failures
+live.
+
+**Start it the way a user does** — no switches, from Explorer or a shortcut. The
+host launches with it, the gate finds the account, nothing is pre-set.
+`--hook-no-host` exists for the checks and defeats the point here.
+
+Then the passes, in the order a new user meets them:
+
+1. **First run, signed out.** The gate draws the card, its code matches the Hook
+   app's, a typed URL comes back to `chrome://hook`, and signing in through the
+   device flow lands on the page with the dock alive. `hook-host.exe` appears in
+   Task Manager and is gone when the browser closes.
+2. **Identity.** Title `New tab - Hook Browser`; the taskbar and Alt-Tab show the
+   Hook mark; `chrome://version` and "About Hook Browser"; `chrome://credits` still
+   credits Chromium (the notices are the licence, not branding); no "Google API keys
+   are missing" infobar.
+3. **The surfaces our patches touch.** Ctrl+T lands on our new tab page; the tab
+   strip at one tab, two tabs, after a drag, a middle-click and a close; session
+   restore after a kill (see 8). The side panel: pin it, narrow the window to where
+   the 360px dock used to clip, close it with ✕, reopen it, restart and check it
+   came back.
+4. **The dock.** One message end to end — streaming reads as typing, not as a jump;
+   an image attachment and its lightbox; a `/` command in advanced mode; a Workspace
+   preview (board, task, document); the "not in the cloud" mark on an unsynced chat.
+   With the Hook app running instead, the `--channel` check covers the wiring — here
+   you are testing the *feel* at 380px and the composer's behaviour.
+5. **Media.** A local `.mp4` with H.264 and AAC; YouTube (VP9/AV1 path);
+   `chrome://media-internals` when something refuses; a WebRTC call with camera, mic
+   and screen share; the PDF viewer; Ctrl+P — print preview is a whole WebUI, and
+   forks break it quietly. DRM services (Netflix, Disney+, Prime) **must fail**
+   today: there is no Widevine until the licence is signed. That is expected.
+6. **Downloads.** A `.exe`, a `.zip`, something large: the shelf, Open, Show in
+   folder, and that the file-type classification still happens (FileTypePolicies is
+   one of the three components kept).
+7. **Passwords and autofill.** Save, revisit, autofill, generate. The strength meter
+   should still work — Zxcvbn's dictionary was dropped with the updater narrowing, so
+   expect less precision, not a broken field.
+8. **Kill it.** End `chrome.exe` mid-session: relaunch offers to restore, and no
+   `hook-host.exe` survives. Kill one renderer: that tab shows a crash page and the
+   browser stays up.
+9. **Offline and slow.** DevTools → offline (the dock's error copy), 3G throttling,
+   a hostname that does not resolve.
+10. **Settings sweep.** The pages that used to reach Google: search engines (Google,
+    and no "update engine" call), sync (absent or off), translate (present, on
+    demand), Safe Browsing (toggle present, off), privacy. When unsure, record with
+    `chrome://net-export` and read it rather than guessing.
+11. **Long session.** Twenty tabs, a paused video, sleep/resume the machine. Then
+    leave it idle with the dock open on a signed-in account: the transport polls at
+    350 ms *only while a turn runs*, so idle CPU must be ~0 %. If it is not, that is
+    ours, not Chromium's.
+12. **Extensions.** `chrome://extensions` → Developer mode → Load unpacked, with an
+    MV3 extension. Installing from the Web Store needs a Google sign-in this build
+    does not offer, so that path is out of scope until the decision exists.
+
+When something breaks, the browser keeps its own stderr: launch once with
+`--enable-logging=stderr --v=1` from a terminal and reproduce, and the log names the
+component that refused or the WebUI that failed. `chrome://crashes` is empty on
+purpose — crash upload is off with the rest of Google's telemetry.
 
 ## Traps
 

@@ -442,8 +442,9 @@ is instead of here:
 - **Google API keys for geolocation, timezone and translate** — geolocation now
   comes from Windows, and the timezone does too, so neither needs a key. Translate
   is the one still talking to Google, and only when a person asks it to: it sends
-  page text to `translate.googleapis.com`. That is a decision to make before
-  calling the browser de-Googled — remove the feature, or leave it and say so.
+  page text to `translate.googleapis.com`. **Decided: it stays** — a feature someone
+  uses is not a de-Googling exception, and this browser is not running an anti-Google
+  agenda (`docs/browser-branding.md`, "What this work is for").
 
 ## Still open
 

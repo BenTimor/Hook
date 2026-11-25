@@ -370,8 +370,14 @@ bash.
   `0015-no-google-at-startup` the four Google component extensions, the AIM
   eligibility check and the search prewarm — off because a build with
   no key cannot use it, and `safe_browsing_mode = 0` does not build (six targets
-  depend on the component unconditionally). `docs/browser-branding.md` has the map,
-  the two `.rc`/`grit` traps, what still talks to Google, and what is still open. `browser/ui/` is the dock's own Vite project: it builds
+  depend on the component unconditionally), `0016-wordmark` the payment sheet's
+  picture, and `0017-component-allowlist` the updater narrowed to the three
+  components that decide whether a certificate is accepted. **Nothing there was
+  removed for being Google's**: the rule is that a dependency has to earn its keep
+  (used, cheap for people who don't use it, worth its maintenance), so Translate and
+  the search engine stay on purpose — `docs/browser-branding.md`, "What this work is
+  for", is the test to apply before removing the next thing. That doc also has the
+  two `.rc`/`grit` traps, what still talks to Google, and what is still open. `browser/ui/` is the dock's own Vite project: it builds
   `packages/chat` into `overlay/src/hook/resources/panel.mjs` — generated, not
   committed (`browser/tools/build.mjs` runs Vite before ninja, because
   `build_webui` can only pack static files that exist in the source tree and GN
@@ -406,7 +412,8 @@ bash.
   flag passes `--hook-no-host` unless it is `--host`, so no check leaves a process behind. The
   ~100 GB checkout itself never
   enters the repo and `browser/README.md` carries the dev loop, the toolchain
-  prerequisites and the traps. `args.gn` pins `use_siso = false`: siso cannot read
+  prerequisites, the traps, and "Testing it like a person" -- the pass the checks
+  cannot do (real profile, real sites, media, downloads, a killed browser). `args.gn` pins `use_siso = false`: siso cannot read
   the overlay junction, so the tree builds with ninja (`browser/README.md`,
   "Traps"). Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
   Chromium build ever runs on a push.
