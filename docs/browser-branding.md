@@ -147,6 +147,25 @@ this tree cannot produce a branded build at all.
   `chrome_exe.rc` has them.
 - `grit` will not walk out of `chrome/app`, as above.
 
+### The first run is not Chromium's
+
+**`0018-skip-first-run`.** A fresh profile used to open `chrome://intro/welcome`:
+"The browser that gets more done" over the Chromium mark, then a Google-account
+sign-in pitch, bookmark import from other browsers, and "set as your default
+browser". It also **plays a startup sound** — `FirstRunFlowController` owns a
+`SoundsManager`, and it is the only non-ChromeOS sound the browser can make.
+
+One line, at the decision point: `first_run::IsChromeFirstRun()` answers false, so
+the picker's `kFirstRun` entry point is never taken and the sentinel is never
+written (harmless — nothing reads it once it cannot answer true). Everything the
+wizard exists to do is either already ours (the sign-in gate, the dock) or a promise
+this product does not make (sync, defaults, import).
+
+Deliberately **not translated** into a Hook wizard: a first-run page is a standing
+obligation to keep Chrome's onboarding vocabulary in step across every Chromium
+upgrade, and the product already has a first screen — the gate. The smoke now proves
+it: a fresh profile's first tab is `chrome://hook-newtab`, not `chrome://intro/*`.
+
 ## Tier 2 — the AI surfaces (done)
 
 The good news was bigger than it looked: an unbranded build with no API keys cannot
@@ -649,6 +668,12 @@ process plus one Google dependency.
 
   Design may still replace all four; the geometry and those two rules are the spec.
   Otherwise: transparent PNG, no matting, no shadow, legible at 22 px on both sheets.
+- **The new tab page's mark.** `browser/overlay/src/hook/resources/newtab_mark.png`
+  (96 px, generated from `apps/chat/src-tauri/icons/icon.png`) is the tile above the
+  greeting. It was a black rounded rectangle with nothing in it, because the CSS drew
+  the tile and no asset was ever put inside. It is a *copy* of the app icon, so a
+  change to the icon means regenerating this file, and a change to the tile's
+  rounding means changing both.
 - **`chrome.exe`.** Skipped on purpose. Revisit only if an installer registers ProgIDs.
 
 ## Still open

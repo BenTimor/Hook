@@ -57,40 +57,74 @@ export function mountSignIn(
   return { update: draw };
 }
 
+// How long the dock keeps asking for a channel before it settles for the local
+// conversation: 20 x 1.5 s. The browser launches its host on demand and a fresh
+// Windows process takes a second or two to bind, so the first answer is often
+// "not yet" — and a panel that turns that into a permanent mock is a panel that
+// says "Hook is not listening on this computer" to someone looking at Hook.
+const CONNECT_ATTEMPTS = 20;
+const CONNECT_DELAY_MS = 1500;
+
 async function boot(): Promise<void> {
   const host = document.getElementById("dock");
   if (!host) return;
 
-  let transport = localTransport(NO_APP);
+  const root = createRoot(host);
+  const draw = (transport: ReturnType<typeof channelTransport> | ReturnType<typeof localTransport>) => {
+    root.render(
+      <StrictMode>
+        <ChatDock
+          transport={transport}
+          open
+          onClose={() => {
+            // The pane is the page in this POC; the side panel's own button (or
+            // pin) is what closes it there.
+          }}
+          suggestions={[
+            "What is this page for?",
+            "Which tab am I on?",
+            "What is left in Step 1?",
+          ]}
+          blurb="The chat from Hook, in the browser."
+        />
+      </StrictMode>,
+    );
+  };
+
   const handler = await hookHandler();
-  if (handler) {
-    // A side panel entry stays hidden until its page says it is ready; in a tab
-    // this is a no-op.
-    handler.showUI();
-    const channel = await handler.getChannel();
-    transport = channel.available
-      ? channelTransport(handler)
-      : localTransport(channel.reason || NO_APP);
+  if (!handler) {
+    draw(localTransport(NO_APP));
+    return;
   }
 
-  createRoot(host).render(
-    <StrictMode>
-      <ChatDock
-        transport={transport}
-        open
-        onClose={() => {
-          // The pane is the page in this POC; the side panel's own button (or
-          // pin) is what closes it there.
-        }}
-        suggestions={[
-          "What is this page for?",
-          "Which tab am I on?",
-          "What is left in Step 1?",
-        ]}
-        blurb="The chat from Hook, in the browser."
-      />
-    </StrictMode>,
-  );
+  // A side panel entry stays hidden until its page says it is ready; in a tab
+  // this is a no-op. Said before connecting, or the panel would stay hidden for
+  // as long as the retry loop runs.
+  handler.showUI();
+
+  // Draw immediately, then keep asking: the dock is a live surface and a stale
+  // descriptor, a host that is still starting or a restart with a new port are
+  // all answered by asking again a moment later (`docs/browser-host.md`).
+  draw(localTransport("Starting Hook…"));
+  let reason = "";
+  for (let attempt = 0; attempt < CONNECT_ATTEMPTS; attempt++) {
+    try {
+      const channel = await handler.getChannel();
+      if (channel.available) {
+        draw(channelTransport(handler));
+        return;
+      }
+      reason = channel.reason || "";
+    } catch (failure) {
+      // A mojo call can reject while the page is still binding its handler. That
+      // is a "not yet", not the end of the dock.
+      reason = String(failure);
+    }
+    // Nothing will ever answer: a refused launch is not a slow launch.
+    if (attempt > 0 && /not installed|not running/i.test(reason)) break;
+    await new Promise((done) => setTimeout(done, CONNECT_DELAY_MS));
+  }
+  draw(localTransport(reason || NO_APP));
 }
 
 void boot();

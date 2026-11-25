@@ -546,7 +546,9 @@ Step 1 is complete, in `overlay/src/hook/` and ten small patches:
 Step 2 is in. The dock from `packages/chat` runs at 380px, on `packages/ui`
 tokens, served from the pak — as a pane of `chrome://hook` and as a real
 side-panel entry (`chrome://hook-panel`, `browser/ui/views/`, entry id + action
-item patches). `--hook-side-panel` opens it, and the toolbar's pin keeps it.
+item patches). Its toolbar button is a pinned action, pinned by default
+(`0019-panel-button`), so a fresh profile has the dock one click away;
+`--hook-side-panel` opens the panel at startup without clicking.
 
 The signed-out page is the shared sign-in card from `packages/ui`, mounted from
 the same bundle: it shows the device code, offers the page again, cancels, and

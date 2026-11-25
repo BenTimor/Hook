@@ -372,7 +372,11 @@ bash.
   no key cannot use it, and `safe_browsing_mode = 0` does not build (six targets
   depend on the component unconditionally), `0016-wordmark` the payment sheet's
   picture, and `0017-component-allowlist` the updater narrowed to the three
-  components that decide whether a certificate is accepted. **Nothing there was
+  components that decide whether a certificate is accepted, `0018-skip-first-run`
+  Chromium's onboarding (and its startup sound), `0019-panel-button` the dock's
+  toolbar button, and `0020-not-default-yet` the default-browser prompt — off until
+  something registers this binary as a browser, because asking for something
+  Windows cannot give is a promise the product does not keep. **Nothing there was
   removed for being Google's**: the rule is that a dependency has to earn its keep
   (used, cheap for people who don't use it, worth its maintenance), so Translate and
   the search engine stay on purpose — `docs/browser-branding.md`, "What this work is
@@ -386,7 +390,8 @@ bash.
   rebuild — `browser/README.md`, "The dock bundle"). The overlay is more than the seam now:
   `browser/navigation/` is the signed-out gate, `browser/account/` is the shared
   account read both the gate and the card use, `browser/ui/views/` is the dock as
-  a side-panel entry (`chrome://hook-panel`, `--hook-side-panel`),
+  a side-panel entry (`chrome://hook-panel`; its toolbar action is pinned by
+  default, `0019-panel-button`, and `--hook-side-panel` opens it at startup),
   `browser/ui/webui/hook_newtab_ui.*` is the New Tab page (a new tab is ours via
   `ChromeUINewTabURLAsGURL`, patch 0009), and
   `browser/channel/` is the client for a *running* Hook host's loopback channel

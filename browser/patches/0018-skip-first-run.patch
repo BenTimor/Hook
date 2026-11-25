@@ -1,0 +1,31 @@
+diff --git a/chrome/browser/first_run/first_run.cc b/chrome/browser/first_run/first_run.cc
+index a6c88f43f5..316bf775cd 100644
+--- a/chrome/browser/first_run/first_run.cc
++++ b/chrome/browser/first_run/first_run.cc
+@@ -358,7 +358,25 @@ bool IsChromeFirstRun() {
+         command_line->HasSwitch(switches::kForceFirstRun),
+         command_line->HasSwitch(switches::kNoFirstRun));
+   }
+-  return g_first_run == internal::FIRST_RUN_TRUE;
++
++  // Hook Browser: never Chromium's first run.
++  //
++  // Chromium's onboarding is chrome://intro/welcome -- "The browser that gets
++  // more done" over the Chromium mark, then a Google-account sign-in pitch,
++  // bookmark import from other browsers, and "set as your default browser".
++  // None of that is this product: Hook's onboarding is the sign-in gate and the
++  // dock, on a page this repository draws. The flow also plays a startup sound
++  // (`FirstRunFlowController` owns a `SoundsManager`), which is the loudest
++  // possible way to be a browser nobody asked for.
++  //
++  // False here is the whole suppression: the picker's `kFirstRun` entry point is
++  // only taken when this answers true, and the sentinel is then never written --
++  // harmless, because nothing reads it once this cannot answer true.
++  //
++  // Deliberately not a translation of that page: a first-run wizard is a promise
++  // to maintain Chrome's onboarding vocabulary (sync, defaults, import) across
++  // every Chromium upgrade, and the product already has somewhere to start.
++  return false;
+ }
+ 
+ #if BUILDFLAG(IS_MAC)

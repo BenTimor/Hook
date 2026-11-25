@@ -34,8 +34,9 @@ END_METADATA
 namespace hook {
 namespace {
 
-// A switch, because the entry has no action id yet: this is how the panel is
-// opened at all until a product decides where its button belongs.
+// Opens the panel at startup. Not the only way in -- the toolbar button is pinned
+// by default (toolbar_pref_names.cc) -- but a switch is what a check can assert
+// without clicking.
 constexpr char kSidePanelSwitch[] = "hook-side-panel";
 
 // The dock draws its own header (conversations, title, close). The side panel's

@@ -418,7 +418,10 @@ export async function main(argv) {
     binary,
     [
       `--user-data-dir=${profile}`,
-      "--no-first-run",
+      // Deliberately no `--no-first-run`: Chromium's onboarding is suppressed by
+      // the browser itself (`0018-skip-first-run`), and the profile is fresh in
+      // every launch, so the first tab is the tripwire for that patch surviving a
+      // rebase. It used to open `chrome://intro/welcome`, with a startup sound.
       "--no-default-browser-check",
       "--disable-breakpad",
       // The check runs unattended: a window nobody is looking at is occluded by
@@ -797,7 +800,16 @@ export async function main(argv) {
       if ((newTab?.chips?.length ?? 0) !== 3) {
         failures.push(`the new tab page has ${newTab?.chips?.length ?? 0} chips, not 3`);
       }
-      if (!firstTab) failures.push("no first tab to prove the new tab URL on");
+      if (!firstTab) {
+        failures.push("no first tab to prove the new tab URL on");
+      } else if (/^chrome:\/\/intro\//.test(firstTab.url ?? "")) {
+        failures.push(`the first tab is Chrome's onboarding (${firstTab.url}): 0018-skip-first-run is missing`);
+      } else if (!/^chrome:\/\/(hook-newtab|hook)\//.test(firstTab.url ?? "")) {
+        // Signed in: the new tab page. Signed out: the gate, which sends the first
+        // navigation to chrome://hook. Both are ours; Chromium's new tab page and
+        // its onboarding are not.
+        failures.push(`a fresh profile opened ${firstTab.url}, which is neither Hook's new tab page nor the gate`);
+      }
     }
 
     // ---- the component updater's allowlist ----------------------------------

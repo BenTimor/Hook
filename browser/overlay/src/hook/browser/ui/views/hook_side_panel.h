@@ -6,9 +6,11 @@
 // the seam page.
 //
 // It is registered from BrowserWindowFeatures (`browser/patches/`), the place
-// every built-in side panel is created, and it has no action id yet: nothing in
-// the toolbar can open it, so `--hook-side-panel` opens it at startup until a
-// product decision says where the button goes.
+// every built-in side panel is created. Its toolbar button is an ordinary pinned
+// action (`kActionSidePanelShowHookChat`), pinned by default in
+// `toolbar_pref_names.cc` so the dock is one click away on a fresh profile;
+// `--hook-side-panel` also opens it at startup, which is what a check can do
+// without clicking.
 
 #ifndef HOOK_BROWSER_UI_VIEWS_HOOK_SIDE_PANEL_H_
 #define HOOK_BROWSER_UI_VIEWS_HOOK_SIDE_PANEL_H_

@@ -1,0 +1,23 @@
+diff --git a/chrome/browser/ui/toolbar/toolbar_pref_names.cc b/chrome/browser/ui/toolbar/toolbar_pref_names.cc
+index 69ea470005..f8a86588f3 100644
+--- a/chrome/browser/ui/toolbar/toolbar_pref_names.cc
++++ b/chrome/browser/ui/toolbar/toolbar_pref_names.cc
+@@ -23,6 +23,18 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+     default_pinned_actions.Append(chrome_labs_action.value());
+   }
+ 
++  // Hook Browser: the dock's side panel entry is on the toolbar from the first
++  // launch. Without this it has no permanent button -- the toolbar shows one only
++  // while the panel is open, and nothing opens it -- so the dock would be
++  // unreachable without a command-line switch. A pinned action is still the
++  // user's to unpin: the pref then differs from this default, and nothing puts it
++  // back.
++  const std::optional<std::string>& hook_chat_action =
++      actions::ActionIdMap::ActionIdToString(kActionSidePanelShowHookChat);
++  if (hook_chat_action.has_value()) {
++    default_pinned_actions.Append(hook_chat_action.value());
++  }
++
+   if (base::FeatureList::IsEnabled(ttc::kTtc)) {
+     const std::optional<std::string>& ttc_action =
+         actions::ActionIdMap::ActionIdToString(kActionTtcToolbar);

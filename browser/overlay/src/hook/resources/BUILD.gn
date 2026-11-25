@@ -30,6 +30,7 @@ build_webui("build") {
     "hook.html",
     "newtab.css",
     "newtab.html",
+    "newtab_mark.png",
     "panel.html",
     "panel.mjs",
   ]

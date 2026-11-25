@@ -17,3 +17,6 @@
 0015-no-google-at-startup.patch
 0016-wordmark.patch
 0017-component-allowlist.patch
+0018-skip-first-run.patch
+0019-panel-button.patch
+0020-not-default-yet.patch

@@ -1,0 +1,28 @@
+diff --git a/chrome/browser/shell_integration.cc b/chrome/browser/shell_integration.cc
+index 5156fb2c9c..f7f6a3722f 100644
+--- a/chrome/browser/shell_integration.cc
++++ b/chrome/browser/shell_integration.cc
+@@ -107,7 +107,22 @@ DefaultWebClientSetPermission GetDefaultSchemeClientSetPermission() {
+ }
+ 
+ bool CanSetAsDefaultBrowser() {
+-  return GetDefaultBrowserSetPermission() != SET_DEFAULT_NOT_ALLOWED;
++  // Hook Browser: not yet, and the browser should not pretend otherwise.
++  //
++  // Everything that asks the user to "make this your default browser" -- the
++  // startup prompt, the settings toggle, the onboarding step -- is gated on this
++  // answer. It is false because nothing registers this binary as a browser on
++  // Windows: no ProgID under `HKCU\Software\Classes`, no entry under
++  // `Software\Clients\StartMenuInternet`. The prompt's second step is "click Set
++  // default in your Windows settings", and Hook Browser is not in that list, so
++  // the user is talked through a flow that cannot complete. A browser that asks
++  // for something it cannot be given teaches people to ignore it.
++  //
++  // The default-browser work inverts this: registration (ProgIDs, the client key,
++  // an MSIX `windows.protocol` extension) plus a deep link to our own settings
++  // page, and then this returns the real answer again. Until then, false is the
++  // truth -- `docs/browser-poc-plan.md`, "Default-browser registration".
++  return false;
+ }
+ 
+ base::CommandLine CommandLineArgsForLauncher(

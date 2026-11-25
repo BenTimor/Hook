@@ -30,9 +30,8 @@ body {
 }
 
 .ntp-mark {
-  background: var(--ink, #24241e);
-  border-radius: 12px;
-  box-shadow: 0 18px 44px -26px rgba(var(--accent-rgb, 40, 59, 49), 0.5);
+  display: block;
+  filter: drop-shadow(0 18px 22px rgba(var(--accent-rgb, 40, 59, 49), 0.28));
   height: 34px;
   margin-bottom: 26px;
   width: 34px;

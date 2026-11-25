@@ -189,8 +189,10 @@ reachable, and is provable with `--hook-signin-state=out`.
   proof; `chrome://hook-panel` is the same document as a *top-chrome* WebUI, so
   it is a real side-panel entry of every window (`ui/views/hook_side_panel.cc`,
   the sixth and seventh patches: the entry's id and the action item the pinning
-  controller insists on). `--hook-side-panel` opens it; the toolbar's pin makes
-  it stick.
+  controller insists on). The action is pinned by default, in the shape of every
+  Chrome side panel (`toolbar_pref_names.cc`, `0019-panel-button`), because a
+  side-panel button exists permanently only when pinned — and nothing else opens
+  the panel; `--hook-side-panel` opens it at startup, which is what a check does.
 - Sign-in becomes the shared card. **Done.** The card is one component
   (`packages/ui/src/SignInCard.tsx`): three states, one voice, and the chat
   window, Hook Workspace, the phone and `chrome://hook` all draw it. The browser
@@ -419,6 +421,20 @@ someone installs, split by what only a decision can unblock.
   `hook-host` the archive has to ship beside `chrome.exe`
   (`docs/browser-host.md`, "Step 5 — what packaging means").
 - **Default-browser registration**, which is fiddly and fiddlier under MSIX.
+  Until it exists, the browser does not ask: `CanSetAsDefaultBrowser()` answers
+  false on purpose (`0020-not-default-yet`), which switches off the startup prompt,
+  the settings toggle, the onboarding step and the feature-showcase step at once.
+  The reason is a registry fact: there is no ProgID under
+  `HKCU\Software\Classes` and no entry under `Software\Clients\StartMenuInternet`,
+  so Windows cannot make this binary a browser — while the prompt's second step is
+  "click Set default in your Windows settings", where Hook Browser is not listed.
+  Asking for something that cannot be given teaches people to ignore prompts.
+  What "done" means, in order: a ProgID and the `StartMenuInternet` client key
+  (installer) or the MSIX `windows.protocol` + `AppExecutionAlias` (Store); a deep
+  link that lands on *our* page in `ms-settings:defaultapps` rather than the
+  general list; detection that compares against our own identity; our own copy,
+  artwork and help page for the prompt; then this function returns the real answer
+  again.
 - **CI:** Chromium's `browser_tests` and `content_browsertests` on a self-hosted
   runner with a persistent `out/`; they are inherited for free and are the reason
   a fork stays affordable. The gate that exists today is `pnpm browser:check`

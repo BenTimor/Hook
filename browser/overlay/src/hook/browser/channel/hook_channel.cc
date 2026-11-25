@@ -225,11 +225,20 @@ void HookChannel::SendRequest(const std::string& method,
   raw->DownloadToString(
       profile_->GetURLLoaderFactory().get(),
       base::BindOnce(
-          [](ChannelReply done,
+          [](base::WeakPtr<HookChannel> self, ChannelReply done,
              std::unique_ptr<network::SimpleURLLoader> keep_alive,
              std::optional<std::string> reply) {
             // `keep_alive` is the loader, alive until this runs.
             if (!reply.has_value()) {
+              // Nothing answered on the port we adopted. The descriptor that
+              // named it may be stale (a host killed hard cannot remove its file)
+              // or the host may have restarted on a new port, so the cache is
+              // invalidated: the next call re-reads the descriptors and re-probes
+              // instead of failing against a dead port for the rest of the
+              // session.
+              if (self) {
+                self->read_at_ = base::TimeTicks();
+              }
               std::move(done).Run(
                   std::nullopt, keep_alive->NetError() == net::OK
                                     ? "Hook did not answer."
@@ -253,7 +262,7 @@ void HookChannel::SendRequest(const std::string& method,
             }
             std::move(done).Run(std::move(body), std::string());
           },
-          std::move(done), std::move(loader)),
+          weak_factory_.GetWeakPtr(), std::move(done), std::move(loader)),
       kMaxReplyBytes);
 }
 
