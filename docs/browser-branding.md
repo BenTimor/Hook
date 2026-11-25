@@ -298,44 +298,236 @@ Google services we do not want to talk to. No attribution was removed and
 build that needs assets we cannot have — and it is the flag that would *add*
 Google's services rather than remove them.
 
-## Open, for whoever picks this up
+## Decisions recorded
 
-Nothing here blocks anything else. Each line is a decision or a small piece of
-polish, not an unbuilt feature.
+Settled while the browser was still a proof of concept, so that the next session
+starts from them instead of re-arguing them.
 
-- **Safe Browsing: off, and that is a debt.** The pref default is false, so there is
-  no phishing warning and no dangerous-download prompt. A replacement is future work
-  (own the local half; see "Safe Browsing, in full"), and the Settings toggle that
-  can still turn the dead state back on disappears with it. Until then this is the
-  one place Hook is plainly weaker than Chrome, and the Store listing has to say so.
-- **The component updater: the last Google talker, and a decision.** It runs without
-  API keys (`cup2key`, not the Google key), so `--no-google` allows its three hosts
-  explicitly. Turning it off also stops CRLSet, PKI metadata and the download
-  file-type policies, so the real choice is which components to keep registering,
-  not whether to flip one switch. Until that is decided, `--no-google` is the record
-  of exactly what is left.
-- **Default search engine.** Deliberately still Google. The hunk is
-  `GetPrepopulatedFallbackSearch()` in
-  `components/search_engines/template_url_prepopulate_data.cc` — one line pointing
-  at another `*.id`, plus the question of which engine. Changing it also quiets the
-  omnibox suggestion traffic, which currently goes to Google on every keystroke.
-- **The wordmark.** `product_logo_name_22.png` (and `_white`) is still Chromium's
-  word, drawn in the payments sheet. It needs an asset: "Hook" set in the UI face
-  on a transparent background, 22 px tall and its 2× variant.
-- **Start-menu and jump-list tiles.** `theme/chromium/win/tiles/{Logo,SmallLogo}.png`
-  (600×600, 176×176) only matter once there is an installer or an MSIX, and there is
-  neither yet.
-- **Dead Google sign-in code.** `enable_dice_support = false` in
-  `components/signin/features.gni` would delete it at compile time. It changes no
-  behaviour (see the table above) and is an upstream-untested configuration, so it
-  was not taken. Worth doing only if binary size or dead code becomes a topic.
-- **Chrome Web Store URLs.** `extensions/common/extension_urls.cc:63-66` is still
-  hard-coded, and so is the CRX auto-update host. Cosmetic until we ship an
-  extension that has to update.
-- **Non-English locales.** The transformer only rewrites the English source
-  (`chromium_strings.grd` and its settings part). There are no `.xtb` translations
-  in this tree, so every locale currently falls back to English and the point is
-  moot — the day we ship a translated build, the same pass has to cover the `.xtb`
-  files or non-English users will read "Chromium" next to the Hook icon.
-- **`chrome.exe`.** Skipped on purpose (see the top). Revisit only if we ever ship
-  an installer that registers ProgIDs or needs the file name to be ours.
+### Default search engine: Google stays, out of scope
+
+Not permanent — deliberately deferred. Two futures are on the table: a distribution
+**deal** with one of the engines, or **our own** engine backed by a search service
+(Exa is the name that came up). Note for the second option: Exa is an answer and
+retrieval API, not a general web index — a browser default engine needs index
+coverage, locale handling, safe-search and a suggestion stream, so "our own" means
+a front end over *someone's* index plus a deal, not a weekend project.
+
+What staying costs: the preconnect in `--no-google` stays allowed, the omnibox sends
+suggestions to Google (with `client=chrome-omni` in the URL), and the "no Google
+traffic" claim keeps one documented exception. That is the price of the deferral, and
+it is small.
+
+### Component updater: narrow to the security set
+
+Decided, not yet implemented. Keep what carries a security obligation:
+
+| Keep | Why |
+| --- | --- |
+| CRLSet | revoked certificates — without it a compromised cert keeps working |
+| PKI metadata | the Certificate Transparency log list |
+| FileTypePolicies | classifies file types for the download path |
+
+Drop the rest: the NTP/Glic CRX payloads (already not registered, `0015`),
+`diffgen-puffin`, optimization hints, Screen AI, autofill models, Zxcvbn data,
+subresource-filter and crowd-deny lists — unless the Safe Browsing replacement wants
+the last two, which is worth deciding with it.
+
+Two things to weigh while doing it: the updater **downloads and runs code** (the NTP
+component extension arrived that way), and a malformed component can break the
+browser without a release. Narrowing cuts both ways. After it, `--no-google` should
+allow `update.googleapis.com` and `edgedl.me.gvt1.com` only.
+
+### Safe Browsing replacement: Web Risk, deferred but designed
+
+Skipped for now, with the shape already picked. Google publishes the numbers, and
+they favour a **local list** over per-URL calls:
+
+| Call | Price |
+| --- | --- |
+| `threatLists.computeDiff` (Update API — download a diff of the threat lists) | **free, unlimited** |
+| `uris.search` (Lookup API) | free to 100,000 calls/month, then $0.50/1,000 |
+| `hashes.search` (confirm a hash against Google) | **$50/1,000** — the one to avoid |
+
+So the design is: `computeDiff` on a schedule → our own local hash database →
+lookups answered locally, no per-page call at all. That is also how Chromium's own
+Safe Browsing list works, which is why it scales.
+
+Three things to check when this is picked up:
+
+- **Protocol, not configuration.** Chromium 159's Safe Browsing is v5
+  (`SafeBrowsingLocalListsUseSBv5` is in the variations list). Web Risk's Update API
+  is the v4 `computeDiff` shape. Pointing one at the other is code, not a flag.
+- **Terms.** Web Risk is the commercial product, so it is *allowed* for a paid Hook —
+  but it has its own terms (attribution, and the local database has to be handled as
+  sensitive and refreshed on a schedule). Read them before building on it.
+- **What it does not cover.** A URL list is not download protection. The file path
+  needs FileTypePolicies plus a verdict, and that is the half users notice when a
+  `.exe` lands.
+
+### Widevine (DRM): free, accepted, and a Google binary we would run
+
+**Decision: pursue it.** A closed module inside the browser is acceptable for this
+product; what is not acceptable is running it *illegally* or pretending it is not
+there. The facts:
+
+- **The licence costs nothing.** Google's own overview: "A license agreement is
+  required for the use of Widevine products or services. **Widevine does not assess
+  any fee** for use of its products and services," and **Chromium is a listed
+  supported platform**.
+- **But there must be an agreement, signed before use.**
+  `third_party/widevine/LICENSE` in the tree: "You may not use, modify, sell, or
+  otherwise distribute the Software without a separate license agreement with Google.
+  The Software is not open source software."
+- **The CDM is delivered as a component.** `enable_widevine` is false for an
+  unbranded build (`third_party/widevine/cdm/widevine.gni`), and turning it on
+  registers `WidevineCdmComponent` with the component updater
+  (`component_updater/registration.cc`) — a closed-source binary fetched from Google
+  at runtime, not something we can bundle.
+- **It therefore collides with two decisions above.** A narrowed updater would keep
+  exactly one component (Widevine), and `--no-google` would need a documented
+  carve-out for the CDM download. Both are defensible; both must be written down
+  rather than discovered later.
+
+### Getting the agreement: the four steps Google documents
+
+From `developers.google.com/widevine/access` (last updated 2025-09-29), the route is
+narrow and procedural:
+
+1. **A corporate Google account.** Access to the partner repository requires a Google
+   account on a company address; gmail, outlook and yahoo are refused. So the first
+   step is an email at the product's domain, not a form.
+2. **Contact Widevine through `www.widevine.com`** — the docs point there, "General
+   Questions" for new inquiries ("Support" is for existing licensees).
+3. **Technical discussion, then the Widevine Master License Agreement.** Repository
+   access is contingent on signing it. This is the step with a calendar attached: a
+   legal agreement between a company and Google, and Google may ask for technical
+   detail to decide what to grant.
+4. **Repository access is approved per repository**, not as a package — client/device
+   code and server SDKs are separate lists. We want the client side.
+
+What that unlocks, and what we cannot get any other way:
+
+- **The CDM itself, legitimately.** Google ships it, the browser fetches it as a
+  component on first use, and `chrome://components` shows "Widevine Content Decryption
+  Module". Copying the module out of an installed Chrome — what most small forks do —
+  is what the licence does not contemplate, and it breaks whenever either side's major
+  version moves.
+- **VMP (Verified Media Path) signing.** This is the part worth the paperwork. Without
+  it, the CDM has no way to hide the machine's **device certificate**: research from a
+  browser team ([Mosaic](https://mosaicbrowser.com/blog/widevine-device-certificate))
+  measured the first licence message at 1,704 bytes with the certificate in the clear,
+  against 2 bytes from Chrome, which asks for a service certificate first and encrypts
+  it. That certificate is identical for every profile on the machine and any page can
+  read it by starting a media-key session — a join key across accounts. With VMP the
+  CDM uses privacy mode; without it, DRM quietly becomes a fingerprinting surface.
+  Some services also refuse, or drop to lower quality, when the signature is missing.
+
+What it costs operationally, so nobody is surprised:
+
+- **Version pairing.** The CDM and the browser want matching major versions; the
+  component updater handles the CDM, so the browser must not lag.
+- **`.sig` files beside the binary and a re-sign per build.** VMP is a signature over
+  the thing that runs; every release is a new conversation, and that is the reason a
+  small fork rarely has it.
+- **L3 is what a desktop browser gets** — software decryption, so Netflix caps browser
+  playback at 720p on desktops, Chrome included. L1 needs chipset vendor code
+  (OEMCrypto), not a licence.
+- **An AGPL exception to publish**: the module is proprietary, listed separately in
+  `THIRD_PARTY_NOTICES.md` and the About panel.
+
+**What we would do first**, in order: corporate email + contact form (a day of
+writing); the Master License Agreement (weeks, legal); then integration (`enable_widevine`,
+keep the Widevine component in the narrowed allowlist, ship the signatures) — which is
+the small part.
+
+**What "a Google binary in the stack" means, concretely.** It is
+`widevinecdm.dll`: a closed-source, Google-signed module the browser loads into its own
+process tree and calls to decrypt media. Not a request to a service — code executing
+inside the browser. Four consequences worth naming:
+
+- **Trust boundary.** We would run bytes nobody here can read, audit or rebuild; the
+  only checks on them are Google's signature and our sandbox. Everything else in this
+  browser is source we can read.
+- **The licence story gets an exception.** Hook is AGPL-3.0-only and dual-licensed; the
+  CDM is proprietary and may not be redistributed by us. It has to appear as a separate
+  component in `THIRD_PARTY_NOTICES.md` and in the About list, the way every Chromium
+  fork that ships DRM does it.
+- **It updates out of our hands** — through the component updater, the one Google path
+  we decided to narrow. A stale CDM is also how playback breaks.
+- **It provisions.** A CDM may fetch device certificates from Google to work at all, so
+  adopting Widevine adds more than one host to `--no-google`, each needing a
+  documented line.
+
+The distinction to hold on to: a Google *service* is traffic we can measure, list and
+turn off. A Google *binary* is a piece of the browser we cannot verify. Both can be
+acceptable; only the second cannot be inspected.
+
+**What Firefox does, and the model to copy.** Firefox has shipped DRM since 2014 under
+exactly this constraint:
+
+- **Nothing is bundled.** "Widevine Content Decryption Module provided by Google Inc."
+  arrives as a separate download through Firefox's media-plugin updater and is listed
+  in the add-ons manager as Google's, not Mozilla's;
+- **it is a setting** — "Play DRM-controlled content" (`media.eme.enabled`) — and the
+  download only happens for a profile that wants it;
+- **without it, a DRM page plays nothing**, and Firefox says so rather than failing
+  silently.
+
+That is the design to adopt if we license Widevine: **off by default, downloaded on
+first use, removable, never in the installer** — which keeps "the browser contains no
+Google binary" true until a user chooses otherwise, and keeps the installer free of a
+component we may not redistribute. Firefox's weak spot is the nag bar it shows on every
+DRM page once DRM is switched off; ours would ask once.
+
+What is lost without it (today): Netflix, Disney+, Prime Video, HBO Max, Hulu and
+Spotify web refuse to play; YouTube works (its normal videos are not DRM). L3
+(software) is what a desktop browser gets, which is what Chrome uses.
+
+Alternatives, briefly: **PlayReady** (Microsoft, used by Edge) is a separate licence
+and a CDM nobody has written for this tree — months of work, not a switch;
+**ClearKey** is free and useless for real content; **FairPlay** is Safari-only. So the
+real choice is Widevine or no DRM, and Widevine being free means the cost is legal
+process plus one Google dependency.
+
+### The rest
+
+- **Password vault.** Synced through the account, and ours: likely our own manager on
+  an open implementation (Bitwarden was the name). Ignored for now; the browser keeps
+  Chromium's local password store until then.
+- **Safe Browsing settings toggle.** Stays until the replacement lands, so a user can
+  still see and turn the state on. Removing it is part of that work, not before.
+- **Wordmark.** The product name drawn as a **picture**, because one place needs an
+  image rather than text. Four files, all in the Chromium checkout
+  (`C:/Dev/cr/src/chrome/app/theme/`):
+
+  | File | Size |
+  | --- | --- |
+  | `default_100_percent/chromium/product_logo_name_22.png` | 97x22, RGBA |
+  | `default_100_percent/chromium/product_logo_name_22_white.png` | 97x22, white, dark mode |
+  | `default_200_percent/chromium/product_logo_name_22.png` | 194x44 (the 2x) |
+  | `default_200_percent/chromium/product_logo_name_22_white.png` | 194x44 |
+
+  One caller: `ChromeLogoImageView` in
+  `chrome/browser/ui/views/payments/payment_request_views_util.cc:55-76`, the payment
+  sheet's header, whose tooltip is `IDS_PRODUCT_NAME` — so the tooltip already says Hook
+  Browser and the artwork still says Chromium. Height is what matters (22 px and 44 px);
+  the width is free, 97 px being how wide "Chromium" is in that face.
+
+  **Decision: option (a)** — render "Hook" at 22 px in an open-licence face and put those
+  four files in place. Not done yet; it lands with the next branding pass. Design may
+  replace it later with a proper asset, and the spec for that is: transparent PNG, no
+  matting, no shadow, legible at 22 px on a light and a dark sheet, the brand's wordmark
+  rather than the app icon's mark, source file kept.
+- **`chrome.exe`.** Skipped on purpose. Revisit only if an installer registers ProgIDs.
+
+## Still open
+
+- Which components the narrowed updater keeps, exactly (see above).
+- Widevine: the Master License Agreement (decided to pursue, not started).
+- The wordmark asset.
+- Start-menu tiles (`win/tiles/{Logo,SmallLogo}.png`), which matter only once an
+  installer or MSIX exists.
+- Non-English locales: the transformer only rewrites the English source, and the tree
+  ships no `.xtb` translations, so every locale falls back to English today. The day
+  a translated build exists, the same pass has to cover the translations.
+

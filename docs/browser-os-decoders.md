@@ -1,5 +1,13 @@
 # Hook Browser — decoding with the OS
 
+> **Status: decided, not started — and one build comes first.** Before stage 1,
+> build the tree once with `is_component_build = false`
+> (`browser/README.md`, "A non-component build"). It has been `true` since the first
+> build here, a release configuration links into one image instead of a hundred small
+> DLLs, and it will take hours and probably surface something. Doing it *before* the
+> codec work keeps the two unknowns apart: if H.264 misbehaves after the switch we
+> should not have to ask whether it was the codec or the link.
+>
 > **Status: decided, not started.** The shipped browser decodes H.264 and AAC
 > through Windows' Media Foundation — not through an FFmpeg we ship — and stages 1
 > and 2 below are the work that makes that real before a public download. Until
@@ -142,6 +150,21 @@ Worth knowing before estimating, because it is more than expected:
 So the audio half is a smaller job than the video half: the MFT machinery, the
 COM initialization, the GPU-process sandbox arrangement and the reporting path are
 already there, and AAC is a branch in a `switch` plus a wider supported-types list.
+
+### Windows N: the gap this leaves
+
+Media Foundation on Windows **N** (and KN) editions ships **without** the media
+codecs: H.264 and AAC only decode there once the separate *Media Feature Pack* is
+installed. A release build with `proprietary_codecs = false` therefore plays no MP4
+on a stock Windows N machine — no error, just a black box — and it is a coverage
+decision, not a bug to find later.
+
+For the current phase this is accepted: a future agreement (a licensed FFmpeg, or a
+decoder we are allowed to ship) is what would close it, and Windows N is a small
+slice of the Windows install base. What matters now is that the browser *says* so when
+it can tell — stage 1's capability report is the place, and a "this copy of Windows
+has no media components" hint is cheap once `media/base/supported_types` is honest.
+Until then the dev build keeps FFmpeg and nobody sees it.
 
 ## The stages
 
