@@ -52,6 +52,12 @@ pub struct DeviceView {
     pub can_host: bool,
     #[serde(default)]
     pub online: bool,
+    /// Whether Hook Browser is running on that machine *now*. Products share a
+    /// device row and one account file, so `capabilities` holds whichever of
+    /// them connected last; this is the live answer the server reads off the
+    /// sockets.
+    #[serde(default)]
+    pub browser_online: bool,
     #[serde(default)]
     pub host_online: bool,
     #[serde(default)]

@@ -17,6 +17,8 @@ const PHONE_TOKEN = "hk_phone_token_0123456789abcdefghij";
 const TABLET_TOKEN = "hk_tablet_token_0123456789abcdefghij";
 const WORKSPACE_TOKEN = "hk_workspace_token_0123456789abcdefgh";
 const BROWSER_TOKEN = "hk_browser_token_0123456789abcdefgh";
+// The browser and the app on one computer: one account file, one device id.
+const SHARED_TOKEN = "hk_shared_token_0123456789abcdefghi";
 const OTHER_TOKEN = "hk_other_token_0123456789abcdefghij";
 const FREE_TOKEN = "hk_relay_free_token_0123456789abcdefgh";
 const SYNC_OFF_TOKEN = "hk_relay_off_token_0123456789abcdefgh";
@@ -144,6 +146,7 @@ async function setup(t) {
     [TABLET_TOKEN, "relay-pro", "device-tablet"],
     [WORKSPACE_TOKEN, "relay-pro", "device-workspace"],
     [BROWSER_TOKEN, "relay-pro", "device-browser"],
+    [SHARED_TOKEN, "relay-pro", "device-host"],
     [OTHER_TOKEN, "relay-other", "device-other"],
     [FREE_TOKEN, "relay-free", "device-free"],
     [SYNC_OFF_TOKEN, "relay-off", "device-off"],
@@ -339,6 +342,58 @@ test("Hook Browser is a controller that can be asked for a page", async (t) => {
   browser.send({ kind: "rpcResult", id: arrived.id, ok: true, result: { text: "hello" } });
   const answer = await phone.next((frame) => frame.kind === "rpcResult");
   assert.equal(answer.result.text, "hello");
+});
+
+test("a machine's app and its browser share a row, and each method finds its own socket", async (t) => {
+  const { request, connect } = await setup(t);
+  // One computer: Hook in the tray (a host) and Hook Browser (a controller),
+  // both with the same device id — which is what one account file means.
+  const app = await connect(HOST_TOKEN, "device-host");
+  app.send(hello("device-host"));
+  await app.next((frame) => frame.kind === "ready");
+
+  const browser = await connect(SHARED_TOKEN, "device-host");
+  browser.send(
+    hello("device-host", {
+      product: "browser",
+      role: "controller",
+      canHost: false,
+      capabilities: { browser: true },
+    }),
+  );
+  await browser.next((frame) => frame.kind === "ready");
+
+  const listed = await request("/devices", { token: HOST_TOKEN });
+  const row = listed.body.devices.find((device) => device.id === "device-host");
+  assert.equal(row.browserOnline, true, "the browser is running on that machine");
+  assert.equal(row.hostOnline, true, "and so is Hook");
+
+  const phone = await connect(PHONE_TOKEN, "device-phone");
+  phone.send(hello("device-phone", { name: "Phone", kind: "mobile", product: "mobile", role: "controller", canHost: false }));
+  await phone.next((frame) => frame.kind === "ready");
+
+  // A page read goes to the browser socket, never to the app's.
+  phone.send({ kind: "rpc", id: "rpc-page", to: "device-host", method: "browser.read", params: { tab: 2 } });
+  const pageCall = await browser.next((frame) => frame.kind === "rpc");
+  assert.equal(pageCall.method, "browser.read");
+  assert.equal(pageCall.params.tab, 2);
+  browser.send({ kind: "rpcResult", id: pageCall.id, ok: true, result: { text: "hi" } });
+  assert.equal((await phone.next((frame) => frame.kind === "rpcResult" && frame.id === "rpc-page")).result.text, "hi");
+
+  // An agent call goes to the host socket, as it always did.
+  phone.send({ kind: "rpc", id: "rpc-agent", to: "device-host", method: "agent.list", params: {} });
+  const agentCall = await app.next((frame) => frame.kind === "rpc");
+  assert.equal(agentCall.method, "agent.list");
+  app.send({ kind: "rpcResult", id: agentCall.id, ok: true, result: { agents: [] } });
+  assert.equal((await phone.next((frame) => frame.kind === "rpcResult" && frame.id === "rpc-agent")).ok, true);
+
+  // The browser closes; a page read says so instead of reaching the app.
+  await browser.close();
+  phone.send({ kind: "rpc", id: "rpc-page-2", to: "device-host", method: "browser.read", params: { tab: 1 } });
+  const refused = await phone.next((frame) => frame.kind === "rpcResult" && frame.id === "rpc-page-2");
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error.code, "device_offline");
+  assert.match(refused.error.message, /Hook Browser/);
 });
 
 test("an RPC reaches the target machine and only its caller sees the answer", async (t) => {

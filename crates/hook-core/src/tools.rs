@@ -453,14 +453,9 @@ pub(crate) fn machine_view(state: &crate::state::AppState) -> Value {
                 "this_computer": device.id == view.self_id,
                 "remote_allowed": device.remote_allowed,
                 "projects": device.specs.as_ref().and_then(|specs| specs.get("projects")).cloned(),
-                // A tab can be read where Hook Browser runs. Without this the
-                // model has to try a machine to find out.
-                "can_read_pages": device
-                    .capabilities
-                    .as_ref()
-                    .and_then(|caps| caps.get("browser"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
+                // A tab can be read where Hook Browser is *running*. Without
+                // this the model has to try a machine to find out.
+                "can_read_pages": device.browser_online,
             })
         })
         .collect();
@@ -632,12 +627,7 @@ fn resolve_machine(
             "There is no machine called \"{requested}\". Call list_machines for the current names."
         )),
         [one] => {
-            let has_browser = one
-                .capabilities
-                .as_ref()
-                .and_then(|caps| caps.get("browser"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            let has_browser = one.browser_online;
             if need == Need::Browser {
                 if !has_browser {
                     return Err(format!(

@@ -134,6 +134,11 @@ export function deviceViews(db, presence, subject) {
   return rows.map((row) => {
     const online = presence?.online(subject, row.device_id) ?? false;
     const hostOnline = presence?.hostOnline(subject, row.device_id) ?? false;
+    // Products share a device row, so `capabilities` is whichever one connected
+    // last. Whether a browser is *running* has to come from the sockets.
+    const browserOnline = (presence?.connections(subject, row.device_id) ?? []).some(
+      (candidate) => candidate.device?.product === "browser",
+    );
     return {
       id: row.device_id,
       name: row.name,
@@ -145,6 +150,7 @@ export function deviceViews(db, presence, subject) {
       canHost: Boolean(row.can_host),
       online,
       hostOnline,
+      browserOnline,
       role: hostOnline ? "host" : "controller",
       remoteAllowed: Boolean(row.remote_allowed),
       lastSeen: row.last_seen_at,

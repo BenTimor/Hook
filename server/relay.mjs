@@ -432,19 +432,38 @@ export function createRelay({ server, db, presence, previewTunnel }) {
     // `can_host` means "can run agent work". A page read is work of a different
     // kind: it goes to a machine with a browser, which is a controller and
     // would fail that test. The family names its own target rule instead.
+    //
+    // A machine's products share one device row (one account file, one device
+    // id), and they may be connected at the same time — Hook in the tray and
+    // Hook Browser both. So the connection is chosen by what the method needs,
+    // not by the row: an agent call wants the host socket, a page read wants the
+    // browser's. The stored capabilities are only a fallback, because they hold
+    // whichever product connected last.
+    const open = presence
+      .connections(conn.subject, to)
+      .filter((candidate) => candidate.ws.readyState === WebSocket.OPEN);
+    const browserHere = open.some(
+      (candidate) => candidate.device?.product === "browser",
+    );
     const readsAPage =
-      method.startsWith("browser.") && storedFlag(targetRow.capabilities, "browser");
+      method.startsWith("browser.") &&
+      (browserHere || storedFlag(targetRow.capabilities, "browser"));
     if (!targetRow.can_host && !readsAPage)
       return rpcError(conn, id, "not_a_host", "That device cannot run agent work.");
     if (!targetRow.remote_allowed)
       return rpcError(conn, id, "remote_disabled", "That machine does not accept remote work.");
-    const target = targetRow.can_host
-      ? presence.host(conn.subject, to)
-      : presence
-          .connections(conn.subject, to)
-          .find((candidate) => candidate.ws.readyState === WebSocket.OPEN);
-    if (!target || target.ws.readyState !== WebSocket.OPEN)
-      return rpcError(conn, id, "device_offline", "That machine is not running Hook right now.");
+    const target = readsAPage
+      ? open.find((candidate) => candidate.device?.product === "browser")
+      : open.find((candidate) => candidate.role === "host");
+    if (!target)
+      return rpcError(
+        conn,
+        id,
+        "device_offline",
+        readsAPage
+          ? "Hook Browser is not running on that machine right now."
+          : "That machine is not running Hook right now.",
+      );
     if (target === conn) return rpcError(conn, id, "self_target", "A machine cannot call itself.");
 
     const existing = pending.get(id);
