@@ -498,33 +498,50 @@ process plus one Google dependency.
   still see and turn the state on. Removing it is part of that work, not before.
 - **Wordmark.** The product name drawn as a **picture**, because one place needs an
   image rather than text. Four files, all in the Chromium checkout
-  (`C:/Dev/cr/src/chrome/app/theme/`):
+  (`C:/Dev/cr/src/chrome/app/theme/`), shipped as **`0016-wordmark`**:
 
   | File | Size |
   | --- | --- |
-  | `default_100_percent/chromium/product_logo_name_22.png` | 97x22, RGBA |
-  | `default_100_percent/chromium/product_logo_name_22_white.png` | 97x22, white, dark mode |
-  | `default_200_percent/chromium/product_logo_name_22.png` | 194x44 (the 2x) |
-  | `default_200_percent/chromium/product_logo_name_22_white.png` | 194x44 |
+  | `default_100_percent/chromium/product_logo_name_22.png` | 67x22, ink `#24241e` |
+  | `default_100_percent/chromium/product_logo_name_22_white.png` | 67x22, white + hairline ring |
+  | `default_200_percent/chromium/product_logo_name_22.png` | 134x44 (the 2x) |
+  | `default_200_percent/chromium/product_logo_name_22_white.png` | 134x44 |
 
   One caller: `ChromeLogoImageView` in
   `chrome/browser/ui/views/payments/payment_request_views_util.cc:55-76`, the payment
-  sheet's header, whose tooltip is `IDS_PRODUCT_NAME` — so the tooltip already says Hook
-  Browser and the artwork still says Chromium. Height is what matters (22 px and 44 px);
-  the width is free, 97 px being how wide "Chromium" is in that face.
+  sheet's header, whose tooltip is `IDS_PRODUCT_NAME` — so the tooltip already said Hook
+  Browser while the artwork still said Chromium. Height is what matters (22 px and 44 px);
+  the width is free, 97 px being how wide "chromium" is in that face and 67 px how wide
+  "Hook" is.
 
-  **Decision: option (a)** — render "Hook" at 22 px in an open-licence face and put those
-  four files in place. Not done yet; it lands with the next branding pass. Design may
-  replace it later with a proper asset, and the spec for that is: transparent PNG, no
-  matting, no shadow, legible at 22 px on a light and a dark sheet, the brand's wordmark
-  rather than the app icon's mark, source file kept.
+  **Done, option (a)**: a lockup of the app icon and "Hook" in **Inter** — the face
+  `--font-sans` already names, OFL-1.1, so no new licence line, and the `.woff2` comes
+  from `node_modules/@fontsource-variable/inter`, not from the tree. Rendered by the built
+  browser rather than an imaging library, so the type is the renderer's own. The page that
+  does it is `browser/tools/wordmark.html`; its header carries the four commands, and
+  re-rendering it reproduces the shipped files byte for byte.
+
+  Geometry, in units of the 1x (u): mark 22 u square at x=0, gap 5.5 u, word 15.5 u at
+  weight 550, baseline at 16.6 u — which puts the cap band 10–33 of 44 at 2x, the same
+  proportions as Chromium's. Two traps, both worth keeping:
+
+  - **The 2x must be exactly twice the 1x**, or grit raises a scale mismatch and the
+    resource build fails. So the canvas is cropped to the ink box (67x22), not to the
+    97x22 the upstream file used.
+  - **The tile is near-black**, so on a dark sheet it disappears and the lockup loses its
+    shape. The white files carry a 1 px ring at 30 % white, derived from the icon's own
+    alpha channel (`alpha - erode(alpha)`), so the outline follows its rounded corners
+    exactly. Without it the dark-mode header is a floating white hook.
+
+  Design may still replace all four; the geometry and those two rules are the spec.
+  Otherwise: transparent PNG, no matting, no shadow, legible at 22 px on both sheets.
 - **`chrome.exe`.** Skipped on purpose. Revisit only if an installer registers ProgIDs.
 
 ## Still open
 
 - Which components the narrowed updater keeps, exactly (see above).
 - Widevine: the Master License Agreement (decided to pursue, not started).
-- The wordmark asset.
+- A proper wordmark from design (the interim lockup is in place, `0016-wordmark`).
 - Start-menu tiles (`win/tiles/{Logo,SmallLogo}.png`), which matter only once an
   installer or MSIX exists.
 - Non-English locales: the transformer only rewrites the English source, and the tree

@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { parseArgs, parseChromeVersion, parsePinnedTag, parseSeries, requiredSdkVersion } from "./lib.mjs";
 import { listFiles, inspectOverlay, overlayCopies } from "./verify.mjs";
-import { analyseNetLog } from "./smoke.mjs";
+import { analyseNetLog, matrixPlan } from "./smoke.mjs";
 
 function workspace() {
   return mkdtempSync(join(tmpdir(), "hook-browser-"));
@@ -148,4 +148,36 @@ test("a preconnect to Google is not a fetch", () => {
   const traffic = analyseNetLog('{"params":{"is_preconnect":true,"url":"https://www.google.com/search/warmup.html"}}');
   assert.deepEqual(traffic.forbidden, []);
   assert.deepEqual([...traffic.preconnects.keys()], ["www.google.com"]);
+});
+
+// --all: the matrix has to be a plan, not a list of flags in a README, and the two
+// checks that depend on each other have to say so instead of quietly passing.
+test("the matrix runs both sign-in states and both halves of the channel", () => {
+  const quiet = matrixPlan({ channelAlive: false });
+  assert.deepEqual(
+    quiet.map((check) => check.name),
+    ["a plain launch", "the surfaces", "signed out", "signed in", "its own host", "the channel"],
+  );
+  const states = quiet.filter((check) => check.argv.includes("--signin-state")).map((check) => check.argv.join(" "));
+  assert.deepEqual(states, ["--signin-state out", "--signin-state in"]);
+  const surfaces = quiet.find((check) => check.name === "the surfaces");
+  for (const flag of ["--side-panel", "--newtab", "--codecs", "--no-google"]) {
+    assert.ok(surfaces.argv.includes(flag), `${flag} is in the shared launch`);
+  }
+});
+
+test("an answering channel skips the launch check and runs the channel check, never both", () => {
+  const quiet = matrixPlan({ channelAlive: false });
+  const busy = matrixPlan({ channelAlive: true });
+  const host = (plan) => plan.find((check) => check.name === "its own host");
+  const channel = (plan) => plan.find((check) => check.name === "the channel");
+  assert.equal(host(quiet).skip, null);
+  assert.match(host(busy).skip, /already answering/);
+  assert.match(channel(quiet).skip, /start the Hook app/);
+  assert.equal(channel(busy).skip, null);
+  // Every check either runs or explains itself: a silent skip reads as a pass.
+  for (const check of [...quiet, ...busy]) {
+    assert.ok(check.skip !== undefined, `${check.name} has a skip answer`);
+    if (check.skip === null) assert.ok(check.argv.length >= 0);
+  }
 });

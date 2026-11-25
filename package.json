@@ -35,6 +35,7 @@
     "browser:host": "cargo build --release -p hook-host",
     "browser:verify": "node browser/tools/verify.mjs",
     "browser:smoke": "node browser/tools/smoke.mjs",
+    "browser:check": "node browser/tools/smoke.mjs --all",
     "browser:patch": "node browser/tools/patch.mjs",
     "browser:ui": "vite build --config browser/ui/vite.config.ts",
     "browser:ui:dev": "vite --config browser/ui/vite.config.ts",

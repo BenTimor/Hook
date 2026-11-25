@@ -17,6 +17,12 @@
  *                                                    # may talk to Google
  *   node browser/tools/smoke.mjs --shot hook.png       # screenshots too
  *   node browser/tools/smoke.mjs --chrome <path to chrome.exe>
+ *   node browser/tools/smoke.mjs --all                 # the whole matrix, one
+ *                                                    # launch per configuration
+ *
+ * `--all` is the command to run after a build and before a build goes out: the
+ * flags above are things a person forgets, and a check nobody runs proves
+ * nothing. It costs about a minute and a half.
  *
  * Every run passes `--hook-no-host` unless it asks for `--host`: a check must not
  * leave a Hook process behind, and the sign-in gate's seams must not spawn one.
@@ -46,6 +52,10 @@ import { bold, fail, ok, parseArgs, srcDir, step, treeRoot, warn } from "./lib.m
 
 const PAGE = "chrome://hook/";
 const PANEL = "chrome://hook-panel/";
+
+// Declared, so `--all --side-panel` cannot read as `--all=--side-panel`... or as
+// `--all` swallowing the next switch. Anything not listed takes a value.
+const SWITCHES = ["all", "side-panel", "channel", "codecs", "newtab", "host", "no-google"];
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -295,7 +305,8 @@ async function screenshot(client, path, target) {
 // ---------------------------------------------------------------------- main --
 
 export async function main(argv) {
-  const { flags } = parseArgs(argv);
+  const { flags } = parseArgs(argv, { switches: SWITCHES });
+  if (flags.get("all") === true) return runMatrix(argv);
   const root = treeRoot(flags);
   const out = flags.get("out") ?? "out/Dev";
   const port = Number(flags.get("port") ?? 9333);
@@ -800,6 +811,122 @@ export async function main(argv) {
     return 1;
   }
   console.log(ok("Smoke check passed."));
+  return 0;
+}
+
+// ------------------------------------------------------------- the matrix --
+
+/**
+ * What `--all` runs, and in what order.
+ *
+ * Six checks, five launches: the plain baseline on its own, the two sign-in
+ * states and `--host` each on their own (a launch flag cannot be changed once the
+ * browser is up), and the four surface checks sharing one, because by then the
+ * browser is open anyway.
+ *
+ * `--host` and `--channel` are each other's precondition. The host check proves
+ * the browser launches its own, so it needs no channel answering; the channel
+ * check proves a running Hook app's data, so it needs one. Whichever way it
+ * falls, the skipped check stays in the list and says why: a check that vanishes
+ * from a summary reads as one that passed.
+ */
+export function matrixPlan({ channelAlive }) {
+  return [
+    { name: "a plain launch", why: "the seam page, the dock, the composer", argv: [], skip: null },
+    {
+      name: "the surfaces",
+      why: "the side panel, the new tab page, the codecs and Google traffic",
+      argv: ["--side-panel", "--newtab", "--codecs", "--no-google"],
+      skip: null,
+    },
+    {
+      name: "signed out",
+      why: "the gate refuses the page and draws the card",
+      argv: ["--signin-state", "out"],
+      skip: null,
+    },
+    { name: "signed in", why: "the gate lets a page through", argv: ["--signin-state", "in"], skip: null },
+    {
+      name: "its own host",
+      why: "the browser starts hook-host and kills it on exit",
+      argv: ["--host"],
+      skip: channelAlive ? "a channel is already answering, and this check proves a launch" : null,
+    },
+    {
+      name: "the channel",
+      why: "a running Hook app's conversations through the seam",
+      argv: ["--channel"],
+      skip: channelAlive ? null : "nothing is answering — start the Hook app (or `hook --headless`)",
+    },
+  ];
+}
+
+// `--all` forwards what says *which tree to check* and nothing else: a per-run
+// flag would contradict the matrix (`--signin-state out --all` asks for both
+// states at once).
+const MATRIX_FORWARDED = ["out", "root", "chrome"];
+
+async function runMatrix(argv) {
+  const { flags } = parseArgs(argv, { switches: SWITCHES });
+  const basePort = Number(flags.get("port") ?? 9333);
+  const forwarded = [];
+  for (const name of MATRIX_FORWARDED) {
+    const value = flags.get(name);
+    if (value !== undefined) forwarded.push(`--${name}`, String(value));
+  }
+
+  // Answering, not existing: a descriptor is left behind by a host that crashed,
+  // and `--host` would then be skipped over a corpse.
+  let answering = null;
+  for (const descriptor of readDescriptors()) {
+    answering = await descriptorAlive(descriptor);
+    if (answering) break;
+  }
+
+  const plan = matrixPlan({ channelAlive: Boolean(answering) });
+  const runnable = plan.filter((check) => !check.skip).length;
+  step(`the whole check matrix: ${runnable} launches, ${plan.length - runnable} skipped`);
+  if (answering) {
+    console.log(`    a channel is answering (${answering.product})`);
+  }
+
+  const results = [];
+  let ran = 0;
+  for (const [index, check] of plan.entries()) {
+    if (check.skip) {
+      console.log(`${warn("–")} ${check.name} — skipped: ${check.skip}`);
+      results.push({ ...check, status: "skipped" });
+      continue;
+    }
+    ran += 1;
+    console.log("");
+    console.log(`${bold("==>")} check ${ran} of ${runnable}: ${check.name} — ${check.why}`);
+    const started = Date.now();
+    // A port per check: the previous browser's loopback socket is not always
+    // gone by the time the next one binds.
+    const code = await main([...forwarded, "--port", String(basePort + index), ...check.argv]);
+    results.push({ ...check, status: code === 0 ? "passed" : "failed", ms: Date.now() - started });
+  }
+
+  const skipped = results.filter((result) => result.status === "skipped");
+  const failed = results.filter((result) => result.status === "failed");
+  const passed = results.filter((result) => result.status === "passed");
+  console.log("");
+  for (const result of results) {
+    const mark = result.status === "passed" ? ok("✔") : result.status === "failed" ? fail("✘") : warn("–");
+    const detail =
+      result.status === "skipped"
+        ? `skipped: ${result.skip}`
+        : `${result.status}${result.ms ? ` in ${(result.ms / 1000).toFixed(0)} s` : ""}`;
+    console.log(`  ${mark} ${result.name.padEnd(16)} ${detail}`);
+  }
+  const total = passed.length + failed.length;
+  console.log("");
+  if (failed.length) {
+    console.error(fail(`${failed.length} of ${total} checks failed: ${failed.map((result) => result.name).join(", ")}`));
+    return 1;
+  }
+  console.log(ok(`All ${total} checks passed${skipped.length ? `, ${skipped.length} skipped` : ""}.`));
   return 0;
 }
 

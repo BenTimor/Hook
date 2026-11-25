@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+  The wordmark, as a picture: `product_logo_name_22.png` and its three siblings.
+
+  One caller — the payment sheet's header (`ChromeLogoImageView`,
+  chrome/browser/ui/views/payments/payment_request_views_util.cc:55-76) — and it
+  wants a PNG, not text. This page is where those PNGs come from, so a change of
+  face, weight or mark is an edit and a re-render rather than a guess at how the
+  last one was made (`docs/browser-branding.md`, "Wordmark").
+
+  Render it with the built browser, one file at a time, from the repository root:
+
+    U=1  OUT=wordmark-1x.png        # 67x22, for default_100_percent/
+    U=2  OUT=wordmark-2x.png        # 134x44, for default_200_percent/
+    WHITE=1 for the dark-mode pair (`..._white.png`)
+
+    "C:/Dev/cr/src/out/Dev/chrome.exe" --headless --disable-gpu --hook-no-host \
+      --no-first-run --default-background-color=00000000 \
+      --allow-file-access-from-files --hide-scrollbars \
+      --window-size=$((200*U)),$((22*U)) --screenshot="$OUT" \
+      "file:///<repo>/browser/tools/wordmark.html?u=$U&white=$WHITE"
+
+  Then crop to the ink box (67x22, or 134x44 — exactly double, or grit refuses
+  the scale pair) and copy over the four files in the Chromium checkout. The u=2
+  render is *not* the u=1 one enlarged: the renderer lays both out natively, which
+  is the whole reason to use it instead of an imaging library.
+
+  Geometry, in units of the 1x (u): mark 22 u square at x=0, gap 5.5 u, the word
+  at 15.5 u in Inter at weight 550, baseline at 16.6 u. Inter is the face
+  `--font-sans` already names (OFL-1.1), and it is loaded from the repository's
+  own dependency because the wordmark has to be the same letterform the products
+  draw. The white variant then gets one more step outside this page: a 1 px ring
+  at 30 % white, derived from the icon's own alpha, because the tile is
+  near-black and would otherwise disappear into a dark sheet.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face {
+    font-family: Inter;
+    src: url('../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2') format('woff2');
+    font-weight: 100 900;
+    font-display: block;
+  }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  :root { --u: 1px; }
+  body.u2 { --u: 2px; }
+  #lockup {
+    position: absolute; left: 0; top: 0;
+    height: calc(22 * var(--u));
+    display: flex; align-items: flex-start;
+    font-family: Inter, sans-serif;
+    font-weight: var(--w, 550);
+    font-feature-settings: "cv05" 1;
+    letter-spacing: calc(-0.015 * 15.5 * var(--u));
+    white-space: nowrap;
+  }
+  #mark {
+    height: calc(22 * var(--u));
+    width: calc(22 * var(--u));
+    display: block;
+  }
+  #word {
+    margin-left: calc(5.5 * var(--u));
+    font-size: calc(15.5 * var(--u));
+    line-height: calc(22 * var(--u));
+    color: #24241e;
+  }
+  .white #word { color: #ffffff; }
+</style>
+</head>
+<body>
+<div id="lockup">
+  <img id="mark" src="../../apps/chat/src-tauri/icons/icon.png">
+  <span id="word">Hook</span>
+</div>
+<script>
+  const p = new URLSearchParams(location.search);
+  if (p.get('u') === '2') document.body.classList.add('u2');
+  if (p.get('white') === '1') document.body.classList.add('white');
+  if (p.get('w')) document.body.style.setProperty('--w', p.get('w'));
+</script>
+</body>
+</html>

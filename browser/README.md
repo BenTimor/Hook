@@ -288,6 +288,28 @@ node browser/tools/smoke.mjs --host           # the browser starts its own host
 node browser/tools/smoke.mjs --channel        # the dock on real conversations
 ```
 
+**After a build, run the whole matrix instead** — `pnpm browser:check`
+(`smoke.mjs --all`). It is the list above arranged into five launches, about a
+minute and a half, and it fails on any of them:
+
+```bash
+pnpm browser:check
+pnpm browser:check -- --out out/NoComp     # the same checks on another build
+```
+
+Five launches for six checks: the plain baseline, the two sign-in states and
+`--host` each need their own (a launch flag cannot be changed once the browser is
+up), and the four surface checks share one, because by then it is open anyway. Two of the six are conditional, and the two that are each other's
+precondition: `--host` proves a launch, so it needs no channel answering;
+`--channel` proves a running Hook app's conversations, so it needs one. The one
+that cannot run is **listed and says why**, because a check that disappears from a
+summary reads as one that passed:
+
+```
+  – its own host     skipped: a channel is already answering, and this check proves a launch
+  ✔ the channel      passed in 10 s
+```
+
 `--host` is the one that needs a second binary: close every Hook product first (a
 host that is already answering means nothing is launched), and build the host.
 

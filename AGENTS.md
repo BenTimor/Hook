@@ -109,6 +109,7 @@ ninja -C out/Dev -n chrome      # (from the checkout) dry run: how much is left 
 pnpm browser:ui                 # rebuild the dock bundle (panel.mjs) with Vite
 pnpm browser:verify             # tag, overlay rule, patch stack, junction
 pnpm browser:smoke              # launch the built browser, read chrome://hook over CDP
+pnpm browser:check              # the whole check matrix, one launch per configuration
 pnpm browser:test
 
 # Offline chat against a fake OpenAI-compatible endpoint on :8787
@@ -391,13 +392,16 @@ bash.
   args, written by `build.mjs`; beside `chrome.exe` in a packaged build), a
   descriptor accepted only when its `pid` is the child's, and `--hook-no-host` to
   turn it off (`docs/browser-host.md`).
-  `pnpm browser:smoke` is the check:
+  `pnpm browser:check` (the smoke matrix) is the check:
   the tab list, the dock, the gate both ways (the card is on the page), the side
   panel, `--newtab`, `--codecs`, `--host` for the launch (the pid, the
   `browser` product, and the browser's own descriptor file), and `--channel`
   against a running app — or against `hook --headless`, the chat app with no
-  window. Every
-  other flag passes `--hook-no-host`, so no check leaves a process behind. The
+  window. It is one launch per configuration that a launch flag decides and one
+  shared launch for the rest, so it costs about a minute and a half; a check that
+  cannot run (no channel answering, or one answering while `--host` needs none)
+  is listed with the reason instead of being dropped. Every
+  flag passes `--hook-no-host` unless it is `--host`, so no check leaves a process behind. The
   ~100 GB checkout itself never
   enters the repo and `browser/README.md` carries the dev loop, the toolchain
   prerequisites and the traps. `args.gn` pins `use_siso = false`: siso cannot read
