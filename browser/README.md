@@ -321,6 +321,13 @@ Each of these cost a night at least once.
   rather than a `WeakPtr` — a weak reference created on a pool thread may not be
   dereferenced on the UI thread, and that is a FATAL (`sequence_checker.cc:21`),
   not a warning.
+- **`safe_browsing_mode = 0` does not build in this tag.** Six targets — four
+  `browser_tests`, `interactive_ui_tests`, and the shipping
+  `chrome/browser/feedback/report_unsafe_site` — depend on
+  `//components/safe_browsing/…` unconditionally, so `gn gen` fails on every one of
+  them. The switch that works is the `kSafeBrowsingEnabled` pref default
+  (`0014-safe-browsing-off`); `docs/browser-branding.md` explains what that leaves
+  behind and why it is off.
 - **A branding change is a patch, not an overlay path.** The product name and the
   icon live in files that already exist (`chrome/app/theme/chromium/BRANDING`,
   `chrome/app/chromium_strings.grd`, two `.rc` files), so they land in

@@ -1,0 +1,23 @@
+diff --git a/components/safe_browsing/core/common/safe_browsing_prefs.cc b/components/safe_browsing/core/common/safe_browsing_prefs.cc
+index 71ef1f8222..5a417eb687 100644
+--- a/components/safe_browsing/core/common/safe_browsing_prefs.cc
++++ b/components/safe_browsing/core/common/safe_browsing_prefs.cc
+@@ -362,8 +362,16 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+   registry->RegisterTimePref(
+       prefs::kSafeBrowsingEsbProtegoPingWithoutTokenLastLogTime, base::Time());
+   registry->RegisterBooleanPref(
+-      prefs::kSafeBrowsingEnabled, true,
+-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
++      prefs::kSafeBrowsingEnabled,
++      // Hook: Safe Browsing ships off. Not because it is Google's — because in a
++      // build with no API key it protects nobody and still makes the request
++      // (it never consults HasAPIKeyConfigured(); it appends the placeholder
++      // `dummytoken` and is refused). `safe_browsing_mode = 0` would remove the
++      // code, but six targets depend on components/safe_browsing unconditionally
++      // and `gn gen` fails, so the switch is this default: it is the pref
++      // SafeBrowsingServiceImpl::RefreshState() reads to Start() or Stop().
++      // docs/browser-branding.md, "Safe Browsing, in full".
++      false, user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+   if (base::FeatureList::IsEnabled(kEsbAsASyncedSetting)) {
+     registry->RegisterBooleanPref(
+         prefs::kSafeBrowsingEnhanced, false,

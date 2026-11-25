@@ -34,6 +34,17 @@ v8_symbol_level = 0
 proprietary_codecs = true
 ffmpeg_branding = "Chrome"
 
+# Safe Browsing is off by default, and it is a patch rather than an arg here:
+# `safe_browsing_mode = 0` is the honest removal and it does not build in this
+# tag — six targets depend on components/safe_browsing unconditionally (four
+# browser_tests, interactive_ui_tests, and the shipping
+# chrome/browser/feedback/report_unsafe_site), so `gn gen` fails. The switch that
+# works is the pref default in
+# components/safe_browsing/core/common/safe_browsing_prefs.cc, which is what
+# SafeBrowsingServiceImpl::RefreshState() reads to start or stop the service.
+# Why off at all, and what it costs: docs/browser-branding.md, "Safe Browsing,
+# in full".
+
 # Google's AI is switched off in the patch stack, not here. `enable_compose =
 # false` looks like the right knob for "Help me write" and is not: ten BUILD.gn
 # files depend on //chrome/browser/compose unconditionally, so the flag makes

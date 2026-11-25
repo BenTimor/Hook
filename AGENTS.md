@@ -364,9 +364,11 @@ bash.
   part after a sync, because a new release adds strings the patch does not cover.
   `patch.mjs add` passes `--binary`, so an icon replacement round-trips.
   `0012-no-google-ai` is the feature defaults (Glic, Compose, Lens, Skills, the
-  Prompt API) and `0013-no-google-services` the API-keys infobar;
-  `docs/browser-branding.md` has the map, the two `.rc`/`grit` traps, and the one
-  open decision (Safe Browsing). `browser/ui/` is the dock's own Vite project: it builds
+  Prompt API), `0013-no-google-services` the API-keys infobar and
+  `0014-safe-browsing-off` the Safe Browsing pref default — off because a build with
+  no key cannot use it, and `safe_browsing_mode = 0` does not build (six targets
+  depend on the component unconditionally). `docs/browser-branding.md` has the map,
+  the two `.rc`/`grit` traps, what still talks to Google, and what is still open. `browser/ui/` is the dock's own Vite project: it builds
   `packages/chat` into `overlay/src/hook/resources/panel.mjs` — generated, not
   committed (`browser/tools/build.mjs` runs Vite before ninja, because
   `build_webui` can only pack static files that exist in the source tree and GN

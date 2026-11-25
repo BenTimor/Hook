@@ -1,12 +1,14 @@
 # De-Googling the browser
 
 What it took to make Hook Browser stop presenting itself as Chromium and stop
-carrying Google's AI. Written against `159.0.8154.13`: the first three tiers are
-built and verified in that tree, the rest is a map with costs.
+carrying Google's AI, and what is still left. Written against `159.0.8154.13`:
+every tier below is built and verified in that tree, except where a line says
+otherwise.
 
-Landed as three patches — `0011-branding`, `0012-no-google-ai`,
-`0013-no-google-services` — plus one rule in `browser/tools/patch.mjs` (`--binary`,
-so an icon replacement round-trips). The stack is 13 patches.
+Landed as four patches — `0011-branding`, `0012-no-google-ai`,
+`0013-no-google-services`, `0014-safe-browsing-off` — plus one rule in
+`browser/tools/patch.mjs` (`--binary`, so an icon replacement round-trips). The stack
+is 14 patches.
 
 ## What it says now
 
@@ -128,86 +130,126 @@ overlay.
 | Item | Today | Why |
 | --- | --- | --- |
 | "Google API keys are missing" infobar | **removed** (`chrome/browser/ui/startup/infobar_utils.cc`) | `HasAPIKeyConfigured()` is false in every run of this build, so stock Chromium greeted each new profile with a yellow bar about Google keys. It was the most Google-branded thing on screen and a warning about us |
+| Safe Browsing | **off** — see "Safe Browsing, in full" | dead in a build with no key, and the free API is non-commercial only |
 | Google sign-in / sync | **nothing to remove** | compiled in, but DICE cannot start without an OAuth client: `account_consistency_mode_manager.cc:46-77` needs `HasOAuthClientConfigured()`, so the avatar menu shows "Local profile" and `chrome://signin-internals` reports no accounts. `enable_dice_support = false` would delete dead code at compile time; it is an upstream-untested configuration (desktop with mirror also off) and buys no visible change, so it was not taken |
 | Default search engine | **Google, by decision** | hard-coded in `GetPrepopulatedFallbackSearch()` (`template_url_prepopulate_data.cc:355-363`); branding has no say. Changing it is one hunk plus a choice of engine — deferred, not forgotten |
-| Safe Browsing | **unchanged, awaiting a decision** | dead in a build with no keys, and the free API is non-commercial only — see below |
-| Omnibox suggestions | to Google | follows from the default search engine |
 | Translate, Geolocation, optimization guide, enhanced spellcheck | already dead | no API key; requests are not made (geolocation uses the Windows provider) |
-| Google Update, crash upload, metrics/UKM, the variations seed | already off | `enable_updater = is_chrome_branded && …`, crash consent false in a non-official build, `kMetricsReportingEnabled` derives from Omaha, no seed fetch |
+| Google Update (Omaha), crash upload, metrics/UKM, the variations seed | already off | `enable_updater = is_chrome_branded && …`, crash consent false in a non-official build, `kMetricsReportingEnabled` derives from Omaha, no seed fetch. **Omaha is not the component updater** — see below |
 | Chrome Web Store links, CRX auto-update | still hard-coded | `extensions/common/extension_urls.cc:63-66`. We ship no extensions, so this is cosmetic until something does |
 | `product_logo_name_22.png` (the wordmark) | still Chromium's | drawn in the payments sheet. It is a rendered word, not a scalable mark; it needs an asset nobody has drawn yet |
 
+### What still talks to Google, measured
+
+Measured, not assumed: a fresh profile, no browsing, `--log-net-log`, and the hosts
+that appear anyway. Three separate things, and only one of them is Safe Browsing.
+
+| What | Endpoints | Where it comes from |
+| --- | --- | --- |
+| **Chromium's own New Tab Page** | `www.google.com/` (8×), `/async/newtab_ogb`, `/async/folae`, `/async/ddljson`, `/complete/s?…sugkey=dummytoken`, `www.gstatic.com/og/_/js/…`, `fonts.gstatic.com/s/googlesans/…`, `ogads-pa.clients6.google.com/…GetAsyncData`, `play.google.com/log` | the net log names the initiator: **`chrome-untrusted://new-tab-page`**. Our page replaced what a new tab *shows* (patch 0009), but Google's NTP frame still loads at startup. It is the largest single leak, it happens on every launch, and it sends the placeholder `dummytoken` as `sugkey` |
+| **The component updater** | `update.googleapis.com/service/update2/json` (20×), `clients2.google.com/time/1/current?cup2key=…`, `edgedl.me.gvt1.com/edgedl/{chrome_component,diffgen-puffin}/…` | it does not use the Google API key; it authenticates with its own `cup2key`, so "no keys" never switched it off. Switching it off is **not** free: CRLSet (revoked certificates), PKI metadata and the file-type policies that classify downloads arrive this way |
+| **The default search engine** | `www.google.com/search/warmup.html` | a **preconnect** only (`"is_preconnect": true`) — no request body, but it does open a connection to Google at startup. It follows the default engine, so it goes away with the search-engine change |
+
+Two consequences worth stating plainly:
+
+- The browser is not "not talking to Google" today. It is not *asking* Google
+  anything on the user's behalf, but it fetches a Google page frame, an update
+  manifest and a warm-up connection.
+- The NTP frame is the one to fix next, and it looks cheap: find what instantiates
+  `chrome-untrusted://new-tab-page` once `chrome://newtab` is no longer Chromium's
+  page. The component updater needs a decision (security components are in it), and
+  the preconnect fixes itself when the default engine changes.
+
 ### Safe Browsing, in full
 
+**Decision: off for now.** A replacement — ours, not Google's — is future work.
+
 Safe Browsing is Chromium's protection against phishing, malware and unwanted
-software. On Windows it is compiled in fully (`safe_browsing_mode = 1`, the default
-for desktop), and it works in two halves:
+software. On Windows it is compiled in fully (`safe_browsing_mode = 1`), and it has
+two halves: a **local** database of bad URLs and file hashes, checked as you navigate
+and download, and **remote** lookups to `safebrowsing.googleapis.com`.
 
-- **Local**: a database of bad URLs and file hashes, checked as you navigate and
-  download. Updated by request, but usable offline.
-- **Remote**: lookups to `safebrowsing.googleapis.com` for URLs the local database
-  cannot vouch for (the "real time" checks), plus download reputation.
+In a build with no API key it protects nobody while still making the requests. Unlike
+Translate or Geolocation, it never consults `HasAPIKeyConfigured()` — it appends
+whatever key it has (`sb_protocol_manager_util.cc:599-612`), and ours is the
+placeholder `dummytoken`, so every list update and every lookup is refused. The
+shield in the UI is decorative, and a browser that shows a protection shield over a
+list that never updates is worse than one that says it has no protection.
 
-The problem is not that it protects you — it is that **in this build the protection
-is dead while the requests still happen**. Unlike Translate, Geolocation or the
-optimization guide, Safe Browsing does not test
-`google_apis::HasAPIKeyConfigured()`. It appends whatever key it has
-(`sb_protocol_manager_util.cc:599-612`), and ours is the literal placeholder
-`dummytoken`, so every update and every lookup is refused by Google. The user pays
-the request and the privacy cost; the database never updates; the shield in the UI
-is decorative.
+**What changed: one pref default.**
+`components/safe_browsing/core/common/safe_browsing_prefs.cc`,
+`RegisterProfilePrefs()`: `kSafeBrowsingEnabled` is registered `false` instead of
+`true`. That is the whole change, because that pref is the single gate —
+`SafeBrowsingServiceImpl::RefreshState()` reads `IsSafeBrowsingEnabled(*prefs)` and
+calls `Start()` or `Stop(false)`, and `services_delegate_->RefreshState()` follows. No
+service, no list updates, no lookups, no download checks, no interstitials. Verified
+with a net log: `safebrowsing.googleapis.com` does not appear at all, and the only
+remaining "safebrowsing" string is a `base::Feature` name in the variations list.
 
-`safe_browsing_mode = 0` removes that: no requests, no half-populated database, and
-it is one GN argument rather than a patch. What it also removes is the *local* half
-— download protection, the dangerous-file prompt, the interstitial for a known-bad
-site. So the question is not "do we keep Google's service": we do not have it. It is
-**what a shipped browser owes its users in its place**, and there are three honest
-answers:
+**Why not `safe_browsing_mode = 0`.** That is the honest removal — it takes the code
+out — and it does not build in this tag. Six targets depend on
+`//components/safe_browsing/…` unconditionally: `browser_tests` in
+`chrome/browser/download`, `chrome/browser/ui/views/file_system_access`,
+`chrome/browser/webshare` and `chrome/browser/feedback`, `interactive_ui_tests`, and
+— the one that decides it — the shipping
+`chrome/browser/feedback/report_unsafe_site`. `gn gen` fails on all of them. Guarding
+six BUILD files that upstream never tests in that configuration is more rebase surface
+than the flag is worth; the pref default costs one line and behaves correctly. If
+someone later wants the code gone, those six are the list.
 
-1. **Turn it off, say so.** `safe_browsing_mode = 0`, and the docs and the Store
-   listing say plainly that Hook Browser has no built-in safe browsing. Cheapest,
-   truthful, and a real regression against Chrome for a non-technical user.
-2. **Turn it off and own the half that does not need Google.** Local-only blocking
-   from a list we host, or a file-reputation call to the account service. Real work
-   — a small server endpoint plus the download path — and a decision about who
-   curates the list.
-3. **Get keys.** This is the option that sounds free and is not. The Safe Browsing API
-   is free **for non-commercial use only**, and its terms say so twice: "unless
-   you have a separate agreement with Google, you may not use the Safe Browsing
-   API for commercial purposes" (<https://developers.google.com/safe-browsing/terms>,
-   clause 1), and the usage page points commercial users at **Web Risk**, which is
-   priced per request. Hook has paid plans, so Hook is commercial. Beyond the
-   licence, three clauses bite:
-   - clause 2: telling users they are protected obliges us to show, **on every
-     warning**, a conspicuous notice that the reliability and accuracy cannot be
-     guaranteed, attributed to Google;
-   - clause 4: a URL from Google's list may not be treated as unsafe unless the
-     list information was received **within the past thirty minutes** — the local
-     database stops being a database and becomes a live requirement;
-   - clause 5: Google may use URLs submitted through the lookup method to improve
-     its products **and share them with third parties**, including other customers.
+**What is left, and what it costs.**
 
-   There is one more cost that applies to any of this: Chromium's `google_api_key`
-   is a single build-wide key, not a per-service one. Setting it makes
-   `HasAPIKeyConfigured()` true, which does not only revive Safe Browsing — it also
-   revives Translate, the network geolocation fallback, enhanced spellcheck uploads
-   and autofill crowdsourcing, and removes the no-key state that keeps the
-   optimization guide quiet. Undoing that means patching each of them back off,
-   i.e. re-doing part of this work to keep one feature.
+- The **Settings toggle remains**: `chrome://settings/security` shows "No protection"
+  by default, and a user can still switch protection on — at which point the service
+  starts and makes the same refused requests. That is the pre-existing dead state, not
+  something this change introduced, but it is a trap. Hiding the section means editing
+  `chrome/browser/resources/settings/privacy_page/security/security_page.html.ts`
+  (`#safeBrowsingSection`) and belongs with the replacement, not before it.
+- The **code is still compiled in**: binary size and dead paths, the same trade as
+  above.
+- Users lose, concretely: **no phishing warning**, **no dangerous-download prompt** (a
+  `.exe` lands with no interstitial), no unwanted-software blocking. The account, the
+  chats and the rest of Hook are unaffected.
+- Anyone asking "is Hook safer than Chrome" now has a real answer to hear: no, and
+  this is why.
 
-There is a fourth option that is not on the table: leave it as it is. A browser that
-shows a protection shield while its list never updates is worse than one that says
-it has no protection.
+**Why not just get the free key.** The Safe Browsing API is free **for
+non-commercial use only**, and its terms say it in the first clause: "unless you have
+a separate agreement with Google, you may not use the Safe Browsing API for commercial
+purposes" (<https://developers.google.com/safe-browsing/terms>). The usage page points
+commercial users at **Web Risk**, priced per request. Hook has paid plans, so Hook is
+commercial. Three clauses then shape the product:
 
-**Status: waiting on the decision above.** Nothing has been changed. Recommendation:
-option 1 now (one line in `browser/args.gn`, plus a paragraph saying so in the docs
-and the Store listing), option 2 written down as what makes a shipped browser
-honest — and note that whichever is chosen, the browser currently has **no download
-protection at all** in a build with no keys, because the same key gates it.
+- clause 2: telling users they are protected obliges a conspicuous notice, **on every
+  warning**, that the reliability and accuracy cannot be guaranteed, attributed to
+  Google;
+- clause 4: a URL from Google's list may not be treated as unsafe unless the
+  information arrived **within the past thirty minutes** — the local database becomes
+  a live requirement, and offline means unprotected;
+- clause 5: Google may use URLs submitted through the lookup method to improve its
+  products **and share them with third parties**, including other customers.
+
+And Chromium's `google_api_key` is a single build-wide key: setting it would also
+revive Translate, the network geolocation fallback, enhanced spellcheck uploads and
+autofill crowdsourcing, and remove the no-key state that keeps the optimization guide
+quiet. Getting Safe Browsing alone would mean patching each of those back off.
+
+**How this gets revisited.** Two options that fit Hook, in order of cost:
+
+1. **Own the local half.** A list we host — curated or bought — checked in the download
+   path and at navigation, with the endpoint on the account service. That is the
+   version that can honestly say "we protect you", and it is where
+   `safe_browsing_mode = 0` becomes attractive again: we would be writing the code,
+   not removing it.
+2. **Web Risk or an agreement with Google.** Paid per request or negotiated, plus the
+   attribution and thirty-minute clauses. Legitimate, but it re-adds the dependency
+   this work is removing.
+
+Turning it back on today is reverting the pref default; the rest of the machinery is
+untouched and still there.
 
 ## What a Chromium sync costs now
 
-The stack is 13 patches. `0011-branding` is by far the largest (334 KB, ~700
+The stack is 14 patches. `0011-branding` is by far the largest (334 KB, ~700
 changed messages) and is the one that needs a step after a sync:
 
 1. `pnpm browser:sync` — rebase the tree.
@@ -218,7 +260,7 @@ changed messages) and is the one that needs a step after a sync:
 4. `node browser/tools/verify.mjs` — it fails loudly if a patch stops applying,
    which is the moment to read it rather than trust it.
 
-`0012` and `0013` are small and touch files that move slowly (`chrome_features.cc`,
+`0012`–`0014` are small and touch files that move slowly (`chrome_features.cc`,
 `lens_features.cc`, `infobar_utils.cc`). The likeliest conflicts over a year are
 `chrome_exe.rc`/`chrome_dll.rc` (the icon `#if` blocks) and `glic_ui.cc` (a young
 file).
@@ -245,9 +287,21 @@ Google's services rather than remove them.
 Nothing here blocks anything else. Each line is a decision or a small piece of
 polish, not an unbuilt feature.
 
-- **Safe Browsing.** The one decision this document is waiting on (four options
-  above; option 1 recommended). Until it is made, the browser has no download
-  protection and no phishing warning, and nothing says so.
+- **Safe Browsing: off, and that is a debt.** The pref default is false, so there is
+  no phishing warning and no dangerous-download prompt. A replacement is future work
+  (own the local half; see "Safe Browsing, in full"), and the Settings toggle that
+  can still turn the dead state back on disappears with it. Until then this is the
+  one place Hook is plainly weaker than Chrome, and the Store listing has to say so.
+- **Google's New Tab Page frame.** The net log puts
+  `chrome-untrusted://new-tab-page` behind ~15 requests to `www.google.com`,
+  `gstatic.com`, `fonts.gstatic.com` and `ogads-pa.clients6.google.com` on every
+  launch, signed-out. Patch 0009 changed what a new tab shows, not what Chromium
+  still loads for it. Finding the instantiation site is the next cheap win.
+- **The component updater.** It runs without API keys (`cup2key`, not the Google
+  key), and it is the biggest remaining talker: `update.googleapis.com`,
+  `clients2.google.com`, `edgedl.me.gvt1.com`, `play.google.com/log`. Turning it off
+  also stops CRLSet, PKI metadata and the download file-type policies, so it is a
+  security decision, not a switch.
 - **Default search engine.** Deliberately still Google. The hunk is
   `GetPrepopulatedFallbackSearch()` in
   `components/search_engines/template_url_prepopulate_data.cc` — one line pointing
