@@ -162,22 +162,30 @@ const DESCRIPTOR_NAMES = [
 ];
 
 function readDescriptor() {
+  return readDescriptors()[0] ?? null;
+}
+
+// Every descriptor that exists, in the browser's preference order. The browser
+// tries them in turn and uses the first that answers — a host killed while the app
+// runs leaves a dead file in front of a live one — so a check that reasons about
+// "is a channel answering" has to look past the first name too.
+function readDescriptors() {
   const dir = sharedDir();
-  if (!dir) return null;
+  if (!dir) return [];
+  const found = [];
   for (const name of DESCRIPTOR_NAMES) {
     const path = join(dir, name);
     if (!existsSync(path)) continue;
     try {
       const descriptor = JSON.parse(readFileSync(path, "utf8"));
       if (typeof descriptor?.port === "number" && descriptor.port > 0) {
-        return { ...descriptor, file: name };
+        found.push({ ...descriptor, file: name });
       }
-      return null;
     } catch {
-      return null;
+      // An unreadable file is the browser's problem to report, not this check's.
     }
   }
-  return null;
+  return found;
 }
 
 // A descriptor outlives a killed host, so "published" is not "running": the
@@ -266,8 +274,20 @@ export async function main(argv) {
   const profile = mkdtempSync(join(tmpdir(), "hook-smoke-"));
   // A host that is already answering is not the one this run means to prove, so
   // the launch check needs an empty channel: it says so instead of pretending.
-  const existingDescriptor = hostCheck ? readDescriptor() : null;
-  const existing = hostCheck ? await descriptorAlive(existingDescriptor) : null;
+  // Any answering channel, from any product, means the browser will not launch
+  // one — `--host` proves a launch, so a run with a live channel says so instead.
+  let existingDescriptor = null;
+  let existing = null;
+  if (hostCheck) {
+    for (const descriptor of readDescriptors()) {
+      const health = await descriptorAlive(descriptor);
+      if (health) {
+        existingDescriptor = descriptor;
+        existing = health;
+        break;
+      }
+    }
+  }
   let hostPid = 0;
   step(`launching ${bold(binary)}`);
   const child = spawn(
@@ -491,7 +511,7 @@ export async function main(argv) {
     if (hostCheck) {
       if (existing) {
         console.error(warn(
-          `a Hook host is already running (${existing.product}, pid ${existingDescriptor?.pid}): ` +
+          `a Hook channel is already answering (${existing.product}, pid ${existingDescriptor?.pid}, ${existingDescriptor?.file}): ` +
             `--host proves a launch, so close it and run again to check this`,
         ));
       } else {

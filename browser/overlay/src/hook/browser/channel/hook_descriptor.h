@@ -15,6 +15,7 @@
 #define HOOK_BROWSER_CHANNEL_HOOK_DESCRIPTOR_H_
 
 #include <string>
+#include <vector>
 
 namespace hook {
 
@@ -35,6 +36,16 @@ struct ChannelDescriptor {
 };
 
 // Blocking. Never call this on the UI thread.
+//
+// Every descriptor that exists, in the order the browser prefers them: its own
+// first, then the other products, then the single name every build before the
+// split wrote. Empty when none exists. A host that was killed leaves its file
+// behind and a *dead* one must not shadow a live one, so the caller tries them in
+// order rather than taking the first that exists.
+std::vector<ChannelDescriptor> ReadChannelDescriptors();
+
+// The first of those, for the host launcher's pid poll — it only cares whether the
+// browser's own descriptor names its child.
 ChannelDescriptor ReadChannelDescriptor();
 
 }  // namespace hook

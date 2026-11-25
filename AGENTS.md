@@ -97,9 +97,15 @@ pnpm test:cla
 pnpm git
 pnpm engine
 
-# Hook Browser: the Chromium checkout lives outside the repo, see browser/README.md
+# Hook Browser: the Chromium checkout lives outside the repo, see browser/README.md.
+# It has been built at least once, so check before treating a build as cold:
+# `out/Dev/chrome.exe` plus `ninja -C out/Dev -n chrome` says whether the answer is
+# minutes or hours, and `browser:build` always re-runs `gn gen` anyway (the
+# `hook_host_path` define is machine-specific).
 pnpm browser:sync               # fetch/refresh the tree at browser/VERSION
 pnpm browser:build              # gn gen + autoninja -C out/Dev chrome
+pnpm browser:host               # cargo build --release -p hook-host (the browser's own backend)
+ninja -C out/Dev -n chrome      # (from the checkout) dry run: how much is left to build
 pnpm browser:ui                 # rebuild the dock bundle (panel.mjs) with Vite
 pnpm browser:verify             # tag, overlay rule, patch stack, junction
 pnpm browser:smoke              # launch the built browser, read chrome://hook over CDP
@@ -663,7 +669,12 @@ Changing one side of a boundary is the most common way to break this repo.
   `chrome://` renderer cannot make these requests itself (Chromium kills it for
   "Incorrect scheme"), so the call stays in the browser process, and the
   descriptor (`channel/hook_descriptor.{h,cc}`) is read on a thread pool because
-  the page asks during startup, where blocking work is a DCHECK.
+  the page asks during startup, where blocking work is a DCHECK. `Check` probes
+  **every** descriptor in preference order and uses the first that answers, not the
+  first that exists: a host killed while the app runs leaves a dead file in front
+  of a live one, and "the first file wins" then reports "Hook is not answering"
+  with a working channel one line below it. That is also why `--host` refuses to
+  run while *any* channel answers.
 - **Browser host launch change:** `browser/overlay/src/hook/browser/host/hook_host.{h,cc}`
   (which switch turns it off, how long it waits, what it kills on exit) → the
   `hook_host_path` GN arg in `browser/overlay/src/hook/browser/BUILD.gn` and how

@@ -169,9 +169,18 @@ It is now `browser-channel.<product>.json` — `browser-channel.chat.json`,
 `product()`, which is `Product::slug()`. `hook_paths::ChannelDescriptorFiles()`
 lists them in the order the browser reads them: its own, then the chat app (which
 hosted this channel before the split), then Workspace, then the bare
-`browser-channel.json` of a host that has not been rebuilt. A file that exists and
-cannot be parsed stops the search — a corrupt descriptor of our own must not send
-the browser to another product's token.
+`browser-channel.json` of a host that has not been rebuilt.
+
+The browser reads **all** of them and uses the first that answers, not the first
+that exists. A descriptor outlives the process that wrote it — a browser whose own
+host was killed while the app sits in the tray must still reach the app's channel,
+and taking the first file that exists would leave it with a dead port and the
+sentence "Hook is not answering on this computer". So `HookChannel::Check` probes
+each candidate's `/health` and moves to the next on a miss; only when every one is
+silent does it report a sentence, preferring the one the first candidate carried
+(a corrupt file says so rather than "not running"). An older Hook that writes only
+the bare name is the last candidate, which is why an installed 0.6.1 app still
+serves a browser built from this tree.
 
 ## What does not change
 

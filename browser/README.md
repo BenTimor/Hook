@@ -213,9 +213,23 @@ variables `build.mjs` sets (`DEPOT_TOOLS_WIN_TOOLCHAIN=0`,
 `vs2022_install=<VS install>`): a `BUILD.gn` edit makes ninja re-run `gn gen`, and
 `gn` cannot find a VS 2022 BuildTools install without the second one.
 
-**A built browser.** `node browser/tools/build.mjs` — hours from cold, the reason
-`browser/README.md` asks for the Defender and indexing exclusions first. After
-that:
+**A built browser.** First check whether one is already there, because a tree that
+has been built once looks identical to one that has not until you look inside
+`out/`:
+
+```bash
+ls /c/Dev/cr/src/out/Dev/chrome.exe               # the binary exists…
+cd /c/Dev/cr/src && ninja -C out/Dev -n chrome    # …and how much is left (0–N steps)
+```
+
+`-n` is a dry run: a handful of steps means minutes, "no work to do" means the
+browser is current, and a long list is the cold build. Do **not** start from the
+assumption that it is cold — this repository's checkout has been built before, and
+`gn gen` regenerating `args.gn` (which `build.mjs` always does, because
+`hook_host_path` is machine-specific) is cheap either way.
+
+`node browser/tools/build.mjs` — hours from cold, the reason the exclusions below
+come first. After that:
 
 ```bash
 node browser/tools/smoke.mjs                  # the seam, the dock, one send

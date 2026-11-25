@@ -24,12 +24,14 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "hook/browser/channel/hook_descriptor.h"
 
 class Profile;
 
@@ -63,10 +65,19 @@ class HookChannel {
             ChannelReply done);
 
  private:
-  // Loads the descriptor (cached for a few seconds) and then runs `ready`.
+  // Loads the descriptors (cached for a few seconds) and then runs `ready`.
   void WithDescriptor(base::OnceClosure ready);
+  void OnDescriptorsRead(base::OnceClosure ready,
+                         std::vector<ChannelDescriptor> descriptors);
+
+  // Points `port_`/`token_` at `descriptors_[candidate_]`. False when that one is
+  // unusable, in which case `error_` says why.
+  bool AdoptCandidate();
 
   void Probe(AvailableCallback done);
+  void OnHealthReply(AvailableCallback done,
+                     std::optional<base::DictValue> reply,
+                     const std::string& error);
 
   // `Check`'s two ways onward: nothing answered, so the host is started; and the
   // host is up, so the descriptor is read again (it is new) and probed again.
@@ -84,6 +95,11 @@ class HookChannel {
                    ChannelReply done);
 
   raw_ptr<Profile> profile_;
+  // Every descriptor that exists, most preferred first, and the one requests go
+  // to. A host that was killed leaves its file behind, so a dead entry is skipped
+  // for the next product's rather than reported as "Hook is not running".
+  std::vector<ChannelDescriptor> descriptors_;
+  size_t candidate_ = 0;
   std::string port_;
   std::string token_;
   std::string error_;

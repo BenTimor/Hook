@@ -46,27 +46,33 @@ bool ReadOne(const base::FilePath& path, ChannelDescriptor& descriptor) {
 
 }  // namespace
 
-ChannelDescriptor ReadChannelDescriptor() {
-  ChannelDescriptor descriptor;
+std::vector<ChannelDescriptor> ReadChannelDescriptors() {
+  std::vector<ChannelDescriptor> descriptors;
   const std::vector<base::FilePath> files = paths::ChannelDescriptorFiles();
   if (files.empty()) {
-    descriptor.error = "Hook's data folder is not available on this computer.";
-    return descriptor;
+    return descriptors;
   }
-  // The first file that exists decides. A product with no descriptor is not an
-  // error — most of them are not running — so absence falls through to the next
-  // name, while a file that exists and cannot be read stops here.
   for (const base::FilePath& path : files) {
     if (!base::PathExists(path)) {
       continue;
     }
-    if (ReadOne(path, descriptor)) {
-      return descriptor;
-    }
-    return descriptor;
+    ChannelDescriptor descriptor;
+    // `ReadOne` fills in the sentence when the file is there and unusable; the
+    // entry is kept so the caller can say why nothing answered.
+    ReadOne(path, descriptor);
+    descriptors.push_back(std::move(descriptor));
   }
-  descriptor.missing = true;
-  return descriptor;
+  return descriptors;
+}
+
+ChannelDescriptor ReadChannelDescriptor() {
+  std::vector<ChannelDescriptor> descriptors = ReadChannelDescriptors();
+  if (descriptors.empty()) {
+    ChannelDescriptor missing;
+    missing.missing = true;
+    return missing;
+  }
+  return std::move(descriptors.front());
 }
 
 }  // namespace hook

@@ -15,6 +15,8 @@
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
+#include <vector>
+
 #include "hook/browser/channel/hook_descriptor.h"
 #include "hook/browser/host/hook_host.h"
 #include "net/base/net_errors.h"
@@ -81,19 +83,27 @@ void HookChannel::Probe(AvailableCallback done) {
   // The descriptor can outlive the app that wrote it (a killed process never
   // removes it), so ask before saying yes.
   SendRequest("GET", "/health", std::string(),
-              base::BindOnce(
-                  [](AvailableCallback done,
-                     std::optional<base::DictValue> reply,
-                     const std::string& error) {
-                    if (!reply) {
-                      std::move(done).Run(
-                          false,
-                          "Hook is not answering on this computer.");
-                      return;
-                    }
-                    std::move(done).Run(true, error);
-                  },
-                  std::move(done)));
+              base::BindOnce(&HookChannel::OnHealthReply,
+                             weak_factory_.GetWeakPtr(), std::move(done)));
+}
+
+void HookChannel::OnHealthReply(AvailableCallback done,
+                                std::optional<base::DictValue> reply,
+                                const std::string& error) {
+  if (reply) {
+    std::move(done).Run(true, error);
+    return;
+  }
+  // Nothing answered here. Every product writes its own descriptor beside the
+  // account, and a browser whose own host was killed while the app is in the tray
+  // has to read the app's — the first file that *exists* is not the one to use.
+  while (++candidate_ < descriptors_.size()) {
+    if (AdoptCandidate()) {
+      Probe(std::move(done));
+      return;
+    }
+  }
+  std::move(done).Run(false, error_);
 }
 
 void HookChannel::OnProbed(AvailableCallback done,
@@ -136,19 +146,41 @@ void HookChannel::WithDescriptor(base::OnceClosure ready) {
 
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-      base::BindOnce(&ReadChannelDescriptor),
-      base::BindOnce(
-          [](base::WeakPtr<HookChannel> self, base::OnceClosure ready,
-             ChannelDescriptor descriptor) {
-            if (!self) {
-              return;
-            }
-            self->port_ = std::move(descriptor.port);
-            self->token_ = std::move(descriptor.token);
-            self->error_ = std::move(descriptor.error);
-            std::move(ready).Run();
-          },
-          weak_factory_.GetWeakPtr(), std::move(ready)));
+      base::BindOnce(&ReadChannelDescriptors),
+      base::BindOnce(&HookChannel::OnDescriptorsRead,
+                     weak_factory_.GetWeakPtr(), std::move(ready)));
+}
+
+void HookChannel::OnDescriptorsRead(
+    base::OnceClosure ready,
+    std::vector<ChannelDescriptor> descriptors) {
+  descriptors_ = std::move(descriptors);
+  candidate_ = 0;
+  if (descriptors_.empty()) {
+    port_.clear();
+    token_.clear();
+    error_ = "No Hook is running on this computer.";
+  } else {
+    AdoptCandidate();
+  }
+  std::move(ready).Run();
+}
+
+bool HookChannel::AdoptCandidate() {
+  port_.clear();
+  token_.clear();
+  error_.clear();
+  if (candidate_ >= descriptors_.size()) {
+    return false;
+  }
+  const ChannelDescriptor& descriptor = descriptors_[candidate_];
+  if (!descriptor.usable()) {
+    error_ = descriptor.error;
+    return false;
+  }
+  port_ = descriptor.port;
+  token_ = descriptor.token;
+  return true;
 }
 
 void HookChannel::Get(const std::string& path, ChannelReply done) {
