@@ -34,7 +34,16 @@
         padding: 24px;
       }
 
+      /* The panel is Chromium's to size — 360px today, whatever it becomes
+       * later — so the dock fills it instead of keeping the 380px it has in the
+       * desktop window. As a fixed 380 it was 20px wider than its host: the left
+       * edge sat at 0 and the close button was clipped at the right, or a scroll
+       * pushed the whole dock left by the same 20. `min-width: 0` lets the
+       * composer and the chips shrink with it. */
       #dock > .dock {
+        width: 100%;
+        min-width: 0;
+        flex: 1 1 auto;
         border: 0;
         border-radius: 0;
         box-shadow: none;

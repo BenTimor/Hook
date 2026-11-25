@@ -392,9 +392,16 @@ someone installs, split by what only a decision can unblock.
 - **The tabstrip.** Restyle it in Views (expensive, C++) or keep it close to
   upstream.
 - **Which surfaces ship as WebUI** beyond New Tab, the dock and sign-in.
-- **The release channel**, and how security patch releases are tracked. Chromium
-  moves every four weeks; falling a quarter behind means shipping a known-vulnerable
-  browser.
+- **The release channel.** Decided: ride Chromium's train. A few hours every four
+  weeks — `browser:sync`, the patch stack, a rebuild — is affordable and is the only
+  answer that does not ship a known-vulnerable browser. What that means in practice:
+  the patch series stays small and rebased (10 hunks today), `patches/series`'
+  failures are the alarm, and an OS-codec release build is what the train publishes.
+- **Distribution.** Decided: MSIX through the Microsoft Store, **not now**. Worth
+  the work (default-browser registration, the Store's update rules, the identity), but
+  it waits until the browser is worth publishing — so `msix/browser/` and the
+  `scripts/products.mjs` entry stay unwritten, and step 5's packaging is gated on
+  this, not on code.
 
 **Work, once the decisions exist:**
 
@@ -426,14 +433,18 @@ someone installs, split by what only a decision can unblock.
 
 - Widevine: licence it, or ship without DRM playback.
 - Vault scope: local-only, or synced — and on which construction.
-- Chromium release channel, and how security patch releases are tracked.
+- ~~Chromium release channel, and how security patch releases are tracked.~~
+  Decided: ride the train (`browser/README.md`, "Upgrading Chromium").
+- ~~How the browser is distributed.~~ Decided: MSIX through the Store, once it is
+  worth publishing; not now.
 - ~~Whether the tabstrip is restyled in Views or left close to upstream.~~
   Restyled, minimally (patch 0010); it can go further or stay where it is.
 - ~~How H.264 and AAC reach a shipped build.~~ Decided: through Windows' Media
   Foundation (`docs/browser-os-decoders.md`), not through FFmpeg we ship. The dev
-  build keeps FFmpeg until stages 1–2 land.
-- ~~Whether the browser can run without another product's daemon.~~ It starts its
-  own host now (step 1); what is left is the host *being* the browser's —
-  `Product::Browser`, its own data folder, no Tauri — which is
-  `docs/browser-host.md`, steps 2–3.
+  build keeps FFmpeg until stages 1–2 land; those are **queued, not started** — they
+  begin when asked for, and they are the gate on any release build.
+- ~~Whether the browser can run without another product's daemon.~~ Done: the
+  browser starts its own `hook-host` (`Product::Browser`, `%APPDATA%pp.hook.browser`,
+  no Tauri), and `browser:smoke --host` proves the launch, the descriptor and the
+  reaping. What is left there is packaging (`docs/browser-host.md`, step 5).
 - Which surfaces ship as WebUI beyond New Tab, the dock and sign-in.

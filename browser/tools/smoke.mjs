@@ -476,16 +476,35 @@ export async function main(argv) {
         await panel.opened;
         await panel.send("Runtime.enable");
         await sleep(2000);
+        // The panel's width is Chromium's to choose (360 today), so what is
+        // asserted is that the dock *fits* it: it used to be a fixed 380px, which
+        // left 20px — the close button among them — outside the panel.
         const panelDock = await panel.evaluate(`(() => {
           const dock = document.querySelector('#dock > .dock');
-          return dock ? {
-            width: Math.round(dock.getBoundingClientRect().width),
+          if (!dock) return null;
+          const rect = (el) => {
+            const r = el.getBoundingClientRect();
+            return { left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width) };
+          };
+          const close = dock.querySelector('.dock-actions .icon-btn');
+          return {
+            width: rect(dock).width,
+            viewport: document.documentElement.clientWidth,
+            overflow: Math.max(0, document.body.scrollWidth - document.documentElement.clientWidth),
+            close: close ? rect(close) : null,
             composer: !!dock.querySelector('textarea'),
-          } : null;
+          };
         })()`);
         console.log(`    side panel: ${JSON.stringify(panelDock)}`);
         if (!panelDock?.composer) failures.push("the side panel did not draw the dock");
         else if (panelDock.width < 300) failures.push(`the side panel's dock is ${panelDock.width}px wide`);
+        else if (panelDock.overflow > 0) {
+          failures.push(
+            `the dock is ${panelDock.width}px in a ${panelDock.viewport}px panel: ${panelDock.overflow}px of it is off-screen`,
+          );
+        } else if (!panelDock.close || panelDock.close.right > panelDock.viewport || panelDock.close.left < 0) {
+          failures.push(`the dock's close button is outside the panel (${JSON.stringify(panelDock.close)})`);
+        }
         const panelProblems = problemsOf(panel);
         if (panelProblems.length) {
           console.error(warn(`side panel console problems: ${panelProblems.length}`));

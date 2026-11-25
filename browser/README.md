@@ -321,6 +321,13 @@ Each of these cost a night at least once.
   rather than a `WeakPtr` — a weak reference created on a pool thread may not be
   dereferenced on the UI thread, and that is a FATAL (`sequence_checker.cc:21`),
   not a warning.
+- **The side panel is narrower than the dock.** Chromium sizes the side panel
+  (360 px today) and the dock is a fixed 380 px in the desktop window, so
+  `panel.html` has to make it fill its host: `width: 100%; min-width: 0`. As a
+  fixed 380 the dock was 20 px wider than the panel — the ✕ sat half outside it and
+  a scroll pushed the whole dock left by the same 20 px. `--side-panel` asserts that
+  the dock fits and that the close button is inside, rather than a pixel width, so
+  the check survives Chromium resizing the panel.
 - **Siso cannot read the overlay through the junction.** Its hashfs follows a
   Windows junction as an absolute symlink and refuses it (`store resolve next
   dir hook failed`). `args.gn` therefore sets `use_siso = false`, and
