@@ -161,8 +161,6 @@ export interface Milestone {
   seq: number;
 }
 
-export type TextDirection = "ltr" | "rtl";
-
 export interface DocumentMeta {
   id: string;
   projectId: string;
@@ -170,7 +168,6 @@ export interface DocumentMeta {
   title: string;
   /** Present on a single document, absent in a listing. */
   markdown?: string;
-  direction: TextDirection;
   bytes?: number;
   rev: number;
   updatedBy: string | null;

@@ -132,10 +132,13 @@ rows written before this rule are adopted when the service starts.
   resized to fit, and animated GIFs may become still images when resized.
   In the formatted editor, Backspace and Delete remove an adjacent image as a unit.
   Hover over a web link for its address and open action, or Ctrl-click it to open.
-  Document options also offers Markdown source editing, left-to-right or
-  right-to-left text direction (also a toolbar toggle), and deletion. The
-  direction is stored with the document, applied to the editor and every
-  preview, and the chat agent can set it through `workspace_documents`.
+  Document options also offers Markdown source editing and deletion. The
+  toolbar's direction button asks the document itself: with nothing selected it
+  writes `::meta{direction=rtl}` as the first line (or takes it off), and with a
+  selection it fences those lines in `:::rtl` … `:::` (or `:::ltr`), a second
+  press taking the fence off. So the direction travels with the Markdown, is
+  applied to the editor and every preview, and the chat agent sets it the same
+  way through `workspace_documents`.
   A write carries the revision it was based
   on; a stale one is refused with the current copy rather than silently overwriting
   someone else's paragraph.

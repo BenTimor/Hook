@@ -1,4 +1,4 @@
-import { DocumentMarkdown } from "@hook/markdown";
+import { DocumentMarkdown, readDocumentMeta } from "@hook/markdown";
 
 import { openExternal } from "../open";
 import type {
@@ -31,19 +31,21 @@ export function WorkspacePreview({ body }: { body: WorkspacePreviewBody }) {
   }
 }
 
+/**
+ * The way a document reads: its own `::meta{direction=…}` line, never a field
+ * beside the Markdown. The panel's title uses it, and so does the page.
+ */
+export function previewDirection(document: WorkspaceDocument): "ltr" | "rtl" {
+  return readDocumentMeta(document.markdown).direction;
+}
+
 export function DocumentPreview({ document }: { document: WorkspaceDocument }) {
   // A page, not a fragment: the same `hook-doc` numbers the Workspace window
   // draws, inside the frame a document gets there.
   return (
-    <div
-      className="preview-doc"
-      data-preview-entity="document"
-      data-id={document.id}
-      dir={document.direction === "rtl" ? "rtl" : "ltr"}
-    >
+    <div className="preview-doc" data-preview-entity="document" data-id={document.id}>
       <DocumentMarkdown
         markdown={document.markdown}
-        direction={document.direction}
         className="preview-doc-page"
         onOpen={(url) => void openExternal(url)}
       />

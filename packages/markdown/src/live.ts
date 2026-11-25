@@ -1,10 +1,10 @@
 import {
   EditorSelection,
   EditorState,
+  Transaction,
   type Extension,
   type Range,
   type Text,
-  type Transaction,
   type TransactionSpec,
 } from "@codemirror/state";
 import {
@@ -19,6 +19,12 @@ import { syntaxTree } from "@codemirror/language";
 
 import { canonical, ruleFor, type Rule } from "./rules.ts";
 import { parseInline, type Construct } from "./parse.ts";
+import {
+  isMetaLine,
+  metaDirection,
+  metaLine,
+  type TextDirection,
+} from "./meta.ts";
 
 /**
  * The live editor's half of the dialect.
@@ -33,6 +39,12 @@ import { parseInline, type Construct } from "./parse.ts";
 export interface LiveOptions {
   /** A widget for an embedded or linked image; without one the markdown shows. */
   image?: (image: { src: string; alt: string }) => WidgetType | null;
+  /**
+   * A widget for a formula. The maths is drawn while the caret is elsewhere and
+   * the TeX shows while it is inside, so a formula can still be edited by hand
+   * without a separate source mode.
+   */
+  math?: (math: { tex: string; display: boolean }) => WidgetType | null;
   /** A widget that gives a hand-written `:::note` (no label) its heading. */
   calloutTitle?: (rule: Rule) => WidgetType | null;
 }
@@ -49,8 +61,8 @@ const HEADING = /^(#{1,6})\s+/;
 const DIVIDER = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const LIST = /^([-*+]\s+|\d+\.\s+)/;
 const FENCE = /^ {0,3}:{3,}/;
-const CALLOUT_OPEN = /^( {0,3})(:{3,})([A-Za-z][\w-]*)(?:\[([^\]\n]*)\])?\s*$/;
-const CALLOUT_CLOSE = /^( {0,3})(:{3,})\s*$/;
+const BLOCK_OPEN = /^( {0,3})(:{3,})([A-Za-z][\w-]*)(?:\[([^\]\n]*)\])?\s*$/;
+const BLOCK_CLOSE = /^( {0,3})(:{3,})\s*$/;
 
 type LineKind = "blank" | "divider" | "heading" | "list" | "fence" | "plain";
 
@@ -179,14 +191,32 @@ export function constructsBetween(state: EditorState, from: number, to: number):
   return found;
 }
 
-// ── Callouts ─────────────────────────────────────────────────────────────────
+/**
+ * Whether the caret is in a run or one character beside it: close enough that
+ * the run is what is being written. A formula is drawn while this is false and
+ * shown as its own TeX while it is true, and the deletion repair follows the
+ * same answer — a formula you can read as source is text you edit, not a unit
+ * that vanishes whole.
+ */
+function touchesRange(
+  from: number,
+  to: number,
+  selection: { from: number; to: number },
+): boolean {
+  return selection.from <= to + 1 && selection.to >= from - 1;
+}
 
-interface CalloutSpan {
+// ── Blocks ──────────────────────────────────────────────────────────────────
+
+interface BlockSpan {
   rule: Rule;
   /** How many colons open it; a closer needs at least as many. */
   fence: number;
   openLine: number;
   openFrom: number;
+  /** Start and end of the rule's word, `:::note` without the colons. */
+  nameFrom: number;
+  nameTo: number;
   /** Start of the label, or the end of the name when there is none. */
   labelFrom: number;
   labelTo: number;
@@ -197,36 +227,39 @@ interface CalloutSpan {
   closeTo: number;
 }
 
-const calloutCache = new WeakMap<Text, CalloutSpan[]>();
+const blockCache = new WeakMap<Text, BlockSpan[]>();
 
 /**
  * Every `:::name` block, innermost closers applied first. This scan deliberately
  * does not know about fenced code: `micromark` closes a container at a line of
  * colons whatever surrounds it, and the editor has to draw what the page shows.
  */
-function calloutSpans(doc: Text): CalloutSpan[] {
-  const cached = calloutCache.get(doc);
+function blockSpans(doc: Text): BlockSpan[] {
+  const cached = blockCache.get(doc);
   if (cached) return cached;
-  const spans: CalloutSpan[] = [];
-  const open: CalloutSpan[] = [];
+  const spans: BlockSpan[] = [];
+  const open: BlockSpan[] = [];
 
   for (let number = 1; number <= doc.lines; number += 1) {
     const line = doc.line(number);
     const colon = line.text.search(/\S/);
     if (colon < 0 || line.text[colon] !== ":") continue;
 
-    const opener = CALLOUT_OPEN.exec(line.text);
+    const opener = BLOCK_OPEN.exec(line.text);
     if (opener) {
       const rule = ruleFor(opener[3], "block");
       if (!rule) continue;
       const indent = opener[1].length;
-      const nameEnd = indent + opener[2].length + opener[3].length;
+      const nameFrom = indent + opener[2].length;
+      const nameEnd = nameFrom + opener[3].length;
       const label = opener[4];
-      const span: CalloutSpan = {
+      const span: BlockSpan = {
         rule,
         fence: opener[2].length,
         openLine: number,
         openFrom: line.from + indent,
+        nameFrom: line.from + nameFrom,
+        nameTo: line.from + nameEnd,
         labelFrom: line.from + (label === undefined ? nameEnd : nameEnd + 1),
         labelTo: line.from + (label === undefined ? nameEnd : nameEnd + 1 + label.length),
         labelEnd: line.from + (label === undefined ? nameEnd : nameEnd + 2 + label.length),
@@ -239,23 +272,23 @@ function calloutSpans(doc: Text): CalloutSpan[] {
       continue;
     }
 
-    const closer = CALLOUT_CLOSE.exec(line.text);
+    const closer = BLOCK_CLOSE.exec(line.text);
     if (!closer) continue;
     while (open.length > 0 && open[open.length - 1].fence <= closer[2].length) {
-      const span = open.pop() as CalloutSpan;
+      const span = open.pop() as BlockSpan;
       span.closeLine = number;
       span.closeFrom = line.from + closer[1].length;
       span.closeTo = line.to;
     }
   }
 
-  calloutCache.set(doc, spans);
+  blockCache.set(doc, spans);
   return spans;
 }
 
-/** The innermost callout covering a line, fences included. */
-function spanAt(spans: readonly CalloutSpan[], number: number): CalloutSpan | null {
-  let found: CalloutSpan | null = null;
+/** The innermost block covering a line, fences included. */
+function spanAt(spans: readonly BlockSpan[], number: number): BlockSpan | null {
+  let found: BlockSpan | null = null;
   for (const span of spans) {
     const end = span.closeLine === 0 ? Number.MAX_SAFE_INTEGER : span.closeLine;
     if (number >= span.openLine && number <= end) found = span;
@@ -280,6 +313,7 @@ export function decorationsFor(
   const items: Range<Decoration>[] = [];
   const hidden: Range<Decoration>[] = [];
   const lineClasses = new Map<number, string[]>();
+  const lineDirections = new Map<number, string>();
 
   const add = (from: number, to: number, decoration: Decoration, replace = false) => {
     if (from < 0 || to > doc.length || from > to) return;
@@ -294,11 +328,46 @@ export function decorationsFor(
     lineClasses.set(position, list);
   };
 
+  /**
+   * The body of a block. A callout draws a box, a direction wrapper is not one:
+   * its lines simply read in the direction it names, through the line's own
+   * `dir` attribute. That is the passage's direction; the page's is the
+   * document's. Code is left alone (a sample stays left to right).
+   */
+  const markBody = (position: number, span: BlockSpan, number: number) => {
+    if (span.rule.dir) {
+      mark(position, "cm-dir-body");
+      lineDirections.set(position, span.rule.dir);
+      return;
+    }
+    const end = span.closeLine === 0 ? doc.lines : span.closeLine - 1;
+    mark(
+      position,
+      "cm-callout-body",
+      number === span.openLine + 1 && "cm-callout-body-first",
+      number === end && "cm-callout-body-last",
+    );
+  };
+
   const emit = (constructs: readonly Construct[], map: (offset: number) => number) => {
     for (const construct of constructs) {
       const from = map(construct.from);
       const to = map(construct.to);
       if (construct.kind === "replace") {
+        if (construct.math) {
+          // A formula is drawn until the caret comes near it, and then it is the
+          // TeX again: writing `$x^2$` means editing the source, and a rendered
+          // formula you cannot get inside is one you cannot fix. "Near" is the
+          // run itself plus one character on each side, so the caret touching an
+          // edge is already enough.
+          const touching = touchesRange(from, to, state.selection.main);
+          const widget = !touching && options.math ? options.math(construct.math) : null;
+          // Deliberately not in `hidden`: hidden ranges are atomic, and an
+          // atomic formula would be one the caret can only jump over.
+          if (widget) add(from, to, Decoration.replace({ widget }));
+          else add(from, to, Decoration.mark({ class: "cm-math-source" }));
+          continue;
+        }
         const widget = construct.image && options.image ? options.image(construct.image) : null;
         if (widget) add(from, to, Decoration.replace({ widget }), true);
         continue;
@@ -314,7 +383,7 @@ export function decorationsFor(
     }
   };
 
-  const spans = calloutSpans(doc);
+  const spans = blockSpans(doc);
 
   for (const visible of ranges) {
     let number = doc.lineAt(Math.min(visible.from, doc.length)).number;
@@ -326,6 +395,16 @@ export function decorationsFor(
       const line = doc.line(number);
       const info = shape(line.text);
       const span = spanAt(spans, number);
+      if (span?.rule.dir) lineDirections.set(line.from, span.rule.dir);
+
+      // The metadata line is the document's setting, not its text: it is never
+      // shown, and the caret never stops on it (see `settle`).
+      if (number === 1 && isMetaLine(line.text)) {
+        mark(line.from, "cm-meta");
+        add(line.from, line.to, hide, true);
+        number += 1;
+        continue;
+      }
 
       if (isCode(state, line.from)) {
         mark(line.from, "cm-code-block-line");
@@ -334,17 +413,26 @@ export function decorationsFor(
       }
 
       if (span && span.openLine === number) {
-        mark(line.from, "cm-callout-head");
-        const empty = span.labelTo === span.labelFrom;
-        const widget = empty && options.calloutTitle ? options.calloutTitle(span.rule) : null;
-        if (widget) {
-          add(span.openFrom, span.labelEnd, Decoration.replace({ widget }), true);
+        if (span.rule.dir) {
+          // A direction wrapper reads as a quiet word, not as a box: the
+          // passage below it flips, and that is what says what it does.
+          mark(line.from, "cm-dir-head");
+          add(span.openFrom, span.nameFrom, hide, true);
+          add(span.nameTo, span.labelEnd, hide, true);
+          add(span.nameFrom, span.nameTo, Decoration.mark({ class: "cm-dir-label" }));
         } else {
-          add(span.openFrom, span.labelFrom, hide, true);
-          add(span.labelTo, span.labelEnd, hide, true);
-          if (!empty) {
-            add(span.labelFrom, span.labelTo, Decoration.mark({ class: "cm-callout-title" }));
-            emit(parseInline(doc.sliceString(span.labelFrom, span.labelTo)), (offset) => span.labelFrom + offset);
+          mark(line.from, "cm-callout-head");
+          const empty = span.labelTo === span.labelFrom;
+          const widget = empty && options.calloutTitle ? options.calloutTitle(span.rule) : null;
+          if (widget) {
+            add(span.openFrom, span.labelEnd, Decoration.replace({ widget }), true);
+          } else {
+            add(span.openFrom, span.labelFrom, hide, true);
+            add(span.labelTo, span.labelEnd, hide, true);
+            if (!empty) {
+              add(span.labelFrom, span.labelTo, Decoration.mark({ class: "cm-callout-title" }));
+              emit(parseInline(doc.sliceString(span.labelFrom, span.labelTo)), (offset) => span.labelFrom + offset);
+            }
           }
         }
         number += 1;
@@ -352,7 +440,7 @@ export function decorationsFor(
       }
 
       if (span && span.closeLine === number) {
-        mark(line.from, "cm-callout-close");
+        mark(line.from, span.rule.dir ? "cm-dir-close" : "cm-callout-close");
         add(span.closeFrom, span.closeTo, hide, true);
         number += 1;
         continue;
@@ -378,21 +466,13 @@ export function decorationsFor(
       if (info.kind === "fence") {
         // A line of colons that could not close its callout is body text; it
         // needs the body's edge, not a bare line.
-        if (span) {
-          const end = span.closeLine === 0 ? doc.lines : span.closeLine - 1;
-          mark(
-            line.from,
-            "cm-callout-body",
-            number === span.openLine + 1 && "cm-callout-body-first",
-            number === end && "cm-callout-body-last",
-          );
-        }
+        if (span) markBody(line.from, span, number);
         number += 1;
         continue;
       }
 
       if (info.kind === "blank") {
-        if (span) mark(line.from, "cm-callout-body");
+        if (span) markBody(line.from, span, number);
         number += 1;
         continue;
       }
@@ -404,14 +484,10 @@ export function decorationsFor(
       }
       add(line.from, line.from + info.quote, hide, true);
       if (span) {
-        const end = span.closeLine === 0 ? doc.lines : span.closeLine - 1;
         for (let inner = unit.first; inner <= unit.last; inner += 1) {
-          mark(
-            doc.line(inner).from,
-            "cm-callout-body",
-            inner === span.openLine + 1 && "cm-callout-body-first",
-            inner === end && "cm-callout-body-last",
-          );
+          const at = doc.line(inner).from;
+          markBody(at, span, inner);
+          if (span.rule.dir) lineDirections.set(at, span.rule.dir);
         }
       }
       emit(parseInline(unit.text), (offset) => toDoc(unit, offset));
@@ -420,7 +496,12 @@ export function decorationsFor(
   }
 
   for (const [position, classes] of lineClasses) {
-    add(position, position, Decoration.line({ class: classes.join(" ") }));
+    const dir = lineDirections.get(position);
+    add(
+      position,
+      position,
+      Decoration.line({ class: classes.join(" "), attributes: dir ? { dir } : undefined }),
+    );
   }
 
   return { all: Decoration.set(items, true), hidden: Decoration.set(hidden, true) };
@@ -438,7 +519,9 @@ export function livePreview(options: LiveOptions = {}): Extension {
         this.hidden = next.hidden;
       }
       update(update: ViewUpdate) {
-        if (!update.docChanged && !update.viewportChanged) return;
+        // A selection change matters: it is what turns a drawn formula back into
+        // its TeX when the caret arrives.
+        if (!update.docChanged && !update.viewportChanged && !update.selectionSet) return;
         const next = decorationsFor(update.view.state, update.view.visibleRanges, options);
         this.all = next.all;
         this.hidden = next.hidden;
@@ -452,8 +535,12 @@ export function livePreview(options: LiveOptions = {}): Extension {
   );
   return [
     plugin,
-    EditorState.transactionFilter.of((transaction) => repairTransaction(transaction)),
+    // Filters run last-added first: the metadata line is settled before the
+    // repair measures anything, so no repair is ever computed against a change
+    // that moved.
     EditorState.transactionFilter.of((transaction) => settleSelection(transaction)),
+    EditorState.transactionFilter.of((transaction) => repairTransaction(transaction)),
+    EditorState.transactionFilter.of((transaction) => protectMeta(transaction)),
   ];
 }
 
@@ -555,7 +642,12 @@ export function repairTransaction(transaction: Transaction): Transaction | reado
   // A picture is a unit, and alone on its line it *is* the line: deleting it, or
   // the line break beside it, removes the line rather than leaving an empty one.
   for (const construct of constructs) {
-    if (construct.kind !== "replace" || !construct.image) continue;
+    if (construct.kind !== "replace" || (!construct.image && !construct.math)) continue;
+    // A formula whose TeX is on screen is being written: the keystroke is about
+    // one character, and treating the run as a unit would delete the formula the
+    // person is looking at.
+    if (construct.math && touchesRange(construct.from, construct.to, transaction.startState.selection.main))
+      continue;
     const line = doc.lineAt(construct.from);
     const alone =
       !doc.sliceString(line.from, construct.from).trim() && !doc.sliceString(construct.to, line.to).trim();
@@ -569,7 +661,7 @@ export function repairTransaction(transaction: Transaction): Transaction | reado
     if (touched || lineBefore || lineAfter) before.push({ from: line.from, to: Math.min(line.to + 1, doc.length) });
   }
 
-  for (const span of calloutSpans(doc)) {
+  for (const span of blockSpans(doc)) {
     const openLine = doc.line(span.openLine);
     const closeStart = span.closeLine === 0 ? doc.length : doc.line(span.closeLine).from;
     const closeEnd = span.closeLine === 0 ? doc.length : doc.line(span.closeLine).to;
@@ -674,6 +766,11 @@ function edgeAt(state: EditorState, position: number): Edge | null {
 
 export function settle(state: EditorState, previous: number, next: number): number {
   let position = next;
+  // The metadata line has no stops at all: anywhere on or before it is the same
+  // place on screen, and it is the document's first real line that a person is
+  // aiming at.
+  const meta = metaEnd(state.doc);
+  if (meta !== null) position = Math.max(position, Math.min(meta + 1, state.doc.length));
   for (let guard = 0; guard < 12; guard += 1) {
     const edge = edgeAt(state, position);
     if (!edge) return position;
@@ -716,6 +813,134 @@ function without(text: string, offset: number, removed: readonly Removed[]): str
     cursor = Math.max(cursor, to);
   }
   return result + text.slice(cursor);
+}
+
+// ── The metadata line ────────────────────────────────────────────────────────
+
+/** The end of the metadata line at the top of the document, or null. */
+function metaEnd(doc: Text): number | null {
+  const first = doc.line(1);
+  return isMetaLine(first.text) ? first.to : null;
+}
+
+/** The direction the document itself asks for, from its top line. */
+export function documentDirection(state: EditorState): TextDirection {
+  return metaDirection(state.doc.line(1).text) ?? "ltr";
+}
+
+/**
+ * Change the document's default direction: the metadata line goes in at the
+ * top, or comes out on the way back to left to right.
+ *
+ * The transaction is its own user event, because the protection below has to
+ * tell this deliberate write from a person typing at the start of the document.
+ */
+export function setDocumentDirection(state: EditorState, direction: TextDirection): TransactionSpec {
+  const doc = state.doc;
+  const first = doc.line(1);
+  const current = metaDirection(first.text);
+  if (direction === "rtl") {
+    if (current !== null) {
+      return {
+        changes: { from: first.from, to: first.to, insert: metaLine("rtl") },
+        userEvent: "hook.direction",
+      };
+    }
+    // Always with a line break after it: the line is invisible, so the caret
+    // and the first typed word belong on the line under it.
+    const insert = `${metaLine("rtl")}\n`;
+    return {
+      changes: { from: 0, insert },
+      selection: EditorSelection.cursor(state.selection.main.head + insert.length),
+      scrollIntoView: true,
+      userEvent: "hook.direction",
+    };
+  }
+  if (current === null) return { changes: [] };
+  const to = doc.length > first.to ? first.to + 1 : first.to;
+  const removed = to - first.from;
+  return {
+    changes: { from: first.from, to },
+    selection: EditorSelection.cursor(Math.max(0, state.selection.main.head - removed)),
+    userEvent: "hook.direction",
+  };
+}
+
+/**
+ * The metadata line is invisible, so an ordinary edit can never change it.
+ *
+ * Typing at the very start of the document happens on the line under the
+ * metadata line, so the line stays first and is never duplicated; a delete that
+ * reaches it stops at its edge, and one that never leaves it does nothing. The
+ * key always does something visible, the way a backspace on an invisible inline
+ * marker removes the neighbouring character instead.
+ */
+export function protectMeta(transaction: Transaction): Transaction | readonly TransactionSpec[] {
+  if (!transaction.docChanged) return transaction;
+  // Only a person's own typing and deleting is steered away from the line:
+  // undo, a document load and the toolbar's write all mean what they say.
+  if (!transaction.isUserEvent("input") && !transaction.isUserEvent("delete")) return transaction;
+  const doc = transaction.startState.doc;
+  const end = metaEnd(doc);
+  if (end === null) return transaction;
+  const hasNext = doc.length > end;
+  const after = hasNext ? end + 1 : end;
+  const specs: { from: number; to?: number; insert?: string }[] = [];
+  let touched = false;
+  let caret: number | null = null;
+
+  transaction.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    let text = inserted.toString();
+    if (fromA === toA) {
+      if (fromA > end) {
+        specs.push({ from: fromA, insert: text });
+        return;
+      }
+      // Typing on the invisible line lands under it, and the line stays first.
+      const write = hasNext ? text : `\n${text}`;
+      specs.push({ from: after, insert: write });
+      caret = after + write.length;
+      touched = true;
+      return;
+    }
+    // A replacement that started at the top carried the line with it: the copy
+    // it brought back would be the duplicate the line must never have.
+    if (hasNext && fromA < after) {
+      const breakAt = text.search(/[\r\n]/);
+      const head = breakAt === -1 ? text : text.slice(0, breakAt);
+      text = isMetaLine(head) ? (breakAt === -1 ? "" : text.slice(breakAt + 1)) : text;
+    }
+    const from = Math.max(fromA, after);
+    const to = Math.max(toA, after);
+    if (from !== fromA || to !== toA) touched = true;
+    if (to > from || text) specs.push({ from, to, insert: text });
+  });
+  if (!touched) return transaction;
+  if (specs.length === 0) return [{ changes: [] }];
+
+  const changes = transaction.startState.changes(specs);
+  const firstReal = Math.min(end + 1, changes.newLength);
+  const mapped = transaction.selection
+    ? EditorSelection.create(
+        transaction.selection.ranges.map((range) => {
+          const anchor = Math.max(firstReal, changes.mapPos(range.anchor, 1));
+          const head = Math.max(firstReal, changes.mapPos(range.head, -1));
+          return EditorSelection.range(anchor, head);
+        }),
+      )
+    : undefined;
+  // The user event is an annotation, and the filters that run after this one
+  // read it: a person typing must still look like a person typing.
+  const event = transaction.annotation(Transaction.userEvent);
+  return [
+    {
+      changes: specs,
+      selection: caret !== null ? EditorSelection.cursor(caret) : mapped,
+      annotations: event ? [Transaction.userEvent.of(event)] : undefined,
+      scrollIntoView: transaction.scrollIntoView,
+      effects: transaction.effects,
+    },
+  ];
 }
 
 // ── Toolbar ──────────────────────────────────────────────────────────────────
@@ -785,24 +1010,90 @@ export function applyRule(state: EditorState, rule: Rule | null, family: string)
   };
 }
 
-/** The callout button: fence the selection, or an empty block at the cursor. */
-export function wrapCallout(state: EditorState, rule: Rule): TransactionSpec {
+/**
+ * Fence the selected whole lines in a block rule: a callout, or a direction
+ * wrapper. An empty body still gets a fence to type in, and the caret goes
+ * where the next keystroke belongs — the title of a callout, the body of a
+ * direction wrapper.
+ */
+export function wrapBlock(state: EditorState, rule: Rule): TransactionSpec {
   const selection = state.selection.main;
   const doc = state.doc;
-  const from = doc.lineAt(selection.from).from;
+  // The document's own metadata line is never part of what a fence wraps: it
+  // is not text a reader sees, so a select-all must not move it into the body.
+  const line = doc.lineAt(selection.from);
+  const firstLine = line.number === 1 && doc.lines > 1 && isMetaLine(line.text) ? 2 : line.number;
+  const from = doc.line(firstLine).from;
   const to = doc.lineAt(selection.to).to;
   const body = doc.sliceString(from, to);
   const name = canonical(rule);
   const title = rule.defaultLabel ?? "Note";
-  const head = `:::${name}[${title}]`;
+  const head = rule.dir ? `:::${name}` : `:::${name}[${title}]`;
   const text = body.trim() ? `${head}\n${body}\n:::` : `${head}\n\n:::`;
+  // A direction wrapper keeps the lines it wrapped selected, so the passage it
+  // flipped is the passage the next action sees; a callout selects its title.
+  const start = from + head.length + 1;
   const titleFrom = from + 3 + name.length + 1;
+  const selectionAfter = rule.dir
+    ? { anchor: start, head: start + body.length }
+    : { anchor: titleFrom, head: titleFrom + title.length };
   return {
     changes: { from, to, insert: text },
-    selection: EditorSelection.range(titleFrom, titleFrom + title.length),
+    selection: selectionAfter,
     scrollIntoView: true,
     userEvent: "input",
   };
+}
+
+/** The innermost `:::rtl`/`:::ltr` the selection is inside, fences included. */
+function directionSpan(state: EditorState): BlockSpan | null {
+  const selection = state.selection.main;
+  const firstLine = state.doc.lineAt(selection.from).number;
+  const lastLine = state.doc.lineAt(selection.to).number;
+  let found: BlockSpan | null = null;
+  for (const span of blockSpans(state.doc)) {
+    if (!span.rule.dir) continue;
+    const end = span.closeLine === 0 ? Number.MAX_SAFE_INTEGER : span.closeLine;
+    if (firstLine >= span.openLine && lastLine <= end) found = span;
+  }
+  return found;
+}
+
+/** Take the fences off: the lines they held stay, in the page's direction. */
+function unwrapBlock(state: EditorState, span: BlockSpan): TransactionSpec {
+  const doc = state.doc;
+  const open = doc.line(span.openLine);
+  // The opening line goes with the break after it.
+  const changes = [{ from: open.from, to: Math.min(open.to + 1, doc.length) }];
+  if (span.closeLine !== 0) {
+    const close = doc.line(span.closeLine);
+    // The closing line goes with a break of its own. At the end of the
+    // document the break is the one above it, so the last body line is not
+    // left ending in an empty one.
+    if (close.number < doc.lines) {
+      changes.push({ from: close.from, to: close.to + 1 });
+    } else if (close.from > open.to) {
+      changes.push({ from: Math.max(open.to + 1, close.from - 1), to: close.to });
+    }
+  }
+  return { changes, scrollIntoView: true, userEvent: "hook.direction" };
+}
+
+/**
+ * The toolbar's direction button.
+ *
+ * With a caret it changes the document's default: `::meta{direction=rtl}` on
+ * the top line, or off again. With a selection it wraps the selected lines in
+ * `:::rtl` … `:::`, and a second press inside that wrapper takes it off: the
+ * wrapper is the passage's setting, and the button is how it goes away.
+ */
+export function toggleDirection(state: EditorState): TransactionSpec {
+  const span = directionSpan(state);
+  if (span) return unwrapBlock(state, span);
+  const direction: TextDirection = documentDirection(state) === "rtl" ? "ltr" : "rtl";
+  if (state.selection.main.empty) return setDocumentDirection(state, direction);
+  const rule = ruleFor(direction, "block");
+  return rule ? wrapBlock(state, rule) : { changes: [] };
 }
 
 /** The link under a position, for the editor's hover card. */

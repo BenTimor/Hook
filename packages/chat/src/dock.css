@@ -327,6 +327,18 @@
   font-size: 13px;
 }
 
+/* A callout in a 380px reply: less air than the document page, and the title
+   sits tight under the bubble's own padding instead of adding to it. */
+.dock .md .hook-callout {
+  margin: 9px 0;
+  padding: 7px 10px 8px;
+  border-radius: 7px;
+}
+
+.dock .md .hook-callout-title {
+  margin-bottom: 4px;
+}
+
 .dock .msg-actions {
   bottom: -19px;
   height: 20px;

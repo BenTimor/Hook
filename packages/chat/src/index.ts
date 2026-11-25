@@ -18,6 +18,7 @@ export {
   DocumentPreview,
   TaskPreview,
   WorkspacePreview,
+  previewDirection,
   reportableFrom,
 } from "./preview";
 export { ReportContentDialog } from "./preview";

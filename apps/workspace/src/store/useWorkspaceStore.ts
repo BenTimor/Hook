@@ -16,7 +16,6 @@ import type {
   Project,
   Roadmap,
   Task,
-  TextDirection,
 } from "../lib/types";
 
 /** How often a visible window asks for changes. A focused window feels live. */
@@ -111,7 +110,6 @@ interface WorkspaceState {
       markdown?: string;
       baseRev?: number;
       folderId?: string | null;
-      direction?: TextDirection;
     },
   ) => Promise<{ document: DocumentMeta | null; conflict: DocumentMeta | null }>;
   deleteDocument: (id: string) => Promise<void>;
@@ -291,32 +289,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         api.members(projectId),
         api.folders(projectId),
       ]);
-      set((state) => {
-        const previous = state.documents[projectId] ?? [];
-        return {
-          boards: { ...state.boards, [projectId]: sortByPosition(boards.boards) },
-          documents: {
-            ...state.documents,
-            [projectId]: documents.documents.map((document) => ({
-              ...document,
-              direction:
-                directionOf(document.direction) ??
-                previous.find((item) => item.id === document.id)?.direction ??
-                cachedDirection(document.id) ??
-                "ltr",
-            })),
-          },
-          roadmaps: { ...state.roadmaps, [projectId]: roadmaps.roadmaps },
-          milestones: { ...state.milestones, [projectId]: milestones.milestones },
-          brainstorms: { ...state.brainstorms, [projectId]: brainstorms.brainstorms },
-          brainstormIdeas: { ...state.brainstormIdeas, [projectId]: ideas.ideas },
-          members: { ...state.members, [projectId]: members.members },
-          // An older service has no pending list; a project without one simply
-          // offers no addresses to assign to.
-          pending: { ...state.pending, [projectId]: members.pending ?? [] },
-          folders: { ...state.folders, [projectId]: sortByPosition(folders.folders) },
-        };
-      });
+      set((state) => ({
+        boards: { ...state.boards, [projectId]: sortByPosition(boards.boards) },
+        documents: { ...state.documents, [projectId]: documents.documents },
+        roadmaps: { ...state.roadmaps, [projectId]: roadmaps.roadmaps },
+        milestones: { ...state.milestones, [projectId]: milestones.milestones },
+        brainstorms: { ...state.brainstorms, [projectId]: brainstorms.brainstorms },
+        brainstormIdeas: { ...state.brainstormIdeas, [projectId]: ideas.ideas },
+        members: { ...state.members, [projectId]: members.members },
+        // An older service has no pending list; a project without one simply
+        // offers no addresses to assign to.
+        pending: { ...state.pending, [projectId]: members.pending ?? [] },
+        folders: { ...state.folders, [projectId]: sortByPosition(folders.folders) },
+      }));
     } catch (error) {
       set({ error: message(error) });
     }
@@ -638,14 +623,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const result = await api.document(id);
       const projectId = result.document.projectId;
-      const existing = findDocument(get(), id);
-      const direction =
-        directionOf(result.document.direction) ??
-        existing?.direction ??
-        cachedDirection(id) ??
-        "ltr";
-      rememberDirection(id, direction);
-      const document = { ...result.document, direction };
+      const document = result.document;
       set((state) => ({
         documents: {
           ...state.documents,
@@ -662,10 +640,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async createDocument(projectId, title, folderId = null) {
     try {
       const created = await api.createDocument(projectId, { title, folderId });
-      const document = {
-        ...created.document,
-        direction: directionOf(created.document.direction) ?? "ltr",
-      };
+      const document = created.document;
       set((state) => ({
         documents: {
           ...state.documents,
@@ -696,19 +671,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const result = await api.saveDocument(id, { title });
       if (!result.document) return;
       const projectId = result.document.projectId;
-      const existing = findDocument(get(), id);
-      const direction =
-        directionOf(result.document.direction) ??
-        existing?.direction ??
-        cachedDirection(id) ??
-        "ltr";
-      rememberDirection(id, direction);
       set((state) => ({
         documents: {
           ...state.documents,
           [projectId]: upsert(state.documents[projectId] ?? [], {
             ...result.document!,
-            direction,
             markdown: undefined,
           }),
         },
@@ -723,15 +690,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const result = await api.saveDocument(id, patch);
       if (!result.document) return result;
       const projectId = result.document.projectId;
-      const existing = findDocument(get(), id);
-      const direction =
-        directionOf(result.document.direction) ??
-        directionOf(patch.direction) ??
-        existing?.direction ??
-        cachedDirection(id) ??
-        "ltr";
-      rememberDirection(id, direction);
-      const document = { ...result.document, direction };
+      const document = result.document;
       set((state) => ({
         documents: {
           ...state.documents,
@@ -1148,7 +1107,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async deleteDocument(id) {
     try {
       await api.deleteDocument(id);
-      forgetDirection(id);
       set((state) => ({
         documents: Object.fromEntries(
           Object.entries(state.documents).map(([project, documents]) => [
@@ -1234,36 +1192,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 function message(error: unknown): string {
   if (error instanceof Error) return error.message;
   return typeof error === "string" ? error : "Something went wrong.";
-}
-
-function directionOf(value: unknown): TextDirection | null {
-  return value === "ltr" || value === "rtl" ? value : null;
-}
-
-const DIRECTION_KEY = "hook.workspace.document-direction.";
-
-function cachedDirection(id: string): TextDirection | null {
-  try {
-    return directionOf(window.localStorage.getItem(`${DIRECTION_KEY}${id}`));
-  } catch {
-    return null;
-  }
-}
-
-function rememberDirection(id: string, direction: TextDirection): void {
-  try {
-    window.localStorage.setItem(`${DIRECTION_KEY}${id}`, direction);
-  } catch {
-    // A document still works when storage is unavailable; the server is primary.
-  }
-}
-
-function forgetDirection(id: string): void {
-  try {
-    window.localStorage.removeItem(`${DIRECTION_KEY}${id}`);
-  } catch {
-    // Nothing to clean up when storage is unavailable.
-  }
 }
 
 function findDocument(state: WorkspaceState, id: string): DocumentMeta | null {
@@ -1359,13 +1287,6 @@ function applyChange(
     case "document": {
       const projectId = change.projectId;
       if (!projectId) return;
-      const previous = (state.documents[projectId] ?? []).find((item) => item.id === change.id);
-      const direction =
-        directionOf((change as Partial<DocumentMeta>).direction) ??
-        previous?.direction ??
-        cachedDirection(change.id) ??
-        "ltr";
-      if (!change.deleted) rememberDirection(change.id, direction);
       set({
         documents: {
           ...state.documents,
@@ -1373,7 +1294,6 @@ function applyChange(
             ? (state.documents[projectId] ?? []).filter((item) => item.id !== change.id)
             : upsert(state.documents[projectId] ?? [], {
                 ...(change as unknown as DocumentMeta),
-                direction,
                 // The open editor owns its buffer; a background update must not
                 // overwrite what the user is typing.
                 markdown: undefined,

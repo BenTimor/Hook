@@ -3,8 +3,10 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markd
 import remarkGfm from "remark-gfm";
 import remarkDirective from "remark-directive";
 
+import { MATH_REHYPE, mathFractions, mathProse, remarkMath } from "./math.ts";
 import { documentBreaks, documentDirectives } from "./remark.ts";
 import { documentImageSource } from "./images.ts";
+import { readDocumentMeta } from "./meta.ts";
 
 /**
  * A Hook Workspace document, on any surface.
@@ -18,13 +20,14 @@ import { documentImageSource } from "./images.ts";
  *
  * Raw HTML is not parsed at all: the dialect is the only formatting language,
  * and a document can never inject an element.
+ *
+ * The document's direction is its own too: `::meta{direction=rtl}` on the top
+ * line flips the page, and the line itself never reaches the output.
  */
 export interface DocumentMarkdownProps {
   markdown: string;
   /** Where a link should open, when the surface can open one. */
   onOpen?: (url: string) => void;
-  /** A document's own `direction`; the page's rules flip with it. */
-  direction?: "ltr" | "rtl";
   /** Extra class for a surface that sizes the page down, such as a tile. */
   className?: string;
 }
@@ -32,16 +35,22 @@ export interface DocumentMarkdownProps {
 const remarkPlugins = [
   remarkGfm,
   remarkDirective,
+  remarkMath,
+  mathProse as never,
+  mathFractions as never,
   documentDirectives as never,
   documentBreaks as never,
 ];
 
+/** MathML: no stylesheet, no fonts, nothing to inline. */
+const rehypePlugins = MATH_REHYPE as never;
+
 export const DocumentMarkdown = memo(function DocumentMarkdown({
   markdown,
   onOpen,
-  direction,
   className,
 }: DocumentMarkdownProps) {
+  const direction = useMemo(() => readDocumentMeta(markdown).direction, [markdown]);
   const components = useMemo<Components>(
     () => ({
       a({ href, children }) {
@@ -84,7 +93,8 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({
       dir={direction === "rtl" ? "rtl" : undefined}
     >
       <ReactMarkdown
-        remarkPlugins={remarkPlugins}
+        remarkPlugins={remarkPlugins as never}
+        rehypePlugins={rehypePlugins}
         components={components}
         urlTransform={(url, key, node) =>
           key === "src" && node.tagName === "img"

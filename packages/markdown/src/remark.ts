@@ -1,5 +1,6 @@
 import { ruleFor, type Rule } from "./rules.ts";
 import { isDirectiveLabel, type MdastNode } from "./parse.ts";
+import { META_NAME } from "./meta.ts";
 
 /**
  * The read view's half of the dialect.
@@ -12,6 +13,9 @@ import { isDirectiveLabel, type MdastNode } from "./parse.ts";
  *
  * The one exception is a registered name with nothing inside it. `:red` alone in
  * a sentence is prose — "the port :red is free" — not an empty run.
+ *
+ * The metadata line `::meta{direction=rtl}` is the other: it is the document's
+ * own setting, not a paragraph, so it leaves the tree without a trace.
  */
 export function documentDirectives() {
   return (tree: MdastNode, file: { value?: unknown }) => {
@@ -84,6 +88,16 @@ function rewrite(parent: MdastNode, source: string) {
     const end = node.position?.end.offset;
     const literal = typeof start === "number" && typeof end === "number" ? source.slice(start, end) : "";
 
+    // The metadata line is the document's setting, not its text: the one at
+    // the top is never drawn. A `::meta` further down is a word nobody
+    // registered, and reads as the text it is, like any other unknown word.
+    const top = node.position?.start.line === 1;
+    if (node.name === META_NAME && node.type === "leafDirective" && top) {
+      children.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
     switch (node.type) {
       case "textDirective": {
         const inner = node.children ?? [];
@@ -104,7 +118,16 @@ function rewrite(parent: MdastNode, source: string) {
           index += unwrapUnknown(node, children, index, literal);
           break;
         }
-        node.data = { ...node.data, hName: "div", hProperties: { className: rule.className } };
+        node.data = {
+          ...node.data,
+          hName: rule.element,
+          hProperties: rule.dir
+            ? { className: rule.className, dir: rule.dir }
+            : { className: rule.className },
+        };
+        // A direction wrapper is not a box: it flips what it holds and has no
+        // heading of its own.
+        if (rule.dir) break;
         ensureTitle(node, rule);
         break;
       }

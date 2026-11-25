@@ -2731,10 +2731,36 @@
    shrink to the top and bottom edges of the box. */
 .cm-callout-head { border-left: 3px solid var(--sage); padding-left: 14px !important; }
 .cm-callout-title { font-weight: 620; color: var(--ink); }
+/* A formula: drawn as maths, or as the TeX it is, while the caret is in it. */
+.cm-math-widget {
+  display: inline-block;
+  vertical-align: baseline;
+  padding: 1px 2px;
+  border-radius: 4px;
+  /* Not a thing you click: a click lands on the text under it, which puts the
+     caret at the formula's edge, and `live.ts` answers that by showing the TeX.
+     Without this the selection goes into the MathML and never reaches the
+     editor. */
+  pointer-events: none;
+  user-select: none;
+}
+.cm-math-widget.cm-math-display { display: block; margin: 6px 0; text-align: center; }
+.cm-math-widget > .katex { font-size: 1.02em; }
+.cm-math-source { font-family: var(--font-mono); font-size: 0.94em; color: var(--ink-soft); }
+
 .cm-callout-body { border-left: 3px solid var(--sage); padding-left: 14px !important; background: rgba(var(--accent-rgb), 0.03); }
 .cm-callout-body-first { padding-top: 4px !important; }
 .cm-callout-body-last { padding-bottom: 4px !important; }
 .cm-callout-close { border-left: 3px solid var(--sage); font-size: 0; line-height: 9px; }
+/* The document's metadata line (`::meta{direction=rtl}`) is its setting, not
+   its text: hidden, and shrunk to a stripe like a callout's closing fence. */
+.cm-meta { font-size: 0; line-height: 9px; }
+/* A direction wrapper reads as a quiet word above the passage it flips, not as
+   a box: the lines below it are what shows what it does. */
+.cm-dir-head { padding-top: 6px !important; }
+.cm-dir-label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.cm-dir-close { font-size: 0; line-height: 9px; }
+.cm-dir-body { padding-inline: 10px !important; }
 .ws-color-trigger { position: relative; }
 .ws-color-trigger > span { position: absolute; bottom: 5px; left: 9px; right: 9px; height: 2px; border-radius: 1px; background: var(--sage); }
 .ws-color-popover { position: fixed; z-index: 100; width: 220px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 13px; background: var(--ivory); box-shadow: var(--shadow-md); animation: ws-select-in 130ms cubic-bezier(.2,.8,.2,1) both; }
@@ -2743,7 +2769,7 @@
 .ws-color-swatch { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); font-size: 15px; font-weight: 650; }
 .ws-color-swatch:hover, .ws-color-swatch:focus-visible { outline: 2px solid var(--sage); outline-offset: 1px; }
 .cm-quote { border-left: 2px solid var(--sage); color: var(--ink-3); padding-left: 12px !important; }
-.cm-code-block-line { background: rgba(var(--accent-rgb), 0.055); font-family: var(--font-mono); font-size: 13px; }
+.cm-code-block-line { background: rgba(var(--accent-rgb), 0.055); font-family: var(--font-mono); font-size: 13px; direction: ltr; text-align: left; }
 .cm-rule::after { content: ""; display: block; margin: 12px 0; border-top: 1px solid var(--line-strong); }
 .cm-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .cm-tooltip:has(.ws-link-preview) { border: 1px solid var(--line-strong); border-radius: 10px; background: var(--ivory); box-shadow: var(--shadow-md, 0 12px 30px rgba(30, 39, 29, 0.14)); }

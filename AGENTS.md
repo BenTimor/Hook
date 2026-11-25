@@ -502,20 +502,58 @@ Changing one side of a boundary is the most common way to break this repo.
   (package `app.hook.mobile` + the SHA-1 of the signing key) must exist in the
   same GCP project as the web client, or Google refuses to show the sheet; the
   server hands the client id to the app so nothing is baked into a build.
-- **New document directive (a new parser for Workspace Markdown):**
-  `packages/markdown/src/rules.ts` (one entry: `names`, `scope`, `element`,
-  `className`, `family`) → its class in `packages/ui/src/tokens.css` → a line in
-  `docs/document-markdown.md` (the reference `document_markdown` hands the model)
-  → nothing else. The live editor's decorations, the deletion repair, the
-  toolbar, `remark.ts` and every preview read the registry, so they cannot
-  drift; add a case to `parse.test.ts` and `remark.test.ts`, and a toolbar button
-  in `apps/workspace/src/components/DocumentEditor.tsx` only if a person needs to
-  reach it. The reference is part of the job: an undocumented rule is one no
-  agent will ever use. A rule must never map to `style`, to a handler or to raw HTML: raw
-  HTML is not parsed at all, which is what lets documents be shared without a
-  sanitizer. Never let the editor and the preview parse separately — both go
-  through `micromark`'s directive grammar, and a hand-rolled matcher for one
-  side is how a formatted run ends up looking different from the page.
+- **New document directive, or any new Markdown the documents draw:** the
+  dialect is **one registry, two renderers**, and "Markdown renders in a
+  document" means all of these, in this order. Walk the list; a construct that
+  skips one shows up somewhere as raw text.
+  1. `packages/markdown/src/rules.ts` — one entry: `names`, `scope`, `element`,
+     `className`, `family`, and `dir` for a block that only sets a direction.
+  2. `packages/markdown/src/remark.ts` — how the read view draws it: the element,
+     the class, extra attributes, or consuming the node (a metadata line is never
+     text). A construct the page draws as DOM that Markdown cannot express needs
+     a **rehype** stage instead, and that stage is listed once, in
+     `packages/markdown/src/math.ts` (`MATH_REHYPE`), because both renderers read
+     it.
+  3. `packages/markdown/src/parse.ts` — what the formatted editor sees. An inline
+     text run just needs the registry; a **replaced unit** (an image, a formula)
+     needs a `Construct` of `kind: "replace"` with its payload, and the payload
+     type in `live.ts`'s `LiveOptions` (`image`, `math`, …).
+  4. `packages/markdown/src/live.ts` — decorations (which markers are hidden,
+     which runs are styled), the widget hook for a replaced unit, the
+     **viewport/selection rule** (a formula shows its TeX while the caret is in
+     it or one character beside it, so it stays editable; its widget is not in
+     `hidden`, because hidden ranges are atomic and an atomic formula is one the
+     caret can only jump over; and the widget's CSS says
+     `pointer-events: none`, or the click selects the widget's own DOM and never
+     reaches the editor), and the deletion repair's unit list in
+     `repairTransaction` (`kind === "replace"` — a new replaced unit must join
+     it or Backspace will chew into it). A unit that can be opened for editing
+     (a formula) must then be *excluded* from that list while the caret touches
+     it: `touchesRange` is the one answer both the drawing and the repair read,
+     or Backspace deletes the whole formula you are typing into.
+  5. Any shared helper that both halves call, so they cannot disagree: `math.ts`
+     exports `proseMath`, and the page and the editor both use it to keep
+     "it costs $5 and $10" out of a formula.
+  6. `apps/workspace/src/components/DocumentEditor.tsx` — supply the widget
+     (`imageWidget`, `MathWidget`, `TableWidget`) and, only if a person needs to
+     reach the construct, a toolbar button. Its page-side class goes in
+     `packages/ui/src/tokens.css`; its editor-side class (`.cm-*`) in
+     `apps/workspace/src/styles/index.css`.
+  7. `docs/document-markdown.md` — the reference `document_markdown` hands the
+     model, enforced by `reference.test.ts`. An undocumented rule is one no agent
+     will ever use.
+  8. Tests: `parse.test.ts` (the editor's spans), `remark.test.ts` (the page's
+     HTML), `live.test.ts` (decorations, the widget, the caret).
+  9. The chat needs nothing: `packages/chat/src/Markdown.tsx` runs the same
+     plugins and `rehypePlugins`, so a reply draws what a page draws — but a
+     class that only looks right in a document needs its `.md` numbers in
+     `tokens.css`, and a 380px check in `dock.css` plus `mobile.css`.
+
+  A rule must never map to `style`, to a handler or to raw HTML: raw HTML is not
+  parsed at all, which is what lets documents be shared without a sanitizer.
+  Never let the editor and the preview parse separately — both go through
+  `micromark`'s grammar, and a hand-rolled matcher for one side is how a
+  formatted run ends up looking different from the page.
 - **Formatted-editor editing rule (deletion, the caret):** inline markup is
   invisible, so an edit must never change it — `repairTransaction` in
   `packages/markdown/src/live.ts` puts the markers back around whatever survived

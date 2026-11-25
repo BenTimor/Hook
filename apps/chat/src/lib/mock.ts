@@ -79,7 +79,19 @@ const DEMO_REPLY = `A few directions worth exploring:
 - **Hairline separation** — a single 1px rule instead of drop shadows reads calmer.
 - **Sticky active state** — the active row keeps a soft white plate, everything else stays flat.
 
-I'd start with the rail, then add depth only where something is interactive.`;
+I'd start with the rail, then add depth only where something is interactive.
+
+:::tip[One trap]
+A backdrop filter on a :red[scrolling] container repaints every frame. Keep it on the rail, and key the rest to :kbd[hover].
+:::
+
+For the maths, the blur radius in CSS pixels against the sheet's own width is $\\sigma = w / 28$, and the cost of the whole surface is:
+
+$$
+C = n \\cdot \\sigma^2 \\cdot 4 \\, \\text{bytes per pixel}
+$$
+
+So halving the rail's height is worth more than any other change.`;
 
 function msg(role: "user" | "assistant", content: string, at: number): Message {
   return { id: id("m"), role, content, createdAt: at, status: "complete" };
@@ -1452,7 +1464,9 @@ export const mock = {
           projectId: "prj_demo",
           title: "Release checklist",
           // The whole dialect, so the panel can be looked at without a backend.
+          // The right-to-left demo carries its direction in the Markdown.
           markdown: [
+            ...(demo === "document-rtl" ? ["::meta{direction=rtl}"] : []),
             "# Release checklist",
             "",
             "Everything that has to ship before **Friday**.",
@@ -1474,7 +1488,6 @@ export const mock = {
             "",
             "Run `pnpm release` once the page is :underline[approved] and the notes are :kbd[Ctrl+S] saved.",
           ].join("\n"),
-          direction: demo === "document-rtl" ? "rtl" : "ltr",
           rev: 3,
           updatedAt: Date.now(),
         },

@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Dialog, TextFieldDialog } from "@hook/ui";
-import { applyRule, linkAt, livePreview, ruleFor, wrapCallout, type Rule } from "@hook/markdown";
+import {
+  applyRule,
+  documentDirection,
+  linkAt,
+  livePreview,
+  renderMath,
+  ruleFor,
+  toggleDirection,
+  wrapBlock,
+  type Rule,
+  type TextDirection,
+} from "@hook/markdown";
 import {
   Annotation,
   Compartment,
@@ -26,7 +37,6 @@ import { ArrowLeftRight, Bold, Italic, Underline, Highlighter, Heading1, Heading
 
 import { openExternal } from "../lib/bridge";
 import { documentImageSource, embedDocumentImage } from "../lib/documentImages";
-import type { TextDirection } from "../lib/types";
 
 /**
  * The document editor.
@@ -68,8 +78,6 @@ export function DocumentEditor({
   document,
   raw,
   readOnly,
-  direction = "ltr",
-  onDirectionChange,
   forceSave = 0,
   onChange,
   onSave,
@@ -78,8 +86,6 @@ export function DocumentEditor({
   document: { id: string; markdown?: string };
   raw: boolean;
   readOnly: boolean;
-  direction?: TextDirection;
-  onDirectionChange?: (direction: TextDirection) => void;
   /** Increment to save the current buffer now (used after a conflict choice). */
   forceSave?: number;
   onChange: (dirty: boolean) => void;
@@ -87,6 +93,9 @@ export function DocumentEditor({
   compact?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
+  // The document's own text direction, from its `::meta{direction=…}` line: it
+  // is part of the Markdown, so it is saved with it and needs no column.
+  const [direction, setDirection] = useState<TextDirection>("ltr");
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
   const [imageAlt, setImageAlt] = useState("");
@@ -106,23 +115,9 @@ export function DocumentEditor({
   const saveRef = useRef(onSave);
   const changeRef = useRef(onChange);
   const directionRef = useRef(direction);
-  const directionChangeRef = useRef(onDirectionChange);
   saveRef.current = onSave;
   changeRef.current = onChange;
   directionRef.current = direction;
-  directionChangeRef.current = onDirectionChange;
-
-  const setDirection = (next: TextDirection) => {
-    if (!directionChangeRef.current || directionRef.current === next) return;
-    directionRef.current = next;
-    directionChangeRef.current(next);
-  };
-
-  const toggleDirection = () => {
-    if (!directionChangeRef.current) return false;
-    setDirection(directionRef.current === "rtl" ? "ltr" : "rtl");
-    return true;
-  };
 
   // A document swap replaces the whole state; the same document re-rendering
   // must not reset the cursor.
@@ -215,6 +210,10 @@ export function DocumentEditor({
           }
           if (update.docChanged) changeRef.current(true);
           if (update.docChanged) schedule(update.state.doc.toString());
+          // An undo, or a paste carrying a metadata line, can change the
+          // document's direction under the editor; follow it.
+          const next = documentDirection(update.state);
+          if (next !== directionRef.current) setDirection(next);
         }),
         EditorView.theme({
           "&": { height: "100%", fontSize: "15px" },
@@ -235,6 +234,9 @@ export function DocumentEditor({
     });
     const instance = new EditorView({ state, parent: host.current });
     view.current = instance;
+    // A document swap brings its own direction with it.
+    directionRef.current = documentDirection(state);
+    setDirection(directionRef.current);
     return () => {
       if (compact && scheduleTimer.current !== null) {
         window.clearTimeout(scheduleTimer.current);
@@ -391,16 +393,19 @@ export function DocumentEditor({
           <button
             type="button"
             className="ws-editor-tool ws-editor-direction"
-            aria-label={direction === "rtl" ? "Switch to left-to-right text" : "Switch to right-to-left text"}
+            aria-label={direction === "rtl" ? "Right-to-left document" : "Left-to-right document"}
             title={
               direction === "rtl"
-                ? "Right-to-left · Click to switch to left-to-right"
-                : "Left-to-right · Click to switch to right-to-left"
+                ? "Right-to-left document · select text to mark a passage left-to-right"
+                : "Left-to-right document · select text to mark a passage right-to-left"
             }
-            disabled={readOnly || !onDirectionChange}
+            disabled={readOnly}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
-              if (toggleDirection()) view.current?.focus();
+              const editor = view.current;
+              if (!editor) return;
+              editor.dispatch(toggleDirection(editor.state));
+              editor.focus();
             }}
           >
             <ArrowLeftRight aria-hidden="true" />
@@ -582,6 +587,38 @@ class DocumentImageWidget extends WidgetType {
 }
 
 /** A hand-written `:::note` with no label still needs a heading to show. */
+/**
+ * A formula in the formatted editor: the maths the page draws, as a widget, so
+ * writing a document with `$x^2$` in it does not mean looking at TeX until a
+ * preview is opened. The TeX shows instead while the caret is inside the run
+ * (`live.ts` decides), so it can always be edited by hand.
+ */
+class MathWidget extends WidgetType {
+  constructor(
+    readonly tex: string,
+    readonly display: boolean,
+  ) {
+    super();
+  }
+
+  eq(other: MathWidget) {
+    return other.tex === this.tex && other.display === this.display;
+  }
+
+  toDOM() {
+    const html = renderMath(this.tex, this.display);
+    const element = document.createElement(this.display ? "div" : "span");
+    element.className = this.display ? "cm-math-widget cm-math-display" : "cm-math-widget";
+    if (html) element.innerHTML = html;
+    else element.textContent = this.display ? `$$${this.tex}$$` : `$${this.tex}$`;
+    return element;
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
 class CalloutTitleWidget extends WidgetType {
   constructor(readonly label: string) { super(); }
   eq(other: CalloutTitleWidget) { return this.label === other.label; }
@@ -739,6 +776,7 @@ const tablePreview = StateField.define<DecorationSet>({
 const formattedExtensions = [
   livePreview({
     image: imageWidget,
+    math: (math) => new MathWidget(math.tex, math.display),
     calloutTitle: (rule) => new CalloutTitleWidget(rule.defaultLabel ?? ""),
   }),
   tablePreview,
@@ -793,7 +831,7 @@ function insertCallout(editor: EditorView): boolean {
   if (editor.state.readOnly) return false;
   const rule = ruleFor("note", "block");
   if (!rule) return false;
-  editor.dispatch(wrapCallout(editor.state, rule));
+  editor.dispatch(wrapBlock(editor.state, rule));
   return true;
 }
 

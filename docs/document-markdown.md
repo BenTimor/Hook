@@ -11,7 +11,8 @@ or the same word on a fenced line, `:::note[Title]`.
 
 The formatted editor and every read view (the Workspace window, the chat side
 panel, the phone sheet) parse this file with the same rules, so what you write is
-what the reader sees.
+what the reader sees. A chat reply in Hook uses the same dialect: a callout, a
+colour or a key in an answer draws exactly as it does on a page.
 
 **Raw HTML is never parsed.** `.md`-style HTML is not a second language here: a
 document cannot contain elements, and `<u>x</u>` is shown as the text it is. Never
@@ -92,6 +93,70 @@ Run the build first.
 ::::
 ````
 
+## Math
+
+LaTeX, as everyone already writes it. `$x^2 + y^2 = r^2$` in a sentence, and
+`$$` on lines of its own for a formula that gets a line:
+
+```markdown
+The area is $\pi r^2$, so the radius is $\sqrt{A/\pi}$.
+
+$$
+\int_0^1 x^2 \, dx = \tfrac{1}{3}
+$$
+```
+
+A fraction can be written the short way: `$1/2$` and `$\frac{1}{2}$` are the
+same, and so are `$x^2/y$`, `$(a+b)/(c+d)$` and `$1/(2x)$`. The slash is only
+read as a fraction where both sides are unambiguous — a number, a word, a group —
+so `\sqrt{2}/2` is left exactly as written, and text in `\text{…}` (`\text{km/h}`)
+and the arguments of `\href{…}` never change.
+
+It renders as MathML in the read view — every surface, no stylesheet, no fonts.
+The formatted editor draws it too, and turns it back into the TeX the moment the
+caret is in it or beside it, because the thing you edit is the formula's source:
+click a formula and it opens; type in it and you are typing TeX. A `$…$` that is plainly prose — a space, a word, and no TeX in it — is
+left as the text it is, so "it costs $5 and the other costs $10" keeps its
+dollars instead of becoming an equation. A formula that does not parse stays on the page as the TeX that was
+written, in red, so nothing is ever lost silently. Math is left to right even
+inside `:::rtl`, as it should be.
+
+## Text direction
+
+A document reads left to right unless it says otherwise. Two directives say so,
+and neither one is ever drawn.
+
+**The whole document** is a metadata line at the very top:
+
+```markdown
+::meta{direction=rtl}
+# שלום
+
+Everything below reads right to left.
+```
+
+- `rtl` for Hebrew, Arabic and similar; `ltr` for everything else.
+- The line has to be the first line of the document. It is invisible in the read
+  view and in the formatted editor, and the caret never lands on it.
+- A document with no such line, or with `::meta{direction=ltr}`, is left to
+  right. Every document written before this line existed is left to right too.
+
+**One passage** is fenced, the way a callout is:
+
+````markdown
+An English document quoting Hebrew:
+
+:::rtl
+שלום, עולם
+:::
+````
+
+- `:::rtl` … `:::` flips the lines it holds; `:::ltr` … `:::` flips them back
+  inside a right-to-left document.
+- A direction fence is not a box: it draws nothing of its own.
+- Code is left to right wherever it sits, a fenced block inside `:::rtl`
+  included.
+
 ## Where the syntax works
 
 - Inline rules work anywhere text does: paragraphs, headings, list items, table
@@ -155,11 +220,11 @@ These are properties of the document, not words in the text. Set them with the
 `workspace_documents` tool:
 
 - **title** — the name in the tree, separate from the first heading.
-- **direction** — `ltr` or `rtl`, for the whole document, when the user writes
-  Hebrew, Arabic or another right-to-left language. Tables, lists, quotes and
-  callouts flip with it; there is no per-paragraph direction.
 - **baseRev** — on an update, the revision you read. A stale one is refused and
   the current copy comes back so the change can be re-applied.
+
+Direction is not one of these: it is the `::meta{direction=…}` line in the text
+(see Text direction), so the Markdown alone says how a document reads.
 
 ## A whole document
 

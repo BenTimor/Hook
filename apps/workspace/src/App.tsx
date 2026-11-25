@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlignLeft, AlignRight, ArrowLeft, Check, Code2, MessageCircleMore, MoreHorizontal, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, Code2, MessageCircleMore, MoreHorizontal, Trash2, X } from "lucide-react";
 import {
   SignInCard,
   TextFieldDialog,
@@ -11,7 +11,7 @@ import { ChatDock } from "@hook/chat";
 import { api, onAuthEvent, openExternal, type AuthView } from "./lib/bridge";
 import { chatTransport, setChatContext } from "./lib/chatTransport";
 import { rememberOpened } from "./lib/projectShortcuts";
-import type { DocumentMeta, TextDirection } from "./lib/types";
+import type { DocumentMeta } from "./lib/types";
 import { useWorkspaceStore } from "./store/useWorkspaceStore";
 import { BoardPage, TaskPanel } from "./components/BoardView";
 import { DocumentEditor } from "./components/DocumentEditor";
@@ -399,7 +399,6 @@ function DocumentPage({
   const [dirty, setDirty] = useState(false);
   const [conflict, setConflict] = useState<DocumentMeta | null>(null);
   const [title, setTitle] = useState("");
-  const [direction, setDirection] = useState<TextDirection>("ltr");
   const [epoch, setEpoch] = useState(0);
   const [forceSave, setForceSave] = useState(0);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -444,7 +443,6 @@ function DocumentPage({
       baseRev.current = document.rev;
       setLoaded(document);
       setTitle(document.title);
-      setDirection(document.direction === "rtl" ? "rtl" : "ltr");
     });
     return () => {
       alive = false;
@@ -457,23 +455,11 @@ function DocumentPage({
     setTitle(meta.title);
   }, [meta?.title]);
 
-  useEffect(() => {
-    if (meta?.direction !== "ltr" && meta?.direction !== "rtl") return;
-    setDirection(meta.direction);
-  }, [meta?.direction]);
-
   if (!loaded) {
     return <section className="ws-empty">Opening…</section>;
   }
 
   const readOnly = project.role === "viewer";
-
-  const changeDirection = (next: TextDirection) => {
-    setDirection(next);
-    setLoaded((current) => (current ? { ...current, direction: next } : current));
-    setOptionsOpen(false);
-    void saveDocument(id, { direction: next });
-  };
 
   return (
     <div className="ws-document">
@@ -482,7 +468,7 @@ function DocumentPage({
           <span className="ws-page-kicker">Document</span>
           <input
             className="ws-document-title"
-            dir={direction}
+            dir="auto"
             value={title}
             readOnly={readOnly}
             onChange={(event) => setTitle(event.target.value)}
@@ -512,31 +498,6 @@ function DocumentPage({
               <button type="button" className="ws-document-option" onClick={() => { setRaw(!raw); setOptionsOpen(false); }}>
                 <Code2 aria-hidden="true" />
                 <span><strong>{raw ? "Back to document" : readOnly ? "View Markdown" : "Edit Markdown"}</strong><small>{raw ? "Return to the formatted document" : readOnly ? "View the source" : "View and edit the source"}</small></span>
-              </button>
-              <div className="ws-document-options-heading">Text direction</div>
-              <button
-                type="button"
-                className="ws-document-option"
-                data-active={direction === "ltr"}
-                aria-pressed={direction === "ltr"}
-                disabled={readOnly}
-                onClick={() => changeDirection("ltr")}
-              >
-                <AlignLeft aria-hidden="true" />
-                <span><strong>Left to right</strong><small>English and most languages</small></span>
-                {direction === "ltr" ? <Check className="ws-document-option-check" aria-hidden="true" /> : null}
-              </button>
-              <button
-                type="button"
-                className="ws-document-option"
-                data-active={direction === "rtl"}
-                aria-pressed={direction === "rtl"}
-                disabled={readOnly}
-                onClick={() => changeDirection("rtl")}
-              >
-                <AlignRight aria-hidden="true" />
-                <span><strong>Right to left</strong><small>Hebrew, Arabic and similar</small></span>
-                {direction === "rtl" ? <Check className="ws-document-option-check" aria-hidden="true" /> : null}
               </button>
               {!readOnly && (
                 <>
@@ -592,8 +553,6 @@ function DocumentPage({
         document={loaded}
         raw={raw}
         readOnly={readOnly}
-        direction={direction}
-        onDirectionChange={changeDirection}
         forceSave={forceSave}
         onChange={setDirty}
         onSave={async (markdown) => {

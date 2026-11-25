@@ -2,13 +2,48 @@ import { memo, useMemo, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import {
+  documentBreaks,
+  documentDirectives,
+  MATH_REHYPE,
+  mathFractions,
+  mathProse,
+  remarkDirective,
+  remarkMath,
+} from "@hook/markdown";
+
 import { openExternal } from "./open";
 import { CodeBlock } from "./CodeBlock";
 
+/**
+ * What Hook said, drawn in the document dialect.
+ *
+ * A reply is the same Markdown a Hook Workspace document is, so it goes
+ * through the same three plugins: `:red[…]`, `:mark[…]`, `:kbd[…]` and a
+ * `:::warning[…]` callout draw exactly as they do on a page, and a single
+ * newline is a line break rather than the space CommonMark prints (the dialect
+ * `docs/document-markdown.md` gives the model), and `$x^2$` is LaTeX. Only a
+ * reply goes through here:
+ * what the user typed is drawn as the text it is.
+ */
 interface Props {
   content: string;
   streaming?: boolean;
 }
+
+/** The dialect's own plugins, in the order the read view uses them. */
+const remarkPlugins = [
+  remarkGfm,
+  remarkDirective,
+  remarkMath,
+  mathProse as never,
+  mathFractions as never,
+  documentDirectives as never,
+  documentBreaks as never,
+];
+
+/** MathML, so a formula needs no stylesheet and no fonts in a bubble either. */
+const rehypePlugins = MATH_REHYPE as never;
 
 function MarkdownImpl({ content, streaming = false }: Props) {
   const components = useMemo<Components>(() => {
@@ -51,7 +86,11 @@ function MarkdownImpl({ content, streaming = false }: Props) {
 
   return (
     <div className="md" data-streaming={streaming ? "true" : "false"}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins as never}
+        rehypePlugins={rehypePlugins}
+        components={components}
+      >
         {content}
       </ReactMarkdown>
     </div>

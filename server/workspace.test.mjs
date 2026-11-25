@@ -817,32 +817,33 @@ test("a stale document write is refused and the current copy comes back", async 
   assert.ok(list.body.documents[0].bytes > 0);
 });
 
-test("a document stores its text direction", async (t) => {
+test("a document's direction is its Markdown, not a column", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);
+  // Direction lives in the document's own `::meta{direction=rtl}` line, so a
+  // stray field is neither stored nor echoed: the text is the whole story.
   const created = await request(`/projects/${project.id}/documents`, {
     method: "POST",
-    body: { title: "מימין לשמאל", markdown: "# שלום\n", direction: "rtl" },
+    body: {
+      title: "מימין לשמאל",
+      markdown: "::meta{direction=rtl}\n# שלום\n",
+      direction: "rtl",
+    },
   });
   assert.equal(created.status, 201);
-  assert.equal(created.body.document.direction, "rtl");
+  assert.equal(created.body.document.direction, undefined);
+  assert.match(created.body.document.markdown, /::meta\{direction=rtl\}/);
 
   const documentId = created.body.document.id;
   const list = await request(`/projects/${project.id}/documents`);
-  assert.equal(list.body.documents[0].direction, "rtl");
+  assert.equal(list.body.documents[0].direction, undefined);
 
   const changed = await request(`/documents/${documentId}`, {
     method: "PATCH",
-    body: { direction: "ltr" },
-  });
-  assert.equal(changed.status, 200);
-  assert.equal(changed.body.document.direction, "ltr");
-
-  const invalid = await request(`/documents/${documentId}`, {
-    method: "PATCH",
     body: { direction: "sideways" },
   });
-  assert.equal(invalid.status, 400);
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.document.direction, undefined);
 });
 
 test("roadmaps hold milestones with their date, status and description", async (t) => {

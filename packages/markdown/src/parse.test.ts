@@ -189,3 +189,15 @@ test("an excerpt drops markup but keeps words", () => {
   assert.equal(firstLine("- [ ] a :red[task]"), "a task");
   assert.equal(firstLine("\n\n> quoted *line*"), "quoted line");
 });
+
+test("an excerpt skips the metadata line", () => {
+  assert.equal(firstLine("::meta{direction=rtl}\n# שלום"), "שלום");
+  assert.equal(firstLine("::meta{direction=rtl}"), "");
+});
+
+test("a direction block is a block rule with a direction", () => {
+  const [block] = blockConstructs(":::rtl\nx\n:::");
+  assert.equal(block.name, "rtl");
+  assert.equal(block.rule.dir, "rtl");
+  assert.equal(block.rule.className, "hook-dir hook-dir-rtl");
+});

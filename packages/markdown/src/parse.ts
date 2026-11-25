@@ -3,8 +3,12 @@ import { gfm } from "micromark-extension-gfm";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { directive } from "micromark-extension-directive";
 import { directiveFromMarkdown } from "mdast-util-directive";
+import { math as mathSyntax } from "micromark-extension-math";
+import { mathFromMarkdown } from "mdast-util-math";
 
+import { proseMath } from "./math.ts";
 import { ruleFor, type Rule } from "./rules.ts";
+import { isMetaLine } from "./meta.ts";
 
 /**
  * The one parser of the dialect.
@@ -24,7 +28,7 @@ export interface MdastNode {
   url?: string;
   alt?: string | null;
   children?: MdastNode[];
-  position?: { start: { offset?: number }; end: { offset?: number } };
+  position?: { start: { offset?: number; line?: number }; end: { offset?: number } };
   /* unist's `Data` has no index signature, so this is the only shape that accepts it */
   data?: any;
 }
@@ -46,12 +50,14 @@ export interface Construct {
   href?: string;
   /** An image's source and description. */
   image?: { src: string; alt: string };
+  /** A formula's TeX, and whether it was written to stand on its own line. */
+  math?: { tex: string; display: boolean };
 }
 
 export function readTree(text: string): MdastNode {
   return fromMarkdown(text, {
-    extensions: [gfm(), directive()],
-    mdastExtensions: [gfmFromMarkdown(), directiveFromMarkdown()],
+    extensions: [gfm(), directive(), mathSyntax()],
+    mdastExtensions: [gfmFromMarkdown(), directiveFromMarkdown(), mathFromMarkdown()],
   }) as unknown as MdastNode;
 }
 
@@ -126,6 +132,22 @@ function visit(node: MdastNode, out: Construct[], text: string) {
         image: { src: node.url ?? "", alt: node.alt ?? "" },
       });
       return;
+    case "inlineMath":
+    case "math": {
+      // A formula is a unit like a picture: the editor draws the maths, or the
+      // TeX when the caret is in it, and the whole run deletes as one thing.
+      // Prose with dollars in it is prose here too, exactly as on the page.
+      if (node.type === "inlineMath" && proseMath(node.value ?? "")) return;
+      out.push({
+        from,
+        to,
+        openTo: from,
+        closeFrom: to,
+        kind: "replace",
+        math: { tex: node.value ?? "", display: node.type === "math" },
+      });
+      return;
+    }
     case "textDirective": {
       const rule = ruleFor(node.name, "inline");
       // An unknown name, an empty label or a block word in a sentence stays
@@ -153,7 +175,7 @@ function webAddress(destination: string | undefined): string | undefined {
 
 // ── Blocks ───────────────────────────────────────────────────────────────────
 
-/** A callout as the document's own tree sees it. The live editor must agree. */
+/** A block as the document's own tree sees it. The live editor must agree. */
 export interface DocumentBlock {
   name: string;
   rule: Rule;
@@ -218,6 +240,8 @@ const DIRECTIVE_LABEL = /:([A-Za-z][\w-]*)\[([^\]\n]*)\]/g;
 function stripLine(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
+  // The metadata line is the document's setting, never something to read.
+  if (isMetaLine(trimmed)) return "";
   // A fence line names no body: its label is the best line to show.
   if (trimmed.startsWith(":::")) {
     return (/^:{3,}[A-Za-z][\w-]*\[([^\]\n]*)\]/.exec(trimmed)?.[1] ?? "").trim();

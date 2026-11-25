@@ -8,6 +8,7 @@ import remarkDirective from "remark-directive";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 
+import { MATH_REHYPE, mathFractions, mathProse, remarkMath } from "./math.ts";
 import { documentBreaks, documentDirectives } from "./remark.ts";
 
 /**
@@ -16,15 +17,22 @@ import { documentBreaks, documentDirectives } from "./remark.ts";
  * about the tree a document becomes, which is what "it renders properly" means.
  */
 async function render(markdown: string): Promise<string> {
-  const file = await unified()
+  let pipeline = unified()
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkDirective)
+    .use(remarkMath)
+    .use(mathProse)
+    .use(mathFractions)
     .use(documentDirectives)
     .use(documentBreaks)
-    .use(remarkRehype)
-    .use(rehypeStringify)
-    .process(markdown);
+    .use(remarkRehype);
+  // `use` wants the plugin and its options separately, and the shared constant
+  // pairs them, so this pipeline never drifts from the read view's.
+  for (const [plugin, options] of MATH_REHYPE) {
+    pipeline = pipeline.use(plugin, options);
+  }
+  const file = await pipeline.use(rehypeStringify).process(markdown);
   return String(file);
 }
 
@@ -119,4 +127,68 @@ test("a colon-only line inside a code fence still closes the callout", async () 
   assert.equal(html.match(/hook-callout-note/g)?.length, 1);
   const safe = await render("::::note[Fenced]\n```\n:::\n```\nAfter.\n::::");
   assert.match(safe, /<p>After.<\/p>/);
+});
+
+test("the metadata line is the document's setting, not its text", async () => {
+  assert.equal(await render("::meta{direction=rtl}\ntext"), "<p>text</p>");
+  // Only the top line: below it, the word is unregistered and reads as typed.
+  assert.match(await render("text\n\n::meta{direction=rtl}"), /::meta\{direction=rtl\}/);
+});
+
+test("a direction wrapper carries dir and no heading", async () => {
+  assert.equal(
+    await render(":::rtl\nשלום\n:::"),
+    '<div class="hook-dir hook-dir-rtl" dir="rtl"><p>שלום</p></div>',
+  );
+  assert.equal(
+    await render(":::ltr\nhello\n:::"),
+    '<div class="hook-dir hook-dir-ltr" dir="ltr"><p>hello</p></div>',
+  );
+});
+
+test("a direction wrapper is not a callout and holds any block", async () => {
+  const html = await render(":::rtl\n# Title\n\n- a :mark[b]\n:::");
+  assert.doesNotMatch(html, /hook-callout/);
+  assert.match(html, /<h1>Title<\/h1>/);
+  assert.match(html, /<mark class="hook-mark">b<\/mark>/);
+});
+
+test("math is LaTeX, and it renders as MathML", async () => {
+  const html = await render(String.raw`The area is $\pi r^2$, so $x^2$ grows.`);
+  assert.match(html, /<math/);
+  assert.match(html, /<msup>/);
+  assert.doesNotMatch(html, /katex-error/);
+});
+
+test("a display formula gets a block of its own", async () => {
+  const html = await render(String.raw`$$
+\int_0^1 x^2 \, dx = \tfrac{1}{3}
+$$`);
+  assert.match(html, /<math[^>]*display="block"/);
+});
+
+test("a price is not a formula", async () => {
+  const html = await render("It costs $5 and the other costs $10.");
+  assert.doesNotMatch(html, /<math/);
+  assert.match(html, /\$5 and the other costs \$10\./);
+});
+
+test("a formula that does not parse keeps the TeX on the page", async () => {
+  const html = await render(String.raw`broken: $\frac{1$ here`);
+  assert.match(html, /katex-error/);
+});
+
+test("a formula stays a formula, in any language", async () => {
+  assert.match(await render(String.raw`$x = 5$ and $\pi r^2$`), /<math/);
+  // A price in Hebrew is still a price: the content is words, not TeX.
+  assert.doesNotMatch(await render(String.raw`המחיר $5 והשני $10`), /<math/);
+});
+
+test("a slash is a fraction, and \\frac is the same thing", async () => {
+  const slash = await render(String.raw`the cost is $w / 28$ a pixel`);
+  const frac = await render(String.raw`the cost is $\frac{w}{28}$ a pixel`);
+  // MathML is identical except for the TeX KaTeX keeps in <annotation>.
+  const strip = (html: string) => html.replace(/<annotation[^>]*>[^<]*<\/annotation>/, "");
+  assert.match(slash, /<mfrac>/);
+  assert.equal(strip(slash), strip(frac));
 });

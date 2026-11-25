@@ -14,6 +14,7 @@ import { useChatStore } from "../store/useChatStore";
 import {
   ReportContentDialog,
   WorkspacePreview,
+  previewDirection,
   reportableFrom,
 } from "@hook/chat";
 
@@ -203,7 +204,7 @@ export function PreviewPanel() {
               title={shown.title}
               // A right-to-left document reads right to left from its title on.
               dir={
-                kind === "document" && shown.document?.direction === "rtl"
+                kind === "document" && shown.document && previewDirection(shown.document) === "rtl"
                   ? "rtl"
                   : undefined
               }

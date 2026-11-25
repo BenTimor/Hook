@@ -3,8 +3,20 @@ import assert from "node:assert/strict";
 
 import { EditorState } from "@codemirror/state";
 import { history, undo } from "@codemirror/commands";
+import { WidgetType } from "@codemirror/view";
 
-import { applyRule, decorationsFor, repairTransaction, settle, settleSelection, wrapCallout } from "./live.ts";
+import {
+  applyRule,
+  decorationsFor,
+  documentDirection,
+  protectMeta,
+  repairTransaction,
+  setDocumentDirection,
+  settle,
+  settleSelection,
+  toggleDirection,
+  wrapBlock,
+} from "./live.ts";
 import { ruleFor } from "./rules.ts";
 
 type Range = { from: number; to: number; className?: string };
@@ -61,6 +73,42 @@ function remove(
     extensions: [EditorState.transactionFilter.of(repairTransaction), history()],
   });
   return state.update({ changes: { from, to }, userEvent }).state.doc.toString();
+}
+
+/** An ordinary edit, through the same filters the formatted editor installs. */
+function write(
+  doc: string,
+  change: { from: number; to?: number; insert?: string },
+  userEvent = "input.type",
+  caret = change.to ?? change.from,
+): string {
+  const state = EditorState.create({
+    doc,
+    selection: { anchor: caret },
+    extensions: [
+      EditorState.transactionFilter.of((transaction) => repairTransaction(transaction)),
+      EditorState.transactionFilter.of((transaction) => protectMeta(transaction)),
+    ],
+  });
+  return state.update({
+    changes: { from: change.from, to: change.to ?? change.from, insert: change.insert },
+    userEvent,
+  }).state.doc.toString();
+}
+
+/** The `dir` each line carries, from the line decorations. */
+function lineDirections(state: EditorState): Map<number, string> {
+  const directions = new Map<number, string>();
+  const { all } = decorationsFor(state, [{ from: 0, to: state.doc.length }]);
+  for (let number = 1; number <= state.doc.lines; number += 1) {
+    const line = state.doc.line(number);
+    all.between(line.from, line.to || line.from + 1, (from, to, decoration) => {
+      if (from !== to || from !== line.from) return;
+      const dir = (decoration.spec.attributes as Record<string, string> | undefined)?.dir;
+      if (dir) directions.set(number, dir);
+    });
+  }
+  return directions;
 }
 
 // ── Decorations ──────────────────────────────────────────────────────────────
@@ -316,7 +364,225 @@ test("a rule applies to a bare cursor", () => {
 test("the callout button fences the selection as the body", () => {
   const text = "one\ntwo";
   const state = stateFor(text, 0, text.length);
-  const next = state.update(wrapCallout(state, ruleFor("tip", "block")!)).state;
+  const next = state.update(wrapBlock(state, ruleFor("tip", "block")!)).state;
   assert.equal(next.doc.toString(), ":::tip[Tip]\none\ntwo\n:::");
   assert.equal(next.sliceDoc(next.selection.main.from, next.selection.main.to), "Tip");
+});
+
+// ── The metadata line ────────────────────────────────────────────────────────
+
+const META = "::meta{direction=rtl}";
+const RTL_DOC = `${META}\nhello`;
+
+test("the metadata line is hidden and takes no caret stop", () => {
+  const state = stateFor(RTL_DOC, 0);
+  const covered = hidden(state).map((range) => RTL_DOC.slice(range.from, range.to));
+  assert.ok(covered.includes(META), "the line itself is not drawn");
+  assert.match(lineClasses(state).get(1) ?? "", /cm-meta/);
+  // The document really starts on the line under it.
+  assert.equal(settle(state, 0, 5), META.length + 1);
+  assert.equal(settle(state, 0, 0), META.length + 1);
+});
+
+test("typing at the very start happens under the metadata line", () => {
+  assert.equal(write(RTL_DOC, { from: 0, insert: "x" }), `${META}\nxhello`);
+  // A document that is nothing but the line still gets a line to type on.
+  assert.equal(write(META, { from: 0, insert: "x" }), `${META}\nx`);
+});
+
+test("deleting next to the metadata line never corrupts it", () => {
+  // Backspace at the start of the text aims at the break: nothing to delete.
+  assert.equal(write(RTL_DOC, { from: META.length, to: META.length + 1 }, "delete.backward"), RTL_DOC);
+  // A character after it goes as usual.
+  assert.equal(
+    write(RTL_DOC, { from: META.length + 1, to: META.length + 2 }, "delete.backward"),
+    `${META}\nello`,
+  );
+  // Select all and delete: the document's setting is not the user's to lose.
+  assert.equal(write(RTL_DOC, { from: 0, to: RTL_DOC.length }, "delete"), `${META}\n`);
+});
+
+test("undo and a paste are not steered away from the line", () => {
+  // Not a user typing event: a whole-document replacement lands as written.
+  assert.equal(write(RTL_DOC, { from: 0, to: RTL_DOC.length, insert: "# x" }, "undo"), "# x");
+});
+
+test("the direction button writes and removes the document's line", () => {
+  const state = stateFor("hello", 2);
+  assert.equal(documentDirection(state), "ltr");
+  const on = state.update(toggleDirection(state)).state;
+  assert.equal(on.doc.toString(), `${META}\nhello`);
+  assert.equal(documentDirection(on), "rtl");
+  // The caret follows its text below the new line.
+  assert.equal(on.selection.main.head, 2 + META.length + 1);
+  const off = on.update(toggleDirection(on)).state;
+  assert.equal(off.doc.toString(), "hello");
+  assert.equal(off.selection.main.head, 2);
+});
+
+test("the document's line is what the editor calls its direction", () => {
+  assert.equal(documentDirection(stateFor(RTL_DOC)), "rtl");
+  assert.equal(documentDirection(stateFor("hello")), "ltr");
+  const ltrLine = stateFor("::meta{direction=ltr}\nhello");
+  assert.equal(documentDirection(ltrLine), "ltr");
+  // A line that is not at the top is body text, not the setting.
+  assert.equal(documentDirection(stateFor(`hello\n${META}`)), "ltr");
+});
+
+test("setDocumentDirection leaves a written line alone when it already says so", () => {
+  const state = stateFor(`${META}\nhello`);
+  assert.equal(state.update(setDocumentDirection(state, "rtl")).state.doc.toString(), `${META}\nhello`);
+});
+
+// ── Direction wrappers ───────────────────────────────────────────────────────
+
+test("a direction wrapper flips its lines and draws no box", () => {
+  const text = "before\n:::rtl\nשלום\n:::\nafter";
+  const state = stateFor(text);
+  const classes = lineClasses(state);
+  assert.match(classes.get(2) ?? "", /cm-dir-head/);
+  assert.match(classes.get(3) ?? "", /cm-dir-body/);
+  assert.match(classes.get(4) ?? "", /cm-dir-close/);
+  assert.doesNotMatch(classes.get(3) ?? "", /cm-callout/);
+  const directions = lineDirections(state);
+  assert.equal(directions.get(3), "rtl");
+  assert.equal(directions.get(1), undefined);
+  assert.equal(directions.get(5), undefined);
+  // The fence markers are hidden; the word that names the direction is not.
+  const covered = hidden(state).map((range) => text.slice(range.from, range.to));
+  assert.ok(covered.includes(":::"));
+});
+
+test("a direction wrapper inside a document keeps the page's own direction", () => {
+  const text = `${META}\n:::ltr\nhello\n:::`;
+  assert.equal(documentDirection(stateFor(text)), "rtl");
+  assert.equal(lineDirections(stateFor(text)).get(3), "ltr");
+});
+
+test("the direction button fences the selection and the next press unwraps it", () => {
+  const text = "one\ntwo";
+  const state = stateFor(text, 0, text.length);
+  const wrapped = state.update(toggleDirection(state)).state;
+  assert.equal(wrapped.doc.toString(), ":::rtl\none\ntwo\n:::");
+  // The lines it wrapped stay selected: the passage is the subject.
+  assert.equal(wrapped.sliceDoc(wrapped.selection.main.from, wrapped.selection.main.to), "one\ntwo");
+  const back = wrapped.update(toggleDirection(wrapped)).state;
+  assert.equal(back.doc.toString(), text);
+});
+
+test("the fence follows the document's direction", () => {
+  const text = `${META}\none\ntwo`;
+  const state = stateFor(text, META.length + 1, text.length);
+  assert.equal(state.update(toggleDirection(state)).state.doc.toString(), `${META}\n:::ltr\none\ntwo\n:::`);
+});
+
+test("a caret inside a wrapper unwraps it instead of moving the page", () => {
+  const text = ":::rtl\none\ntwo\n:::";
+  const state = stateFor(text, 10);
+  assert.equal(state.update(toggleDirection(state)).state.doc.toString(), "one\ntwo");
+});
+
+test("the fences come off a wrapper inside a callout", () => {
+  const text = ":::note[Title]\n:::rtl\none\n:::\n:::";
+  const state = stateFor(text, 22);
+  assert.equal(
+    state.update(toggleDirection(state)).state.doc.toString(),
+    ":::note[Title]\none\n:::",
+  );
+});
+
+test("a fence around everything leaves the metadata line where it is", () => {
+  const text = `${META}\none\ntwo`;
+  const state = stateFor(text, 0, text.length);
+  assert.equal(
+    state.update(wrapBlock(state, ruleFor("rtl", "block")!)).state.doc.toString(),
+    `${META}\n:::rtl\none\ntwo\n:::`,
+  );
+});
+
+test("a replacement that covered the line does not bring a copy back", () => {
+  const text = `${META}\none\ntwo`;
+  const inserted = `${META}\n:::rtl\none\ntwo\n:::`;
+  assert.equal(write(text, { from: 0, to: text.length, insert: inserted }), inserted);
+});
+
+/** A stand-in for the editor's MathWidget: only its presence matters here. */
+class MathStub extends WidgetType {
+  toDOM() {
+    return document.createElement("span");
+  }
+}
+
+function maths(state: EditorState) {
+  const widgets: Range[] = [];
+  const marks: Range[] = [];
+  const { all } = decorationsFor(state, [{ from: 0, to: state.doc.length }], {
+    math: () => new MathStub(),
+  });
+  all.between(0, state.doc.length, (from, to, decoration) => {
+    if (decoration.spec?.widget) widgets.push({ from, to });
+    const className = typeof decoration.spec?.class === "string" ? decoration.spec.class : "";
+    if (className === "cm-math-source") marks.push({ from, to, className });
+  });
+  return { widgets, marks };
+}
+
+test("a formula is drawn while the caret is elsewhere", () => {
+  const state = EditorState.create({ doc: "before $x^2$ after" });
+  const { widgets, marks } = maths(state);
+  assert.equal(widgets.length, 1, "the formula is a widget");
+  assert.equal(marks.length, 0, "no source while it is not being edited");
+  assert.equal(state.doc.sliceString(widgets[0].from, widgets[0].to), "$x^2$");
+});
+
+test("a formula shows its TeX while the caret is inside it", () => {
+  const state = EditorState.create({ doc: "before $x^2$ after", selection: { anchor: 9 } });
+  const { widgets, marks } = maths(state);
+  assert.equal(widgets.length, 0, "the caret is in it, so the source shows");
+  assert.equal(marks.length, 1, "the source run is marked");
+});
+
+test("a formula shows its TeX when the caret only touches its edge", () => {
+  // `$x^2$` sits at 7..12: a caret just before or just after it counts.
+  for (const anchor of [6, 13]) {
+    const state = EditorState.create({ doc: "before $x^2$ after", selection: { anchor } });
+    const { widgets, marks } = maths(state);
+    assert.equal(widgets.length, 0, `caret at ${anchor} shows the source`);
+    assert.equal(marks.length, 1, `caret at ${anchor} marks the source`);
+  }
+});
+
+test("a drawn formula is not atomic, so the caret can step into it", () => {
+  const state = EditorState.create({ doc: "before $x^2$ after" });
+  const { hidden } = decorationsFor(state, [{ from: 0, to: state.doc.length }], {
+    math: () => new MathStub(),
+  });
+  const ranges: Range[] = [];
+  hidden.between(0, state.doc.length, (from, to) => {
+    ranges.push({ from, to });
+  });
+  assert.ok(
+    !ranges.some((range) => range.from === 7 && range.to === 12),
+    "the formula is not a hidden, atomic range",
+  );
+});
+
+test("a backspace inside a revealed formula takes one character", () => {
+  // `$x^2$` sits at 7..12; the caret is inside it, so the TeX is on screen and
+  // the keystroke is about one character, not the whole run.
+  const text = "before $x^2$ after";
+  assert.equal(remove(text, 10, 11, "delete.backward", 11), "before $x^$ after");
+  assert.equal(remove(text, 11, 12, "delete.backward", 12), "before $x^2 after");
+});
+
+test("deleting a drawn formula still removes the whole run", () => {
+  // The caret is well away from it: the formula is a picture-like unit.
+  const text = "before $x^2$ after";
+  assert.equal(remove(text, 7, 12, "delete", 5), "before  after");
+});
+
+test("a price is not a formula in the editor either", () => {
+  const state = EditorState.create({ doc: "it costs $5 and the rest $10" });
+  const { widgets } = maths(state);
+  assert.equal(widgets.length, 0);
 });

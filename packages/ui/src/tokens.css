@@ -555,6 +555,9 @@ textarea {
      document is read in a panel narrower than the window. */
   white-space: pre-wrap;
   overflow-wrap: break-word;
+  /* A sample is left to right wherever it sits, `:::rtl` included. */
+  direction: ltr;
+  text-align: left;
 }
 
 .hook-doc pre code {
@@ -569,7 +572,7 @@ textarea {
 }
 
 /* What the callout title is: a paragraph the dialect rewrote, at body size. */
-.hook-doc .hook-callout-title {
+.hook-callout-title {
   font-size: inherit;
   font-weight: 620;
   line-height: inherit;
@@ -625,6 +628,35 @@ textarea {
 .hook-callout-tip { border-inline-start-color: #4f7f5f; }
 .hook-callout-warning { border-inline-start-color: #b58a3a; }
 .hook-callout-danger { border-inline-start-color: var(--danger); }
+
+/* A direction wrapper is not a box: it carries `dir` and nothing else, so the
+   block it holds reads in the direction it names, in the page and in a reply. */
+.hook-dir { display: block; }
+
+/* A chat reply draws the same constructs, a size down and inside a column. The
+   classes are the dialect's; only the numbers are the chat surface's. */
+.md .hook-callout {
+  margin: 12px 0;
+  padding: 9px 12px 10px;
+  border-radius: 9px;
+}
+
+/* At the top or bottom of a reply the callout's margin is the message's gap,
+   and the thread already owns that. */
+.md > .hook-callout:first-child { margin-top: 0; }
+.md > .hook-callout:last-child { margin-bottom: 0; }
+
+.md .hook-callout-title {
+  margin: 0 0 5px;
+  font-weight: 620;
+}
+
+/* The reply's code block is the highlighted one, not `<pre>`: a sample stays
+   left to right even inside an RTL reply or a `:::rtl` wrapper. */
+.md .code-block {
+  direction: ltr;
+  text-align: left;
+}
 
 /* ── Code blocks ───────────────────────────────────────────────────────── */
 

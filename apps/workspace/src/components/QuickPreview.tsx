@@ -3,7 +3,7 @@ import { FileText, KanbanSquare } from "lucide-react";
 import { DocumentMarkdown } from "@hook/markdown";
 
 import { api } from "../lib/bridge";
-import type { Task, TextDirection } from "../lib/types";
+import type { Task } from "../lib/types";
 
 /** Load real content only when a tile comes into view; never change the open item. */
 export function QuickPreview({
@@ -20,7 +20,6 @@ export function QuickPreview({
   const [content, setContent] = useState<{
     text?: string;
     tasks?: Task[];
-    direction?: TextDirection;
   } | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -53,10 +52,7 @@ export function QuickPreview({
         ? api.tasks(id).then((result) => ({ tasks: result.tasks }))
         : api
             .document(id)
-            .then((result) => ({
-              text: result.document.markdown ?? "",
-              direction: result.document.direction,
-            }));
+            .then((result) => ({ text: result.document.markdown ?? "" }));
     void request
       .then((result) => {
         if (active) setContent(result);
@@ -91,10 +87,8 @@ export function QuickPreview({
           )}
         </div>
       ) : (
-        <div
-          className="ws-preview-document"
-          dir={content.direction === "rtl" ? "rtl" : "ltr"}
-        >
+        // The tile's direction is the document's own `::meta` line.
+        <div className="ws-preview-document">
           {content.text?.trim() ? (
             <DocumentMarkdown markdown={content.text} className="ws-quick-preview-md" />
           ) : <span className="ws-preview-placeholder">Empty document</span>}

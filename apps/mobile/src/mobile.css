@@ -410,6 +410,11 @@ body {
   line-height: 1.62;
 }
 
+/* The phone's reply keeps the page's callout, one step tighter. */
+.mobile-thread .md .hook-callout {
+  padding: 8px 11px 9px;
+}
+
 .mobile-thread .md pre {
   /* A wide code block scrolls inside the message instead of widening it. */
   max-width: calc(100vw - 64px);

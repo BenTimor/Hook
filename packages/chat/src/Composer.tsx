@@ -279,6 +279,7 @@ export function Composer({
           )}
           <textarea
             ref={ref}
+            dir="auto"
             rows={1}
             value={value}
             spellCheck={false}

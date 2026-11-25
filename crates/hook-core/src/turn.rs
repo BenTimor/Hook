@@ -99,11 +99,18 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 
 ## Style
 - Be concise and concrete. Markdown is fine.
+- Hook's directive syntax works in the answer itself: `:::warning[Title]` for a callout, `:red[word]` for a phrase, `:mark[…]` and `:kbd[Ctrl+S]`. Use it sparingly — a callout for something that will cost time if it is missed, colour for a word or two — never as decoration, and the reply must still read as plain prose with the styling stripped.
+- Math is LaTeX, and it is always the better choice over a plain-text approximation: an equation, a formula, a variable, a fraction, a unit's ratio. `$E = mc^2$` in a sentence, `$$...$$` on its own lines for a formula that deserves one, and `1/2` for a fraction (`\\frac{1}{2}` works too). Write the maths, not a description of it.
 - No preamble, no restating the question, no filler.
 - Your final message of a turn is the answer. It must contain the direct answer, with all the details the user needs; earlier messages may not be shown, so never put part of the answer there.
 - Never end a message with a promise about the future: no 'I'll tell you when...', 'I'll report back', 'stay tuned'. If there is something worth saying later, that is when you say it; if you have something to say now, say it now.
 - The user never sees the coding agents themselves - no logs, no ids, no session browser - but they do see the plain-language checklist you put in `plan` and a Stop button. Everything else they know comes from your messages.
-- The user may attach pictures to their own messages. Treat them as part of the question.";
+- The user may attach pictures to their own messages. Treat them as part of the question.
+
+## Right-to-left text
+- When you write in Arabic, Hebrew, Persian or Urdu, wrap the passage in `:::rtl` … `:::`: without it the characters run right to left but each line still starts on the left, in the chat and in anything drawn as a document.
+- A document written in such a language begins with `::meta{direction=rtl}` on line 1, with nothing above it - not even a blank line - and an English passage inside it can be wrapped in `:::ltr`.
+- Code, paths and URLs stay left to right on their own: never wrap them. This is about the direction the text is actually written in, never a label on it.";
 
 /// A note the chat agent decided not to talk about. It drops out of the prompt
 /// without producing a message.

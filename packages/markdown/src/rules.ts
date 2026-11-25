@@ -2,9 +2,11 @@
  * The document dialect: one registry, two renderers.
  *
  * An inline rule is a word typed between a colon and brackets — `:red[text]` —
- * and a block rule is the same word on a fenced line — `:::note[Title]`.
- * Adding a rule is the whole job: the live editor, the read-only renderer and
- * the toolbar all read this table, so a new parser cannot drift between them.
+ * and a block rule is the same word on a fenced line — `:::note[Title]`. A
+ * block rule may also only set a direction (`:::rtl`), which is why the entry
+ * can carry `dir` instead of a heading. Adding a rule is the whole job: the
+ * live editor, the read-only renderer, a chat reply and the toolbar all read
+ * this table, so a new parser cannot drift between them.
  *
  * Never map a rule to `style`, to a handler or to raw HTML. The read view draws
  * the element and the class below and nothing else, which is what lets documents
@@ -25,6 +27,11 @@ export interface Rule {
   family: string;
   /** Heading of a block that carries no label. */
   defaultLabel?: string;
+  /**
+   * A block that sets the text direction of what it wraps, instead of drawing
+   * a box. It carries `dir` on the read view and no heading: `:::rtl` … `:::`.
+   */
+  dir?: "ltr" | "rtl";
 }
 
 const COLORS: Rule[] = ["red", "green", "blue", "purple"].map((name) => ({
@@ -42,6 +49,8 @@ const CALLOUTS = [
   { name: "danger", label: "Danger" },
 ];
 
+const DIRECTIONS = ["rtl", "ltr"] as const;
+
 export const RULES: readonly Rule[] = [
   ...COLORS,
   { names: ["mark", "highlight"], scope: "inline", element: "mark", className: "hook-mark", family: "mark" },
@@ -54,6 +63,14 @@ export const RULES: readonly Rule[] = [
     className: `hook-callout hook-callout-${name}`,
     family: "callout",
     defaultLabel: label,
+  })),
+  ...DIRECTIONS.map<Rule>((direction) => ({
+    names: [direction],
+    scope: "block",
+    element: "div",
+    className: `hook-dir hook-dir-${direction}`,
+    family: "direction",
+    dir: direction,
   })),
 ];
 

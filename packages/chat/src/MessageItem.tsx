@@ -139,7 +139,15 @@ export function MessageItem<M extends ChatMessage>({
     return (
       <div className="msg" data-role="user">
         {renderExtras?.(message)}
-        {message.content.trim() && <div className="bubble">{message.content}</div>}
+        {/* `dir="auto"` is the browser's first-strong-character rule: a message
+            written in Hebrew or Arabic is laid out right to left, one that opens
+            with a digit, a quote or an emoji still gets it right, and nothing
+            here has to know which languages those are. */}
+        {message.content.trim() && (
+          <div className="bubble" dir="auto">
+            {message.content}
+          </div>
+        )}
         <div className="msg-actions">
           <button className="mini-btn" onClick={() => void copy()}>
             {copied ? <Check strokeWidth={2.2} /> : <Copy strokeWidth={1.9} />}

@@ -219,7 +219,6 @@ pub fn definitions() -> Vec<Value> {
                     "document": { "type": "string", "description": "Document id (dc_…)." },
                     "title": { "type": "string" },
                     "markdown": { "type": "string" },
-                    "direction": { "type": "string", "enum": ["ltr", "rtl"], "description": "Text direction for the whole document. Right to left for Hebrew, Arabic and similar; left to right otherwise." },
                     "folder": { "type": "string" },
                     "baseRev": { "type": "integer", "description": "The revision you read, for update." }
                 },
@@ -262,7 +261,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "document_markdown",
-            "The exact syntax of Hook's document Markdown, on demand: the colour, highlight, underline and key directives, the callout blocks and how they nest, where each is allowed, what stays literal, the traps, and the document options that are not Markdown (title, direction). Call it before you style a document, a task description or a comment, or when you are not sure whether something is allowed. Plain Markdown and plain prose need no lookup.",
+            "The exact syntax of Hook's document Markdown, on demand: the colour, highlight, underline and key directives, the callout blocks and how they nest, where each is allowed, what stays literal, the traps, the document direction (`::meta{direction=rtl}` and the `:::rtl` block), and the one document option that is not Markdown (title). Call it before you style a document, a task description or a comment, or when you are not sure whether something is allowed. Plain Markdown and plain prose need no lookup.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
@@ -560,7 +559,7 @@ async fn documents(client: &WorkspaceClient, args: &Value) -> ToolResult {
 
 /// The fields one document write carries. Only what the call named: to the
 /// server an absent field means "leave it alone", so an update that changes the
-/// text cannot reset the title or the direction by omission.
+/// text cannot reset the title by omission.
 fn document_fields(args: &Value) -> Value {
     let mut body = json!({});
     if let Some(title) = string(args, "title") {
@@ -568,9 +567,6 @@ fn document_fields(args: &Value) -> Value {
     }
     if let Some(markdown) = args.get("markdown").and_then(Value::as_str) {
         body["markdown"] = json!(markdown);
-    }
-    if let Some(direction) = string(args, "direction") {
-        body["direction"] = json!(direction);
     }
     if let Some(folder) = string(args, "folder") {
         body["folderId"] = json!(folder);
@@ -806,12 +802,14 @@ mod tests {
     }
 
     #[test]
-    fn a_document_write_carries_its_direction_and_nothing_it_was_not_given() {
-        let body = document_fields(&json!({ "direction": "rtl", "markdown": "# x" }));
-        assert_eq!(body["direction"], "rtl");
+    fn a_document_write_carries_only_what_it_was_given() {
+        let body = document_fields(&json!({ "title": "Release", "markdown": "# x" }));
+        assert_eq!(body["title"], "Release");
         assert_eq!(body["markdown"], "# x");
-        // An update that only replaces the text must not touch the direction.
-        assert!(document_fields(&json!({ "markdown": "y" })).get("direction").is_none());
+        // Direction is the document's own `::meta` line, never a field.
+        assert!(document_fields(&json!({ "direction": "rtl" })).get("direction").is_none());
+        // An update that only replaces the text must not touch the title.
+        assert!(document_fields(&json!({ "markdown": "y" })).get("title").is_none());
         // An empty markdown is a write, not an omission.
         assert_eq!(document_fields(&json!({ "markdown": "" }))["markdown"], "");
     }
@@ -824,7 +822,7 @@ mod tests {
         assert!(MARKDOWN_REFERENCE.contains(":::note["));
         assert!(MARKDOWN_REFERENCE.contains(":red["));
         assert!(MARKDOWN_REFERENCE.contains(":mark["));
-        assert!(MARKDOWN_REFERENCE.contains("rtl"), "the direction option is documented");
+        assert!(MARKDOWN_REFERENCE.contains("rtl"), "the document direction is documented");
     }
 
     #[test]
