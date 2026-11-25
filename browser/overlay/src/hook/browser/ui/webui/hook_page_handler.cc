@@ -104,8 +104,11 @@ mojom::ChatMessagePtr ToMessage(const base::DictValue& row) {
 }  // namespace
 
 HookPageHandler::HookPageHandler(content::WebContents* web_contents,
-                                 base::RepeatingClosure on_show_ui)
-    : web_contents_(web_contents), on_show_ui_(std::move(on_show_ui)) {}
+                                 base::RepeatingClosure on_show_ui,
+                                 base::RepeatingClosure on_close_ui)
+    : web_contents_(web_contents),
+      on_show_ui_(std::move(on_show_ui)),
+      on_close_ui_(std::move(on_close_ui)) {}
 
 HookPageHandler::~HookPageHandler() = default;
 
@@ -140,6 +143,12 @@ void HookPageHandler::GetTabs(GetTabsCallback callback) {
 void HookPageHandler::ShowUI() {
   if (on_show_ui_) {
     on_show_ui_.Run();
+  }
+}
+
+void HookPageHandler::CloseUI() {
+  if (on_close_ui_) {
+    on_close_ui_.Run();
   }
 }
 

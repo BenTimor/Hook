@@ -30,7 +30,7 @@ void HookUI::BindInterface(
     mojo::PendingReceiver<mojom::PageHandler> receiver) {
   if (!page_handler_) {
     page_handler_ = std::make_unique<HookPageHandler>(
-        web_ui()->GetWebContents(), base::DoNothing());
+        web_ui()->GetWebContents(), base::DoNothing(), base::DoNothing());
   }
   page_handler_->Bind(std::move(receiver));
 }

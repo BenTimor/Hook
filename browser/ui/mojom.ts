@@ -57,6 +57,8 @@ export interface SignInView {
 export interface HookPageHandler {
   getTabs(): Promise<{ tabs: Tab[] }>;
   showUI(): void;
+  /** Asks the host to hide the side panel; a no-op in a tab. */
+  closeUI(): void;
   getChannel(): Promise<{ available: boolean; reason: string }>;
   listChats(): Promise<{ chats: ChatSummary[]; error: string }>;
   getChat(id: string): Promise<{ chat: ChatView | null; error: string }>;

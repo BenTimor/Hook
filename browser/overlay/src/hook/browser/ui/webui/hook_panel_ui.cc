@@ -4,6 +4,7 @@
 
 #include <utility>
 
+#include "base/functional/bind.h"
 #include "chrome/grit/hook_resources.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/url_constants.h"
@@ -25,6 +26,8 @@ HookPanelUI::HookPanelUI(content::WebUI* web_ui)
   page_handler_ = std::make_unique<HookPageHandler>(
       web_ui->GetWebContents(),
       base::BindRepeating(&HookPanelUI::OnPageReady,
+                          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&HookPanelUI::OnCloseRequested,
                           weak_factory_.GetWeakPtr()));
 }
 
@@ -42,6 +45,15 @@ void HookPanelUI::OnPageReady() {
   // the entry to the panel and marks the content available.
   if (base::WeakPtr<Embedder> embedder = this->embedder()) {
     embedder->ShowUI();
+  }
+}
+
+void HookPanelUI::OnCloseRequested() {
+  // The embedder is the SidePanelWebUIView; asking it to close is how a
+  // top-chrome page takes itself away (`WebUIContentsWrapper::CloseUI`), and the
+  // view's close callback is what actually hides the panel.
+  if (base::WeakPtr<Embedder> embedder = this->embedder()) {
+    embedder->CloseUI();
   }
 }
 

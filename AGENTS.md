@@ -45,8 +45,8 @@ packages/chat/src/preview/
                      drawn from the JSON `workspace_preview` returns. The
                      desktop puts it in its side panel, the phone in a sheet.
 packages/markdown/  the document dialect: one registry of rules, the parser the
-                     live editor and the preview share, the read-only renderer,
-                     and the deletion repair.
+                     live editor, the read view and a chat reply share, and the
+                     deletion repair (direction is part of the Markdown).
 ```
 
 `server/` and `waitlist/` deliberately stay at the repo root: they are one deploy
@@ -326,7 +326,10 @@ bash.
   space, and a document's rows would come out as one run-on line); `DocumentMarkdown.tsx`
   is the renderer `QuickPreview`, `WorkspacePreview` and the phone all use;
   `live.ts` is the CodeMirror half — decorations, the deletion repair, the
-  toolbar's `applyRule`, and the callout scan. `rules.ts`,
+  toolbar's `applyRule`, the block scan and the metadata line. A document's
+  direction is in the text, not beside it: `meta.ts` reads the top line
+  (`readDocumentMeta`), `remark.ts` drops it and draws `:::rtl`/`:::ltr` through
+  `dir`, and the editor keeps the caret off it. `rules.ts`,
   `packages/ui/src/tokens.css` and `docs/document-markdown.md` are the only
   three files a new rule touches: the last is the syntax a model reads through
   the `document_markdown` tool, embedded into `hook-core` by `include_str!`, and
@@ -335,12 +338,13 @@ bash.
   `reportableFrom` and `ReportContentDialog`. A document is drawn as a page:
   `.hook-doc` (`packages/ui/src/tokens.css`) is the read view's typography, and
   its numbers are the formatted editor's, so the panel and the phone sheet match
-  the Workspace window instead of approximating it. A document's `direction`
-  reaches this component from `workspace_preview` and flips it through `dir`;
-  keep new rules logical (`padding-inline-start`, `text-align: start`) or RTL
-  silently breaks. The JSON is what
-  `workspace_preview` returned; the components own no frame, so `PreviewPanel`
-  (desktop, side panel) and `apps/mobile/src/components/PreviewSheet.tsx`
+  the Workspace window instead of approximating it. The direction is the
+  document's own `::meta{direction=rtl}` line, so the page flips itself through
+  `dir` and nothing travels beside the Markdown; keep new rules logical
+  (`padding-inline-start`, `text-align: start`) or RTL silently breaks. The JSON
+  is what `workspace_preview` returned; the components own no frame, so
+  `PreviewPanel` (desktop, side panel) and
+  `apps/mobile/src/components/PreviewSheet.tsx`
   (phone, bottom sheet) draw the same thing. A task's comments are other
   people's words: that is what `ReportContentDialog` is for, not the AI report.
 - `packages/chat/src/images/` — the picture strip and its lightbox. A product
@@ -433,8 +437,12 @@ bash.
   enters the repo and `browser/README.md` carries the dev loop, the toolchain
   prerequisites, the traps, and "Testing it like a person" -- the pass the checks
   cannot do (real profile, real sites, media, downloads, a killed browser). `args.gn` pins `use_siso = false`: siso cannot read
-  the overlay junction, so the tree builds with ninja (`browser/README.md`,
-  "Traps"). Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
+  the overlay junction, so the tree builds with ninja. `out/Dev` keeps fatal
+  DCHECKs on purpose (they catch our own bugs); `out/NoComp` — the build pages are
+  judged on — sets `dcheck_always_on=false`, because a non-official Chromium
+  build otherwise kills the renderer on valid pages (`bentimor.com` at
+  `compositor_animations.cc:589`; "Aw, Snap! … STATUS_BREAKPOINT")
+  (`browser/README.md`, "Assertions, and the two builds", "Traps"). Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
   Chromium build ever runs on a push.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
@@ -530,7 +538,11 @@ Changing one side of a boundary is the most common way to break this repo.
   turn's last message (`turns.ts`; a direct coding chat opts out with
   `finalOnly`). The prompt's **Style** section always says the final message is
   the complete answer, independent of the mode, so the same reply works in both
-  views.
+  views. `Markdown.tsx` is the document dialect applied to an answer — the same
+  three remark plugins (`remarkDirective`, `documentDirectives`,
+  `documentBreaks`), so a callout or a colour in a reply draws as it does on a
+  page, and a single newline is a line break. Only a reply goes through it: a
+  user's message is drawn as the text it is.
 - **Advanced-mode change (thinking, tool calls, coding-agent inspector):**
   `server/auth.mjs` (`advanced_mode` column, `advancedMode` on `publicUser` and
   `/api/auth/preferences`) → `auth.rs` (`advanced_mode` on the session,

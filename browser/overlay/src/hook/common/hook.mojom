@@ -85,6 +85,11 @@ interface PageHandler {
   // top-chrome page announces that it is ready; in a tab it is a no-op.
   ShowUI();
 
+  // The dock's own close button. The page is the side panel's content, so it
+  // cannot close the panel itself: this asks the host, which hides the entry.
+  // A no-op in a tab, where the pane *is* the page.
+  CloseUI();
+
   // Whether a running Hook app published its channel. The browser process reads
   // the descriptor and makes the calls; a chrome:// renderer cannot open a
   // socket to loopback at all (Chromium kills it for "Incorrect scheme").

@@ -189,6 +189,9 @@ async function boot(): Promise<void> {
   if (!host) return;
 
   const root = createRoot(host);
+  // chrome://hook-panel and chrome://hook serve one bundle. Only the panel has
+  // something above it to close; in a tab the pane is the page.
+  const inPanel = location.host === "hook-panel";
   const draw = (
     transport: ReturnType<typeof channelTransport> | ReturnType<typeof localTransport>,
     notice?: ReactNode,
@@ -199,10 +202,13 @@ async function boot(): Promise<void> {
           transport={transport}
           notice={notice}
           open
-          onClose={() => {
-            // The pane is the page in this POC; the side panel's own button (or
-            // pin) is what closes it there.
-          }}
+          onClose={
+            inPanel
+              ? () => {
+                  void handler?.closeUI();
+                }
+              : undefined
+          }
           suggestions={[
             "What is this page for?",
             "Which tab am I on?",

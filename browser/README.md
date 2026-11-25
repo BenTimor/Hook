@@ -118,6 +118,34 @@ bundler by hand. Three things are deliberate:
   anyway. Now a stale checkout fails loudly — `panel.mjs` is missing until the
   build creates it — and the build always creates it.
 
+## Assertions, and the two builds
+
+There are two, and they differ on one deliberate point.
+
+**`out/Dev` keeps Chromium's default: a `DCHECK` failure kills the process.**
+That is the net that catches our own mistakes while we iterate on C++, so it
+stays. The cost is that Blink's own assertions fire on real pages — `bentimor.com`
+dies at `compositor_animations.cc:589` (`!any_compositor_properties_present`) —
+because Chromium makes every DCHECK fatal whenever `is_official_build` is false
+(`build/config/dcheck_always_on.gni`). Nothing on the page is wrong and nothing
+Hooks did; a shipping Chrome never runs that code because official builds compile
+DCHECKs out.
+
+**`out/NoComp` turns them off** (`dcheck_always_on = false`). It is the build we
+judge pages with — the recipe's own comment says "so a failure has one possible
+cause" — and a browser that dies on an ordinary page cannot be used for that. With
+the flag off, `DCHECK` is compiled out exactly as in the product, so this build
+behaves like shipping Chrome: no assertion crashes, no assertion overhead.
+
+The trade is that a bug of ours which only trips a DCHECK is silent in `NoComp`
+and loud in `out/Dev`, which is the right way round: Dev finds it, NoComp is what
+a person sees. If you want Dev's net without the fatal crash for one session,
+build with `dcheck_is_configurable = true` and add
+`--enable-features=DcheckIsFatal` only when hunting — but the flag lands in every
+translation unit, so flipping it either way recompiles the whole tree (~35,000
+steps here). That is why it is not in `args.gn`: the tree must not start a
+two-hour rebuild because someone opened a page.
+
 ## Codecs
 
 `args.gn` sets `proprietary_codecs = true` and `ffmpeg_branding = "Chrome"`.
@@ -158,7 +186,7 @@ cd /c/Dev/cr/src
 export PATH="/c/Dev/depot_tools:$PATH" DEPOT_TOOLS_WIN_TOOLCHAIN=0
 export vs2022_install="C:\Program Files (x86)\Microsoft Visual Studio 2022\BuildTools"
 
-gn gen out/NoComp --args='is_debug=false is_component_build=false symbol_level=0 blink_symbol_level=0 v8_symbol_level=0 use_siso=false proprietary_codecs=true ffmpeg_branding="Chrome" enable_component_ffmpeg=true hook_host_path="C:/Users/user/Documents/Dev/Hook/target/release/hook-host.exe"'
+gn gen out/NoComp --args='is_debug=false is_component_build=false dcheck_always_on=false symbol_level=0 blink_symbol_level=0 v8_symbol_level=0 use_siso=false proprietary_codecs=true ffmpeg_branding="Chrome" enable_component_ffmpeg=true hook_host_path="C:/Users/user/Documents/Dev/Hook/target/release/hook-host.exe"'
 
 autoninja -C out/NoComp chrome
 ```
@@ -449,6 +477,14 @@ Each of these cost a night at least once.
   recovery.
 - **Never run `gclient sync -D`.** With the overlay junctioned in, it can remove
   unmanaged directories. Plain `gclient sync` recreates the junction instead.
+- **"Aw, Snap! ... STATUS_BREAKPOINT" on a page that works in Chrome is a
+  DCHECK, not a network error.** It means the renderer was killed by an
+  assertion (`__debugbreak`, hence the Windows code) that official builds do not
+  compile in. Re-run with `--enable-logging=stderr` and read the `FATAL` line for
+  the file and the failed condition. `out/Dev` is where that is fatal on purpose;
+  `out/NoComp` sets `dcheck_always_on = false` and does not have the problem, so
+  a page that dies this way in Dev is still testable there (see "Assertions, and
+  the two builds").
 - **Set the symbol levels before the first build.** Changing them later forces a
   full recompile.
 - **The SDK installer's `/features` replaces the default feature set.** A

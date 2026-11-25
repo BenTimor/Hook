@@ -85,7 +85,11 @@ export function ChatDock({
 }: {
   transport: ChatTransport;
   open: boolean;
-  onClose: () => void;
+  /**
+   * What the header's X does. A surface with nothing to close (chrome://hook in
+   * a tab) passes nothing and gets no button.
+   */
+  onClose?: () => void;
   /** Said to a screen reader only: the dock never prints the product's name. */
   title?: string;
   /** Three things worth asking here, offered on the empty screen. */
@@ -319,16 +323,18 @@ export function ChatDock({
           <List strokeWidth={1.9} />
           {activeChat ? <span className="dock-title">{activeChat.title}</span> : null}
         </button>
-        <div className="dock-actions">
-          <button
-            className="icon-btn"
-            title="Hide Hook"
-            aria-label="Hide Hook"
-            onClick={onClose}
-          >
-            <X strokeWidth={1.9} />
-          </button>
-        </div>
+        {onClose ? (
+          <div className="dock-actions">
+            <button
+              className="icon-btn"
+              title="Hide Hook"
+              aria-label="Hide Hook"
+              onClick={onClose}
+            >
+              <X strokeWidth={1.9} />
+            </button>
+          </div>
+        ) : null}
       </header>
 
       {historyOpen ? (

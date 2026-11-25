@@ -43,10 +43,25 @@ constexpr char kSidePanelSwitch[] = "hook-side-panel";
 // header would be a second, empty one above it.
 constexpr bool kPanelShowsHeader = false;
 
+// What the panel's own close button reaches: `WebUIContentsWrapper::CloseUI`
+// calls the view's close callback, and this is it. Without it the dock's X is a
+// button that does nothing.
+void CloseHookPanel(base::WeakPtr<BrowserWindowInterface> browser) {
+  if (!browser) {
+    return;
+  }
+  if (SidePanelUI* ui = SidePanelUI::From(browser.get())) {
+    ui->Close();
+  }
+}
+
 std::unique_ptr<views::View> CreateHookPanelView(Profile* profile,
                                                  SidePanelEntryScope& scope) {
   return std::make_unique<SidePanelWebUIViewT<HookPanelUI>>(
-      scope, base::RepeatingClosure(), base::RepeatingClosure(),
+      scope, base::RepeatingClosure(),
+      base::BindRepeating(
+          &CloseHookPanel,
+          scope.GetBrowserWindowInterface().GetWeakPtr()),
       std::make_unique<WebUIContentsWrapperT<HookPanelUI>>(
           GURL(kHookPanelURL), profile,
           // The task manager's label for this WebUI. The panel's own header is

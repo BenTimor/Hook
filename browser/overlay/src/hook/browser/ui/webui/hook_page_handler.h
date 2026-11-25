@@ -36,9 +36,12 @@ struct SignInLookup;
 class HookPageHandler : public mojom::PageHandler {
  public:
   // `on_show_ui` is what the page's ShowUI() call reaches: a no-op in a tab, and
-  // "add me to the side panel" in chrome://hook-panel.
+  // "add me to the side panel" in chrome://hook-panel. `on_close_ui` is its
+  // opposite, and empty in a tab: the dock's close button has nothing to close
+  // there.
   HookPageHandler(content::WebContents* web_contents,
-                  base::RepeatingClosure on_show_ui);
+                  base::RepeatingClosure on_show_ui,
+                  base::RepeatingClosure on_close_ui);
   HookPageHandler(const HookPageHandler&) = delete;
   HookPageHandler& operator=(const HookPageHandler&) = delete;
   ~HookPageHandler() override;
@@ -50,6 +53,7 @@ class HookPageHandler : public mojom::PageHandler {
   // mojom::PageHandler:
   void GetTabs(GetTabsCallback callback) override;
   void ShowUI() override;
+  void CloseUI() override;
   void GetChannel(GetChannelCallback callback) override;
   void ListChats(ListChatsCallback callback) override;
   void GetChat(const std::string& id, GetChatCallback callback) override;
@@ -89,6 +93,7 @@ class HookPageHandler : public mojom::PageHandler {
   // outlives the handler.
   raw_ptr<content::WebContents> web_contents_;
   base::RepeatingClosure on_show_ui_;
+  base::RepeatingClosure on_close_ui_;
   raw_ptr<BrowserService> service_ = nullptr;
 
   mojo::Receiver<mojom::PageHandler> receiver_{this};

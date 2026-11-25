@@ -46,6 +46,8 @@ class HookPanelUI : public TopChromeWebUIController {
  private:
   // The page says it has drawn; the side panel entry is shown then, not before.
   void OnPageReady();
+  // The page's close button: the entry goes away.
+  void OnCloseRequested();
 
   std::unique_ptr<HookPageHandler> page_handler_;
   base::WeakPtrFactory<HookPanelUI> weak_factory_{this};
