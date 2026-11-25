@@ -1,0 +1,140 @@
+diff --git a/chrome/browser/glic/host/glic_ui.cc b/chrome/browser/glic/host/glic_ui.cc
+index cdc5477237..59f508f0f5 100644
+--- a/chrome/browser/glic/host/glic_ui.cc
++++ b/chrome/browser/glic/host/glic_ui.cc
+@@ -168,10 +168,12 @@ bool GlicUI::simulate_no_connection_ = false;
+ GlicUIConfig::GlicUIConfig()
+     : DefaultWebUIConfig(content::kChromeUIScheme, chrome::kChromeUIGlicHost) {}
+ 
+-bool GlicUIConfig::IsWebUIEnabled(content::BrowserContext* browser_context) {
+-  Profile* profile = Profile::FromBrowserContext(browser_context);
+-  return GlicEnabling::IsEnabledForProfile(profile) ||
+-         GlicEnabling::IsInternalsWebUIEnabled(profile);
++bool GlicUIConfig::IsWebUIEnabled(content::BrowserContext*) {
++  // Hook: Gemini in Chrome's page, and its /internals view, are not this
++  // browser's. Turning kGlic off is not enough — IsInternalsWebUIEnabled() is
++  // true in a non-official build, which is why chrome://glic still answered and
++  // drew "Gemini is refreshing…" with the feature disabled.
++  return false;
+ }
+ 
+ std::unique_ptr<content::WebUIController> GlicUIConfig::CreateWebUIController(
+diff --git a/chrome/common/chrome_features.cc b/chrome/common/chrome_features.cc
+index 108c56d407..0754816486 100644
+--- a/chrome/common/chrome_features.cc
++++ b/chrome/common/chrome_features.cc
+@@ -538,14 +538,10 @@ BASE_FEATURE(kGlicMessageFirstFre, base::FEATURE_DISABLED_BY_DEFAULT);
+ // IMPORTANT: this feature should never be expired! It is used as the main
+ // kill-switch for Glic and can be used in the future to handle unsupported
+ // Chrome versions.
+-BASE_FEATURE(kGlic,
+-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || \
+-    BUILDFLAG(IS_ANDROID)
+-             base::FEATURE_ENABLED_BY_DEFAULT
+-#else
+-             base::FEATURE_DISABLED_BY_DEFAULT
+-#endif
+-);
++// Hook: Gemini in Chrome is Google's assistant, not this browser's. Nothing here
++// can turn it on anyway (no account, no API key), and the default is the one
++// switch that keeps it off without deleting the code.
++BASE_FEATURE(kGlic, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kGlicBackgroundActuation, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+diff --git a/components/compose/core/browser/compose_features.cc b/components/compose/core/browser/compose_features.cc
+index bc0d7b5a05..df12de70db 100644
+--- a/components/compose/core/browser/compose_features.cc
++++ b/components/compose/core/browser/compose_features.cc
+@@ -10,7 +10,12 @@ namespace compose::features {
+ 
+ // Note: Compose is enabled by default because it is country--restricted at
+ // runtime.
+-BASE_FEATURE(kEnableCompose, "Compose", base::FEATURE_ENABLED_BY_DEFAULT);
++// Hook: "Help me write" is Google's writing assistant. `enable_compose = false`
++// would be the real switch, but ten BUILD.gn files depend on
++// //chrome/browser/compose unconditionally and the target asserts on the flag,
++// so the flag cannot be turned off in this tag. The feature defaults are
++// the switch.
++BASE_FEATURE(kEnableCompose, "Compose", base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kComposeInputParams, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+@@ -20,7 +25,7 @@ BASE_FEATURE(kComposeAXSnapshot, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kComposeAutoSubmit, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+-BASE_FEATURE(kComposeEligible, base::FEATURE_ENABLED_BY_DEFAULT);
++BASE_FEATURE(kComposeEligible, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kEnableComposeSavedStateNudge,
+              "ComposeNudge",
+diff --git a/components/lens/lens_features.cc b/components/lens/lens_features.cc
+index 16f3e102ff..78ee14eedd 100644
+--- a/components/lens/lens_features.cc
++++ b/components/lens/lens_features.cc
+@@ -16,17 +16,14 @@
+ 
+ namespace lens::features {
+ 
+-BASE_FEATURE(kLensStandalone, base::FEATURE_ENABLED_BY_DEFAULT);
++// Hook: Lens is Google's visual search. The overlay and the standalone page are
++// switched off so no entry point (omnibox, image context menu, side panel) is
++// drawn; the region-search half is already absent from an unbranded build.
++BASE_FEATURE(kLensStandalone, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kShowContextualTasksMenuIcon, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+-BASE_FEATURE(kLensOverlay,
+-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+-             base::FEATURE_DISABLED_BY_DEFAULT
+-#else
+-             base::FEATURE_ENABLED_BY_DEFAULT
+-#endif
+-);
++BASE_FEATURE(kLensOverlay, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kLensOverlayAndroid, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+diff --git a/components/skills/features.cc b/components/skills/features.cc
+index 8d73e79d2c..be95028402 100644
+--- a/components/skills/features.cc
++++ b/components/skills/features.cc
+@@ -7,13 +7,9 @@
+ 
+ namespace features {
+ 
+-BASE_FEATURE(kSkillsEnabled,
+-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
+-             base::FEATURE_ENABLED_BY_DEFAULT
+-#else
+-             base::FEATURE_DISABLED_BY_DEFAULT
+-#endif
+-);
++// Hook: skills are Chrome's saved AI prompts (chrome://skills). Off with the rest
++// of Google's assistant; the page is reachable while this default is on.
++BASE_FEATURE(kSkillsEnabled, base::FEATURE_DISABLED_BY_DEFAULT);
+ BASE_FEATURE(kSkillsAndExtensionsAppMenu, base::FEATURE_DISABLED_BY_DEFAULT);
+ BASE_FEATURE(kSkillsMetricsProviderEnabled, base::FEATURE_ENABLED_BY_DEFAULT);
+ BASE_FEATURE(kSkillsRefinementEnabled, base::FEATURE_ENABLED_BY_DEFAULT);
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index 62c811fd96..c588f4ef91 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -468,13 +468,9 @@
+     {
+       name: "AIPromptAPI",
+       public: true,
+-      status: {
+-        "Win": "stable",
+-        "Mac": "stable",
+-        "Linux": "stable",
+-        "ChromeOS": "stable",
+-        "default": "",
+-      },
++      // Hook: this is Chrome's on-device model reached from a page (window.ai).
++      // No `status` means disabled everywhere; we ship neither Gemini Nano nor
++      // the updater that would fetch it. (An empty status string is not valid.)
+     },
+     {
+       name: "AIPromptAPIForWorkers",

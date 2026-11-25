@@ -321,6 +321,16 @@ Each of these cost a night at least once.
   rather than a `WeakPtr` — a weak reference created on a pool thread may not be
   dereferenced on the UI thread, and that is a FATAL (`sequence_checker.cc:21`),
   not a warning.
+- **A branding change is a patch, not an overlay path.** The product name and the
+  icon live in files that already exist (`chrome/app/theme/chromium/BRANDING`,
+  `chrome/app/chromium_strings.grd`, two `.rc` files), so they land in
+  `0011-branding`. Two traps cost a build each the first time: `rc.exe`
+  interprets `` and `	`, so an icon path needs **doubled** backslashes in both
+  `.rc` files, and `grit` will not resolve a path that leaves `chrome/app`, so the
+  in-product logos are replaced in place (`patch.mjs add` passes `--binary` for
+  those). `docs/browser-branding.md` has the whole map; re-run
+  `browser/tools/brand-strings.py` after a sync to catch the strings a new release
+  added.
 - **The side panel is narrower than the dock.** Chromium sizes the side panel
   (360 px today) and the dock is a fixed 380 px in the desktop window, so
   `panel.html` has to make it fill its host: `width: 100%; min-width: 0`. As a

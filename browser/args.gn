@@ -33,3 +33,9 @@ v8_symbol_level = 0
 # true`, so it stays a separate, relinkable DLL (LGPL-2.1+).
 proprietary_codecs = true
 ffmpeg_branding = "Chrome"
+
+# Google's AI is switched off in the patch stack, not here. `enable_compose =
+# false` looks like the right knob for "Help me write" and is not: ten BUILD.gn
+# files depend on //chrome/browser/compose unconditionally, so the flag makes
+# `gn gen` assert. The feature defaults in components/compose/.../compose_features.cc
+# are the switch (docs/browser-branding.md, "The AI surfaces").

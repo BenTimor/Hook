@@ -57,7 +57,10 @@ async function add(src, slug, paths) {
     return 1;
   }
 
-  const diff = await run("git", ["-C", src, "diff", "HEAD", "--no-color", "--", ...(paths.length ? paths : ["."])], {
+  // --binary so an icon replacement round-trips: `git apply` handles a binary
+  // hunk natively, and the alternative for the in-product logos is a path the
+  // grit resources will not resolve (see docs/browser-branding.md).
+  const diff = await run("git", ["-C", src, "diff", "HEAD", "--binary", "--no-color", "--", ...(paths.length ? paths : ["."])], {
     allowFail: true,
   });
   if (diff.code !== 0) {

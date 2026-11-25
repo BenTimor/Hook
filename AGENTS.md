@@ -358,7 +358,15 @@ bash.
   loses the capability), `overlay/src/hook/` the new paths that are
   junctioned into the checkout as `src/hook`, `patches/series` the small edits to
   upstream files that survive a rebase, and `tools/{sync,build,verify,patch,smoke}.mjs`
-  the whole interface. `browser/ui/` is the dock's own Vite project: it builds
+  the whole interface. The product name and icon are `0011-branding`, the largest
+  patch in the stack (it renames 690 messages in `chromium_strings.grd` and
+  `settings_chromium_strings.grdp`); `tools/brand-strings.py` regenerates that
+  part after a sync, because a new release adds strings the patch does not cover.
+  `patch.mjs add` passes `--binary`, so an icon replacement round-trips.
+  `0012-no-google-ai` is the feature defaults (Glic, Compose, Lens, Skills, the
+  Prompt API) and `0013-no-google-services` the API-keys infobar;
+  `docs/browser-branding.md` has the map, the two `.rc`/`grit` traps, and the one
+  open decision (Safe Browsing). `browser/ui/` is the dock's own Vite project: it builds
   `packages/chat` into `overlay/src/hook/resources/panel.mjs` — generated, not
   committed (`browser/tools/build.mjs` runs Vite before ninja, because
   `build_webui` can only pack static files that exist in the source tree and GN
@@ -1008,7 +1016,8 @@ reference lives in `docs/`. Read the document instead of guessing:
 - Hook Browser (designed, not built) → `docs/browser-architecture.md`,
   `docs/browser-poc-plan.md`, `docs/browser-os-decoders.md` (the OS decoder path:
   designed, sized, not started), `docs/browser-host.md` (the browser's own host
-  process: designed, sized, not started)
+  process: designed, sized, not started), `docs/browser-branding.md` (the name,
+  the icon, Google's AI and Google's services, with what each removal costs)
 - License, what a fork may do, bundled third-party terms → `docs/license.md`,
   plus `LICENSE`, `TRADEMARK.md`, `THIRD_PARTY_NOTICES.md`, `CONTRIBUTING.md`
   and `CLA.md`
