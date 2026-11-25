@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { parseArgs, parseChromeVersion, parsePinnedTag, parseSeries, requiredSdkVersion } from "./lib.mjs";
 import { listFiles, inspectOverlay, overlayCopies } from "./verify.mjs";
+import { analyseNetLog } from "./smoke.mjs";
 
 function workspace() {
   return mkdtempSync(join(tmpdir(), "hook-browser-"));
@@ -121,4 +122,30 @@ test("everything after -- is a path, even if it looks like a flag", () => {
   const { flags, rest } = parseArgs(["add", "my-fix", "--", "--weird-name.cc", "b.cc"]);
   assert.equal(flags.has("weird-name.cc"), false);
   assert.deepEqual(rest, ["add", "my-fix", "--weird-name.cc", "b.cc"]);
+});
+
+// --no-google is only worth having if it can fail: a check that passes because it
+// read nothing, or because it stopped looking, is worse than no check.
+test("the Google traffic check separates the updater, preconnects and content", () => {
+  const log = [
+    '{"params":{"request_info":{"url":"https://update.googleapis.com/service/update2/json"}}}',
+    '{"params":{"is_preconnect":true,"url":"https://www.google.com/"}}',
+    '{"params":{"request_info":{"url":"https://fonts.gstatic.com/s/googlesans/x.woff2"}}}',
+    '{"params":{"request_info":{"url":"https://example.com/fine"}}}',
+  ].join(",");
+  const traffic = analyseNetLog(log);
+  assert.equal(traffic.urls, 4);
+  assert.deepEqual([...traffic.allowed.keys()], ["update.googleapis.com"]);
+  assert.deepEqual([...traffic.preconnects.keys()], ["www.google.com"]);
+  assert.deepEqual(traffic.forbidden, ["https://fonts.gstatic.com/s/googlesans/x.woff2"]);
+});
+
+test("an empty net log proves nothing and is reported as such", () => {
+  assert.equal(analyseNetLog("").urls, 0);
+});
+
+test("a preconnect to Google is not a fetch", () => {
+  const traffic = analyseNetLog('{"params":{"is_preconnect":true,"url":"https://www.google.com/search/warmup.html"}}');
+  assert.deepEqual(traffic.forbidden, []);
+  assert.deepEqual([...traffic.preconnects.keys()], ["www.google.com"]);
 });

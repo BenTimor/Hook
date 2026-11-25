@@ -321,6 +321,14 @@ Each of these cost a night at least once.
   rather than a `WeakPtr` — a weak reference created on a pool thread may not be
   dereferenced on the UI thread, and that is a FATAL (`sequence_checker.cc:21`),
   not a warning.
+- **`--no-google` is the answer to "does it still talk to Google".** It runs a fresh
+  profile with `--log-net-log` and fails on any Google host outside a short allowlist
+  (the component updater, plus preconnects, which carry no content). Three leaks were
+  found this way and none of them was branding-gated: the New Tab Page **component
+  extension** (a CRX the updater downloads, which fetched Google's page frame),
+  Google's AI Mode eligibility check, and the search prewarm. When adding a Chromium
+  feature that reaches a service, run it — `docs/browser-branding.md`, "What still
+  talks to Google".
 - **`safe_browsing_mode = 0` does not build in this tag.** Six targets — four
   `browser_tests`, `interactive_ui_tests`, and the shipping
   `chrome/browser/feedback/report_unsafe_site` — depend on

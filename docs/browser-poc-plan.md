@@ -395,7 +395,7 @@ someone installs, split by what only a decision can unblock.
 - **The release channel.** Decided: ride Chromium's train. A few hours every four
   weeks — `browser:sync`, the patch stack, a rebuild — is affordable and is the only
   answer that does not ship a known-vulnerable browser. What that means in practice:
-  the patch series stays small and rebased (14 hunks today), `patches/series`'
+  the patch series stays small and rebased (15 hunks today), `patches/series`'
   failures are the alarm, and an OS-codec release build is what the train publishes.
 - **Distribution.** Decided: MSIX through the Microsoft Store, **not now**. Worth
   the work (default-browser registration, the Store's update rules, the identity), but

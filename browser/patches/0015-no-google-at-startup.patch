@@ -1,0 +1,81 @@
+diff --git a/chrome/browser/extensions/component_loader.cc b/chrome/browser/extensions/component_loader.cc
+index e88059b861..2f7cc70273 100644
+--- a/chrome/browser/extensions/component_loader.cc
++++ b/chrome/browser/extensions/component_loader.cc
+@@ -816,10 +816,25 @@ void ComponentLoader::AddDefaultComponentExtensionsWithBackgroundPages(
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+   }
+ 
++  // Hook: the four Google component extensions that ship with Chromium are not
++  // loaded. They run a service worker before any window is shown, and that worker
++  // is what fetched www.google.com/async/*, the One Google Bar from gstatic, Google
++  // Sans and ogads-pa.clients6.google.com on every launch — with our own new tab
++  // page in front of them, where none of it belongs. Measured with a net log; see
++  // docs/browser-branding.md, "What still talks to Google".
++  //
++  //   AddAimEligibilityExtension()   Google's AI Mode chip in the omnibox
++  //   AddNewTabPageExtension()       Chrome's New Tab Page, replaced by patch 0009
++  //   AddGlicExtension()             Gemini in Chrome
++  //   AddContextualTasksExtension()  Google's AI tasks
++  //
++  // Re-enabling one is deleting its line from this list, nothing else.
++#if 0
+   AddAimEligibilityExtension();
+   AddNewTabPageExtension();
+   AddGlicExtension();
+   AddContextualTasksExtension();
++#endif
+ 
+ // http://crbug.com/41070702
+ #if BUILDFLAG(GOOGLE_CHROME_BRANDING) && !BUILDFLAG(IS_CHROMEOS)
+diff --git a/chrome/browser/preloading/preloading_features.cc b/chrome/browser/preloading/preloading_features.cc
+index 87a63fa3b7..c711d818bb 100644
+--- a/chrome/browser/preloading/preloading_features.cc
++++ b/chrome/browser/preloading/preloading_features.cc
+@@ -6,7 +6,13 @@
+ 
+ namespace features {
+ 
+-BASE_FEATURE(kPrewarm, base::FEATURE_ENABLED_BY_DEFAULT);
++// Hook: "prewarm" prerenders the default search engine's warmup URL
++// (https://www.google.com/search/warmup.html, chrome_content_browser_client.cc)
++// as soon as any visible tab finishes painting — which on this browser is a new
++// tab, at startup, before anyone has typed anything. It fetched a Google page and
++// Google Sans on every launch. Measured with a net log; see
++// docs/browser-branding.md, "What still talks to Google".
++BASE_FEATURE(kPrewarm, base::FEATURE_DISABLED_BY_DEFAULT);
+ BASE_FEATURE(kPrewarmZeroSuggestTrigger, base::FEATURE_DISABLED_BY_DEFAULT);
+ BASE_FEATURE(kPrewarmPageLoadAndTabSwitchAfterPaintTrigger,
+              base::FEATURE_DISABLED_BY_DEFAULT);
+diff --git a/components/omnibox/browser/aim_eligibility_service_features.cc b/components/omnibox/browser/aim_eligibility_service_features.cc
+index c23cef8903..9887df032c 100644
+--- a/components/omnibox/browser/aim_eligibility_service_features.cc
++++ b/components/omnibox/browser/aim_eligibility_service_features.cc
+@@ -8,9 +8,15 @@
+ 
+ namespace omnibox {
+ 
+-BASE_FEATURE(kAimEnabled, base::FEATURE_ENABLED_BY_DEFAULT);
+-
+-BASE_FEATURE(kAimServerEligibilityEnabled, base::FEATURE_ENABLED_BY_DEFAULT);
++// Hook: "AI Mode" is Google's AI answers surface in the omnibox. The service this
++// gates sends /async/folae to google.com at startup and again whenever the account
++// changes, and it is the reason a fresh, signed-out profile still fetched a Google
++// page and Google Sans on every launch. Turning kAimEnabled off makes the service's
++// constructor return before it registers anything or sends a request.
++BASE_FEATURE(kAimEnabled, base::FEATURE_DISABLED_BY_DEFAULT);
++
++BASE_FEATURE(kAimServerEligibilityEnabled,
++             base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kAimCoBrowseEligibilityCheckEnabled,
+              base::FEATURE_ENABLED_BY_DEFAULT);
+@@ -36,7 +42,7 @@ BASE_FEATURE(kAimServerEligibilityForPrimaryAccountEnabled,
+              base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kAimServerRequestOnStartupEnabled,
+-             base::FEATURE_ENABLED_BY_DEFAULT);
++             base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kAimStartupRequestDelayedUntilNetworkAvailableEnabled,
+              base::FEATURE_DISABLED_BY_DEFAULT);

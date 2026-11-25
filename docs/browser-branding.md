@@ -5,10 +5,10 @@ carrying Google's AI, and what is still left. Written against `159.0.8154.13`:
 every tier below is built and verified in that tree, except where a line says
 otherwise.
 
-Landed as four patches — `0011-branding`, `0012-no-google-ai`,
-`0013-no-google-services`, `0014-safe-browsing-off` — plus one rule in
-`browser/tools/patch.mjs` (`--binary`, so an icon replacement round-trips). The stack
-is 14 patches.
+Landed as five patches — `0011-branding`, `0012-no-google-ai`,
+`0013-no-google-services`, `0014-safe-browsing-off`, `0015-no-google-at-startup` —
+plus one rule in `browser/tools/patch.mjs` (`--binary`, so an icon replacement
+round-trips). The stack is 15 patches.
 
 ## What it says now
 
@@ -140,24 +140,40 @@ overlay.
 
 ### What still talks to Google, measured
 
-Measured, not assumed: a fresh profile, no browsing, `--log-net-log`, and the hosts
-that appear anyway. Three separate things, and only one of them is Safe Browsing.
+Measured, not assumed: a fresh profile, no browsing, `--log-net-log`. It is
+automated now — `node browser/tools/smoke.mjs --no-google` fails on any Google host
+that is not on a short, explained allowlist, so the next Chromium bump cannot start
+phoning home quietly.
 
-| What | Endpoints | Where it comes from |
+**Before this work**, a fresh profile made ~80 requests to about ten Google hosts,
+for three unrelated reasons. One of them was not what it looked like: the requests
+came from `chrome-untrusted://new-tab-page`, which is not a stray frame but
+Chromium's **New Tab Page component extension** — a CRX that the component updater
+downloads and runs a service worker for before the first window is drawn. Three
+fixes, all in `0015-no-google-at-startup`:
+
+| Was | Why it happened | What removed it |
 | --- | --- | --- |
-| **Chromium's own New Tab Page** | `www.google.com/` (8×), `/async/newtab_ogb`, `/async/folae`, `/async/ddljson`, `/complete/s?…sugkey=dummytoken`, `www.gstatic.com/og/_/js/…`, `fonts.gstatic.com/s/googlesans/…`, `ogads-pa.clients6.google.com/…GetAsyncData`, `play.google.com/log` | the net log names the initiator: **`chrome-untrusted://new-tab-page`**. Our page replaced what a new tab *shows* (patch 0009), but Google's NTP frame still loads at startup. It is the largest single leak, it happens on every launch, and it sends the placeholder `dummytoken` as `sugkey` |
-| **The component updater** | `update.googleapis.com/service/update2/json` (20×), `clients2.google.com/time/1/current?cup2key=…`, `edgedl.me.gvt1.com/edgedl/{chrome_component,diffgen-puffin}/…` | it does not use the Google API key; it authenticates with its own `cup2key`, so "no keys" never switched it off. Switching it off is **not** free: CRLSet (revoked certificates), PKI metadata and the file-type policies that classify downloads arrive this way |
-| **The default search engine** | `www.google.com/search/warmup.html` | a **preconnect** only (`"is_preconnect": true`) — no request body, but it does open a connection to Google at startup. It follows the default engine, so it goes away with the search-engine change |
+| **Four component extensions** (`AddNewTabPageExtension`, `AddGlicExtension`, `AddContextualTasksExtension`, `AddAimEligibilityExtension`) | `ComponentLoader` starts their service workers for every profile; the New Tab Page one fetches `www.google.com/async/{newtab_ogb,ddljson}`, the One Google Bar from `gstatic.com`, Google Sans and `ogads-pa.clients6.google.com` | the four calls are behind `#if 0` with a comment naming each; re-enabling one is deleting its line |
+| **Google's "AI Mode" eligibility check** | `AimEligibilityService` sends `/async/folae` to `www.google.com` at startup and again on every account change (`kAimEnabled`, `kAimServerRequestOnStartupEnabled`) | both features disabled in `aim_eligibility_service_features.cc`; the service's constructor returns before it registers anything |
+| **The search prewarm** | `PrewarmTabHelper` prerenders the default search engine's warmup URL (`www.google.com/search/warmup.html`) as soon as a visible tab finishes painting — on this browser, a new tab, at startup, before anyone types | `preloading::features::kPrewarm` disabled. It was also the only thing that loaded a Google page and Google Sans |
+
+**After**: three hosts and one preconnect.
+
+| What remains | Endpoint | Status |
+| --- | --- | --- |
+| **The component updater** | `update.googleapis.com/service/update2/json` (20), `clients2.google.com/time/1/current`, `edgedl.me.gvt1.com/edgedl/{release2, diffgen-puffin}/…` | allowed by the check, **open decision**. It authenticates with `cup2key`, not the Google API key, so "no keys" never switched it off. Turning it off is not free: CRLSet (revoked certificates), PKI metadata and the file-type policies that classify downloads arrive this way |
+| **A preconnect to `www.google.com`** | one TCP/TLS connection, no request with content | allowed *as a preconnect only*; the check fails if a Google host serves a page. It follows the default search engine, so it goes away with that change |
+| **`dns.google`** | DoH | allowed: the machine's resolver is `8.8.8.8`, and Chromium upgrades known resolvers. Not a choice this build makes — a check running on a machine with a local resolver never sees it |
 
 Two consequences worth stating plainly:
 
-- The browser is not "not talking to Google" today. It is not *asking* Google
-  anything on the user's behalf, but it fetches a Google page frame, an update
-  manifest and a warm-up connection.
-- The NTP frame is the one to fix next, and it looks cheap: find what instantiates
-  `chrome-untrusted://new-tab-page` once `chrome://newtab` is no longer Chromium's
-  page. The component updater needs a decision (security components are in it), and
-  the preconnect fixes itself when the default engine changes.
+- "Unbranded" is not "quiet". None of the three fixed items was gated on
+  `is_chrome_branded`, and one of them shipped a **downloaded** extension. This is
+  the class of thing that only a net log finds.
+- The remaining Google talker is the security updater. That is the honest trade to
+  finish with: either we accept it, or we narrow which components register and
+  document what stops updating.
 
 ### Safe Browsing, in full
 
@@ -249,7 +265,7 @@ untouched and still there.
 
 ## What a Chromium sync costs now
 
-The stack is 14 patches. `0011-branding` is by far the largest (334 KB, ~700
+The stack is 15 patches. `0011-branding` is by far the largest (334 KB, ~700
 changed messages) and is the one that needs a step after a sync:
 
 1. `pnpm browser:sync` — rebase the tree.
@@ -260,7 +276,7 @@ changed messages) and is the one that needs a step after a sync:
 4. `node browser/tools/verify.mjs` — it fails loudly if a patch stops applying,
    which is the moment to read it rather than trust it.
 
-`0012`–`0014` are small and touch files that move slowly (`chrome_features.cc`,
+`0012`–`0015` are small and touch files that move slowly (`chrome_features.cc`,
 `lens_features.cc`, `infobar_utils.cc`). The likeliest conflicts over a year are
 `chrome_exe.rc`/`chrome_dll.rc` (the icon `#if` blocks) and `glic_ui.cc` (a young
 file).
@@ -292,16 +308,12 @@ polish, not an unbuilt feature.
   (own the local half; see "Safe Browsing, in full"), and the Settings toggle that
   can still turn the dead state back on disappears with it. Until then this is the
   one place Hook is plainly weaker than Chrome, and the Store listing has to say so.
-- **Google's New Tab Page frame.** The net log puts
-  `chrome-untrusted://new-tab-page` behind ~15 requests to `www.google.com`,
-  `gstatic.com`, `fonts.gstatic.com` and `ogads-pa.clients6.google.com` on every
-  launch, signed-out. Patch 0009 changed what a new tab shows, not what Chromium
-  still loads for it. Finding the instantiation site is the next cheap win.
-- **The component updater.** It runs without API keys (`cup2key`, not the Google
-  key), and it is the biggest remaining talker: `update.googleapis.com`,
-  `clients2.google.com`, `edgedl.me.gvt1.com`, `play.google.com/log`. Turning it off
-  also stops CRLSet, PKI metadata and the download file-type policies, so it is a
-  security decision, not a switch.
+- **The component updater: the last Google talker, and a decision.** It runs without
+  API keys (`cup2key`, not the Google key), so `--no-google` allows its three hosts
+  explicitly. Turning it off also stops CRLSet, PKI metadata and the download
+  file-type policies, so the real choice is which components to keep registering,
+  not whether to flip one switch. Until that is decided, `--no-google` is the record
+  of exactly what is left.
 - **Default search engine.** Deliberately still Google. The hunk is
   `GetPrepopulatedFallbackSearch()` in
   `components/search_engines/template_url_prepopulate_data.cc` — one line pointing

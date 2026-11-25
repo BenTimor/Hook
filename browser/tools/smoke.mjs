@@ -13,6 +13,8 @@
  *                                                    # a new tab is ours at all
  *   node browser/tools/smoke.mjs --host                # the browser starts its own
  *                                                    # Hook host when none answers
+ *   node browser/tools/smoke.mjs --no-google          # nothing but the updater
+ *                                                    # may talk to Google
  *   node browser/tools/smoke.mjs --shot hook.png       # screenshots too
  *   node browser/tools/smoke.mjs --chrome <path to chrome.exe>
  *
@@ -200,6 +202,53 @@ async function descriptorAlive(descriptor) {
   }
 }
 
+// --no-google: what a fresh profile talks to Google about, from the browser's own
+// net log. The point is not to whitelist today's traffic once, it is to fail the
+// day a new piece of Chromium phones home — the NTP component extension, the AI
+// mode eligibility check and the search prewarm were all found that way.
+//
+// Allowed, each with the reason it is still here; anything else that resolves to a
+// Google host fails the run. Preconnects are allowed and reported: no request
+// carries content on one, and they follow the default search engine.
+export const GOOGLE_ALLOWED = new Map([
+  ["update.googleapis.com", "the component updater (open decision, docs/browser-branding.md)"],
+  ["clients2.google.com", "the component updater's clock"],
+  ["edgedl.me.gvt1.com", "the component updater's payloads"],
+  ["dns.google", "the machine's resolver; the browser did not pick it"],
+]);
+
+const GOOGLE_HOST = /(^|\.)(google|gstatic|googleapis|gvt1|ggpht|googleusercontent|googlevideo|youtube)\.[a-z0-9.-]+$/i;
+
+export function analyseNetLog(text) {
+  const allowed = new Map();
+  const preconnects = new Map();
+  const forbidden = [];
+  let urls = 0;
+  for (const match of text.matchAll(/"url":"(https?:\/\/[^"]+)"/g)) {
+    urls += 1;
+    let host;
+    try {
+      host = new URL(match[1]).hostname;
+    } catch {
+      continue;
+    }
+    if (!GOOGLE_HOST.test(host) && host !== "google.com") continue;
+    // `is_preconnect` belongs to the event that carries the url, so look back only
+    // as far as that event's own `"params":` — a lookbehind of a fixed size picks
+    // up the previous event's preconnect and calls a real fetch a preconnect.
+    const paramsStart = text.lastIndexOf('"params":', match.index);
+    const isPreconnect = text.slice(Math.max(0, paramsStart), match.index).includes('"is_preconnect":true');
+    if (GOOGLE_ALLOWED.has(host)) {
+      allowed.set(host, (allowed.get(host) ?? 0) + 1);
+    } else if (isPreconnect) {
+      preconnects.set(host, (preconnects.get(host) ?? 0) + 1);
+    } else {
+      forbidden.push(match[1].length > 140 ? `${match[1].slice(0, 140)}…` : match[1]);
+    }
+  }
+  return { urls, allowed, preconnects, forbidden };
+}
+
 function processAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -256,6 +305,7 @@ export async function main(argv) {
   const codecCheck = flags.get("codecs") === true;
   const newTabCheck = flags.get("newtab") === true;
   const hostCheck = flags.get("host") === true;
+  const noGoogle = flags.get("no-google") === true;
   const signin = flags.get("signin-state");
   if (signin !== undefined && signin !== "in" && signin !== "out") {
     console.error(fail("--signin-state takes in or out"));
@@ -306,6 +356,7 @@ export async function main(argv) {
       `--remote-debugging-port=${port}`,
       ...(hostCheck ? [] : ["--hook-no-host"]),
       ...(signin ? [`--hook-signin-state=${signin}`] : []),
+      ...(noGoogle ? [`--log-net-log=${join(profile, "netlog.json")}`] : []),
       ...(sidePanel ? ["--hook-side-panel"] : []),
       PAGE,
     ],
@@ -711,6 +762,29 @@ export async function main(argv) {
         failures.push(`the host (pid ${hostPid}) outlived the browser`);
       } else {
         console.log(`    host: pid ${hostPid} went with the browser`);
+      }
+    }
+    if (noGoogle) {
+      try {
+        const logPath = join(profile, "netlog.json");
+        const traffic = analyseNetLog(existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
+        if (traffic.urls === 0) {
+          failures.push("--no-google produced an empty net log: nothing was captured, so nothing was proven");
+        }
+        for (const [host, count] of traffic.allowed) {
+          console.log(`    google: ${host} (${count}) - ${GOOGLE_ALLOWED.get(host)}`);
+        }
+        for (const [host, count] of traffic.preconnects) {
+          console.log(`    google: ${host} (${count}) - preconnect only, follows the default search engine`);
+        }
+        if (traffic.urls > 0 && traffic.forbidden.length === 0) {
+          console.log(`    google: ${traffic.urls} urls in the log, ${traffic.allowed.size + traffic.preconnects.size} Google hosts, none of them served a page`);
+        }
+        for (const url of [...new Set(traffic.forbidden)].slice(0, 8)) {
+          failures.push(`the browser fetched a Google resource: ${url}`);
+        }
+      } catch (failure) {
+        failures.push(`--no-google could not read the net log: ${String(failure).slice(0, 120)}`);
       }
     }
     try {
