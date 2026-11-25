@@ -27,10 +27,11 @@
 //! prompt and the toolset; it never changes the data model.
 
 mod agent;
-mod boot;
 mod analytics;
 mod auth;
+mod boot;
 mod bridge;
+mod browser;
 mod channel;
 mod coding;
 #[cfg(feature = "desktop")]
@@ -163,6 +164,10 @@ pub struct Capabilities {
     /// Without a projects directory these tools can only fail, so a device with
     /// no folder of its own must not advertise them.
     pub projects: bool,
+    /// A Hook Browser on this machine, whose tabs the account's chats may read.
+    /// Only the browser's own host has one; every other product reaches a
+    /// browser through `remote_agents` and the relay.
+    pub browser: bool,
 }
 
 impl Capabilities {
@@ -175,6 +180,7 @@ impl Capabilities {
             remote_agents: true,
             workspace_tools: true,
             projects: true,
+            browser: false,
         }
     }
 
@@ -189,14 +195,18 @@ impl Capabilities {
             remote_agents: true,
             workspace_tools: true,
             projects: true,
+            browser: false,
         }
     }
 
-    /// Hook Browser's host: the conversation and the account's Workspace data.
-    /// No engine and no project folder on this machine — the browser can drive
-    /// agents on the account's other computers — and no page served from disk,
-    /// because there is no project to serve one from. It is the phone's shape
-    /// with a different data folder: the browser is a controller, not a host.
+    /// Hook Browser's host: the conversation, the account's Workspace data and
+    /// *this machine's browser*. No engine and no project folder — the browser
+    /// drives agents on the account's other computers — and no page served from
+    /// disk, because there is no project to serve one from.
+    ///
+    /// `browser` is what makes a read local here and remote everywhere else: a
+    /// tab belongs to the process that hosts it, so this is the only product
+    /// that can answer `read_page` without the relay.
     pub const fn browser() -> Self {
         Self {
             preview_pages: false,
@@ -205,6 +215,7 @@ impl Capabilities {
             remote_agents: true,
             workspace_tools: true,
             projects: false,
+            browser: true,
         }
     }
 
@@ -219,6 +230,7 @@ impl Capabilities {
             remote_agents: true,
             workspace_tools: true,
             projects: false,
+            browser: false,
         }
     }
 }

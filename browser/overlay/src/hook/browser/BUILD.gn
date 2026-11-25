@@ -25,6 +25,12 @@ source_set("browser") {
     "host/hook_host.h",
     "navigation/hook_sign_in_throttle.cc",
     "navigation/hook_sign_in_throttle.h",
+    "service/hook_service.cc",
+    "service/hook_service.h",
+    "startup/hook_extra_parts.cc",
+    "startup/hook_extra_parts.h",
+    "tabs/hook_page.cc",
+    "tabs/hook_page.h",
     "tabs/hook_tabs.cc",
     "tabs/hook_tabs.h",
     "ui/views/hook_side_panel.cc",
@@ -59,6 +65,11 @@ source_set("browser") {
   deps = [
     "//base",
     "//chrome/browser/profiles:profile",
+    # The startup seam: ChromeBrowserMainExtraParts, and the profile manager the
+    # startup hook walks to start one poller per profile.
+    "//chrome/browser:main_extra_parts",
+    "//chrome/browser:browser_process",
+    "//chrome/browser/profiles:profile_manager",
     # BrowserWindowInterface is the public leaf interface, and the tab strip
     # headers carry the model the live tab list reads.
     "//chrome/browser/ui/browser_window",

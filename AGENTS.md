@@ -178,6 +178,16 @@ bash.
   frames that carry it into a chat, `memory_search`, and per-account files in
   the shared `%APPDATA%\app.hook\memory\` folder.
 - `crates/hook-core/src/tools.rs` — chat-agent tool schemas and implementations.
+- `crates/hook-core/src/browser.rs` — reading a tab, from anywhere. A page
+  belongs to a machine, so `list_tabs`/`read_page`/`find_in_page` are machine
+  operations like the agent ones and take a `machine`; the machine with the
+  browser answers. `BrowserTasks` is that machine's half: the browser is a
+  *client* of the channel, so the host leaves a task in this queue
+  (`GET /browser/tasks`, `POST /browser/tasks/<id>`) and waits, and the browser
+  polls it, reads the page in its own process and answers with a slice. Only the
+  slice crosses the wire — never a whole page — and slicing and searching happen
+  on the machine that owns the tab. `Capabilities::browser` is what makes a read
+  local; every other product reaches it over the relay (`browser.*`).
 - `crates/hook-core/src/agent.rs` — supervisor for `pi` subprocesses over RPC:
   spawn, states, plans, progress batching, wakes, stop. It points agents at the
   bundled git and the managed `agent-home/gitconfig` only when the account may
@@ -393,7 +403,11 @@ bash.
   a side-panel entry (`chrome://hook-panel`; its toolbar action is pinned by
   default, `0019-panel-button`, and `--hook-side-panel` opens it at startup),
   `browser/ui/webui/hook_newtab_ui.*` is the New Tab page (a new tab is ours via
-  `ChromeUINewTabURLAsGURL`, patch 0009), and
+  `ChromeUINewTabURLAsGURL`, patch 0009), `browser/service/hook_service.cc` is the
+  page-read poller (one per profile, started at browser startup by
+  `browser/startup/hook_extra_parts.cc`, patch 0021 — not by a page, because a
+  read has to work with the side panel closed), `browser/tabs/hook_page.cc` reads
+  a tab's visible text in an isolated world, and
   `browser/channel/` is the client for a *running* Hook host's loopback channel
   (`crates/hook-core/src/channel.rs`) — the browser process makes those calls
   because a `chrome://` renderer is killed for a cross-scheme request, and that is
@@ -625,6 +639,10 @@ Changing one side of a boundary is the most common way to break this repo.
   and it reaches it through `folders.browse` (one level per call, directories
   only, never a file's contents), so a remote chat can start anywhere the
   local picker can — the host still canonicalizes and validates it.
+  `can_host` means "can run agents", so a family whose target is not an agent
+  host names its own rule: `browser.*` reaches a device whose capabilities
+  include `browser` (`server/relay.mjs`), which is what lets a page read target
+  Hook Browser on a controller. Do not widen `can_host` for it.
 - **Remote direct coding chat:** the host keeps the folder, engine and session;
   only a stub travels. `store.rs` (`deviceId`, `deviceName`, `remote`,
   `stubState`, `is_owned_coding`, `apply_stub`) → `sync.rs`
@@ -665,7 +683,11 @@ Changing one side of a boundary is the most common way to break this repo.
   `src-tauri/` with its own identifier) → `Product` + `Capabilities` in
   `crates/hook-core/src/lib.rs`, plus its own version passed to
   `hook_core::builder(product, capabilities, env!("CARGO_PKG_VERSION"))` → an
-  entry in `scripts/products.mjs` → root scripts → its own `msix/<id>/`. Every
+  entry in `scripts/products.mjs` → root scripts → its own `msix/<id>/`. The
+  relay validates the product a host announces (`PRODUCTS` in
+  `server/relay.mjs`), so a product that opens a relay connection has to be
+  named there too: one that is not is refused as an unknown product, and its
+  machine never appears in `list_machines`. Every
   *desktop* product is built and published by
   `pnpm release` (`scripts/release.sh`); add its `package.json` to the manifest
   copies in `Dockerfile` so a workspace install still resolves. A product with

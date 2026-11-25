@@ -1,0 +1,134 @@
+/**
+ * The browser's own addition to the dock: the line that says a read is possible.
+ *
+ * It lives here rather than in `packages/chat/src/dock.css` because nothing else
+ * has a page to read. The tokens come from `@hook/ui`, so it looks like the rest
+ * of the dock at both window widths.
+ */
+
+.read-notice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 18px 6px;
+  font-size: 11px;
+  color: var(--ink-3);
+  user-select: none;
+}
+
+.read-notice-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A live dot rather than an icon: it reads as a capability that is on, which is
+   what it is, and it costs 5 pixels instead of a glyph nobody recognises. */
+.read-notice-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-4);
+}
+
+.read-notice-help {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.read-notice-help:hover {
+  color: var(--ink);
+  border-color: var(--ink-4);
+}
+
+.read-notice-help:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.55);
+  outline-offset: 2px;
+}
+
+/* Anchored to the line above the composer, opening upward: the composer is at
+   the bottom of the panel, and a popover that opened downward would leave the
+   window. */
+.read-notice-popover {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--canvas);
+  box-shadow: 0 12px 28px -18px rgba(0, 0, 0, 0.55);
+  animation: read-notice-in 120ms var(--ease) both;
+}
+
+.read-notice-popover h2 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.read-notice-popover p {
+  margin: 0 0 7px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+/* The one sentence that must not be skimmed past. */
+.read-notice-warn {
+  color: var(--ink) !important;
+}
+
+.read-notice-close {
+  margin-top: 2px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(var(--ink-rgb), 0.05);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.read-notice-close:hover {
+  color: var(--ink);
+  background: rgba(var(--ink-rgb), 0.08);
+}
+
+@keyframes read-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .read-notice-popover {
+    animation: none;
+  }
+}

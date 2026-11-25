@@ -130,6 +130,9 @@ pub fn profile(state: &AppState) -> DeviceProfile {
             "previewPages": caps.preview_pages,
             "previewWorkspace": caps.preview_workspace,
             "workspaceTools": caps.workspace_tools,
+            // Whether a page can be read on this machine. A tool that names it
+            // for `read_page` needs to know before it tries.
+            "browser": caps.browser,
         }),
         specs: json!({
             "cpuCores": std::thread::available_parallelism()

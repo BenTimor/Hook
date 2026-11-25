@@ -25,6 +25,15 @@ agent themselves.
   `<ticket>.preview.hookcode.io`, with the account service as the middleman. The
   machine dials out; nothing needs a forwarded port. The ticket is short-lived
   and only reaches the active preview for that conversation.
+- **Reading a page.** A machine running Hook Browser can be read: `list_tabs`,
+  `read_page` and `find_in_page` take a `machine` like the agent tools, and the
+  machine with the browser answers (`docs/browser-host.md`, "Reading a page").
+  `list_machines` marks the ones that can be read (`can_read_pages`). The browser
+  is a controller, not a host, so `can_host` does not decide this: the relay lets
+  the `browser.*` family target any device that advertises a browser. What
+  crosses the relay is the slice of the page the model asked for, never a whole
+  page, and a read is a view of the page at that moment — it cannot click, type
+  or change anything.
 - **Requirements.** Remote control is part of a paid plan and requires cloud
   sync on. A free account can still use its own model endpoint for local agents;
   it cannot reach another machine.

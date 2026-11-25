@@ -27,6 +27,8 @@ class WebContents;
 
 namespace hook {
 
+class BrowserService;
+
 // One sign-in lookup in flight; defined by the .cc, which is the only place that
 // knows what it carries.
 struct SignInLookup;
@@ -54,7 +56,6 @@ class HookPageHandler : public mojom::PageHandler {
   void CreateChat(CreateChatCallback callback) override;
   void SendMessage(const std::string& id,
                    const std::string& text,
-                   const std::string& context,
                    SendMessageCallback callback) override;
   void StopMessage(const std::string& id) override;
   void GetSignIn(GetSignInCallback callback) override;
@@ -78,7 +79,9 @@ class HookPageHandler : public mojom::PageHandler {
                     std::optional<base::DictValue> body,
                     const std::string& error);
 
-  // The channel client, made on first use (it needs the page's profile).
+  // The channel client, made on first use (it needs the page's profile). It is
+  // the profile's, shared with the page-read poller: one descriptor, one token,
+  // one reconnect.
   HookChannel* Channel();
 
   // The WebContents this page belongs to: the tab reader needs it to find the
@@ -86,7 +89,7 @@ class HookPageHandler : public mojom::PageHandler {
   // outlives the handler.
   raw_ptr<content::WebContents> web_contents_;
   base::RepeatingClosure on_show_ui_;
-  std::unique_ptr<HookChannel> channel_;
+  raw_ptr<BrowserService> service_ = nullptr;
 
   mojo::Receiver<mojom::PageHandler> receiver_{this};
 

@@ -184,11 +184,31 @@ pub async fn handle(
         "coding.answer" => coding_answer(state, decode(params)?),
         "coding.rename" => coding_rename(state, decode(params)?),
         "coding.delete" => coding_delete(state, decode(params)?),
+        // A browser is a thing this machine has, so these three run here and
+        // nowhere else: the caller is a chat on another device (or another
+        // product on this one) asking what the tabs hold. The answer is a
+        // slice, never the whole page — the relay carries the part that was
+        // asked for.
+        "browser.tabs" => browser(state, crate::browser::Op::Tabs, &params).await,
+        "browser.read" => browser(state, crate::browser::Op::Read, &params).await,
+        "browser.find" => browser(state, crate::browser::Op::Find, &params).await,
         _ => Err(fail(
             "unknown_method",
             format!("Hook does not handle {method}."),
         )),
     }
+}
+
+/// The three browser methods, answered from this machine's queue. Params are
+/// the tool's own: `tab`, `offset`, `limit`, `query`, `regex`.
+async fn browser(
+    state: &Arc<AppState>,
+    op: crate::browser::Op,
+    params: &Value,
+) -> Result<Value, RpcFailure> {
+    crate::browser::perform(state, op, params)
+        .await
+        .map_err(|message| fail("browser_unavailable", message))
 }
 
 fn start(state: &Arc<AppState>, params: StartParams) -> Result<Value, RpcFailure> {

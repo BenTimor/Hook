@@ -75,6 +75,10 @@ pub struct AppState {
     /// What the user is looking at, written by the product's window. Ephemeral:
     /// it rides on the next request only, and is never stored in a chat.
     pub context: Arc<Mutex<Option<String>>>,
+    /// The queue this machine's Hook Browser polls for page work
+    /// (`browser.rs`). A task is a tool waiting on a tab; the answer is the
+    /// page's text. Empty on a product with no browser.
+    pub browser: Arc<crate::browser::BrowserTasks>,
     /// Which product this backend is serving (see `Product`).
     pub product: crate::Product,
     /// What this product's chat agent may do (see `Capabilities`).

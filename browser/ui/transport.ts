@@ -18,7 +18,7 @@
  */
 import type { ChatTransport, DockChat, DockEvent, DockMessage } from "@hook/chat";
 
-import { activeTab, type ChatMessage, type ChatSummary, type HookPageHandler } from "./mojom";
+import type { ChatMessage, ChatSummary, HookPageHandler } from "./mojom";
 
 const POLL_MS = 350;
 
@@ -40,19 +40,6 @@ function toChat(summary: ChatSummary): DockChat {
     updatedAt: summary.updatedAt,
     unsynced: summary.unsynced,
   };
-}
-
-/** The trailing context frame: which page the user is asking about. */
-async function tabContext(handler: HookPageHandler): Promise<string> {
-  const { tabs } = await handler.getTabs();
-  const tab = activeTab(tabs);
-  if (!tab) return "Browser: Hook Browser";
-  return [
-    "Browser: Hook Browser",
-    `Tab: ${tab.index + 1} of ${tabs.length} (id: ${tab.id})`,
-    `Title: ${tab.title}`,
-    `Domain: ${tab.domain}`,
-  ].join("\n");
 }
 
 export function channelTransport(handler: HookPageHandler): ChatTransport {
@@ -157,7 +144,11 @@ export function channelTransport(handler: HookPageHandler): ChatTransport {
         if (created.error) throw new Error(created.error);
         id = created.id;
       }
-      const sent = await handler.sendMessage(id, text, await tabContext(handler));
+      // The frame that says which page this is about (tab, title, address,
+      // highlight) is built in the browser process, from the live strip: the
+      // page never handles a tab handle, so it cannot point a read at a tab of
+      // its choosing.
+      const sent = await handler.sendMessage(id, text);
       if (!sent.ok) throw new Error(sent.error);
       const view = await handler.getChat(id);
       let drawnId: string | null = null;

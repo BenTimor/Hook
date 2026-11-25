@@ -91,6 +91,7 @@ void HookChannel::OnHealthReply(AvailableCallback done,
                                 std::optional<base::DictValue> reply,
                                 const std::string& error) {
   if (reply) {
+    refused_.erase(port_);
     std::move(done).Run(true, error);
     return;
   }
@@ -160,7 +161,11 @@ void HookChannel::OnDescriptorsRead(
     port_.clear();
     token_.clear();
     error_ = "No Hook is running on this computer.";
-  } else {
+  } else if (!AdoptCandidate() && !refused_.empty()) {
+    // Every file we know about refused once. That is a stale memory, not a dead
+    // machine: forget it and let the probe decide afresh.
+    refused_.clear();
+    candidate_ = 0;
     AdoptCandidate();
   }
   std::move(ready).Run();
@@ -170,17 +175,23 @@ bool HookChannel::AdoptCandidate() {
   port_.clear();
   token_.clear();
   error_.clear();
-  if (candidate_ >= descriptors_.size()) {
-    return false;
+  while (candidate_ < descriptors_.size()) {
+    const ChannelDescriptor& descriptor = descriptors_[candidate_];
+    if (!descriptor.usable()) {
+      error_ = descriptor.error;
+      return false;
+    }
+    // Skip a port that refused us: a killed host's file outlives the process,
+    // and the browser prefers its own descriptor over a running app's.
+    if (refused_.find(descriptor.port) != refused_.end()) {
+      ++candidate_;
+      continue;
+    }
+    port_ = descriptor.port;
+    token_ = descriptor.token;
+    return true;
   }
-  const ChannelDescriptor& descriptor = descriptors_[candidate_];
-  if (!descriptor.usable()) {
-    error_ = descriptor.error;
-    return false;
-  }
-  port_ = descriptor.port;
-  token_ = descriptor.token;
-  return true;
+  return false;
 }
 
 void HookChannel::Get(const std::string& path, ChannelReply done) {
@@ -232,11 +243,13 @@ void HookChannel::SendRequest(const std::string& method,
             if (!reply.has_value()) {
               // Nothing answered on the port we adopted. The descriptor that
               // named it may be stale (a host killed hard cannot remove its file)
-              // or the host may have restarted on a new port, so the cache is
-              // invalidated: the next call re-reads the descriptors and re-probes
-              // instead of failing against a dead port for the rest of the
-              // session.
+              // or the host may have restarted on a new port. The port is marked
+              // refused so the next call picks the next descriptor — a live app
+              // behind a dead browser-host file is the case that made the panel
+              // say "Hook is not listening" — and the cache is invalidated so
+              // that happens on the very next call.
               if (self) {
+                self->refused_.insert(self->port_);
                 self->read_at_ = base::TimeTicks();
               }
               std::move(done).Run(

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { CloudOff, List, Search, SquarePen, X } from "lucide-react";
 import { HookMark } from "@hook/ui";
 
@@ -81,6 +81,7 @@ export function ChatDock({
   title = "Hook",
   suggestions = [],
   blurb = "Ask anything. Hook can read what you are looking at.",
+  notice,
 }: {
   transport: ChatTransport;
   open: boolean;
@@ -91,6 +92,12 @@ export function ChatDock({
   suggestions?: string[];
   /** One line under the greeting, in the product's words. */
   blurb?: string;
+  /**
+   * A line above the composer: what this product wants said before every
+   * message. The browser uses it to say what a read means, which is not
+   * something the dock can decide for it.
+   */
+  notice?: ReactNode;
 }) {
   const [chats, setChats] = useState<DockChat[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -441,6 +448,8 @@ export function ChatDock({
           }
         />
       )}
+
+      {historyOpen ? null : notice}
 
       {historyOpen ? null : (
         <div className="dock-composer">

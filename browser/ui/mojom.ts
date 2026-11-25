@@ -13,6 +13,8 @@ export interface Tab {
   id: number;
   active: boolean;
   title: string;
+  /** The committed URL, without its fragment or credentials. */
+  url: string;
   domain: string;
 }
 
@@ -59,10 +61,10 @@ export interface HookPageHandler {
   listChats(): Promise<{ chats: ChatSummary[]; error: string }>;
   getChat(id: string): Promise<{ chat: ChatView | null; error: string }>;
   createChat(): Promise<{ id: string; error: string }>;
+  /** The browser builds the page frame itself; the page sends words only. */
   sendMessage(
     id: string,
     text: string,
-    context: string,
   ): Promise<{ ok: boolean; error: string }>;
   stopMessage(id: string): void;
   getSignIn(): Promise<SignInView>;

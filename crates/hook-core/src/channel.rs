@@ -35,7 +35,12 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MAX_HEAD: usize = 16 * 1024;
-const MAX_BODY: usize = 64 * 1024;
+// A page read answers with up to 200k characters of text, and JSON escaping can
+// double that, so the request body cap has to hold one with room to spare. The
+// channel is loopback and token-authenticated; this is a size a browser
+// legitimately sends, not a trust boundary being widened. A body over the cap is
+// refused, which a tool would see as a browser that never answered.
+const MAX_BODY: usize = 1024 * 1024;
 const DESCRIPTOR_PREFIX: &str = "browser-channel";
 const CHANNEL_DIR: &str = "app.hook";
 
@@ -59,6 +64,15 @@ pub trait ChannelBackend: Send + Sync {
     /// browser polls `chat` while it runs, so there is no stream to keep alive.
     fn send(&self, id: &str, text: &str, context: &str) -> Result<(), String>;
     fn stop(&self, id: &str) -> Result<(), String>;
+    /// The next page task for this machine's browser, held open until there is
+    /// one or `wait` runs out. `None` is "nothing to do", which is also how an
+    /// idle browser says it is alive: every poll is a heartbeat.
+    fn browser_task(
+        &self,
+        wait: std::time::Duration,
+    ) -> Pin<Box<dyn Future<Output = Option<Value>> + Send + '_>>;
+    /// The browser's answer to one task, by id.
+    fn browser_answer(&self, id: &str, body: &Value);
     /// The account, as `auth_signer` sees it: the pending code while the device
     /// flow waits, and `signed_in` once it has been approved.
     fn sign_in_state(&self) -> Value;
@@ -153,6 +167,17 @@ impl ChannelBackend for LiveBackend {
     fn stop(&self, id: &str) -> Result<(), String> {
         crate::session::stop_chat_turn(&self.state, id);
         Ok(())
+    }
+
+    fn browser_task(
+        &self,
+        wait: std::time::Duration,
+    ) -> Pin<Box<dyn Future<Output = Option<Value>> + Send + '_>> {
+        Box::pin(async move { self.state.browser.next_waiting(wait).await })
+    }
+
+    fn browser_answer(&self, id: &str, body: &Value) {
+        self.state.browser.answer(id, body.clone());
     }
 
     fn sign_in_state(&self) -> Value {
@@ -581,6 +606,21 @@ async fn handle(
                 }
             }
         }
+        // Hook Browser asking for page work: the queue `browser.rs` fills when a
+        // chat somewhere on the account reads a tab on this machine. Signed in,
+        // like every other route below the gate: a signed-out browser has no
+        // dock to read for.
+        ("GET", ["browser", "tasks"]) => {
+            let task = backend
+                .browser_task(std::time::Duration::from_secs(10))
+                .await;
+            respond(&mut stream, 200, &json!({ "ok": true, "task": task })).await
+        }
+        ("POST", ["browser", "tasks", id]) => {
+            let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
+            backend.browser_answer(id, &body);
+            respond(&mut stream, 200, &json!({ "ok": true })).await
+        }
         ("POST", ["chats", id, "stop"]) => match backend.stop(id) {
             Ok(()) => respond(&mut stream, 200, &json!({ "ok": true })).await,
             Err(error) => respond(&mut stream, 400, &json!({ "ok": false, "error": error })).await,
@@ -642,6 +682,15 @@ mod tests {
         fn create(&self) -> Result<String, String> {
             Ok("c2".into())
         }
+        fn browser_task(
+            &self,
+            _wait: std::time::Duration,
+        ) -> Pin<Box<dyn Future<Output = Option<Value>> + Send + '_>> {
+            Box::pin(async { None })
+        }
+
+        fn browser_answer(&self, _id: &str, _body: &Value) {}
+
         fn send(&self, id: &str, text: &str, _context: &str) -> Result<(), String> {
             if id != "c1" {
                 return Err("unknown chat".into());

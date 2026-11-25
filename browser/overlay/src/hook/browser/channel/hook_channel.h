@@ -23,6 +23,7 @@
 #define HOOK_BROWSER_CHANNEL_HOOK_CHANNEL_H_
 
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -100,6 +101,13 @@ class HookChannel {
   // for the next product's rather than reported as "Hook is not running".
   std::vector<ChannelDescriptor> descriptors_;
   size_t candidate_ = 0;
+  // Ports that refused a request. A killed host leaves its descriptor behind,
+  // and the browser prefers its own: without this, every real request went to
+  // the dead port while the live app's descriptor sat next in the list, and the
+  // panel said "Hook is not listening" to someone looking at Hook. Only the
+  // probe walked the list; now the requests do too. A port is forgotten as soon
+  // as a health check on it succeeds.
+  std::set<std::string> refused_;
   std::string port_;
   std::string token_;
   std::string error_;

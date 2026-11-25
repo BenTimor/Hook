@@ -18,6 +18,9 @@ struct Tab {
   bool active;
   // The tab's title as WebContents reports it, possibly empty.
   string title;
+  // The committed URL, without its fragment: what the chat agent is told a tab
+  // is about, and what a page read is keyed on.
+  string url;
   // The host of the last committed URL, without scheme or path.
   string domain;
 };
@@ -91,9 +94,10 @@ interface PageHandler {
   ListChats() => (array<ChatSummary> chats, string error);
   GetChat(string id) => (ChatView? chat, string error);
   CreateChat() => (string id, string error);
-  // Starts the turn. `context` is the page's trailing context frame (the active
-  // tab), capped by the backend like every other product's.
-  SendMessage(string id, string text, string context) => (bool ok, string error);
+  // Starts the turn. The trailing context frame and the page view the agent's
+  // browser tools read are built here, from the live tabstrip, so the page never
+  // handles a tab handle and cannot point a read at a tab of its choosing.
+  SendMessage(string id, string text) => (bool ok, string error);
   StopMessage(string id);
 
   // The sign-in card: the account file, plus the running app's answer when there

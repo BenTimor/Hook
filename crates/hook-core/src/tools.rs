@@ -36,6 +36,12 @@ pub const MACHINE_TOOLS: [&str; 10] = [
     "list_coding_sessions",
 ];
 
+/// The tools that read a browser: a tab's address and title, its text, and the
+/// words inside it. A machine operation like the agent tools, and dispatched the
+/// same way: the machine named in the call is the machine with the browser, and
+/// `this computer` is only the right answer on the browser's own host.
+pub const BROWSER_TOOLS: [&str; 3] = ["list_tabs", "read_page", "find_in_page"];
+
 /// The tools that reach a *folder on this computer*. A phone has no projects
 /// directory — the folders live on the desktops signed into the account — so
 /// these are removed together with the prompt section that explains them.
@@ -273,6 +279,69 @@ pub fn definitions() -> Value {
     ])
 }
 
+/// Reading a browser, on the machine that has one.
+///
+/// The message a browser sends already carries the active tab, its address and
+/// its title; these tools are for everything else — the other tabs, and the page
+/// itself, which is far too large to travel with every message.
+pub fn browser_definitions() -> Vec<Value> {
+    let list = json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "list_tabs",
+                "description": "List the tabs open in Hook Browser on a machine: number, title, address and which one is selected. On a machine whose user is browsing, this is how you find out what they are looking at. Pass `tab` to read one tab's row instead of the whole list.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines. Always required, even for this computer: the conversation has to say where the browser is." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "One tab, numbered as list_tabs numbers it." }
+                    },
+                    "required": ["machine"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_page",
+                "description": "Read a tab's text. Returns one slice and the page's headings; a long page is read in pieces, so pass `offset` (the `next` value from the previous read) instead of asking again. The numbers in `headings` are not offsets - to find a section, use find_in_page on its words.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "Which tab to read, as list_tabs numbers it." },
+                        "offset": { "type": "integer", "minimum": 0, "description": "Characters to skip. Default 0; use the `next` value from the last read." },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 40000, "description": "How many characters to return. Default 8000, which is usually enough to answer from." }
+                    },
+                    "required": ["machine", "tab"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "find_in_page",
+                "description": "Search inside a tab for words or a pattern, without reading the whole page: returns up to ten short snippets with the character offset of each, which read_page can start from. Faster and cheaper than paging through a long page.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "Which tab to search, as list_tabs numbers it." },
+                        "query": { "type": "string", "description": "The words to look for, case-insensitive. With `regex` set, a regular expression." },
+                        "regex": { "type": "boolean", "description": "Treat `query` as a regular expression. Default false." }
+                    },
+                    "required": ["machine", "tab", "query"],
+                    "additionalProperties": false
+                }
+            }
+        }
+    ]);
+    list.as_array().cloned().unwrap_or_default()
+}
+
 /// The chat agent's tools, minus the ones that manage coding agents, as a
 /// schema list for a directly-driven coding agent.
 ///
@@ -340,6 +409,12 @@ pub fn execute(env: &ToolEnv<'_>, name: &str, args: &Value) -> String {
 /// Run a tool that may need another machine. Local tools fall through to the
 /// synchronous dispatcher, so their behaviour and tests are unchanged.
 pub async fn execute_async(env: &ToolEnv<'_>, name: &str, args: &Value) -> String {
+    if BROWSER_TOOLS.contains(&name) {
+        return match run_browser(env, name, args).await {
+            Ok(value) => value.to_string(),
+            Err(message) => json!({ "error": message }).to_string(),
+        };
+    }
     if !MACHINE_TOOLS.contains(&name) {
         return execute(env, name, args);
     }
@@ -356,11 +431,15 @@ struct TargetMachine {
     /// This process can execute the work itself (it is Hook, and the machine is
     /// this one).
     local: bool,
+    /// The machine runs Hook Browser, so a tab can be read there.
+    can_read_pages: bool,
+    /// This machine is the one this process runs on.
+    is_self: bool,
 }
 
 pub(crate) fn machine_view(state: &crate::state::AppState) -> Value {
     let view = state.relay.view();
-    let machines: Vec<Value> = view
+    let mut machines: Vec<Value> = view
         .devices
         .iter()
         .map(|device| {
@@ -374,12 +453,40 @@ pub(crate) fn machine_view(state: &crate::state::AppState) -> Value {
                 "this_computer": device.id == view.self_id,
                 "remote_allowed": device.remote_allowed,
                 "projects": device.specs.as_ref().and_then(|specs| specs.get("projects")).cloned(),
+                // A tab can be read where Hook Browser runs. Without this the
+                // model has to try a machine to find out.
+                "can_read_pages": device
+                    .capabilities
+                    .as_ref()
+                    .and_then(|caps| caps.get("browser"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             })
         })
         .collect();
+    // The machine this process runs on, when it hosts a browser. A tab is local
+    // work: it does not need the relay, and a chat on Hook Browser must not be
+    // told "no computers are connected" while the browser is right here.
+    if state.capabilities.browser && !machines.iter().any(|row| row["id"] == json!(view.self_id)) {
+        machines.insert(
+            0,
+            json!({
+                "machine": view.self_name,
+                "id": view.self_id,
+                "kind": "desktop",
+                "platform": std::env::consts::OS,
+                "online": true,
+                "can_run_agents": false,
+                "this_computer": true,
+                "remote_allowed": false,
+                "projects": Value::Null,
+                "can_read_pages": true,
+            }),
+        );
+    }
     json!({
         "machines": machines,
-        "connected": view.state == "online",
+        "connected": view.state == "online" || state.capabilities.browser,
         "message": view.message,
         "hint": if machines.is_empty() {
             "No computers are connected. Ask the user to turn one on, or add a cloud machine."
@@ -389,7 +496,71 @@ pub(crate) fn machine_view(state: &crate::state::AppState) -> Value {
     })
 }
 
-fn resolve_machine(env: &ToolEnv<'_>, requested: Option<&str>) -> Result<TargetMachine, String> {
+/// Reads a browser: here when this process hosts the browser, over the relay
+/// when another machine does. Both halves answer the same JSON, because both run
+/// `browser::perform` — the difference is only which process can see the tabs.
+async fn run_browser(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
+    let state = env
+        .state
+        .ok_or("This build cannot reach a browser.")?;
+    let machine = arg_str(args, "machine")?;
+    let target = resolve_machine(env, Some(machine), Need::Browser)?;
+    let op = crate::browser::Op::parse(name).ok_or("That is not a page tool.")?;
+
+    // The body of the call, named the way both the tool and the relay spell it.
+    let mut params = serde_json::Map::new();
+    for key in ["tab", "offset", "limit", "regex"] {
+        if let Some(value) = args.get(key) {
+            params.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(query) = args.get("query") {
+        params.insert("query".into(), query.clone());
+    }
+    let params = Value::Object(params);
+
+    // Local means this process is the one hosting the browser, which is what
+    // `Capabilities::browser` says. A Hook app on the same computer is not: it
+    // reaches the browser's host over the relay, like any other machine.
+    if target.is_self && state.capabilities.browser {
+        return crate::browser::perform(state, op, &params).await;
+    }
+    if !target.can_read_pages {
+        return Err(format!(
+            "{} has no Hook Browser running. Any machine with one can be read; list_machines marks them.",
+            target.name
+        ));
+    }
+    let method = match op {
+        crate::browser::Op::Tabs => "browser.tabs",
+        crate::browser::Op::Read => "browser.read",
+        crate::browser::Op::Find => "browser.find",
+    };
+    state
+        .relay
+        .rpc(&target.id, method, params, std::time::Duration::from_secs(30))
+        .await
+        .map_err(|error| error.message)
+}
+
+/// What the tool that is asking needs from a machine. The same name resolves to
+/// a different verdict: `this computer` is the right answer for an agent only
+/// where Hook hosts agents, and for a page only where Hook Browser runs. A
+/// browser is a controller, so its machine is never a host — which is exactly
+/// why this cannot be one function with one answer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Need {
+    /// Run a coding agent: the machine must accept work.
+    Agents,
+    /// Read a tab: the machine must have a browser.
+    Browser,
+}
+
+fn resolve_machine(
+    env: &ToolEnv<'_>,
+    requested: Option<&str>,
+    need: Need,
+) -> Result<TargetMachine, String> {
     let state = env
         .state
         .ok_or("This build cannot reach other machines.")?;
@@ -399,26 +570,43 @@ fn resolve_machine(env: &ToolEnv<'_>, requested: Option<&str>) -> Result<TargetM
         requested.to_ascii_lowercase().as_str(),
         "this computer" | "this machine" | "this pc" | "local" | "here"
     );
+    let mine = TargetMachine {
+        id: view.self_id.clone(),
+        name: view.self_name.clone(),
+        local: state.capabilities.coding_agents,
+        is_self: true,
+        can_read_pages: state.capabilities.browser,
+    };
     if this_computer {
+        if need == Need::Browser {
+            return if mine.can_read_pages {
+                Ok(mine)
+            } else if state.product == crate::Product::Mobile {
+                Err("A phone has no browser. Name one of the user's computers, from list_machines.".into())
+            } else {
+                Err(format!(
+                    "{} is not running Hook Browser, so it has no tabs to read. Name the machine that is.",
+                    mine.name
+                ))
+            };
+        }
         if state.product == crate::Product::Mobile {
             return Err(
                 "A phone cannot run coding agents. Choose one of the user's computers."
                     .into(),
             );
         }
-        return Ok(TargetMachine {
-            id: view.self_id.clone(),
-            name: view.self_name.clone(),
-            local: state.capabilities.coding_agents,
-        });
+        return Ok(mine);
     }
     if requested.is_empty() {
+        if need == Need::Browser {
+            return Err(
+                "Choose a machine with Hook Browser. Call list_machines: the ones that can be read are marked."
+                    .into(),
+            );
+        }
         if state.capabilities.coding_agents {
-            return Ok(TargetMachine {
-                id: view.self_id.clone(),
-                name: view.self_name.clone(),
-                local: true,
-            });
+            return Ok(mine);
         }
         return Err(
             "Choose a computer for this work. Call list_machines to see which ones are on."
@@ -444,6 +632,33 @@ fn resolve_machine(env: &ToolEnv<'_>, requested: Option<&str>) -> Result<TargetM
             "There is no machine called \"{requested}\". Call list_machines for the current names."
         )),
         [one] => {
+            let has_browser = one
+                .capabilities
+                .as_ref()
+                .and_then(|caps| caps.get("browser"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if need == Need::Browser {
+                if !has_browser {
+                    return Err(format!(
+                        "{} has no Hook Browser, so there is nothing to read there.",
+                        one.name
+                    ));
+                }
+                if !one.online {
+                    return Err(format!(
+                        "{} is not running right now, so its browser cannot be read. Turn it on, then ask again.",
+                        one.name
+                    ));
+                }
+                return Ok(TargetMachine {
+                    id: one.id.clone(),
+                    name: one.name.clone(),
+                    local: false,
+                    is_self: one.id == view.self_id,
+                    can_read_pages: true,
+                });
+            }
             if !one.can_host {
                 return Err(format!(
                     "\"{}\" cannot run coding agents. Choose a computer running Hook.",
@@ -460,6 +675,8 @@ fn resolve_machine(env: &ToolEnv<'_>, requested: Option<&str>) -> Result<TargetM
                 id: one.id.clone(),
                 name: one.name.clone(),
                 local: one.id == view.self_id && state.capabilities.coding_agents,
+                is_self: one.id == view.self_id,
+                can_read_pages: has_browser,
             })
         }
         many => Err(format!(
@@ -495,7 +712,7 @@ async fn run_machine(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Valu
     }
 
     let requested = args.get("machine").and_then(Value::as_str);
-    let target = resolve_machine(env, requested)?;
+    let target = resolve_machine(env, requested, Need::Agents)?;
     if target.local {
         return run(env, name, args);
     }
@@ -1111,6 +1328,7 @@ mod tests {
                 remote_agents: true,
                 workspace_tools: false,
                 projects: true,
+                browser: false,
             },
             false,
         );

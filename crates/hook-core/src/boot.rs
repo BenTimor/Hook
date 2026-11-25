@@ -253,6 +253,7 @@ pub fn start(options: StartOptions) -> Result<Arc<AppState>, Box<dyn std::error:
         imports: Arc::new(crate::import::Importer::new()),
         workspace,
         context: Arc::new(Mutex::new(None)),
+        browser: Arc::new(crate::browser::BrowserTasks::new()),
         product,
         capabilities,
     });

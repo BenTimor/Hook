@@ -32,7 +32,12 @@ const HEARTBEAT_MS = 25_000;
 const PRESENCE_DEBOUNCE_MS = 250;
 const TOUCH_MS = 5 * 60_000;
 
-const PRODUCTS = new Set(["chat", "workspace", "mobile", "headless"]);
+/**
+ * Every product that may hold a relay connection. `browser` is here and not in
+ * HOST_PRODUCTS: Hook Browser's host can be asked for a tab, which is work, but
+ * it runs no engine and takes no agent commands.
+ */
+const PRODUCTS = new Set(["chat", "workspace", "mobile", "headless", "browser"]);
 const KINDS = new Set(["desktop", "headless", "mobile"]);
 const HOST_PRODUCTS = new Set(["chat", "headless"]);
 
@@ -68,6 +73,17 @@ function cleanName(value) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 60);
+}
+
+/** A boolean out of a stored JSON column (`capabilities`), or false. */
+function storedFlag(column, key) {
+  if (typeof column !== "string") return false;
+  try {
+    const parsed = JSON.parse(column);
+    return Boolean(parsed && typeof parsed === "object" && parsed[key] === true);
+  } catch {
+    return false;
+  }
 }
 
 function jsonObject(value, max = 4096) {
@@ -408,16 +424,25 @@ export function createRelay({ server, db, presence, previewTunnel }) {
     }
     const targetRow = db
       .prepare(
-        "SELECT can_host, remote_allowed FROM devices WHERE google_subject = ? AND device_id = ?",
+        "SELECT can_host, remote_allowed, capabilities FROM devices WHERE google_subject = ? AND device_id = ?",
       )
       .get(conn.subject, to);
     if (!targetRow)
       return rpcError(conn, id, "unknown_device", "That machine is not on this account.");
-    if (!targetRow.can_host)
+    // `can_host` means "can run agent work". A page read is work of a different
+    // kind: it goes to a machine with a browser, which is a controller and
+    // would fail that test. The family names its own target rule instead.
+    const readsAPage =
+      method.startsWith("browser.") && storedFlag(targetRow.capabilities, "browser");
+    if (!targetRow.can_host && !readsAPage)
       return rpcError(conn, id, "not_a_host", "That device cannot run agent work.");
     if (!targetRow.remote_allowed)
       return rpcError(conn, id, "remote_disabled", "That machine does not accept remote work.");
-    const target = presence.host(conn.subject, to);
+    const target = targetRow.can_host
+      ? presence.host(conn.subject, to)
+      : presence
+          .connections(conn.subject, to)
+          .find((candidate) => candidate.ws.readyState === WebSocket.OPEN);
     if (!target || target.ws.readyState !== WebSocket.OPEN)
       return rpcError(conn, id, "device_offline", "That machine is not running Hook right now.");
     if (target === conn) return rpcError(conn, id, "self_target", "A machine cannot call itself.");

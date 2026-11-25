@@ -16,6 +16,7 @@ const HOST2_TOKEN = "hk_host2_token_0123456789abcdefghij";
 const PHONE_TOKEN = "hk_phone_token_0123456789abcdefghij";
 const TABLET_TOKEN = "hk_tablet_token_0123456789abcdefghij";
 const WORKSPACE_TOKEN = "hk_workspace_token_0123456789abcdefgh";
+const BROWSER_TOKEN = "hk_browser_token_0123456789abcdefgh";
 const OTHER_TOKEN = "hk_other_token_0123456789abcdefghij";
 const FREE_TOKEN = "hk_relay_free_token_0123456789abcdefgh";
 const SYNC_OFF_TOKEN = "hk_relay_off_token_0123456789abcdefgh";
@@ -142,6 +143,7 @@ async function setup(t) {
     [PHONE_TOKEN, "relay-pro", "device-phone"],
     [TABLET_TOKEN, "relay-pro", "device-tablet"],
     [WORKSPACE_TOKEN, "relay-pro", "device-workspace"],
+    [BROWSER_TOKEN, "relay-pro", "device-browser"],
     [OTHER_TOKEN, "relay-other", "device-other"],
     [FREE_TOKEN, "relay-free", "device-free"],
     [SYNC_OFF_TOKEN, "relay-off", "device-off"],
@@ -296,6 +298,47 @@ test("Workspace is a controller even when it claims host", async (t) => {
   assert.equal(ready.device.hostOnline, false);
   const listed = await request("/devices", { token: WORKSPACE_TOKEN });
   assert.equal(listed.body.devices[0].canHost, false);
+});
+
+test("Hook Browser is a controller that can be asked for a page", async (t) => {
+  const { request, connect } = await setup(t);
+  const browser = await connect(BROWSER_TOKEN, "device-browser");
+  browser.send(
+    hello("device-browser", {
+      name: "Ben's PC",
+      product: "browser",
+      role: "controller",
+      canHost: false,
+      capabilities: { browser: true, workspaceTools: true },
+    }),
+  );
+  const ready = await browser.next((frame) => frame.kind === "ready");
+  assert.equal(ready.device.role, "controller");
+  // A browser takes work (a page read) without being a coding-agent host.
+  assert.equal(ready.device.hostOnline, false);
+
+  const listed = await request("/devices", { token: BROWSER_TOKEN });
+  const row = listed.body.devices.find((device) => device.id === "device-browser");
+  assert.equal(row.product, "browser");
+  assert.equal(row.capabilities.browser, true);
+
+  // Another device reads a tab on it: the method travels, the answer comes back.
+  const phone = await connect(PHONE_TOKEN, "device-phone");
+  phone.send(hello("device-phone", { name: "Phone", kind: "mobile", product: "mobile", role: "controller", canHost: false }));
+  await phone.next((frame) => frame.kind === "ready");
+  phone.send({
+    kind: "rpc",
+    id: "rpc-page-1",
+    to: "device-browser",
+    method: "browser.read",
+    params: { tab: 1 },
+  });
+  const arrived = await browser.next((frame) => frame.kind === "rpc");
+  assert.equal(arrived.method, "browser.read");
+  assert.equal(arrived.params.tab, 1);
+  browser.send({ kind: "rpcResult", id: arrived.id, ok: true, result: { text: "hello" } });
+  const answer = await phone.next((frame) => frame.kind === "rpcResult");
+  assert.equal(answer.result.text, "hello");
 });
 
 test("an RPC reaches the target machine and only its caller sees the answer", async (t) => {

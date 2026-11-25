@@ -1,0 +1,24 @@
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index 41b28743df..f43a18b893 100644
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -48,6 +48,7 @@
+ #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+ #include "chrome/browser/media/webrtc/webrtc_log_util.h"
+ #include "chrome/browser/memory/chrome_browser_main_extra_parts_memory.h"
++#include "hook/browser/startup/hook_extra_parts.h"
+ #include "chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.h"
+ #include "chrome/browser/metrics/chrome_feature_list_creator.h"
+ #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
+@@ -855,6 +856,11 @@ std::unique_ptr<content::BrowserMainParts> ChromeBrowserMainParts::Create(
+ 
+   main_parts->AddParts(std::make_unique<ChromeBrowserMainExtraPartsMemory>());
+ 
++  // Hook Browser: starts the page-read queue for every profile, so a chat on
++  // the account can read a tab while the side panel is closed. See
++  // docs/browser-host.md and hook/browser/service/hook_service.h.
++  main_parts->AddParts(std::make_unique<hook::HookExtraParts>());
++
+   chrome::AddMetricsExtraParts(main_parts.get());
+ 
+   main_parts->AddParts(

@@ -50,6 +50,14 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk
 - When you are woken and there is something to report, say what actually happened in plain language: what changed, whether it worked, what is left. Never mention agent ids, session ids, tool names, or raw logs.
 - If a coding agent asks a question, answer it yourself when the user-s instructions already determine the answer; otherwise ask the user, then answer the agent.
 
+## Browsers
+- A machine running Hook Browser can be read: the tabs open there, and the text of any one of them. A page belongs to the machine it is open on, so these tools take a `machine` like the agent tools do: the exact name from list_machines, or `this computer` on the machine that actually has the browser.
+- When the user wrote from Hook Browser, the browser is on this computer, and `this computer` is the answer. Try it before list_machines, and do not tell the user nothing is connected while they are typing in the browser: if a read fails, say what the browser said.
+- The user's message already carries the tab they were looking at when they wrote it: its number and title, its address, and anything they highlighted. Use that first; it is what they mean by this page. Call list_tabs when the question is about other tabs, or to get the numbering right.
+- read_page returns one slice of a page and its headings, not the whole thing: a long page is read in pieces, with `offset` set to the `next` value from the last read. Do not read the same page twice for one question, and do not paste a page into the reply - quote the sentence that answers the question.
+- find_in_page is for when you know the words: a price, an error, a name. It returns short snippets and where they are, which is cheaper than paging through the page. Set `regex` only when the user asked for a pattern.
+- A read is a real view of the page at that moment, so it can be stale by a turn, and it is the page's *text*: no screenshots, no forms, no clicking. If the user wants something changed on the page, say what you would do rather than claiming you did it.
+
 ## Preview panel
 - Hook has a preview panel on the right side of the window. A coding agent can put one HTML page from its project there with its own show_preview tool; Hook serves it and refreshes it whenever the project changes. You never see the panel and you never set it yourself.
 - It is optional. Tell the coding agent to use it when the work has something worth looking at: a frontend task, a UI change, a data analysis with charts or tables, a visual report. Skip it for backend work, refactors, scripts, configuration, or anything with nothing to look at.
@@ -578,6 +586,14 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         if state.capabilities.workspace_tools {
             if let Some(list) = set.as_array_mut() {
                 list.extend(crate::workspace::definitions());
+            }
+        }
+        // Reading a browser: the dock's own message carries the page, but the
+        // tabs and the text are asked for. Offered wherever a machine can be
+        // reached, which is everywhere except a build with no account.
+        if state.capabilities.browser || state.capabilities.remote_agents {
+            if let Some(list) = set.as_array_mut() {
+                list.extend(tools::browser_definitions());
             }
         }
         // Memory is account data, not product data: both windows get the same
@@ -1253,6 +1269,11 @@ fn system_prompt(cfg: &config::HarnessConfig, caps: crate::Capabilities, memory:
     if !caps.preview_pages {
         text = without_section(text, "## Preview panel");
     }
+    // A browser is a machine away: without somewhere to put a `machine`, the
+    // paragraphs would describe tools that are not in the list.
+    if !(caps.browser || caps.remote_agents) {
+        text = without_section(text, "## Browsers");
+    }
     if !(caps.coding_agents || caps.remote_agents) {
         text = without_section(text, "## Coding agents");
         text = without_section(text, "## Steering a running agent");
@@ -1416,6 +1437,15 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
         },
         "list_projects" => "Looking at your projects…".into(),
         "list_machines" => "Checking which computers are on…".into(),
+        "list_tabs" => "Looking at the tabs…".into(),
+        "read_page" => match text("tab") {
+            Some(tab) => format!("Reading tab {tab}…"),
+            None => "Reading the page…".into(),
+        },
+        "find_in_page" => match text("query") {
+            Some(query) => format!("Looking for “{}” on the page…", short(query, 42)),
+            None => "Looking through the page…".into(),
+        },
         "remember" => match text("text") {
             Some(value) => format!("Remembering “{}”…", short(value, 42)),
             None => "Remembering something…".into(),
@@ -2792,11 +2822,13 @@ mod capability_tests {
                 remote_agents: false,
                 workspace_tools: false,
                 projects: false,
+                browser: false,
             },
             false,
         );
         for heading in [
             "## Projects",
+            "## Browsers",
             "## Coding agents",
             "## Steering a running agent",
             "## Progress",
@@ -2866,12 +2898,14 @@ mod activity_tests {
         let chat = tools::definitions();
         let workspace = crate::workspace::definitions();
         let memory = crate::memory::definitions();
+        let browser = tools::browser_definitions();
         let names = chat
             .as_array()
             .expect("tools are an array")
             .iter()
             .chain(workspace.iter())
             .chain(memory.iter())
+            .chain(browser.iter())
             .filter_map(|tool| tool["function"]["name"].as_str())
             .filter(|name| *name != "no_update");
         for name in names {

@@ -11,11 +11,15 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "hook/browser/account/hook_account.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
+#include "hook/browser/account/hook_account.h"
+#include "hook/browser/service/hook_service.h"
+#include "hook/browser/tabs/hook_page.h"
 #include "hook/browser/tabs/hook_tabs.h"
 #include "hook/common/hook.mojom.h"
 
@@ -111,21 +115,22 @@ void HookPageHandler::Bind(mojo::PendingReceiver<mojom::PageHandler> receiver) {
 }
 
 HookChannel* HookPageHandler::Channel() {
-  if (!channel_ && web_contents_) {
-    channel_ = std::make_unique<HookChannel>(
+  if (!service_ && web_contents_) {
+    service_ = BrowserService::For(
         Profile::FromBrowserContext(web_contents_->GetBrowserContext()));
   }
-  return channel_.get();
+  return service_ ? service_->channel() : nullptr;
 }
 
 void HookPageHandler::GetTabs(GetTabsCallback callback) {
   std::vector<mojom::TabPtr> tabs;
-  for (const HookTab& row : ReadTabs(web_contents_.get())) {
+  for (const HookTab& row : ReadAllTabs()) {
     mojom::TabPtr tab = mojom::Tab::New();
     tab->index = row.index;
     tab->id = row.id;
     tab->active = row.active;
     tab->title = row.title;
+    tab->url = row.url;
     tab->domain = row.domain;
     tabs.push_back(std::move(tab));
   }
@@ -241,26 +246,117 @@ void HookPageHandler::CreateChat(CreateChatCallback callback) {
           std::move(callback)));
 }
 
-void HookPageHandler::SendMessage(const std::string& id,
-                                  const std::string& text,
-                                  const std::string& context,
-                                  SendMessageCallback callback) {
-  HookChannel* channel = Channel();
-  if (!channel) {
-    std::move(callback).Run(false, "This page has no browser context.");
-    return;
-  }
+namespace {
+
+// One message on its way to the host: the text, and the frame that describes
+// the page it is about.
+void PostSend(HookChannel* channel,
+              const std::string& id,
+              const std::string& text,
+              const std::string& context,
+              mojom::PageHandler::SendMessageCallback done) {
   base::DictValue body;
   body.Set("text", text);
   body.Set("context", context);
   channel->Post(
       base::StringPrintf("/chats/%s/send", id.c_str()), body,
       base::BindOnce(
-          [](SendMessageCallback done, std::optional<base::DictValue> reply,
-             const std::string& error) {
-            std::move(done).Run(reply.has_value(), error);
+          [](mojom::PageHandler::SendMessageCallback finished,
+             std::optional<base::DictValue> reply, const std::string& error) {
+            std::move(finished).Run(reply.has_value(), error);
           },
-          std::move(callback)));
+          std::move(done)));
+}
+
+// What "this page" means in the message the agent receives: which tab, its
+// title, its address, and the words the user highlighted. Cheap and stable, so
+// it can travel with every message; the page's *text* does not, because that is
+// tens of thousands of tokens the model may never need. It asks for that with
+// `read_page` (see hook/browser/service/hook_service.cc).
+std::string ContextFrame(content::WebContents* active,
+                         const std::string& selection) {
+  const std::vector<HookTab> tabs = ReadAllTabs();
+  const std::optional<int> active_handle =
+      active && tabs::TabInterface::GetFromContents(active)
+          ? std::make_optional(
+                tabs::TabInterface::GetFromContents(active)->GetHandle()
+                    .raw_value())
+          : std::nullopt;
+
+  std::vector<std::string> lines;
+  lines.push_back("Browser: Hook Browser");
+  for (const HookTab& row : tabs) {
+    if (active_handle && row.id == *active_handle) {
+      lines.push_back(
+          base::StringPrintf("Tab: %d of %zu", row.index + 1, tabs.size()));
+      if (!row.title.empty()) {
+        lines.push_back("Title: " + row.title);
+      }
+      if (!row.url.empty()) {
+        lines.push_back("URL: " + row.url);
+      }
+      if (!selection.empty()) {
+        // The backend caps the whole frame at 4000 characters; an address and a
+        // title are worth more than the fourth paragraph of a highlight.
+        lines.push_back("Selected: \"" + CapText(selection, 1500) + "\"");
+      }
+      return base::JoinString(lines, "\n");
+    }
+  }
+  // No selected tab to describe (a window with no pages open): say what the
+  // browser has instead of inventing a page.
+  lines.push_back(base::StringPrintf("Tabs open: %zu", tabs.size()));
+  return base::JoinString(lines, "\n");
+}
+
+}  // namespace
+
+void HookPageHandler::SendMessage(const std::string& id,
+                                  const std::string& text,
+                                  SendMessageCallback callback) {
+  HookChannel* channel = Channel();
+  if (!channel) {
+    std::move(callback).Run(false, "This page has no browser context.");
+    return;
+  }
+  // The tab this message is about. `ActiveTabIn` answers for a page that is a
+  // tab; the side panel is not one (its WebContents belongs to the panel view),
+  // so it falls back to the most recently active window's tab — which is the
+  // window the user is typing in.
+  content::WebContents* active = ActiveTabIn(web_contents_.get());
+  if (!active) {
+    active = ActiveTab();
+  }
+  if (!active) {
+    PostSend(channel, id, text, ContextFrame(nullptr, std::string()),
+             std::move(callback));
+    return;
+  }
+  // The highlight is read first, because it is part of the message: a turn that
+  // started without it would answer about the wrong words.
+  ReadSelection(
+      active,
+      base::BindOnce(
+          [](base::WeakPtr<HookPageHandler> handler, std::string id,
+             std::string text, SendMessageCallback done,
+             const std::string& selection) {
+            if (!handler) {
+              std::move(done).Run(false, "This page went away.");
+              return;
+            }
+            HookChannel* channel = handler->Channel();
+            if (!channel) {
+              std::move(done).Run(false, "This page has no browser context.");
+              return;
+            }
+            content::WebContents* tab = ActiveTabIn(handler->web_contents_);
+            if (!tab) {
+              tab = ActiveTab();
+            }
+            PostSend(channel, id, text, ContextFrame(tab, selection),
+                     std::move(done));
+          },
+          weak_factory_.GetWeakPtr(), id, text, std::move(callback)));
 }
 
 void HookPageHandler::StopMessage(const std::string& id) {

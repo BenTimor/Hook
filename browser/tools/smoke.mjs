@@ -741,7 +741,7 @@ export async function main(argv) {
             : null;
           // A whitespace-only message is refused by hook-core before any turn:
           // this proves the write path without spending a model call.
-          refused = await handler.sendMessage(first.id, "   ", "");
+          refused = await handler.sendMessage(first.id, "   ");
         }
         return {
           available: status.available,

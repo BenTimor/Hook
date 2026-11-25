@@ -182,6 +182,59 @@ silent does it report a sentence, preferring the one the first candidate carried
 the bare name is the last candidate, which is why an installed 0.6.1 app still
 serves a browser built from this tree.
 
+## Reading a page
+
+The chat in the dock can read the page it is attached to, and any other tab, on
+demand. Two halves make that work, and the split is the point:
+
+- **The message carries the page's identity, never its text.**
+  `hook_page_handler.cc` builds the trailing frame from the live strip — tab
+  number, title, address, and the selection — and `SendMessage(id, text)` sends
+  just that. A page's text is tens of thousands of tokens; handing it to the
+  model with every message spends the conversation's budget on pages nobody
+  asked about, and leaves it in the history and the sync payload forever.
+- **The text is asked for by a tool.** `read_page` and `find_in_page` go through
+  the queue in `crates/hook-core/src/browser.rs`: a task waits there, the browser
+  polls for it, reads the tab in its own process (`tabs/hook_page.cc`, an
+  isolated world, visible text only) and answers with a slice the backend caps
+  again. The extraction drops nav, sidebars, footers and forms while walking the
+  DOM, so a 60k-character sidebar stays out of the answer.
+
+The routes are on the same channel and the same token:
+
+| route | what it is |
+| --- | --- |
+| `GET /browser/tasks` | the browser asking for work; held open for a few seconds when there is none, so an idle browser is one request per hold. Every poll is also the heartbeat a tool reads to say "Hook Browser is running" instead of "that machine is offline" |
+| `POST /browser/tasks/<id>` | the answer: the tab list, or a page's text and headings |
+
+The poller is `hook/browser/service/hook_service.cc`, one per profile, started by
+`hook/browser/startup/hook_extra_parts.cc` at browser startup (one line in
+patch `0021-start-page-queue.patch`) rather than by a page. That is deliberate: a
+read has to work when the side panel is closed, because the browser merely has to
+be running. It backs off to one poll every ten seconds against a host that does
+not know the route, which is what an older Hook app is.
+
+## Reading a page from anywhere else
+
+The three tools are machine operations, like the agent ones
+(`docs/machines.md`): `list_tabs`, `read_page` and `find_in_page` each take a
+`machine`, and the machine that has the browser is the one that answers.
+
+- **This computer**, in the dock's own conversation: the host is the browser's
+  host, so the task never leaves the process (`Capabilities::browser`).
+- **Any other device**: the relay carries `browser.tabs` / `browser.read` /
+  `browser.find` (`remote.rs`), and the machine at the other end runs the same
+  queue. Slicing and searching happen *there*, so the relay carries the slice the
+  model asked for and never a whole page.
+- **The target rule is the family's own.** `can_host` means "can run agent work",
+  and a browser is a controller, so `server/relay.mjs` lets `browser.*` target a
+  device whose capabilities include `browser`. Without that, the only machine
+  that could answer a page read would be one that runs coding agents.
+
+`list_machines` reports `can_read_pages` per device, and always includes this
+computer when this process hosts a browser — a tab is local work and does not
+wait for the relay.
+
 ## What does not change
 
 - **The page.** `browser/ui/transport.ts` is a `ChatTransport` over mojom; the

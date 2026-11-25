@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, CornerDownLeft, ImagePlus, Square, X } from "lucide-react";
 
 import type { DraftImage, SlashCommand } from "./types";
@@ -133,12 +133,41 @@ export function Composer({
     requestAnimationFrame(() => ref.current?.focus());
   };
 
-  useEffect(() => {
+  // Grow to fit what was typed, up to the cap the stylesheet also sets.
+  //
+  // Two conditions, both learned the hard way: an element that has not been
+  // laid out yet reports a zero width, and a zero-width box wraps "Ask
+  // anything…" one character per line, so `scrollHeight` measures hundreds of
+  // pixels and the composer opens tall (the browser's side panel does this while
+  // it is being attached). And a box that changes width — a panel sliding open,
+  // a window resizing, the phone's keyboard closing — has to be measured again,
+  // or it keeps the height it had at the old width.
+  const fit = useCallback(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || !el.clientWidth) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
-  }, [value]);
+  }, []);
+
+  useEffect(() => {
+    fit();
+  }, [value, fit]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let width = Math.round(el.clientWidth);
+    const observer = new ResizeObserver((entries) => {
+      // Width only: the height is what this writes, and watching it would be a
+      // loop rather than a measurement.
+      const next = Math.round(entries[0]?.contentRect.width ?? 0);
+      if (next === width) return;
+      width = next;
+      fit();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [fit]);
 
   useEffect(() => {
     ref.current?.focus();
