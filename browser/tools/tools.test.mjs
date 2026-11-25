@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { parseArgs, parseChromeVersion, parsePinnedTag, parseSeries, requiredSdkVersion } from "./lib.mjs";
 import { listFiles, inspectOverlay, overlayCopies } from "./verify.mjs";
-import { analyseNetLog, matrixPlan } from "./smoke.mjs";
+import { analyseNetLog, componentsProblems, matrixPlan, parseComponentsPage } from "./smoke.mjs";
 
 function workspace() {
   return mkdtempSync(join(tmpdir(), "hook-browser-"));
@@ -159,7 +159,7 @@ test("the matrix runs both sign-in states and both halves of the channel", () =>
     ["a plain launch", "the surfaces", "signed out", "signed in", "its own host", "the channel"],
   );
   const states = quiet.filter((check) => check.argv.includes("--signin-state")).map((check) => check.argv.join(" "));
-  assert.deepEqual(states, ["--signin-state out", "--signin-state in"]);
+  assert.deepEqual(states, ["--signin-state out", "--signin-state in --components"]);
   const surfaces = quiet.find((check) => check.name === "the surfaces");
   for (const flag of ["--side-panel", "--newtab", "--codecs", "--no-google"]) {
     assert.ok(surfaces.argv.includes(flag), `${flag} is in the shared launch`);
@@ -180,4 +180,43 @@ test("an answering channel skips the launch check and runs the channel check, ne
     assert.ok(check.skip !== undefined, `${check.name} has a skip answer`);
     if (check.skip === null) assert.ok(check.argv.length >= 0);
   }
+});
+
+// The allowlist is only a claim until something reads it back. `chrome://components`
+// is that something, and the parse has to survive the page's own noise ("Components
+// (23)", "Status - New collection", the per-row buttons).
+test("the components page yields names, not its furniture", () => {
+  const page = [
+    "Components",
+    "Components (2)",
+    "CRLSet - Version: 0.0.0.0",
+    "Status - New collection",
+    "Check for update",
+    "File Type Policies - Version: 1.2.3.4",
+    "Status - Up-to-date",
+  ].join("\n");
+  assert.deepEqual(parseComponentsPage(page), ["CRLSet", "File Type Policies"]);
+  assert.deepEqual(parseComponentsPage(""), []);
+});
+
+test("the signed-in launch is the one that proves the component allowlist", () => {
+  const signedIn = matrixPlan({ channelAlive: false }).find((check) => check.name === "signed in");
+  assert.ok(signedIn.argv.includes("--components"), "the components check runs signed in, where the gate lets a chrome:// page load");
+});
+
+// The tripwire has to bite in both directions, or it is decoration.
+test("the allowlist check fails on a stray component and on a missing one", () => {
+  assert.deepEqual(componentsProblems(["CRLSet", "PKI Metadata", "File Type Policies"]), []);
+  assert.deepEqual(
+    componentsProblems(["CRLSet", "PKI Metadata", "File Type Policies", "PKI Metadata Fastpush"]),
+    [],
+    "the fastpush half of PKI metadata is allowed",
+  );
+  const stray = componentsProblems(["CRLSet", "PKI Metadata", "File Type Policies", "Optimization Hints"]);
+  assert.equal(stray.length, 1);
+  assert.match(stray[0], /Optimization Hints.*not on Hook's allowlist/);
+  const missing = componentsProblems(["PKI Metadata", "File Type Policies"]);
+  assert.equal(missing.length, 1);
+  assert.match(missing[0], /CRLSet.*upstream rename/);
+  assert.match(componentsProblems([])[0], /listed nothing/);
 });

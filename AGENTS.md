@@ -394,7 +394,9 @@ bash.
   turn it off (`docs/browser-host.md`).
   `pnpm browser:check` (the smoke matrix) is the check:
   the tab list, the dock, the gate both ways (the card is on the page), the side
-  panel, `--newtab`, `--codecs`, `--host` for the launch (the pid, the
+  panel, `--newtab`, `--codecs`, the component updater's allowlist
+  (`--components`, which fails on a name that should not be there and on one that
+  should), `--host` for the launch (the pid, the
   `browser` product, and the browser's own descriptor file), and `--channel`
   against a running app — or against `hook --headless`, the chat app with no
   window. It is one launch per configuration that a launch flag decides and one

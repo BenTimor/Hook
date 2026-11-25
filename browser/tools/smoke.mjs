@@ -55,7 +55,16 @@ const PANEL = "chrome://hook-panel/";
 
 // Declared, so `--all --side-panel` cannot read as `--all=--side-panel`... or as
 // `--all` swallowing the next switch. Anything not listed takes a value.
-const SWITCHES = ["all", "side-panel", "channel", "codecs", "newtab", "host", "no-google"];
+const SWITCHES = [
+  "all",
+  "side-panel",
+  "channel",
+  "codecs",
+  "components",
+  "newtab",
+  "host",
+  "no-google",
+];
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -212,6 +221,53 @@ async function descriptorAlive(descriptor) {
   }
 }
 
+// The component updater is an allowlist (`kHookComponentAllowlist`,
+// components/component_updater/component_updater_service.cc): the three components
+// that carry a security obligation, and nothing else. `chrome://components` is the
+// only place that list can be read from outside, so it is where the claim is
+// checked -- in both directions:
+//
+//   - a name that is listed but not allowed is a new Google service arriving on
+//     Google's schedule, which is exactly what the allowlist exists to stop;
+//   - a required name that is missing is an upstream rename, and a rename fails
+//     closed: that component silently stops updating, so CRLSet would stop
+//     revoking certificates in a build that otherwise looks healthy.
+export const COMPONENTS_REQUIRED = ["CRLSet", "PKI Metadata", "File Type Policies"];
+export const COMPONENTS_ALLOWED = [
+  ...COMPONENTS_REQUIRED,
+  "PKI Metadata Fastpush",
+  // Listed only once the licence is signed and the CDM is on the allowlist.
+  "Widevine Content Decryption Module",
+];
+
+/** `chrome://components` as names: "CRLSet - Version: 0.0.0.0" is CRLSet. */
+export function parseComponentsPage(text) {
+  return String(text)
+    .split("\n")
+    .map((line) => /^(.*) - Version: /.exec(line.trim()))
+    .filter(Boolean)
+    .map((match) => match[1].trim());
+}
+
+/** What is wrong with a `chrome://components` listing, if anything is. */
+export function componentsProblems(listed) {
+  if (listed.length === 0) {
+    return ["chrome://components listed nothing, so the allowlist was not proven"];
+  }
+  const problems = [];
+  for (const name of COMPONENTS_REQUIRED) {
+    if (!listed.includes(name)) {
+      problems.push(`chrome://components no longer lists "${name}": an upstream rename stopped a security component silently`);
+    }
+  }
+  for (const name of listed) {
+    if (!COMPONENTS_ALLOWED.includes(name)) {
+      problems.push(`chrome://components lists "${name}", which is not on Hook's allowlist`);
+    }
+  }
+  return problems;
+}
+
 // --no-google: what a fresh profile talks to Google about, from the browser's own
 // net log. The point is not to whitelist today's traffic once, it is to fail the
 // day a new piece of Chromium phones home — the NTP component extension, the AI
@@ -221,7 +277,7 @@ async function descriptorAlive(descriptor) {
 // Google host fails the run. Preconnects are allowed and reported: no request
 // carries content on one, and they follow the default search engine.
 export const GOOGLE_ALLOWED = new Map([
-  ["update.googleapis.com", "the component updater (open decision, docs/browser-branding.md)"],
+  ["update.googleapis.com", "the component updater, narrowed to CRLSet, PKI metadata and file-type policies (docs/browser-branding.md)"],
   ["clients2.google.com", "the component updater's clock"],
   ["edgedl.me.gvt1.com", "the component updater's payloads"],
   ["dns.google", "the machine's resolver; the browser did not pick it"],
@@ -315,6 +371,7 @@ export async function main(argv) {
   const channelCheck = flags.get("channel") === true;
   const codecCheck = flags.get("codecs") === true;
   const newTabCheck = flags.get("newtab") === true;
+  const componentsCheck = flags.get("components") === true;
   const hostCheck = flags.get("host") === true;
   const noGoogle = flags.get("no-google") === true;
   const signin = flags.get("signin-state");
@@ -737,6 +794,15 @@ export async function main(argv) {
       if (!firstTab) failures.push("no first tab to prove the new tab URL on");
     }
 
+    // ---- the component updater's allowlist ----------------------------------
+    if (componentsCheck) {
+      await client.send("Page.navigate", { url: "chrome://components/" });
+      await sleep(2500);
+      const listed = parseComponentsPage(await client.evaluate("document.body.innerText"));
+      console.log(`    components: ${listed.length} registered - ${listed.join(", ")}`);
+      failures.push(...componentsProblems(listed));
+    }
+
     // ---- the sign-in gate, last: it navigates the tab -----------------------
     const server = await probeServer();
     try {
@@ -845,7 +911,12 @@ export function matrixPlan({ channelAlive }) {
       argv: ["--signin-state", "out"],
       skip: null,
     },
-    { name: "signed in", why: "the gate lets a page through", argv: ["--signin-state", "in"], skip: null },
+    {
+      name: "signed in",
+      why: "the gate lets a page through, and the updater's allowlist",
+      argv: ["--signin-state", "in", "--components"],
+      skip: null,
+    },
     {
       name: "its own host",
       why: "the browser starts hook-host and kills it on exit",

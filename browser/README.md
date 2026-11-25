@@ -299,7 +299,11 @@ pnpm browser:check -- --out out/NoComp     # the same checks on another build
 
 Five launches for six checks: the plain baseline, the two sign-in states and
 `--host` each need their own (a launch flag cannot be changed once the browser is
-up), and the four surface checks share one, because by then it is open anyway. Two of the six are conditional, and the two that are each other's
+up), and the four surface checks share one, because by then it is open anyway. The
+signed-in launch also reads `chrome://components` (`--components`) and fails if the
+component updater registered anything outside its allowlist, or stopped registering
+one of the three it keeps — a rename upstream, which would silently stop a security
+component (`docs/browser-branding.md`, "The component updater"). Two of the six are conditional, and the two that are each other's
 precondition: `--host` proves a launch, so it needs no channel answering;
 `--channel` proves a running Hook app's conversations, so it needs one. The one
 that cannot run is **listed and says why**, because a check that disappears from a

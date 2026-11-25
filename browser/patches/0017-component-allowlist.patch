@@ -1,0 +1,72 @@
+diff --git a/components/component_updater/component_updater_service.cc b/components/component_updater/component_updater_service.cc
+index cfc5df6faf..d91ef4038f 100644
+--- a/components/component_updater/component_updater_service.cc
++++ b/components/component_updater/component_updater_service.cc
+@@ -54,6 +54,51 @@ enum UpdateType {
+   UPDATE_TYPE_COUNT,
+ };
+ 
++// Hook Browser: the component updater is an **allowlist**, not a list of
++// deletions.
++//
++// Google's updater serves components that are services: Safe Browsing's lists,
++// optimisation hints, origin trials, on-device AI models, the speech engine, the
++// password-strength dictionaries. Each one is a standing network call and a
++// standing dependency, and the set grows on Google's schedule, not ours -- a
++// blocklist is one Chromium upgrade away from being wrong, and wrong in the
++// direction that ships a new Google service to users who were promised none.
++//
++// So only components that carry a **security obligation** survive, and they are
++// refused at the one place every component passes through. Everything else is
++// dropped before it can be scheduled.
++//
++// The list is by name on purpose: it reads as a decision, and it is short enough
++// to review. Names are upstream strings (`ComponentInstallerPolicy::GetName`), so
++// a rename drops a component we wanted -- which fails *closed* and is visible:
++// `chrome://components` stops listing it, and `pnpm browser:check` fails when an
++// expected component is missing (browser/tools/smoke.mjs, `--components`).
++constexpr const char* kHookComponentAllowlist[] = {
++    // Certificate revocation. Nothing else in the browser replaces it, and the
++    // alternative is pinning a list into the binary and re-shipping to revoke.
++    "CRLSet",
++    // Certificate Transparency logs, pins and HSTS preload: data about the
++    // certificates this browser will accept, which is a security input.
++    "PKI Metadata",
++    "PKI Metadata Fastpush",
++    // What a download's extension means (executable, archive, dangerous), which
++    // is the policy half of download protection.
++    "File Type Policies",
++    // One more entry, on the day the licence is signed: the CDM is delivered
++    // here too, and refusing it would leave DRM sites refusing us instead
++    // (docs/browser-branding.md, "Widevine").
++    // "Widevine Content Decryption Module",
++};
++
++bool IsHookBrowserComponent(const std::string& name) {
++  for (const char* allowed : kHookComponentAllowlist) {
++    if (name == allowed) {
++      return true;
++    }
++  }
++  return false;
++}
++
+ }  // namespace
+ 
+ namespace component_updater {
+@@ -215,6 +260,15 @@ bool CrxUpdateService::RegisterComponent(
+     return false;
+   }
+ 
++  // Hook Browser: the one door every component comes through (the list and the
++  // reasoning are at the top of this file). Silent skipping would make a rename
++  // look like a working build, so it says so at verbosity 1.
++  if (!IsHookBrowserComponent(component.name)) {
++    VLOG(1) << "Hook: not registering the component \"" << component.name
++            << "\": it is not on the allowlist";
++    return false;
++  }
++
+   // Cancel any pending unregistration for this component.
+   std::erase(components_pending_unregistration_, component.app_id);
+ 

@@ -162,7 +162,7 @@ fixes, all in `0015-no-google-at-startup`:
 
 | What remains | Endpoint | Status |
 | --- | --- | --- |
-| **The component updater** | `update.googleapis.com/service/update2/json` (20), `clients2.google.com/time/1/current`, `edgedl.me.gvt1.com/edgedl/{release2, diffgen-puffin}/…` | allowed by the check, **open decision**. It authenticates with `cup2key`, not the Google API key, so "no keys" never switched it off. Turning it off is not free: CRLSet (revoked certificates), PKI metadata and the file-type policies that classify downloads arrive this way |
+| **The component updater** | `update.googleapis.com/service/update2/json`, `clients2.google.com/time/1/current`, `edgedl.me.gvt1.com/edgedl/{release2, diffgen-puffin}/…` | **narrowed to an allowlist** (`0017-component-allowlist`): three components, 23 before — see "The component updater" below. It authenticates with `cup2key`, not the Google API key, so "no keys" never switched it off |
 | **A preconnect to `www.google.com`** | one TCP/TLS connection, no request with content | allowed *as a preconnect only*; the check fails if a Google host serves a page. It follows the default search engine, so it goes away with that change |
 | **`dns.google`** | DoH | allowed: the machine's resolver is `8.8.8.8`, and Chromium upgrades known resolvers. Not a choice this build makes — a check running on a machine with a local resolver never sees it |
 
@@ -171,9 +171,60 @@ Two consequences worth stating plainly:
 - "Unbranded" is not "quiet". None of the three fixed items was gated on
   `is_chrome_branded`, and one of them shipped a **downloaded** extension. This is
   the class of thing that only a net log finds.
-- The remaining Google talker is the security updater. That is the honest trade to
-  finish with: either we accept it, or we narrow which components register and
-  document what stops updating.
+- The remaining Google talker is the security updater, now on an allowlist of three
+  components (below). That is the honest trade to finish with: what still arrives is
+  data that decides whether this browser accepts a certificate — not a service.
+
+### The component updater: an allowlist of three
+
+**Decision: the allowlist, and it is done** (`0017-component-allowlist`).
+
+The updater is one endpoint that fetches whatever Google's servers offer. Its
+request carries the list of components this browser wants, so "we do not use that
+service" and "we do not ask for it" are the same statement — and the second is the
+one that can be checked. The list was **23 components** in this tag; it is **3**:
+
+| Kept | Why it survives |
+| --- | --- |
+| `CRLSet` | Certificate revocation. Nothing else replaces it, and the alternative is pinning a list into the binary and re-shipping to revoke. |
+| `PKI Metadata` (+ `PKI Metadata Fastpush`) | CT logs, pins and HSTS preload: data about which certificates this browser will accept. |
+| `File Type Policies` | What a download's extension means — the policy half of download protection. |
+
+The seam is `CrxUpdateService::RegisterComponent`
+(`components/component_updater/component_updater_service.cc`) — the one door every
+component passes through, including the component *extensions* (the NTP CRX, Glic,
+contextual tasks) that `component_loader.cc` was already skipping by hand. A new
+component therefore cannot arrive with a Chromium upgrade; it arrives only when
+somebody adds a name to the list. That is the difference between a blocklist and
+this: a blocklist is one upgrade away from being wrong, in the direction that ships
+a new Google service to users who were promised none.
+
+It is by **name**, so the list reads as a decision. Names are upstream strings, so a
+rename fails *closed* — the component silently stops updating. Two things make that
+visible instead of quiet: `VLOG(1)` on every refusal, and `pnpm browser:check`
+(`smoke.mjs --components`) reading `chrome://components` and failing both ways — a
+name that is listed but not allowed, and a required name that is missing.
+
+What stops arriving, and what that costs:
+
+| Dropped | What you lose |
+| --- | --- |
+| `Subresource Filter Rules`, `Crowd Deny`, `Actor Safety Lists`, `Safety Tips`, `Certificate Error Assistant` | Safe Browsing's lists — already inert while Safe Browsing is off. Revisit with the Web Risk replacement. |
+| `Optimization Hints`, `OnDeviceHeadSuggest`, `Optimization Guide On DeviceModels Manifest`, `Commerce Heuristics`, `Amount Extraction Heuristic Regexes`, `Trust Token Key Commitments`, `Origin Trials`, `Indigo` | Google services and models with no user-visible feature in this build. |
+| `SODA Library` / `SODA en-US Models` | Live Caption (on-device speech). |
+| `WASM TTS Engine` | Web Speech synthesis fallback; Windows' own voices still work. |
+| `Zxcvbn Data Dictionaries` | The password-strength meter gets less accurate. Re-add this one line if the vault lands before anything else. |
+| `Hyphenation`, `Dictation Connector`, `Captcha Providers`, `MEI Preload`, `Chrome Improved Recovery` | Cosmetic or absent features: justified text in some locales, accessibility dictation, captcha rendering, prerender lists, Chrome's own installer recovery. |
+
+Measured, in the same fresh profile: `chrome://components` went from **23 rows to 3**,
+and `--no-google` from "73 urls, 4 Google hosts" to **62 urls, 2 hosts** — the
+updater's clock and the search preconnect, with no request to `update.googleapis.com`
+in the first 15 seconds at all (nothing is fetched eagerly any more). A 100-second
+run then shows `update.googleapis.com` (×8) and the CRLSet id in the log: the updater
+still works, it just has three things to ask about.
+
+`Widevine Content Decryption Module` is a commented entry in the list, so the day the
+licence is signed it is one uncommented line (see "Widevine" below).
 
 ### Safe Browsing, in full
 
@@ -383,10 +434,12 @@ there. The facts:
   registers `WidevineCdmComponent` with the component updater
   (`component_updater/registration.cc`) — a closed-source binary fetched from Google
   at runtime, not something we can bundle.
-- **It therefore collides with two decisions above.** A narrowed updater would keep
-  exactly one component (Widevine), and `--no-google` would need a documented
-  carve-out for the CDM download. Both are defensible; both must be written down
-  rather than discovered later.
+- **It collides with the narrowed updater, mildly, and that is fine.** The allowlist
+  is written as an allowlist so the CDM is one uncommented line — it is already in
+  the list, commented (`0017-component-allowlist`) — and `--no-google` needs a
+  documented carve-out for the CDM download, which is the same updater host it
+  already allows. What it must not become is a second download path that the check
+  cannot see: the CDM arrives through the component updater or not at all.
 
 ### Getting the agreement: the four steps Google documents
 
@@ -539,7 +592,6 @@ process plus one Google dependency.
 
 ## Still open
 
-- Which components the narrowed updater keeps, exactly (see above).
 - Widevine: the Master License Agreement (decided to pursue, not started).
 - A proper wordmark from design (the interim lockup is in place, `0016-wordmark`).
 - Start-menu tiles (`win/tiles/{Logo,SmallLogo}.png`), which matter only once an
