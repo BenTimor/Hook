@@ -7,7 +7,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const DEFAULT_TITLE: &str = "New chat";
+/// What a conversation is called until its agent names it. A title is written
+/// by the model itself, with the `set_title` tool (see
+/// [`Chat::set_agent_title`]); Hook never names a conversation after the
+/// user's first message.
+pub const DEFAULT_TITLE: &str = "Untitled";
+
+/// The longest title an agent may write. Long enough for a sentence, short
+/// enough to stay one line in the sidebar.
+pub const MAX_GENERATED_TITLE: usize = 72;
 
 /// A conversation the user has with one coding agent directly, without the
 /// chat agent in between. It lives in the same list as every other chat; the
@@ -300,19 +308,29 @@ impl Chat {
     }
 
     /// A conversation with a coding agent in `path`, before it has said
-    /// anything. The title is the folder's name: it is the one thing the user
-    /// already knows about the work, and it survives a reinstall of the idea.
+    /// anything. It is untitled like any other chat: the agent names it in its
+    /// first reply, and the folder stays where it already is, in
+    /// `projectPath` (the window shows it beside the title).
     pub fn new_coding(path: &Path) -> Self {
         let mut chat = Self::new();
-        let folder = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or_else(|| "Coding agent".to_string());
-        chat.meta.title = truncate(&folder, 120);
         chat.meta.kind = Some(KIND_CODING.to_string());
         chat.meta.project_path = Some(path.to_string_lossy().to_string());
         chat
+    }
+
+    /// Name the conversation, or rename it, from the agent's own `set_title`.
+    ///
+    /// The agent writes the title itself instead of Hook taking the first line
+    /// of the user's message: a few words about what the conversation is for
+    /// beat a truncated question, and a direct coding agent's folder name says
+    /// nothing about the work. The prompt asks for it in the first reply and
+    /// after that only when the user asks for a different name; the store does
+    /// not enforce either, so someone can always say "call this one X".
+    pub fn set_agent_title(&mut self, title: &str) -> Result<String, String> {
+        let title = clean_title(title)?;
+        self.meta.title = title.clone();
+        self.meta.updated_at = now_ms();
+        Ok(title)
     }
 
     /// Recompute derived metadata from the message list.
@@ -354,6 +372,21 @@ pub fn strip_verbatim(path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
         return std::path::PathBuf::from(rest);
     }
     path.to_path_buf()
+}
+
+/// A title the model wrote, made fit for the sidebar: one line, no wrapping
+/// quotes, no trailing full stop, a bounded length.
+fn clean_title(raw: &str) -> Result<String, String> {
+    let line = raw.lines().next().unwrap_or("").trim();
+    let quoted = line
+        .trim_matches(|c: char| matches!(c, '"' | '\'' | '\u{201c}' | '\u{201d}' | '\u{2018}' | '\u{2019}'))
+        .trim();
+    let sentence = quoted.trim_end_matches('.').trim();
+    let collapsed = sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return Err("set_title needs a title of a few words.".into());
+    }
+    Ok(truncate(&collapsed, MAX_GENERATED_TITLE))
 }
 
 pub fn truncate(s: &str, max_chars: usize) -> String {
@@ -1157,6 +1190,33 @@ mod tests {
     ];
 
     #[test]
+    fn a_title_from_the_agent_is_cleaned_and_can_change() {
+        let mut chat = Chat::new();
+        assert_eq!(chat.meta.title, DEFAULT_TITLE);
+        chat.messages.push(Message::new("user", "why is my invoice total wrong", "complete"));
+        // The model's own punctuation is not part of the name.
+        assert_eq!(
+            chat.set_agent_title("  \"Fixing the invoice total.\"  ").unwrap(),
+            "Fixing the invoice total"
+        );
+        assert_eq!(chat.meta.title, "Fixing the invoice total");
+        // The user asking for a different name is ordinary work, not a special
+        // case: a second call replaces the title like the first one set it.
+        assert_eq!(chat.set_agent_title("Invoice totals").unwrap(), "Invoice totals");
+        assert_eq!(chat.meta.title, "Invoice totals");
+        // A title is one line and it is bounded.
+        let title = chat
+            .set_agent_title(&format!("{}\nsecond line", "word ".repeat(40)))
+            .unwrap();
+        assert!(!title.contains('\n'));
+        // `truncate` marks the cut with one ellipsis.
+        assert!(title.chars().count() <= MAX_GENERATED_TITLE + 1);
+        // An empty one is refused rather than becoming a blank row.
+        assert!(chat.set_agent_title("   ").is_err());
+        assert_ne!(chat.meta.title, DEFAULT_TITLE);
+    }
+
+    #[test]
     fn a_picture_records_its_digest_when_it_is_stored() {
         // The account names a picture by its digest. Learning it later meant
         // re-saving the chat mid-upload, which could undo a reply the turn had
@@ -1218,7 +1278,11 @@ mod tests {
         let mut chat = Chat::new_coding(&path);
         assert!(chat.meta.is_coding());
         assert!(chat.meta.is_local_only());
-        assert_eq!(chat.meta.title, "demo project");
+        // The folder is not the title: the agent names the conversation in its
+        // first reply, and the folder stays in `projectPath` where the window
+        // shows it.
+        assert_eq!(chat.meta.title, DEFAULT_TITLE);
+        assert!(chat.meta.project_path.as_deref().unwrap().ends_with("demo project"));
         store.save(&mut chat).unwrap();
         // Never queued for upload, so the account cannot be handed a folder
         // path and a session file that only exist here.

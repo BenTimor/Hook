@@ -4,7 +4,7 @@ use crate::agent::AgentManager;
 use crate::config::HarnessConfig;
 use crate::projects::ProjectsStore;
 use crate::settings::SettingsStore;
-use crate::store::truncate;
+use crate::store::{Chat, truncate};
 
 /// The tools that only make sense for the chat agent, because they launch and
 /// manage coding agents. A coding agent talking to the user directly has no
@@ -58,6 +58,21 @@ pub const PROJECT_TOOLS: [&str; 3] = [
 /// agent, then reports back in prose.
 pub fn definitions() -> Value {
     json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "set_title",
+                "description": "Name this conversation, or rename it. In your first reply, call it before anything else: the title is how the user finds the conversation in their list, and it is never written from their message. After that, call it again only when the user asks for a different name. Three to six words saying what the conversation is for, in the language the user writes in, with no quotes and no full stop.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string", "description": "A name for the conversation, e.g. 'Fixing the invoice totals'." }
+                    },
+                    "required": ["title"],
+                    "additionalProperties": false
+                }
+            }
+        },
         {
             "type": "function",
             "function": {
@@ -383,6 +398,20 @@ pub fn direct_bridge_definitions(
         out.extend(crate::workspace::definitions());
     }
     out
+}
+
+/// `set_title`: the name the model gives its own conversation.
+///
+/// Applied by whoever holds the chat — the turn loop keeps it in memory, the
+/// tool bridge loads it from disk — so the rule and the answer live here and
+/// the caller only decides where the chat is saved.
+pub fn title(chat: &mut Chat, args: &Value) -> Result<Value, String> {
+    let title = args.get("title").and_then(Value::as_str).unwrap_or_default();
+    let title = chat.set_agent_title(title)?;
+    Ok(json!({
+        "title": title,
+        "note": "The conversation is named this now. Only change it again when the user asks.",
+    }))
 }
 
 pub struct ToolEnv<'a> {
@@ -1019,6 +1048,9 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
                 .collect();
             Ok(json!({ "project": project, "sessions": sessions }))
         }
+        // Applied by the caller that holds the chat (the turn loop, the tool
+        // bridge), so there is nothing to do here.
+        "set_title" => Err("The conversation's title is set where the chat is held.".into()),
         // Intercepted by the turn loop before it gets here; the arm exists so
         // an unexpected call still behaves.
         "no_update" => Ok(json!({ "sent": false })),
@@ -1196,6 +1228,7 @@ mod tests {
             .filter_map(|d| d.pointer("/function/name").and_then(|n| n.as_str()))
             .collect();
         for expected in [
+            "set_title",
             "list_projects",
             "create_project",
             "update_project_description",
@@ -1210,6 +1243,24 @@ mod tests {
         ] {
             assert!(names.contains(&expected), "{expected} missing");
         }
+    }
+
+    #[test]
+    fn the_title_tool_names_the_chat() {
+        let mut chat = Chat::new();
+        chat.messages.push(crate::store::Message::new("user", "hi", "complete"));
+        let answer = title(&mut chat, &json!({ "title": "Setting up the invoice parser" })).unwrap();
+        assert_eq!(answer["title"], "Setting up the invoice parser");
+        assert_eq!(chat.meta.title, "Setting up the invoice parser");
+        // When the user asks for a different name the tool answers the same
+        // way: they can ask the agent to rename a conversation at any time.
+        let renamed = title(&mut chat, &json!({ "title": "Invoice parser" })).unwrap();
+        assert_eq!(renamed["title"], "Invoice parser");
+        assert_eq!(chat.meta.title, "Invoice parser");
+        // A missing argument is a sentence, not a blank title.
+        let mut fresh = Chat::new();
+        fresh.messages.push(crate::store::Message::new("user", "hi", "complete"));
+        assert!(title(&mut fresh, &json!({})).is_err());
     }
 
     #[test]
@@ -1281,6 +1332,7 @@ mod tests {
             .filter_map(|tool| tool["function"]["name"].as_str())
             .collect();
         for expected in [
+            "set_title",
             "list_projects",
             "create_project",
             "update_project_description",

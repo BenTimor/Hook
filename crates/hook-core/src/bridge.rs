@@ -330,6 +330,9 @@ async fn dispatch(state: Arc<AppState>, chat_id: String, name: String, args: Val
         return crate::workspace::execute(&state.workspace, &chat_id, &name, &args).await;
     }
     let result = crate::rt::spawn_blocking(move || {
+        if name == "set_title" {
+            return set_title(&state, &chat_id, &args);
+        }
         if crate::memory::handles(&name) {
             return crate::memory::execute(&state.memory, &name, &args, &chat_id);
         }
@@ -349,6 +352,27 @@ async fn dispatch(state: Arc<AppState>, chat_id: String, name: String, args: Val
     match result {
         Ok(text) => text,
         Err(error) => json!({ "error": format!("That tool did not finish: {error}") }).to_string(),
+    }
+}
+
+/// `set_title` for a direct agent: the chat is on disk, so `Chat::set_agent_title`
+/// runs here and the file is written at once. The next `tool_execution_end`
+/// carries the new title to the window.
+fn set_title(state: &AppState, chat_id: &str, args: &Value) -> String {
+    let Ok(mut chat) = state.store.load(chat_id) else {
+        return json!({ "error": "This conversation could not be read." }).to_string();
+    };
+    match crate::tools::title(&mut chat, args) {
+        Ok(value) => {
+            if let Err(error) = state.store.save(&mut chat) {
+                return json!({ "error": error }).to_string();
+            }
+            // The title is part of the chat's metadata: an ordinary chat syncs
+            // it, and a coding chat's stub carries it to the other products.
+            state.sync.wake();
+            value.to_string()
+        }
+        Err(message) => json!({ "error": message }).to_string(),
     }
 }
 

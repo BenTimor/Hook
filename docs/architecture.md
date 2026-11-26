@@ -70,6 +70,19 @@ Details worth knowing:
   `Message` list, which is why the thread, the work blocks, the task board and
   the preview do not care — and why `packages/chat` never learns that `pi`
   exists. A `coding` chat is local-only and hidden while Advanced is off.
+- **A conversation names itself.** It is `Untitled` until the agent's first reply
+  calls the `set_title` tool: the model writes a few words about what the
+  conversation is for, rather than Hook deriving one from the user's message
+  (and a direct coding agent's folder name saying nothing about the work). The
+  rule is `Chat::set_agent_title` (clean it up and store it), the answer is
+  `tools::title`, and each half applies it where it holds the chat — the model
+  turn to its in-memory copy, the coding bridge to the chat file. Nothing
+  enforces "first reply only": the prompt asks for the name there and for a
+  rename only when the user asks, so a conversation can always be renamed by
+  asking. Until the first reply names it, the request ends with one line
+  reminding the model (`title_hint`), and the tool stays in the list for the
+  whole conversation: dropping it between turns would change the request in
+  front of the messages.
 - **Streaming** arrives on one app-wide `hook://chat` event (user turns and
   agent-woken turns alike); deltas are coalesced per animation frame in the store
   so React re-renders at most ~60×/s, and several chats can stream at once.

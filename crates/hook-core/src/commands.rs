@@ -10,7 +10,7 @@ use crate::events::EmitExt;
 use crate::preview::PreviewView;
 use crate::projects::Project;
 use crate::state::{lock, AppState};
-use crate::store::{now_ms, Chat, ChatMeta, Message, SearchHit, DEFAULT_TITLE};
+use crate::store::{now_ms, Chat, ChatMeta, Message, SearchHit};
 use crate::turn;
 
 #[derive(Serialize)]
@@ -644,9 +644,6 @@ pub async fn send_message(
         return Err("A reply is already streaming in this chat.".into());
     }
 
-    if chat.messages.is_empty() && chat.meta.title == DEFAULT_TITLE && !text.is_empty() {
-        chat.meta.title = crate::session::derive_title(&text);
-    }
     chat.meta.updated_at = now_ms();
     let mut message = Message::new("user", &text, "complete");
     for image in images {

@@ -730,7 +730,7 @@ export const mock = {
   async renameChat(chatId: string, title: string): Promise<ChatMeta> {
     const chat = chats[chatId];
     if (!chat) throw "Chat not found";
-    chat.meta.title = title.trim() || "New chat";
+    chat.meta.title = title.trim() || "Untitled";
     return clone(chat.meta);
   },
 
@@ -808,7 +808,7 @@ export const mock = {
         chat = {
           meta: {
             id: freshId,
-            title: text.slice(0, 60),
+            title: "Untitled",
             createdAt: Date.now(),
             updatedAt: Date.now(),
             pinned: false,
@@ -859,6 +859,13 @@ export const mock = {
 
     if (!chat) throw "Chat not found";
     const target = chat;
+    const lastUser = [...target.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    // A new conversation stays `Untitled` until its agent names it in the first
+    // reply. The demo has no model and no `set_title` tool, so the first line of
+    // the message stands in for the name it would write.
+    if (target.meta.title === "Untitled" && lastUser.trim()) {
+      target.meta.title = lastUser.trim().replace(/[\r\n]+/g, " ").slice(0, 60);
+    }
     const assistant: Message = {
       id: id("m"),
       role: "assistant",
@@ -875,7 +882,6 @@ export const mock = {
 
     await sleep(220);
 
-    const lastUser = [...target.messages].reverse().find((m) => m.role === "user")?.content ?? "";
     const shouldFail = /\bfail\b|\berror\b|\boffline\b/i.test(lastUser);
 
     const tokens = reply.match(/\s+|\S+/g) ?? [];

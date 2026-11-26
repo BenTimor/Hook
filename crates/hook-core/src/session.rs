@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use crate::auth::{AuthView, LoginOutcome};
 use crate::state::{lock, AppState};
-use crate::store::{now_ms, Chat, Message, DEFAULT_TITLE};
+use crate::store::{now_ms, Chat, Message};
 
 /// Remove a conversation this machine owns. Both the local command and the
 /// relay's `coding.delete` end here: a host deletes the same way whichever
@@ -117,9 +117,6 @@ pub(crate) fn send_chat_message(
         return Err("This conversation is owned by another machine.".into());
     }
     chat.meta.updated_at = now_ms();
-    if chat.messages.is_empty() && chat.meta.title == DEFAULT_TITLE {
-        chat.meta.title = derive_title(text);
-    }
     commit_and_start(state, &mut chat, Message::new("user", text, "complete"))?;
     Ok(())
 }
@@ -146,14 +143,4 @@ pub(crate) async fn remote_rpc(
         .rpc(device_id, method, params, timeout)
         .await
         .map_err(|failure| failure.message)
-}
-
-/// The first line of a message, as a chat title.
-pub(crate) fn derive_title(text: &str) -> String {
-    let first_line = text.lines().next().unwrap_or(text);
-    let cleaned = first_line
-        .trim_start_matches(|c: char| c == '#' || c == '-' || c == '*' || c.is_whitespace())
-        .trim();
-    let candidate = if cleaned.is_empty() { text } else { cleaned };
-    crate::store::truncate(candidate, 72)
 }

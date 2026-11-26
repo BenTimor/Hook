@@ -18,6 +18,11 @@ use crate::tools::{self, ToolEnv};
 /// `[agent] system_prompt` in harness.config.toml.
 const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk with the user in a chat window and put real coding work in motion for them.
 
+## Title
+- Your first reply of a conversation names it: call `set_title` before anything else, with three to six words saying what the conversation is for, in the language the user writes in. It is how they find the conversation again in their list.
+- After that, change the title only when the user asks for a different one. Never rename a conversation on your own initiative, and never put a title in your prose.
+- The title is a name, not a sentence: no quotes, no ending full stop, and none of 'Question about' or 'Chat about'.
+
 ## Projects
 - A project is a folder on one of the user-s computers. Every chat can use every project, on every machine. On a phone, call `list_machines` and then `list_projects` with the machine whose folders you need; create_project also names the machine it should create the folder on.
 - Projects are saved to the user-s account and can be worked on from several computers. The folder a coding agent starts in may be empty because the work so far lives on another computer; the agent pulls the latest version first and saves its own work at the end. Never tell the user files are missing before the agent has had that chance.
@@ -588,6 +593,10 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                 list.retain(|tool| tool["function"]["name"] != "no_update");
             }
         }
+        // `set_title` stays advertised for the whole conversation on purpose:
+        // removing a tool between turns changes the request before the
+        // messages, which is the cached prefix (see "Never rewrite the request
+        // prefix"). A second call is refused instead.
         // Workspace tools: the same data the Workspace app shows, reachable
         // from the chat whether or not that product is installed.
         if state.capabilities.workspace_tools {
@@ -760,7 +769,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
         );
         // Live state for this request only, at the very end where changing it
         // cannot invalidate the conversation behind it.
-        if let Some(context) = context_frame(&state, &chat_id) {
+        if let Some(context) = context_frame(&state, &chat) {
             // `system` is the right shape and every endpoint Hook has pointed at
             // accepts it. One that refuses is remembered below and gets `user`.
             let configured = cfg.memory.context_role();
@@ -932,8 +941,14 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                         if let Some(label) = activity_label(&call.name, &call.arguments) {
                             emit(&state, &chat_id, StreamEvent::Activity { label: Some(label) });
                         }
-                        let result =
-                            run_tool(&state, &chat_id, call, user_initiated).await;
+                        // The title acts on this turn's copy of the chat: the
+                        // tool writes the chat file, and the save below would
+                        // put the copy this turn loaded back over it.
+                        let result = if call.name == "set_title" {
+                            title_tool(&mut chat, &call.arguments)
+                        } else {
+                            run_tool(&state, &chat_id, call, user_initiated).await
+                        };
                         let mut message = Message::new("tool", &result, "complete");
                         message.tool_call_id = Some(call.id.clone());
                         message.hidden = true;
@@ -1141,9 +1156,17 @@ fn system_message(cfg: &config::HarnessConfig, caps: crate::Capabilities, memory
 /// What changed since the last request, as one trailing message: the live
 /// coding agents and what the window is showing. It sits at the very end, so
 /// changing it costs one small message instead of the whole prefix.
-fn context_frame(state: &AppState, chat_id: &str) -> Option<String> {
+fn context_frame(state: &AppState, chat: &Chat) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
-    if let Some(hint) = live_agent_hint(state, chat_id) {
+    if let Some(hint) = live_agent_hint(state, &chat.meta.id) {
+        parts.push(hint);
+    }
+    // The first reply names the conversation. The prompt already says so, but a
+    // model that read it once can still answer without the tool; one line at
+    // the end of the request is what makes it happen. It disappears the moment
+    // the title exists, and being last it costs one small message rather than
+    // the cached prefix.
+    if let Some(hint) = title_hint(chat) {
         parts.push(hint);
     }
     // What the user is looking at, from the product's window. It is here for
@@ -1157,6 +1180,23 @@ fn context_frame(state: &AppState, chat_id: &str) -> Option<String> {
         return None;
     }
     Some(parts.join("\n\n"))
+}
+
+/// The reminder that goes with the first reply of an untitled conversation.
+/// `None` once it has a title, and on later turns: the prompt already tells
+/// the model to name it first, and this is not a rule the store enforces, so
+/// nagging after turn one would only be noise.
+fn title_hint(chat: &Chat) -> Option<String> {
+    if chat.meta.title != crate::store::DEFAULT_TITLE {
+        return None;
+    }
+    if chat.messages.iter().filter(|m| m.role == "user").count() != 1 {
+        return None;
+    }
+    Some(
+        "## This conversation has no title yet\nCall `set_title` now with a short name for it (three to six words, no quotes), then carry on with your answer."
+            .to_string(),
+    )
 }
 
 /// An ephemeral line for this request only. A live coding agent means the
@@ -1438,6 +1478,10 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
 
     let label: String = match name {
         "no_update" => return None,
+        "set_title" => match text("title") {
+            Some(title) => format!("Naming this conversation “{}”…", short(title, 42)),
+            None => "Naming this conversation…".into(),
+        },
         "web_search" => match text("query") {
             Some(query) => format!("Searching the web for “{}”…", short(query, 42)),
             None => "Searching the web…".into(),
@@ -1592,6 +1636,15 @@ fn short(text: &str, max: usize) -> String {
         }
     }
     cut.trim_end().to_string()
+}
+
+/// `set_title`, applied to the chat this turn is holding.
+fn title_tool(chat: &mut Chat, arguments: &str) -> String {
+    let args = serde_json::from_str::<serde_json::Value>(arguments).unwrap_or_else(|_| json!({}));
+    match tools::title(chat, &args) {
+        Ok(value) => value.to_string(),
+        Err(message) => json!({ "error": message }).to_string(),
+    }
 }
 
 async fn run_tool(
@@ -2357,6 +2410,27 @@ mod tests {
         let chat = chat_with(vec![user]);
         let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
         assert!(history[0]["content"].as_str().unwrap().contains("attached image"));
+    }
+
+    #[test]
+    fn the_first_reply_is_reminded_to_name_the_conversation() {
+        let mut chat = Chat::new();
+        assert!(title_hint(&chat).is_none(), "there is nothing to name yet");
+        chat.messages.push(Message::new("user", "hi", "complete"));
+        let hint = title_hint(&chat).expect("a reminder on the first reply");
+        assert!(hint.contains("set_title"));
+        // The hint is a request, not a message: naming the chat ends it.
+        chat.set_agent_title("Saying hello").unwrap();
+        assert!(title_hint(&chat).is_none());
+        // A first reply that forgot is not reminded again later. The tool still
+        // works there (the user can ask for a name), but this line belongs to
+        // the first reply.
+        let late = chat_with(vec![
+            Message::new("user", "first", "complete"),
+            Message::new("assistant", "hello", "complete"),
+            Message::new("user", "second", "complete"),
+        ]);
+        assert!(title_hint(&late).is_none());
     }
 
     #[test]

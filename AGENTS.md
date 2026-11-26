@@ -256,7 +256,15 @@ bash.
   switch).
 - `crates/hook-core/src/{store,sync}.rs` — chats on disk and the background
   sync engine (cursor, pending queue, account quarantine, media, memory, the
-  personal endpoint). `sync.rs` also owns the policy: a free account and an
+  personal endpoint). A chat is `Untitled` until its agent names it: the model
+  calls `set_title` in the first reply (`Chat::set_agent_title`; `tools::title`
+  is the answer it gets), never from the user's message and never from a coding
+  chat's folder. Nothing enforces the first reply — the prompt asks for it, the
+  tool works on any turn, so the user can ask for a rename. The tool stays
+  advertised for the whole conversation (removing it would rewrite the cached
+  prefix) and `title_hint` reminds the model at the end of the first reply's
+  request.
+  `sync.rs` also owns the policy: a free account and an
   account whose switch is off never reach the network, and the loop re-checks
   `/api/auth/me` so a change made in another product arrives without a restart
   (plan, sync switch and advanced mode alike).
@@ -657,7 +665,11 @@ Changing one side of a boundary is the most common way to break this repo.
   none. Gate it on `Capabilities` when only some products have it. A tool that
   reaches beyond `tools.rs` follows `workspace_*` (own `definitions()` +
   `execute`, added to the toolset in `run_turn`) or `memory::*` (the same, plus
-  the Settings toggle).
+  the Settings toggle). Anything in `definitions()` is also offered to a
+  directly-driven coding agent through `bridge.rs` and the guard's
+  `registerBridgeTools`; a tool the file bridge must apply to a chat (like
+  `set_title`) is intercepted in `bridge::dispatch` as well as in the turn loop,
+  because a turn saves the copy of the chat it loaded before the model answered.
 - **New kind of memory, or a change to how it reaches a chat:**
   `memory.rs` (store, caps, frames) → `turn.rs` (`ensure_memory_frames`,
   `activity_label`, the `## Memory` prompt section) → the tool schemas in

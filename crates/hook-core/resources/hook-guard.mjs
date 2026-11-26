@@ -289,6 +289,7 @@ function directGuidance() {
   return (
     "\n\n## Talking to the user directly (Hook)" +
     "\nThis conversation is only you and the user: there is no assistant in between and no one rewrites your words. What you write is what they read, so write to them, not to a log - short, plain sentences when you are done, and nothing at all while you are simply working." +
+    "\n- Your first reply of a conversation names it: call `set_title` before anything else, with three to six words saying what the work is, in the language the user writes in. It is how they find the conversation in their list. After that, change the title only when the user asks for a different one." +
     "\n- Never start another coding agent. You are the agent for this work; there is nothing to delegate to." +
     "\n- You have your own file and shell tools, plus Hook's own tools for the user's projects, memory and Workspace. Use them as you would any other tool." +
     "\n- The user may interrupt you with a new message while you work: treat it as guidance for the current work, not as a new, unrelated task." +
