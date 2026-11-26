@@ -1045,3 +1045,27 @@ export async function openExternal(url: string): Promise<void> {
   }
   await invoke("open_url", { url });
 }
+
+/** The answer to "export this window as a PDF". Mirrors `PdfExport` in hook-core. */
+export interface PdfExport {
+  /** The file that was written, when one was. */
+  path: string | null;
+  /**
+   * Whether this build writes the PDF itself. False means there is no silent
+   * writer here (a browser, or a platform without one), so the caller prints
+   * through the system dialog instead.
+   */
+  direct: boolean;
+}
+
+/**
+ * Write the page the window is showing to a PDF the person names.
+ *
+ * The page is what prints, not what is being edited: the caller puts the
+ * document on the sheet first (`pdf.ts`), and the print stylesheet decides the
+ * rest.
+ */
+export async function exportPdf(suggestedName: string): Promise<PdfExport> {
+  if (!isTauri()) return { path: null, direct: false };
+  return invoke<PdfExport>("export_pdf", { suggestedName });
+}

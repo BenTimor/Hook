@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { Dialog, TextFieldDialog } from "@hook/ui";
 import {
@@ -49,6 +49,7 @@ import { documentImageSource, embedDocumentImage } from "../lib/documentImages";
  */
 
 export interface DocumentEditorHandle {
+  /** The buffer as it is right now, unsaved edits included. */
   markdown: () => string;
 }
 
@@ -75,6 +76,7 @@ function imageSizeError() {
 }
 
 export function DocumentEditor({
+  ref,
   document,
   raw,
   readOnly,
@@ -83,6 +85,8 @@ export function DocumentEditor({
   onSave,
   compact = false,
 }: {
+  /** Reaches the buffer for a copy nothing else can take: "Export as PDF". */
+  ref?: Ref<DocumentEditorHandle>;
   document: { id: string; markdown?: string };
   raw: boolean;
   readOnly: boolean;
@@ -123,6 +127,13 @@ export function DocumentEditor({
   // must not reset the cursor.
   const documentId = document.id;
   const initial = useRef(document.markdown ?? "");
+
+  // The document as it stands, for a copy taken from outside the editor (the
+  // PDF export): the buffer is the document, and it may hold a keystroke the
+  // 900 ms save has not sent yet.
+  useImperativeHandle(ref, () => ({
+    markdown: () => view.current?.state.doc.toString() ?? initial.current,
+  }), []);
 
   useEffect(() => {
     initial.current = document.markdown ?? "";

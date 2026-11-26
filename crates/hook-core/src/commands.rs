@@ -1439,6 +1439,48 @@ fn copy_image(source: &std::path::Path, target: &std::path::Path) -> Result<(), 
         .map_err(|e| format!("Couldn't save the picture: {e}"))
 }
 
+/// "Export as PDF": a native save dialog, then the window draws the page it is
+/// showing into that file (`pdf.rs`).
+///
+/// `direct` is the platform's answer, not the person's: when it is false there
+/// is no silent writer here, and the window prints through the system dialog
+/// instead of asking for a path nothing could fill.
+#[tauri::command]
+pub async fn export_pdf(
+    app: AppHandle,
+    webview: tauri::Webview,
+    suggested_name: String,
+) -> Result<crate::pdf::PdfExport, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let dismissed = crate::pdf::PdfExport {
+        path: None,
+        direct: crate::pdf::DIRECT,
+    };
+    if !crate::pdf::DIRECT {
+        return Ok(dismissed);
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&crate::pdf::file_name(&suggested_name))
+        .add_filter("PDF", &["pdf"])
+        .save_file(move |chosen| {
+            let _ = tx.send(chosen);
+        });
+
+    let Some(chosen) = rx.await.map_err(|e| e.to_string())? else {
+        return Ok(dismissed);
+    };
+    let target = chosen.into_path().map_err(|e| e.to_string())?;
+    crate::pdf::write(webview, target.clone()).await?;
+    Ok(crate::pdf::PdfExport {
+        path: Some(target.to_string_lossy().to_string()),
+        direct: true,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{copy_image, drop_last_reply};

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { EditorState } from "@codemirror/state";
 import { history, undo } from "@codemirror/commands";
-import { WidgetType } from "@codemirror/view";
+import { Direction, WidgetType } from "@codemirror/view";
 
 import {
   applyRule,
@@ -16,6 +16,7 @@ import {
   settleSelection,
   toggleDirection,
   wrapBlock,
+  type LiveOptions,
 } from "./live.ts";
 import { ruleFor } from "./rules.ts";
 
@@ -40,9 +41,9 @@ function hidden(state: EditorState): Range[] {
   return found;
 }
 
-function lineClasses(state: EditorState): Map<number, string> {
+function lineClasses(state: EditorState, options: LiveOptions = {}): Map<number, string> {
   const classes = new Map<number, string>();
-  const { all } = decorationsFor(state, [{ from: 0, to: state.doc.length }]);
+  const { all } = decorationsFor(state, [{ from: 0, to: state.doc.length }], options);
   for (let number = 1; number <= state.doc.lines; number += 1) {
     const line = state.doc.line(number);
     let name = "";
@@ -542,14 +543,75 @@ test("a formula shows its TeX while the caret is inside it", () => {
   assert.equal(marks.length, 1, "the source run is marked");
 });
 
-test("a formula shows its TeX when the caret only touches its edge", () => {
-  // `$x^2$` sits at 7..12: a caret just before or just after it counts.
-  for (const anchor of [6, 13]) {
+test("a formula shows its TeX when the caret is at either end of it", () => {
+  // `$x^2$` sits at 7..12. A click on the drawn maths lands at an edge, because
+  // the widget takes no clicks of its own, so both ends show the source.
+  for (const anchor of [7, 12]) {
     const state = EditorState.create({ doc: "before $x^2$ after", selection: { anchor } });
     const { widgets, marks } = maths(state);
     assert.equal(widgets.length, 0, `caret at ${anchor} shows the source`);
     assert.equal(marks.length, 1, `caret at ${anchor} marks the source`);
   }
+  // One character further out is the sentence, not the formula.
+  for (const anchor of [6, 13]) {
+    const state = EditorState.create({ doc: "before $x^2$ after", selection: { anchor } });
+    const { widgets, marks } = maths(state);
+    assert.equal(widgets.length, 1, `caret at ${anchor} leaves the maths drawn`);
+    assert.equal(marks.length, 0, `caret at ${anchor} shows no TeX`);
+  }
+});
+
+test("a displayed formula keeps its TeX to itself", () => {
+  // `$$` on the first line, the TeX in the middle, `$$` again: 7..16 in the
+  // buffer. The line above ends at 6 and the line below starts at 17 — neither
+  // is the formula, so walking past it leaves the maths drawn.
+  const text = "Before\n$$\nx^2\n$$\nAfter";
+  for (const anchor of [6, 17]) {
+    const state = EditorState.create({ doc: text, selection: { anchor } });
+    const { widgets, marks } = maths(state);
+    assert.equal(widgets.length, 1, `caret at ${anchor} leaves the block drawn`);
+    assert.equal(marks.length, 0, `caret at ${anchor} shows no TeX`);
+  }
+  // Inside it — or on either `$$` line — the source is what is being written.
+  for (const anchor of [7, 10, 16]) {
+    const state = EditorState.create({ doc: text, selection: { anchor } });
+    const { widgets, marks } = maths(state);
+    assert.equal(widgets.length, 0, `caret at ${anchor} shows the source`);
+    assert.equal(marks.length, 1, `caret at ${anchor} marks the source`);
+  }
+});
+
+test("a displayed formula's TeX reads left to right, an RTL document included", () => {
+  const text = "Before\n$$\nx^2\n$$\nAfter";
+  const math = { math: () => new MathStub() };
+  const inside = EditorState.create({ doc: text, selection: { anchor: 10 } });
+  const classes = lineClasses(inside, math);
+  for (const number of [2, 3, 4]) {
+    assert.match(classes.get(number) ?? "", /cm-math-source-line/, `line ${number} is left to right`);
+  }
+  assert.doesNotMatch(classes.get(1) ?? "", /cm-math-source-line/);
+  assert.doesNotMatch(classes.get(5) ?? "", /cm-math-source-line/);
+
+  // An inline formula is isolated inside its sentence instead: the paragraph
+  // around it keeps the document's direction, so there is no line to flip.
+  const sentence = EditorState.create({ doc: "a $x^2$ b", selection: { anchor: 4 } });
+  for (const name of lineClasses(sentence, math).values()) {
+    assert.doesNotMatch(name, /cm-math-source-line/);
+  }
+});
+
+test("the TeX that shows is isolated left to right for the editor's own model", () => {
+  // The CSS isolates the run; the caret is measured by CodeMirror's copy of the
+  // line's order, so the mark has to say the same thing (`bidiIsolatedRanges`).
+  const state = EditorState.create({ doc: "a $x^2$ b", selection: { anchor: 4 } });
+  const { sources } = decorationsFor(state, [{ from: 0, to: state.doc.length }], {
+    math: () => new MathStub(),
+  });
+  const isolates: unknown[] = [];
+  sources.between(0, state.doc.length, (_from, _to, decoration) => {
+    isolates.push(decoration.spec.bidiIsolate);
+  });
+  assert.deepEqual(isolates, [Direction.LTR]);
 });
 
 test("a drawn formula is not atomic, so the caret can step into it", () => {

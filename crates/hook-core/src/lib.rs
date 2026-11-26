@@ -44,6 +44,8 @@ mod git;
 mod guard;
 mod import;
 mod memory;
+#[cfg(feature = "desktop")]
+mod pdf;
 mod projects;
 mod preview;
 mod provider;
@@ -278,6 +280,7 @@ pub fn builder(
             commands::read_image,
             commands::open_image,
             commands::save_image_as,
+            commands::export_pdf,
             commands::open_path,
             commands::app_info,
             commands::auth_status,

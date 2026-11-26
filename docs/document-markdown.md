@@ -113,9 +113,13 @@ so `\sqrt{2}/2` is left exactly as written, and text in `\text{…}` (`\text{km/
 and the arguments of `\href{…}` never change.
 
 It renders as MathML in the read view — every surface, no stylesheet, no fonts.
-The formatted editor draws it too, and turns it back into the TeX the moment the
-caret is in it or beside it, because the thing you edit is the formula's source:
-click a formula and it opens; type in it and you are typing TeX. A `$…$` that is plainly prose — a space, a word, and no TeX in it — is
+The formatted editor draws it too, and turns it back into the TeX while the
+caret is in the formula, because the thing you edit is the formula's source:
+click a formula and it opens; type in it and you are typing TeX. A caret beside
+it is not in it — on a `$$` block, the line above and the line below keep the
+maths drawn. The TeX reads left to right while it is edited, in a right-to-left
+document too, and a `$$` block stays a block: its lines start at the left edge
+rather than flipping with the passage around it. A `$…$` that is plainly prose — a space, a word, and no TeX in it — is
 left as the text it is, so "it costs $5 and the other costs $10" keeps its
 dollars instead of becoming an equation. A formula that does not parse stays on the page as the TeX that was
 written, in red, so nothing is ever lost silently. Math is left to right even

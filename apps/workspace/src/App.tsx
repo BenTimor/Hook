@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Code2, MessageCircleMore, MoreHorizontal, Trash2, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ArrowLeft, Check, Code2, FileDown, MessageCircleMore, MoreHorizontal, Trash2, X } from "lucide-react";
 import {
   SignInCard,
   TextFieldDialog,
@@ -7,14 +8,16 @@ import {
   useWindowState,
 } from "@hook/ui";
 import { ChatDock } from "@hook/chat";
+import { DocumentMarkdown } from "@hook/markdown";
 
-import { api, onAuthEvent, openExternal, type AuthView } from "./lib/bridge";
+import { api, exportPdf, onAuthEvent, openExternal, type AuthView } from "./lib/bridge";
 import { chatTransport, setChatContext } from "./lib/chatTransport";
+import { laidOut, picturesReady, printDialog } from "./lib/pdf";
 import { rememberOpened } from "./lib/projectShortcuts";
 import type { DocumentMeta } from "./lib/types";
 import { useWorkspaceStore } from "./store/useWorkspaceStore";
 import { BoardPage, TaskPanel } from "./components/BoardView";
-import { DocumentEditor } from "./components/DocumentEditor";
+import { DocumentEditor, type DocumentEditorHandle } from "./components/DocumentEditor";
 import { RoadmapPage } from "./components/RoadmapPage";
 import { BrainstormPage } from "./components/BrainstormPage";
 import { InvitesPanel } from "./components/MembersPanel";
@@ -402,6 +405,11 @@ function DocumentPage({
   const [epoch, setEpoch] = useState(0);
   const [forceSave, setForceSave] = useState(0);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  // The copy on its way to a PDF. Null except while the export runs: the page
+  // that prints is this one, drawn on its own (`pdf.ts`).
+  const [printCopy, setPrintCopy] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const editor = useRef<DocumentEditorHandle>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const optionsButton = useRef<HTMLButtonElement>(null);
   // A rename from the tree is a save like any other; follow it here too, unless
@@ -461,6 +469,37 @@ function DocumentPage({
 
   const readOnly = project.role === "viewer";
 
+  /**
+   * Export the document as it stands.
+   *
+   * The window prints; the editor does not. CodeMirror holds only the lines it
+   * is showing, so a sheet printed from the editor would end where the screen
+   * does — the copy mounted below is the whole document, drawn by the read
+   * view's own renderer (`pdf.ts` has the three steps and why each one counts).
+   */
+  const exportDocument = async () => {
+    if (exporting) return;
+    setOptionsOpen(false);
+    setExporting(true);
+    setPrintCopy(editor.current?.markdown() ?? loaded.markdown ?? "");
+    try {
+      await laidOut();
+      await picturesReady();
+      const result = await exportPdf(title.trim() || "Document");
+      // A platform with a silent writer has written the file, or the person
+      // cancelled the dialog. Without one, the system's print dialog is where
+      // "Save as PDF" lives.
+      if (!result.direct) await printDialog();
+    } catch (error) {
+      window.alert(
+        error instanceof Error ? error.message : "Could not export this document as a PDF.",
+      );
+    } finally {
+      setExporting(false);
+      setPrintCopy(null);
+    }
+  };
+
   return (
     <div className="ws-document">
       <div className="ws-document-bar">
@@ -498,6 +537,11 @@ function DocumentPage({
               <button type="button" className="ws-document-option" onClick={() => { setRaw(!raw); setOptionsOpen(false); }}>
                 <Code2 aria-hidden="true" />
                 <span><strong>{raw ? "Back to document" : readOnly ? "View Markdown" : "Edit Markdown"}</strong><small>{raw ? "Return to the formatted document" : readOnly ? "View the source" : "View and edit the source"}</small></span>
+              </button>
+              <div className="ws-document-options-divider" />
+              <button type="button" className="ws-document-option" disabled={exporting} onClick={() => void exportDocument()}>
+                <FileDown aria-hidden="true" />
+                <span><strong>{exporting ? "Exporting…" : "Export as PDF…"}</strong><small>Save the document as a PDF file</small></span>
               </button>
               {!readOnly && (
                 <>
@@ -549,6 +593,7 @@ function DocumentPage({
       ) : null}
 
       <DocumentEditor
+        ref={editor}
         key={`${id}-${epoch}`}
         document={loaded}
         raw={raw}
@@ -569,6 +614,17 @@ function DocumentPage({
           return false;
         }}
       />
+
+      {/* The sheet, and only the sheet: `index.css` hides the window in the
+          print media and shows this. It is mounted for the length of the
+          export, so nothing is drawn twice while a person is writing. */}
+      {printCopy !== null &&
+        createPortal(
+          <div className="ws-print">
+            <DocumentMarkdown markdown={printCopy} imageLoading="eager" />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

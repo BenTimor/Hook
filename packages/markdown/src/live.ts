@@ -9,6 +9,7 @@ import {
 } from "@codemirror/state";
 import {
   Decoration,
+  Direction,
   EditorView,
   ViewPlugin,
   type DecorationSet,
@@ -53,9 +54,25 @@ export interface LiveDecorations {
   all: DecorationSet;
   /** The hidden markup, as atomic ranges so a selection takes it along. */
   hidden: DecorationSet;
+  /**
+   * The runs that show their own source and are isolated left to right — a
+   * formula showing its TeX. They are published to the editor's
+   * `bidiIsolatedRanges` facet, so its idea of the line's order matches the
+   * CSS's.
+   */
+  sources: DecorationSet;
 }
 
 const hide = Decoration.replace({});
+
+/**
+ * A formula's TeX, isolated from the sentence around it: the run reads left to
+ * right whatever the paragraph's direction is. `bidiIsolate` is the same fact
+ * for CodeMirror, which measures the caret by its own copy of the line's order
+ * (`EditorView.bidiIsolatedRanges`) — the class alone would move the characters
+ * on screen while the arrows still counted in the document's direction.
+ */
+const SOURCE = Decoration.mark({ class: "cm-math-source", bidiIsolate: Direction.LTR });
 
 const HEADING = /^(#{1,6})\s+/;
 const DIVIDER = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/;
@@ -192,18 +209,27 @@ export function constructsBetween(state: EditorState, from: number, to: number):
 }
 
 /**
- * Whether the caret is in a run or one character beside it: close enough that
- * the run is what is being written. A formula is drawn while this is false and
- * shown as its own TeX while it is true, and the deletion repair follows the
- * same answer — a formula you can read as source is text you edit, not a unit
- * that vanishes whole.
+ * Whether the caret is on the run itself: inside it, or at either end of it.
+ *
+ * A formula is drawn while this is false and shown as its own TeX while it is
+ * true, and the deletion repair follows the same answer — a formula you can
+ * read as source is text you edit, not a unit that vanishes whole.
+ *
+ * The ends count because that is where a click on the drawn maths lands: the
+ * widget takes no clicks of its own (`pointer-events: none`), so the caret
+ * arrives at the edge of the run and the source has to appear there or the
+ * formula could never be opened. What does *not* count is a character beside
+ * it — on a display formula that character is the end of the line above or the
+ * start of the line below — so walking the caret past a formula does not flash
+ * TeX that is not being edited, and Backspace on the line under a block
+ * removes the character it is aimed at.
  */
 function touchesRange(
   from: number,
   to: number,
   selection: { from: number; to: number },
 ): boolean {
-  return selection.from <= to + 1 && selection.to >= from - 1;
+  return selection.from >= from && selection.to <= to;
 }
 
 // ── Blocks ──────────────────────────────────────────────────────────────────
@@ -312,6 +338,7 @@ export function decorationsFor(
   const doc = state.doc;
   const items: Range<Decoration>[] = [];
   const hidden: Range<Decoration>[] = [];
+  const sources: Range<Decoration>[] = [];
   const lineClasses = new Map<number, string[]>();
   const lineDirections = new Map<number, string>();
 
@@ -355,17 +382,31 @@ export function decorationsFor(
       const to = map(construct.to);
       if (construct.kind === "replace") {
         if (construct.math) {
-          // A formula is drawn until the caret comes near it, and then it is the
+          // A formula is drawn until the caret comes into it, and then it is the
           // TeX again: writing `$x^2$` means editing the source, and a rendered
-          // formula you cannot get inside is one you cannot fix. "Near" is the
-          // run itself plus one character on each side, so the caret touching an
-          // edge is already enough.
+          // formula you cannot get inside is one you cannot fix. "Into" is the
+          // run itself and its two ends, never the line beside it (`touchesRange`).
           const touching = touchesRange(from, to, state.selection.main);
           const widget = !touching && options.math ? options.math(construct.math) : null;
           // Deliberately not in `hidden`: hidden ranges are atomic, and an
           // atomic formula would be one the caret can only jump over.
           if (widget) add(from, to, Decoration.replace({ widget }));
-          else add(from, to, Decoration.mark({ class: "cm-math-source" }));
+          else {
+            // A formula that stands on its own lines is laid out left to right
+            // from the left edge while its TeX shows, in a right-to-left
+            // document too — the same direction the drawn maths has. Inside a
+            // sentence the run is only isolated (`.cm-math-source`), so the
+            // words around it keep the paragraph's direction.
+            if (construct.math.display) {
+              const last = doc.lineAt(to).number;
+              for (let number = doc.lineAt(from).number; number <= last; number += 1) {
+                mark(doc.line(number).from, "cm-math-source-line");
+              }
+            }
+            const range = SOURCE.range(from, to);
+            items.push(range);
+            sources.push(range);
+          }
           continue;
         }
         const widget = construct.image && options.image ? options.image(construct.image) : null;
@@ -504,7 +545,11 @@ export function decorationsFor(
     );
   }
 
-  return { all: Decoration.set(items, true), hidden: Decoration.set(hidden, true) };
+  return {
+    all: Decoration.set(items, true),
+    hidden: Decoration.set(hidden, true),
+    sources: Decoration.set(sources, true),
+  };
 }
 
 /** The live preview as an extension: decorations and the deletion repair. */
@@ -513,10 +558,12 @@ export function livePreview(options: LiveOptions = {}): Extension {
     class {
       all: DecorationSet;
       hidden: DecorationSet;
+      sources: DecorationSet;
       constructor(view: EditorView) {
         const next = decorationsFor(view.state, view.visibleRanges, options);
         this.all = next.all;
         this.hidden = next.hidden;
+        this.sources = next.sources;
       }
       update(update: ViewUpdate) {
         // A selection change matters: it is what turns a drawn formula back into
@@ -525,16 +572,28 @@ export function livePreview(options: LiveOptions = {}): Extension {
         const next = decorationsFor(update.view.state, update.view.visibleRanges, options);
         this.all = next.all;
         this.hidden = next.hidden;
+        this.sources = next.sources;
       }
     },
     {
       decorations: (value) => value.all,
-      provide: (plugin) =>
+      provide: (plugin) => [
         EditorView.atomicRanges.of((view) => view.plugin(plugin)?.hidden ?? Decoration.none),
+        // The TeX that shows while a formula is edited is isolated left to
+        // right in the CSS; the editor has to know that, or its own view of the
+        // line's order disagrees with the one on screen.
+        EditorView.bidiIsolatedRanges.of((view) => view.plugin(plugin)?.sources ?? Decoration.none),
+      ],
     },
   );
   return [
     plugin,
+    // A line can be laid out in a direction of its own: a display formula
+    // showing its TeX (`cm-math-source-line`), or a passage inside `:::rtl`.
+    // With this, CodeMirror reads the direction the CSS gave each rendered
+    // line instead of assuming the document's, so the caret's own idea of
+    // "left" is the one on screen.
+    EditorView.perLineTextDirection.of(true),
     // Filters run last-added first: the metadata line is settled before the
     // repair measures anything, so no repair is ever computed against a change
     // that moved.

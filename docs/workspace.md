@@ -132,8 +132,13 @@ rows written before this rule are adopted when the service starts.
   resized to fit, and animated GIFs may become still images when resized.
   In the formatted editor, Backspace and Delete remove an adjacent image as a unit.
   Hover over a web link for its address and open action, or Ctrl-click it to open.
-  Document options also offers Markdown source editing and deletion. The
-  toolbar's direction button asks the document itself: with nothing selected it
+  Document options also offers Markdown source editing, Export as PDF and
+  deletion. **Export as PDF** writes the document, not the window: the buffer is
+  drawn once outside the editor (CodeMirror only holds the lines it is showing),
+  the print stylesheet hides the app around it, and the platform's print engine
+  draws the sheet — WebView2's `PrintToPdf` straight into a file the person
+  names, the system print dialog everywhere else. The toolbar's direction button
+  asks the document itself: with nothing selected it
   writes `::meta{direction=rtl}` as the first line (or takes it off), and with a
   selection it fences those lines in `:::rtl` … `:::` (or `:::ltr`), a second
   press taking the fence off. So the direction travels with the Markdown, is

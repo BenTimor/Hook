@@ -37,3 +37,14 @@ tauri-plugin-opener = { version = "2", optional = true }
 tauri-plugin-dialog = { version = "2.0.0-rc.8", optional = true }
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"] }
 base64 = "0.23.1"
+
+# "Export as PDF" (pdf.rs) draws the window through WebView2's own
+# `PrintToPdf`, which is a COM call: it needs the runtime's bindings and its
+# string type. `webview2-com` is the version `tauri` itself depends on, because
+# the call starts from the controller `PlatformWebview` hands back — the two
+# have to be the same crate, so a `tauri` that moves on wants this line moved
+# with it. Nothing is linked here on another platform: the print dialog is the
+# export there.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"

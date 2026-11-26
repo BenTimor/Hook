@@ -30,6 +30,13 @@ export interface DocumentMarkdownProps {
   onOpen?: (url: string) => void;
   /** Extra class for a surface that sizes the page down, such as a tile. */
   className?: string;
+  /**
+   * How the pictures load. A page that is about to be printed asks for
+   * `eager`: a lazy picture is one the browser may decide not to fetch for a
+   * page that has no viewport yet, and a PDF with an empty box in it is worse
+   * than a page that took a moment longer.
+   */
+  imageLoading?: "lazy" | "eager";
 }
 
 const remarkPlugins = [
@@ -49,6 +56,7 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({
   markdown,
   onOpen,
   className,
+  imageLoading = "lazy",
 }: DocumentMarkdownProps) {
   const direction = useMemo(() => readDocumentMeta(markdown).direction, [markdown]);
   const components = useMemo<Components>(
@@ -75,7 +83,7 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({
             className="hook-doc-image"
             src={source}
             alt={alt ?? ""}
-            loading="lazy"
+            loading={imageLoading}
             referrerPolicy="no-referrer"
           />
         );
@@ -84,7 +92,7 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({
         return <span className="hook-doc-checkbox">{checked ? "☑" : "☐"}</span>;
       },
     }),
-    [onOpen],
+    [onOpen, imageLoading],
   );
 
   return (

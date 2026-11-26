@@ -2743,10 +2743,22 @@
      editor. */
   pointer-events: none;
   user-select: none;
+  /* The maths is left to right wherever it is drawn, an RTL page included. */
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 .cm-math-widget.cm-math-display { display: block; margin: 6px 0; text-align: center; }
 .cm-math-widget > .katex { font-size: 1.02em; }
-.cm-math-source { font-family: var(--font-mono); font-size: 0.94em; color: var(--ink-soft); }
+/* The TeX, while a formula is being edited. Reading order is the source's own,
+   not the sentence's: an isolated run keeps `$$x^2$$` as it was typed inside an
+   RTL paragraph, instead of letting the bidi algorithm shuffle its brackets and
+   digits. `bidiIsolate` in `live.ts` is the same fact for the editor's caret. */
+.cm-math-source { font-family: var(--font-mono); font-size: 0.94em; color: var(--ink-soft); direction: ltr; unicode-bidi: isolate; }
+/* A formula written on its own lines is a block while it renders and a block
+   while it is edited: its lines read left to right from the left edge, so the
+   source is written from the side the maths is read from, in an RTL document
+   too. */
+.cm-math-source-line { direction: ltr; text-align: left; }
 
 .cm-callout-body { border-left: 3px solid var(--sage); padding-left: 14px !important; background: rgba(var(--accent-rgb), 0.03); }
 .cm-callout-body-first { padding-top: 4px !important; }
@@ -2798,6 +2810,72 @@
   background: rgba(var(--ink-rgb), 0.07);
   font-family: var(--font-mono);
   font-size: 0.88em;
+}
+
+/* ── The document as a PDF ──────────────────────────────────────────────────
+   "Export as PDF" prints the window, and a page of prose must not arrive with
+   a sidebar and a toolbar on it. The sheet is not the editor either: CodeMirror
+   only holds the lines it is showing, so `App.tsx` draws the whole document
+   once, into this element, and mounts it only while the export runs.
+
+   On screen it does not exist; in the print media — which is what WebView2's
+   `PrintToPdf` and the system print dialog both lay the page out in — it is the
+   only thing that does. The prose numbers are `.hook-doc`'s (tokens.css), the
+   same ones the read view and the preview panel use, so the PDF says what the
+   document says. */
+.ws-print {
+  display: none;
+}
+
+@media print {
+  /* The shell is a window: exactly one viewport tall, never scrolled. Paper is
+     as long as the document, so both of those have to let go, or the sheet ends
+     at the fold. */
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+  }
+
+  body > *:not(.ws-print) {
+    display: none !important;
+  }
+
+  .ws-print {
+    display: block;
+    max-width: 760px;
+    margin: 0 auto;
+    color: var(--ink);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* A sheet has no scrollbar: a wide table or a long code sample keeps its own
+     width instead of being clipped to the screen's. */
+  .ws-print .hook-doc pre,
+  .ws-print .hook-doc table {
+    overflow: visible;
+    break-inside: avoid;
+  }
+
+  .ws-print .hook-doc img {
+    break-inside: avoid;
+    max-height: 200mm;
+  }
+
+  /* A heading at the foot of a page belongs with what it introduces. */
+  .ws-print .hook-doc h1,
+  .ws-print .hook-doc h2,
+  .ws-print .hook-doc h3,
+  .ws-print .hook-doc h4 {
+    break-after: avoid;
+  }
+
+  @page {
+    margin: 18mm 16mm;
+  }
 }
 
 /* ג”€ג”€ Error banner ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ */

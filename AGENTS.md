@@ -480,6 +480,13 @@ bash.
 - `apps/workspace/src/lib/documentImages.ts` — validates image sources and
   sizes images added by the toolbar, clipboard or file drop in the Markdown
   editor shared by documents and tasks.
+- `apps/workspace/src/lib/pdf.ts` — the three steps of "Export as PDF", in the
+  window's half: draw the document once outside CodeMirror (which only holds the
+  lines it is showing), wait for that copy to be laid out and its pictures
+  decoded, then let the window write the file. `crates/hook-core/src/pdf.rs` is
+  the other half: WebView2's `PrintToPdf` and the suggested file name; the print
+  stylesheet in `apps/workspace/src/styles/index.css` decides what is on the
+  sheet.
 - `packages/ui/src/tokens.css` — the design foundation (tokens, base elements,
   window chrome, prose, buttons/inputs). Both products import it first.
 - `waitlist/content.json` — all landing-page copy and interest definitions.
@@ -521,6 +528,19 @@ Changing one side of a boundary is the most common way to break this repo.
   → the `mock.ts` fallback → store/component. Both `isTauri()` branches must work.
   A command that only the phone has still goes in `hook-core` (it is the same
   account code) and its `Capabilities` decide whether the prompt mentions it.
+- **Saving a page as a PDF (or printing one):** `crates/hook-core/src/pdf.rs`
+  (the file name, and WebView2's `PrintToPdf` on Windows; elsewhere `DIRECT` is
+  false and the window falls back to the system print dialog, which is where
+  "Save as PDF" lives) → `commands::export_pdf` in the handler → `bridge.ts`
+  (`exportPdf`) → `apps/workspace/src/lib/pdf.ts` (the print copy, the frame and
+  picture waits) → the product's print stylesheet
+  (`apps/workspace/src/styles/index.css`, `@media print`) → the menu item.
+  What prints is never the editor: CodeMirror only holds the lines it is
+  showing, so a document is drawn once by `DocumentMarkdown` into `.ws-print`
+  and mounted only for the length of the export. The element is a portal child
+  of `body`, because `@media print` hides everything else by that rule; keep
+  that shape, and keep `html`/`body`'s `height: 100%; overflow: hidden` released
+  in print, or the sheet ends at the fold.
 - **Native sign-in:** `plugins/google-signin` (Kotlin Credential Manager +
   `register_android_plugin` in its `lib.rs`) → `apps/mobile/src/lib/api.ts` →
   `POST /api/auth/config` and `POST /api/auth/google` in `server/auth.mjs` → the
@@ -547,11 +567,18 @@ Changing one side of a boundary is the most common way to break this repo.
   4. `packages/markdown/src/live.ts` — decorations (which markers are hidden,
      which runs are styled), the widget hook for a replaced unit, the
      **viewport/selection rule** (a formula shows its TeX while the caret is in
-     it or one character beside it, so it stays editable; its widget is not in
-     `hidden`, because hidden ranges are atomic and an atomic formula is one the
-     caret can only jump over; and the widget's CSS says
+     the run or at either end of it — a click opens it, because the click lands
+     at an edge — and never while the caret is on the line beside it, or
+     walking past a block would flash TeX that is not being edited; its widget
+     is not in `hidden`, because hidden ranges are atomic and an atomic formula
+     is one the caret can only jump over; and the widget's CSS says
      `pointer-events: none`, or the click selects the widget's own DOM and never
-     reaches the editor), and the deletion repair's unit list in
+     reaches the editor), the run's own direction (the TeX is
+     `direction: ltr; unicode-bidi: isolate`, a display block's lines are laid
+     out left to right, and the same ranges are published to
+     `EditorView.bidiIsolatedRanges` with `perLineTextDirection` on, so the
+     caret's idea of the line's order is the one on screen in an RTL document),
+     and the deletion repair's unit list in
      `repairTransaction` (`kind === "replace"` — a new replaced unit must join
      it or Backspace will chew into it). A unit that can be opened for editing
      (a formula) must then be *excluded* from that list while the caret touches
