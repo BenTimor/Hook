@@ -199,13 +199,22 @@ demand. Two halves make that work, and the split is the point:
   isolated world, visible text only) and answers with a slice the backend caps
   again. The extraction drops nav, sidebars, footers and forms while walking the
   DOM, so a 60k-character sidebar stays out of the answer.
+- **Everything else is a protocol command.** `crates/hook-core/src/browser.rs`
+  composes `runtime.evaluate` for `run_js` and forwards `browser_cdp` verbatim;
+  `browser/cdp/hook_cdp.cc` attaches a `DevToolsAgentHost` to the tab, sends the
+  one command, and answers with its `result` object. Nothing listens on a port:
+  the browser process attaches to a tab it already owns, and it is the only place
+  a page can be driven from. `run_js` carries
+  `resources/browser-agent.js` with every call and installs it as `__hook` on
+  first use — a page that navigated has the helpers again on the next script,
+  without a per-tab install to keep track of.
 
 The routes are on the same channel and the same token:
 
 | route | what it is |
 | --- | --- |
 | `GET /browser/tasks` | the browser asking for work; held open for a few seconds when there is none, so an idle browser is one request per hold. Every poll is also the heartbeat a tool reads to say "Hook Browser is running" instead of "that machine is offline" |
-| `POST /browser/tasks/<id>` | the answer: the tab list, or a page's text and headings |
+| `POST /browser/tasks/<id>` | the answer: the tab list, a page's text and headings, or one protocol command's `result` |
 
 The poller is `hook/browser/service/hook_service.cc`, one per profile, started by
 `hook/browser/startup/hook_extra_parts.cc` at browser startup (one line in
@@ -214,18 +223,32 @@ read has to work when the side panel is closed, because the browser merely has t
 be running. It backs off to one poll every ten seconds against a host that does
 not know the route, which is what an older Hook app is.
 
-## Reading a page from anywhere else
+## Reading a page, and driving one, from anywhere else
 
-The three tools are machine operations, like the agent ones
-(`docs/machines.md`): `list_tabs`, `read_page` and `find_in_page` each take a
-`machine`, and the machine that has the browser is the one that answers.
+The nine tools are machine operations, like the agent ones
+(`docs/machines.md`): `list_tabs`, `read_page`, `find_in_page`, `open_tab`,
+`switch_tab`, `close_tab`, `navigate`, `run_js` and `browser_cdp` each take a
+`machine` and a `tab`, and the machine that has the browser is the one that
+answers.
+
+The strip is the browser's own to draw, so the four tab tools are protocol calls
+rather than new browser code: `Target.createTarget` is the same thing the `+`
+button does, and `Page.close` / `Page.bringToFront` are the strip's own close and
+select. `navigate` is `Page.navigate` followed by a poll of `document.readyState`,
+because a tab that is being replaced has no execution context to answer from —
+that poll is also why a script's `location.href = …` is the wrong way to move a
+page.
 
 - **This computer**, in the dock's own conversation: the host is the browser's
   host, so the task never leaves the process (`Capabilities::browser`).
 - **Any other device**: the relay carries `browser.tabs` / `browser.read` /
-  `browser.find` (`remote.rs`), and the machine at the other end runs the same
-  queue. Slicing and searching happen *there*, so the relay carries the slice the
-  model asked for and never a whole page.
+  `browser.find` / `browser.eval` / `browser.cdp` / `browser.open` /
+  `browser.close` / `browser.focus` / `browser.navigate` (`remote.rs`), and the
+  machine at the other end runs the same queue. Slicing, searching and the
+  protocol call itself happen *there*, so the relay carries the answer the model
+  asked for and never a whole page. The budgets are chosen to fit under the
+  relay's 60-second RPC timeout: a protocol call waits 50 seconds, and a script
+  is stopped at 40.
 - **The target rule is the family's own.** `can_host` means "can run agent work",
   and a browser is a controller, so `server/relay.mjs` lets `browser.*` target a
   device whose capabilities include `browser`. Without that, the only machine
@@ -233,7 +256,8 @@ The three tools are machine operations, like the agent ones
 
 `list_machines` reports `can_read_pages` per device, and always includes this
 computer when this process hosts a browser — a tab is local work and does not
-wait for the relay.
+wait for the relay. The field is named for reading, which is what it first
+answered; the machine it marks is also the one `run_js` and `browser_cdp` reach.
 
 ## What does not change
 

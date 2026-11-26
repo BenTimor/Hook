@@ -323,11 +323,28 @@ async fn refuse(stream: &mut tokio::net::TcpStream, status: u16, message: &str) 
 
 /// Run one tool call for one chat and return the JSON text the model reads.
 ///
-/// Workspace tools are `async` (they go over the account API); everything else
-/// is blocking file work, kept off the reactor.
+/// Workspace tools are `async` (they go over the account API), and so are the
+/// ones whose answer comes from a browser or from another machine; everything
+/// else is blocking file work, kept off the reactor.
 async fn dispatch(state: Arc<AppState>, chat_id: String, name: String, args: Value) -> String {
     if crate::workspace::handles(&name) {
         return crate::workspace::execute(&state.workspace, &chat_id, &name, &args).await;
+    }
+    // A browser call and an agent call answer from somewhere else: the browser
+    // process on this machine, or a host across the relay. They need the live
+    // state, so they are awaited here instead of being handed to the blocking
+    // pool — which is also what gives a coding agent the same machine rules the
+    // chat agent follows.
+    if crate::tools::needs_async(&name) {
+        let env = crate::tools::ToolEnv {
+            agents: &state.agents,
+            projects: &state.projects,
+            settings: &state.settings,
+            chat_id: &chat_id,
+            user_initiated: true,
+            state: Some(&*state),
+        };
+        return crate::tools::execute_async(&env, &name, &args).await;
     }
     let result = crate::rt::spawn_blocking(move || {
         if name == "set_title" {
@@ -344,7 +361,7 @@ async fn dispatch(state: Arc<AppState>, chat_id: String, name: String, args: Val
             // The user typed the message that led here; a coding agent talking
             // to them directly is never woken by a note.
             user_initiated: true,
-            state: None,
+            state: Some(&*state),
         };
         crate::tools::execute(&env, &name, &args)
     })

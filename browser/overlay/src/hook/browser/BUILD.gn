@@ -17,6 +17,8 @@ source_set("browser") {
     "account/hook_account.h",
     "account/hook_paths.cc",
     "account/hook_paths.h",
+    "cdp/hook_cdp.cc",
+    "cdp/hook_cdp.h",
     "channel/hook_channel.cc",
     "channel/hook_channel.h",
     "channel/hook_descriptor.cc",

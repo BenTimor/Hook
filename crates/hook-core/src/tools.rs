@@ -36,11 +36,27 @@ pub const MACHINE_TOOLS: [&str; 10] = [
     "list_coding_sessions",
 ];
 
-/// The tools that read a browser: a tab's address and title, its text, and the
-/// words inside it. A machine operation like the agent tools, and dispatched the
-/// same way: the machine named in the call is the machine with the browser, and
-/// `this computer` is only the right answer on the browser's own host.
-pub const BROWSER_TOOLS: [&str; 3] = ["list_tabs", "read_page", "find_in_page"];
+/// The tools that reach a browser: a tab's address and title, its text, the
+/// words inside it — and then everything the DevTools protocol can do to it.
+/// A machine operation like the agent tools, and dispatched the same way: the
+/// machine named in the call is the machine with the browser, and `this
+/// computer` is only the right answer on the browser's own host.
+///
+/// `run_js` and `browser_cdp` are the two that are not a fixed vocabulary: the
+/// first runs a script with [`crate::browser::AGENT_RUNTIME`] installed, the
+/// second sends one raw protocol command. Everything a page can do is behind
+/// one of them, which is why a new capability does not need a new tool here.
+pub const BROWSER_TOOLS: [&str; 9] = [
+    "list_tabs",
+    "read_page",
+    "find_in_page",
+    "open_tab",
+    "switch_tab",
+    "close_tab",
+    "navigate",
+    "run_js",
+    "browser_cdp",
+];
 
 /// The tools that reach a *folder on this computer*. A phone has no projects
 /// directory — the folders live on the desktops signed into the account — so
@@ -311,11 +327,16 @@ pub fn definitions() -> Value {
     ])
 }
 
-/// Reading a browser, on the machine that has one.
+/// A browser, on the machine that has one.
 ///
 /// The message a browser sends already carries the active tab, its address and
-/// its title; these tools are for everything else — the other tabs, and the page
-/// itself, which is far too large to travel with every message.
+/// its title; these tools are for everything else — the other tabs, the page
+/// itself (which is far too large to travel with every message), and doing
+/// something to it.
+///
+/// `run_js` and `browser_cdp` are deliberately the last two: a page can do
+/// anything through them, so a capability that is missing here is a Rust change
+/// and not a new schema.
 pub fn browser_definitions() -> Vec<Value> {
     let list = json!([
         {
@@ -369,6 +390,108 @@ pub fn browser_definitions() -> Vec<Value> {
                     "additionalProperties": false
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "open_tab",
+                "description": "Open a link in a new foreground tab and return the new tab's number, title and address so the next call can act on it. Use this instead of window.open in a script: a popup is blocked, and the tab it opens has no number to give back.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "The tab this request is sent from, as list_tabs numbers it. The new tab opens as the selected one." },
+                        "url": { "type": "string", "description": "The address to open. Omit it for an empty tab." }
+                    },
+                    "required": ["machine", "tab"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "switch_tab",
+                "description": "Select a tab and bring its window to the front, the way clicking it in the strip would. Do this before typing into or scrolling a tab the user is not looking at.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "Which tab to select, as list_tabs numbers it." }
+                    },
+                    "required": ["machine", "tab"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "close_tab",
+                "description": "Close one tab. The strip renumbers afterwards, so take the next number from list_tabs rather than counting down.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "Which tab to close, as list_tabs numbers it." }
+                    },
+                    "required": ["machine", "tab"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "navigate",
+                "description": "Send a tab to an address and wait for it to load, then answer where it landed, its title and whether it finished. Use this instead of assigning location in run_js: a navigation destroys the page's script, so a run_js that navigates never gets to answer.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "Which tab to navigate, as list_tabs numbers it." },
+                        "url": { "type": "string", "description": "The address to open in that tab." }
+                    },
+                    "required": ["machine", "tab", "url"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "run_js",
+                "description": "Run JavaScript in a tab and return what it evaluates to. `await` and `return` both work at the top level, and the page's own globals are in scope. A `__hook` helper is installed for you: snapshot() lists the interactive elements in reading order with a stable ref each; find(text) says where the words are and which element holds them; text(selector?) is the visible text; click(ref), type(ref, value), press(key), scroll({to:'bottom'|by:600|target:ref}) and waitFor('text'|'sel:css'|'url:fragment', {timeout_ms}) each act and return what happened; state(), frames(), errors() and sleep(ms) are there too. A ref belongs to the document that made it, so take a fresh snapshot after a navigation. Throw instead of guessing: the error comes back to you. Return a JSON-able value - the answer is capped at 60,000 characters. Use browser_cdp for trusted clicks and keys, screenshots, downloads and emulation.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "Which tab to run it in, as list_tabs numbers it." },
+                        "code": { "type": "string", "description": "The JavaScript. A short script that returns JSON beats a long one that console.logs." },
+                        "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 40000, "description": "How long the script may run before the browser stops it. Default 20000." }
+                    },
+                    "required": ["machine", "tab", "code"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_cdp",
+                "description": "Send one Chrome DevTools Protocol command to a tab and return its result object. This is the escape hatch for what run_js cannot do: trusted input (Input.dispatchMouseEvent and Input.dispatchKeyEvent are the only clicks and keys a page counts as the user's), navigation (Page.navigate, Page.reload, Page.navigateToHistoryEntry), emulation (Emulation.setDeviceMetricsOverride, setCPUThrottlingRate, setGeolocationOverride), files (DOM.setFileInputFiles), the accessibility tree (Accessibility.getFullAXTree), dialogs (Page.handleJavaScriptDialog), and the page's own tool registry (WebMCP.*). A binary result - a screenshot, a PDF - is dropped and reported as `omitted`: you cannot see pictures, so read the page with run_js instead.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "machine": { "type": "string", "description": "The machine with the browser, by name from list_machines." },
+                        "tab": { "type": "integer", "minimum": 1, "description": "Which tab to send it to, as list_tabs numbers it." },
+                        "method": { "type": "string", "description": "The protocol method, like `Page.captureScreenshot` or `Input.dispatchMouseEvent`." },
+                        "params": { "type": "object", "description": "The command's own parameters, exactly as the protocol defines them." }
+                    },
+                    "required": ["machine", "tab", "method"],
+                    "additionalProperties": false
+                }
+            }
         }
     ]);
     list.as_array().cloned().unwrap_or_default()
@@ -399,7 +522,10 @@ pub fn direct_bridge_definitions(
     if let Some(list) = definitions().as_array() {
         for tool in list {
             let name = tool["function"]["name"].as_str().unwrap_or("");
-            if AGENT_TOOLS.contains(&name)
+            // A direct agent has no subagents, so the tools that launch and
+            // steer them are gone. `list_machines` stays: it is how the agent
+            // finds the machine a browser tool has to name.
+            if (AGENT_TOOLS.contains(&name) && name != "list_machines")
                 || name == "web_search"
                 || name == "no_update"
                 // The engine can already open a picture with its own `read`,
@@ -420,6 +546,12 @@ pub fn direct_bridge_definitions(
     }
     if caps.workspace_tools {
         out.extend(crate::workspace::definitions());
+    }
+    // A coding agent that can look at the page it just built — and click it —
+    // is worth more than one that cannot. Offered on the same rule the chat
+    // agent gets: a browser on this machine, or machines to reach one on.
+    if caps.browser || caps.remote_agents {
+        out.extend(browser_definitions());
     }
     out
 }
@@ -459,22 +591,29 @@ pub fn execute(env: &ToolEnv<'_>, name: &str, args: &Value) -> String {
     }
 }
 
-/// Run a tool that may need another machine. Local tools fall through to the
-/// synchronous dispatcher, so their behaviour and tests are unchanged.
+/// Run a tool that may need another process or another machine. Local tools fall
+/// through to the synchronous dispatcher, so their behaviour and tests are
+/// unchanged.
 pub async fn execute_async(env: &ToolEnv<'_>, name: &str, args: &Value) -> String {
-    if BROWSER_TOOLS.contains(&name) {
-        return match run_browser(env, name, args).await {
-            Ok(value) => value.to_string(),
-            Err(message) => json!({ "error": message }).to_string(),
-        };
-    }
-    if !MACHINE_TOOLS.contains(&name) {
+    if !needs_async(name) {
         return execute(env, name, args);
     }
-    match run_machine(env, name, args).await {
+    let result = if BROWSER_TOOLS.contains(&name) {
+        run_browser(env, name, args).await
+    } else {
+        run_machine(env, name, args).await
+    };
+    match result {
         Ok(value) => value.to_string(),
         Err(message) => json!({ "error": message }).to_string(),
     }
+}
+
+/// Whether a tool's answer may come from another process (a browser) or another
+/// machine (an agent run). Those are the ones the turn loop and the coding
+/// agent's bridge hand to [`execute_async`]; everything else stays a local call.
+pub fn needs_async(name: &str) -> bool {
+    BROWSER_TOOLS.contains(&name) || MACHINE_TOOLS.contains(&name)
 }
 
 #[derive(Debug, Clone)]
@@ -555,15 +694,16 @@ async fn run_browser(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Valu
     let target = resolve_machine(env, Some(machine), Need::Browser)?;
     let op = crate::browser::Op::parse(name).ok_or("That is not a page tool.")?;
 
-    // The body of the call, named the way both the tool and the relay spell it.
+    // The body of the call: everything the tool was given but the machine,
+    // which is this call's addressing and not the browser's business. Passing it
+    // through instead of naming each key is what keeps a new argument from
+    // being silently dropped on the way to `browser::perform`.
     let mut params = serde_json::Map::new();
-    for key in ["tab", "offset", "limit", "regex"] {
-        if let Some(value) = args.get(key) {
-            params.insert(key.to_string(), value.clone());
+    for (key, value) in args.as_object().into_iter().flatten() {
+        if key == "machine" {
+            continue;
         }
-    }
-    if let Some(query) = args.get("query") {
-        params.insert("query".into(), query.clone());
+        params.insert(key.clone(), value.clone());
     }
     let params = Value::Object(params);
 
@@ -575,18 +715,16 @@ async fn run_browser(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Valu
     }
     if !target.can_read_pages {
         return Err(format!(
-            "{} has no Hook Browser running. Any machine with one can be read; list_machines marks them.",
+            "{} has no Hook Browser running. Any machine with one can answer; list_machines marks them.",
             target.name
         ));
     }
-    let method = match op {
-        crate::browser::Op::Tabs => "browser.tabs",
-        crate::browser::Op::Read => "browser.read",
-        crate::browser::Op::Find => "browser.find",
-    };
+    // The controller waits a little longer than the host does, so a slow script
+    // is answered by the machine that ran it instead of by this timeout.
+    let wait = op.budget() + std::time::Duration::from_secs(5);
     state
         .relay
-        .rpc(&target.id, method, params, std::time::Duration::from_secs(30))
+        .rpc(&target.id, op.method(), params, wait)
         .await
         .map_err(|error| error.message)
 }
@@ -600,7 +738,7 @@ async fn run_browser(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Valu
 enum Need {
     /// Run a coding agent: the machine must accept work.
     Agents,
-    /// Read a tab: the machine must have a browser.
+    /// Reach a browser: this machine has to be running Hook Browser.
     Browser,
 }
 
@@ -1405,6 +1543,13 @@ mod tests {
             "memory_search",
             "forget",
             "workspace_projects",
+            // The agent has to be able to name a machine before a browser tool
+            // will answer, so the directory of machines goes with them.
+            "list_machines",
+            "list_tabs",
+            "read_page",
+            "run_js",
+            "browser_cdp",
         ] {
             assert!(names.contains(&expected), "{expected} missing");
         }

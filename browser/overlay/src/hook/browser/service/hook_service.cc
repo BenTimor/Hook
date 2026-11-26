@@ -9,6 +9,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
+#include "hook/browser/cdp/hook_cdp.h"
 #include "hook/browser/channel/hook_channel.h"
 #include "hook/browser/tabs/hook_page.h"
 #include "hook/browser/tabs/hook_tabs.h"
@@ -213,6 +214,53 @@ void BrowserService::RunTask(const base::DictValue& task) {
                    }
                  },
                  self, task_id));
+    return;
+  }
+
+  if (*op == "cdp") {
+    const int number = task.FindInt("tab").value_or(0);
+    content::WebContents* contents = FindTabByNumber(number);
+    if (!contents) {
+      base::DictValue answer;
+      answer.Set("ok", false);
+      answer.Set("error",
+                 base::StringPrintf(
+                     "There is no tab %d. It was closed, or the strip changed.",
+                     number));
+      Answer(*id, std::move(answer));
+      return;
+    }
+    const std::string* method = task.FindString("method");
+    if (!method || method->empty()) {
+      base::DictValue answer;
+      answer.Set("ok", false);
+      answer.Set("error", "The request did not name a protocol method.");
+      Answer(*id, std::move(answer));
+      return;
+    }
+    base::DictValue params;
+    if (const base::DictValue* given = task.FindDict("params")) {
+      params = given->Clone();
+    }
+    const std::string task_id = *id;
+    base::WeakPtr<BrowserService> self = weak_factory_.GetWeakPtr();
+    SendCdpCommand(
+        contents, *method, std::move(params),
+        base::BindOnce(
+            [](base::WeakPtr<BrowserService> service, std::string task_id,
+               CdpReply reply) {
+              base::DictValue answer;
+              answer.Set("ok", reply.ok);
+              if (reply.ok) {
+                answer.Set("result", std::move(reply.result));
+              } else {
+                answer.Set("error", reply.error);
+              }
+              if (service) {
+                service->Answer(task_id, std::move(answer));
+              }
+            },
+            self, task_id));
     return;
   }
 

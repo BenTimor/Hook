@@ -181,16 +181,25 @@ bash.
   frames that carry it into a chat, `memory_search`, and per-account files in
   the shared `%APPDATA%\app.hook\memory\` folder.
 - `crates/hook-core/src/tools.rs` — chat-agent tool schemas and implementations.
-- `crates/hook-core/src/browser.rs` — reading a tab, from anywhere. A page
-  belongs to a machine, so `list_tabs`/`read_page`/`find_in_page` are machine
+- `crates/hook-core/src/browser.rs` — reading a tab, from anywhere, and doing
+  something to it. A page belongs to a machine, so the browser tools are machine
   operations like the agent ones and take a `machine`; the machine with the
   browser answers. `BrowserTasks` is that machine's half: the browser is a
   *client* of the channel, so the host leaves a task in this queue
   (`GET /browser/tasks`, `POST /browser/tasks/<id>`) and waits, and the browser
-  polls it, reads the page in its own process and answers with a slice. Only the
-  slice crosses the wire — never a whole page — and slicing and searching happen
-  on the machine that owns the tab. `Capabilities::browser` is what makes a read
-  local; every other product reaches it over the relay (`browser.*`).
+  polls it, runs it in its own process and answers. Only what a tool asked for
+  crosses the wire — never a whole page — and slicing and searching happen on the
+  machine that owns the tab. `list_tabs`/`read_page`/`find_in_page` are the fixed
+  vocabulary for reading; `open_tab`/`switch_tab`/`close_tab`/`navigate` are the
+  strip, and they are protocol calls (`Target.createTarget`, `Page.close`,
+  `Page.bringToFront`, `Page.navigate`) rather than new browser code, because a
+  tab is the browser's to draw; `run_js` evaluates a script with `AGENT_RUNTIME`
+  (`resources/browser-agent.js`, installed into the page as `__hook`) and
+  `browser_cdp` sends one raw DevTools protocol command, so a new capability is
+  a change here and not a new tool. Both keep the relay's 60-second RPC budget in
+  mind: `CDP_WAIT` is 50s and a script is stopped at 40. `Capabilities::browser`
+  is what makes a read local; every other product reaches it over the relay
+  (`browser.*`).
 - `crates/hook-core/src/agent.rs` — supervisor for `pi` subprocesses over RPC:
   spawn, states, plans, progress batching, wakes, stop. It points agents at the
   bundled git and the managed `agent-home/gitconfig` only when the account may
@@ -422,10 +431,13 @@ bash.
   default, `0019-panel-button`, and `--hook-side-panel` opens it at startup),
   `browser/ui/webui/hook_newtab_ui.*` is the New Tab page (a new tab is ours via
   `ChromeUINewTabURLAsGURL`, patch 0009), `browser/service/hook_service.cc` is the
-  page-read poller (one per profile, started at browser startup by
+  task poller (one per profile, started at browser startup by
   `browser/startup/hook_extra_parts.cc`, patch 0021 — not by a page, because a
   read has to work with the side panel closed), `browser/tabs/hook_page.cc` reads
-  a tab's visible text in an isolated world, and
+  a tab's visible text in an isolated world, `browser/cdp/hook_cdp.cc` attaches a
+  `DevToolsAgentHost` to a tab and answers exactly one protocol command (the
+  browser process is the only place a page can be driven from; nothing listens on
+  a port), and
   `browser/channel/` is the client for a *running* Hook host's loopback channel
   (`crates/hook-core/src/channel.rs`) — the browser process makes those calls
   because a `chrome://` renderer is killed for a cross-scheme request, and that is

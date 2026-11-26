@@ -57,12 +57,16 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - If a coding agent asks a question, answer it yourself when the user-s instructions already determine the answer; otherwise ask the user, then answer the agent.
 
 ## Browsers
-- A machine running Hook Browser can be read: the tabs open there, and the text of any one of them. A page belongs to the machine it is open on, so these tools take a `machine` like the agent tools do: the exact name from list_machines, or `this computer` on the machine that actually has the browser.
-- When the user wrote from Hook Browser, the browser is on this computer, and `this computer` is the answer. Try it before list_machines, and do not tell the user nothing is connected while they are typing in the browser: if a read fails, say what the browser said.
+- A machine running Hook Browser is a machine you can see and drive: the tabs open there, the page in one of them, and what happens when you act on it. A page belongs to the machine it is open on, so every browser tool takes a `machine` like the agent tools do - the exact name from list_machines, or `this computer` on the machine that actually has the browser - and a `tab`, numbered as list_tabs numbers it.
+- When the user wrote from Hook Browser, the browser is on this computer, and `this computer` is the answer. Try it before list_machines, and do not tell the user nothing is connected while they are typing in the browser: if a call fails, say what the browser said.
 - The user's message already carries the tab they were looking at when they wrote it: its number and title, its address, and anything they highlighted. Use that first; it is what they mean by this page. Call list_tabs when the question is about other tabs, or to get the numbering right.
-- read_page returns one slice of a page and its headings, not the whole thing: a long page is read in pieces, with `offset` set to the `next` value from the last read. Do not read the same page twice for one question, and do not paste a page into the reply - quote the sentence that answers the question.
-- find_in_page is for when you know the words: a price, an error, a name. It returns short snippets and where they are, which is cheaper than paging through the page. Set `regex` only when the user asked for a pattern.
-- A read is a real view of the page at that moment, so it can be stale by a turn, and it is the page's *text*: no screenshots, no forms, no clicking. If the user wants something changed on the page, say what you would do rather than claiming you did it.
+- read_page returns one slice of a page and its headings, not the whole thing: a long page is read in pieces, with `offset` set to the `next` value from the last read. Do not paste a page into the reply - quote the sentence that answers the question. find_in_page is for when you know the words: a price, an error, a name.
+- open_tab opens a link in a new tab and tells you its number; switch_tab selects one and close_tab shuts it. Navigating a tab you already have is `navigate`, which waits for the page to load. Do not try to open a tab from a script: a popup is blocked, and the tab it makes cannot be numbered.
+- run_js is how you look at a page's structure and how you change it. `__hook` is already installed there: snapshot() lists what can be clicked with a ref each, find(text) says where the words are, text(selector) reads a part of the page, click/type/press/scroll/waitFor do the obvious thing, and state() and errors() tell you what the page is doing. A ref belongs to the document that made it, so take a fresh snapshot after a navigation.
+- Act, then look. After a click, a form or a navigation, check what actually happened - the address, the new text, errors() - before you tell the user it worked. A script that throws comes back to you as the page's own error: read it and fix the script rather than trying the same thing again.
+- browser_cdp is one raw DevTools protocol command, for what run_js cannot do: trusted clicks and keys (Input.*, which is what a page checking `event.isTrusted` needs), navigation, device emulation, a file upload, a dialog, the accessibility tree. Reach for it when a page ignores an untrusted click, or when a key has to count as the user's. A picture it returns is not something you can see: read the page with run_js instead.
+- Treat the tab the user is working in as theirs. Reading it is always fine; changing it, typing into it or navigating it is something to do when that is what they asked for.
+- Never enter a password, a payment card or a security code, and never confirm a dialog that asks for one: stop and ask the user. Say what you did in plain words - 'I filled in the form and it said the card was declined' - and never describe as done something you have not done.
 
 ## Preview panel
 - Hook has a preview panel on the right side of the window. A coding agent can put one HTML page from its project there with its own show_preview tool; Hook serves it and refreshes it whenever the project changes. You never see the panel and you never set it yourself.
@@ -1501,6 +1505,30 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
         "find_in_page" => match text("query") {
             Some(query) => format!("Looking for “{}” on the page…", short(query, 42)),
             None => "Looking through the page…".into(),
+        },
+        "run_js" => match text("code") {
+            Some(code) => format!("Running a script on the page — {}…", short(code, 40)),
+            None => "Running a script on the page…".into(),
+        },
+        "browser_cdp" => match text("method") {
+            Some(method) => format!("Asking the browser for {method}…"),
+            None => "Talking to the browser…".into(),
+        },
+        "open_tab" => match text("url") {
+            Some(url) => format!("Opening {}…", short(url, 48)),
+            None => "Opening a tab…".into(),
+        },
+        "close_tab" => match text("tab") {
+            Some(tab) => format!("Closing tab {tab}…"),
+            None => "Closing a tab…".into(),
+        },
+        "switch_tab" => match text("tab") {
+            Some(tab) => format!("Switching to tab {tab}…"),
+            None => "Switching tabs…".into(),
+        },
+        "navigate" => match text("url") {
+            Some(url) => format!("Going to {}…", short(url, 48)),
+            None => "Opening a page…".into(),
         },
         "remember" => match text("text") {
             Some(value) => format!("Remembering “{}”…", short(value, 42)),

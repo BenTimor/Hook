@@ -36,11 +36,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MAX_HEAD: usize = 16 * 1024;
 // A page read answers with up to 200k characters of text, and JSON escaping can
-// double that, so the request body cap has to hold one with room to spare. The
-// channel is loopback and token-authenticated; this is a size a browser
-// legitimately sends, not a trust boundary being widened. A body over the cap is
-// refused, which a tool would see as a browser that never answered.
-const MAX_BODY: usize = 1024 * 1024;
+// double that. A `run_js` answer is whatever the script returned, and a
+// `Page.captureScreenshot` is a base64 image, which is megabytes. So the cap has
+// to hold the largest thing a tool legitimately hands back. The channel is
+// loopback and token-authenticated; this is a size a browser really sends, not a
+// trust boundary being widened. A body over the cap is refused, which a tool
+// sees as a browser that never answered.
+const MAX_BODY: usize = 8 * 1024 * 1024;
 const DESCRIPTOR_PREFIX: &str = "browser-channel";
 const CHANNEL_DIR: &str = "app.hook";
 

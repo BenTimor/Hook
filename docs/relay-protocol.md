@@ -105,6 +105,13 @@ renderer does not learn that the run is remote.
   `coding.fetch`, `coding.send`, `coding.stop`, `coding.answer`,
   `coding.rename`, `coding.delete`, `coding.compact`, `projects.create`,
   `preview.open` are the method names v1 uses.
+- `browser.tabs`, `browser.read`, `browser.find`, `browser.eval` and
+  `browser.cdp` are answered by a machine running Hook Browser. The first three
+  read a tab; `browser.eval` runs a script there with the page helpers installed,
+  and `browser.cdp` sends one raw DevTools protocol command. They target a device
+  by *browser*, not by `can_host`, because a browser is a controller rather than
+  a place agents run. Their own budgets are set to fit under the 60-second RPC
+  timeout below: a protocol call waits 50 seconds, and a script is stopped at 40.
 - A `coding.*` method is handled by the machine that owns the direct coding
   chat. `coding.fetch` returns the whole conversation and marks the chat as
   watched, so its records are mirrored from then on. `coding.compact` asks the

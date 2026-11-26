@@ -1017,7 +1017,8 @@ Cite the URLs you use. Search results can be incomplete or disagree; say so when
 
 /**
  * Register the tools Hook itself owns, for a chat where the user drives the
- * agent directly: the chat agent's projects, memory and Workspace tools.
+ * agent directly: the chat agent's projects, memory, Workspace and browser
+ * tools.
  *
  * The schemas come from Rust (the same `definitions()` the chat agent gets), so
  * the two surfaces cannot drift; only the descriptions travel with them. Names
@@ -1056,9 +1057,11 @@ function registerBridgeTools(pi) {
               "x-hook-token": bridge.token,
             },
             body: JSON.stringify({ name, args: params ?? {} }),
-            // Memory, projects and Workspace calls are local or a single
-            // request to Hook's own service; a minute is generous.
-            signal: AbortSignal.timeout(60_000),
+            // Projects, memory and Workspace are local or a single request to
+            // Hook's own service. A browser call can sit on a page's network for
+            // up to 90 seconds (`browser.rs`, CDP_WAIT), so this budget has to
+            // outlast the slowest tool, not the fastest.
+            signal: AbortSignal.timeout(120_000),
           });
           const text = await response.text();
           if (!response.ok) {

@@ -184,14 +184,24 @@ pub async fn handle(
         "coding.answer" => coding_answer(state, decode(params)?),
         "coding.rename" => coding_rename(state, decode(params)?),
         "coding.delete" => coding_delete(state, decode(params)?),
-        // A browser is a thing this machine has, so these three run here and
-        // nowhere else: the caller is a chat on another device (or another
-        // product on this one) asking what the tabs hold. The answer is a
-        // slice, never the whole page — the relay carries the part that was
-        // asked for.
+        // A browser is a thing this machine has, so these run here and nowhere
+        // else: the caller is a chat on another device (or another product on
+        // this one) asking what the tabs hold, or doing something to a page.
+        // The answer is a slice or one command's result, never the whole page —
+        // the relay carries the part that was asked for.
         "browser.tabs" => browser(state, crate::browser::Op::Tabs, &params).await,
         "browser.read" => browser(state, crate::browser::Op::Read, &params).await,
         "browser.find" => browser(state, crate::browser::Op::Find, &params).await,
+        // A script, and one raw DevTools command. Both are answered by the
+        // browser that owns the tab; the caller only sees what it returned.
+        "browser.eval" => browser(state, crate::browser::Op::Eval, &params).await,
+        "browser.cdp" => browser(state, crate::browser::Op::Cdp, &params).await,
+        // The strip itself: a new tab, one closed, one selected, one sent
+        // somewhere. They are answered by the browser that draws the strip.
+        "browser.open" => browser(state, crate::browser::Op::OpenTab, &params).await,
+        "browser.close" => browser(state, crate::browser::Op::CloseTab, &params).await,
+        "browser.focus" => browser(state, crate::browser::Op::FocusTab, &params).await,
+        "browser.navigate" => browser(state, crate::browser::Op::Navigate, &params).await,
         _ => Err(fail(
             "unknown_method",
             format!("Hook does not handle {method}."),
@@ -199,8 +209,9 @@ pub async fn handle(
     }
 }
 
-/// The three browser methods, answered from this machine's queue. Params are
-/// the tool's own: `tab`, `offset`, `limit`, `query`, `regex`.
+/// The browser methods, answered from this machine's queue. Params are the
+/// tool's own: `tab`, `offset`, `limit`, `query`, `regex`, `code`, `method`,
+/// `params`, `timeout_ms`.
 async fn browser(
     state: &Arc<AppState>,
     op: crate::browser::Op,
