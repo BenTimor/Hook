@@ -170,23 +170,66 @@ pub fn write_agent_config(
     Ok(path)
 }
 
-/// Environment every git invocation needs, so it can never prompt, never read
-/// the user's own global config, and finds the bundled binary's DLLs.
-pub fn env(git: &GitRuntime, config: &Path) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let mut path = git.path_dirs.clone();
-    if let Some(existing) = std::env::var_os("PATH") {
-        path.extend(std::env::split_paths(&existing));
-    }
+/// Environment every git invocation needs, so it can never prompt and finds
+/// the bundled binary's DLLs.
+///
+/// `config` names Hook's managed file, and the run uses Hook's own copy of git
+/// (`PATH` is prepended with it). `None` is a folder that is not one of the
+/// account's projects but is inside a repository of the user's own: there the
+/// `PATH` is left alone, so `git` is the one their terminal uses, with their
+/// global config, their system config and their credential helper. A prompt is
+/// refused either way, because the engine's stdin is the RPC channel and not a
+/// place to ask a question.
+pub fn env(
+    git: &GitRuntime,
+    config: Option<&Path>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let mut values: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
-        ("GIT_CONFIG_GLOBAL".into(), config.as_os_str().to_owned()),
-        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
         ("GIT_TERMINAL_PROMPT".into(), "0".into()),
         ("GIT_OPTIONAL_LOCKS".into(), "0".into()),
     ];
-    if let Ok(joined) = std::env::join_paths(path) {
-        values.push(("PATH".into(), joined));
+    if let Some(config) = config {
+        values.push(("GIT_CONFIG_GLOBAL".into(), config.as_os_str().to_owned()));
+        values.push(("GIT_CONFIG_NOSYSTEM".into(), "1".into()));
+        let mut path = git.path_dirs.clone();
+        if let Some(existing) = std::env::var_os("PATH") {
+            path.extend(std::env::split_paths(&existing));
+        }
+        if let Ok(joined) = std::env::join_paths(path) {
+            values.push(("PATH".into(), joined));
+        }
     }
     values
+}
+
+/// Whether a run should read the user's own git config instead of Hook's.
+///
+/// A folder that is inside a git repository and is not one of the account's
+/// projects is the user's own clone: they pointed the agent at it and expect
+/// `git` to behave the way it does in their terminal, credentials included. A
+/// Hook project keeps the managed file, because its identity, its remote and
+/// its token belong to the account.
+pub fn uses_user_config(is_account_project: bool, path: &Path) -> bool {
+    !is_account_project && inside_work_tree(path)
+}
+
+/// Whether the user's own git is there to run.
+///
+/// Hook ships MinGit, but the credentials in a terminal come from the user's
+/// installation as much as from their config: on Windows the system gitconfig
+/// (`C:\Program Files\Git\etc\gitconfig`) is where Git declares its credential
+/// manager, and the bundled copy has no system config that could reach it. So a
+/// repository of the user's runs the `git` on their `PATH`; only when they have
+/// none does the run fall back to the bundled copy and Hook's own config.
+pub fn user_git_available() -> bool {
+    let executable = if cfg!(windows) { "git.exe" } else { "git" };
+    find_on_path(executable).is_some()
+}
+
+/// Git walks up from the folder to find the repository, so a subfolder of a
+/// clone is inside one too (and `.git` is a file in a worktree or submodule).
+fn inside_work_tree(path: &Path) -> bool {
+    path.ancestors().any(|dir| dir.join(".git").exists())
 }
 
 fn command(
@@ -207,7 +250,7 @@ fn command(
     command
         .args(args)
         .current_dir(cwd)
-        .envs(env(git, config))
+        .envs(env(git, Some(config)))
         .stdin(Stdio::null());
     command
 }
@@ -416,6 +459,70 @@ mod tests {
             remote_url("https://example.test", "pj_abc"),
             "https://example.test/api/git/pj_abc.git"
         );
+    }
+
+    fn pairs(list: Vec<(std::ffi::OsString, std::ffi::OsString)>) -> Vec<(String, String)> {
+        list.into_iter()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.to_string_lossy().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_project_reads_hook_config_and_the_users_repository_reads_theirs() {
+        let git = GitRuntime {
+            program: PathBuf::new(),
+            path_dirs: Vec::new(),
+        };
+        let config = std::env::temp_dir().join("hook-gitconfig-never-read");
+        let managed = pairs(env(&git, Some(&config)));
+        assert!(managed
+            .iter()
+            .any(|(key, value)| key == "GIT_CONFIG_GLOBAL" && *value == config.to_string_lossy()));
+        assert!(managed.iter().any(|(key, _)| key == "GIT_CONFIG_NOSYSTEM"));
+        // ... and Hook's own copy of git is what runs.
+        assert!(managed.iter().any(|(key, _)| key == "PATH"));
+
+        // The user's own repository: no override, so git finds their global and
+        // system config - which is where their helper and SSH keys live - and
+        // PATH is left alone, so it is the git their terminal uses.
+        let inherited = pairs(env(&git, None));
+        assert!(!inherited.iter().any(|(key, _)| key == "GIT_CONFIG_GLOBAL"));
+        assert!(!inherited.iter().any(|(key, _)| key == "GIT_CONFIG_NOSYSTEM"));
+        assert!(!inherited.iter().any(|(key, _)| key == "PATH"));
+        // Neither of them may prompt: the engine's stdin is its RPC channel.
+        for list in [&managed, &inherited] {
+            assert!(list
+                .iter()
+                .any(|(key, value)| key == "GIT_TERMINAL_PROMPT" && value == "0"));
+        }
+    }
+
+    #[test]
+    fn a_repository_of_the_users_keeps_their_config() {
+        let root = std::env::temp_dir().join(format!("hook-git-env-{}", uuid::Uuid::new_v4()));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        assert!(!uses_user_config(false, &repo), "no repository yet");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        assert!(uses_user_config(false, &repo));
+        // Git walks up, so a subfolder of a clone is inside it too.
+        assert!(uses_user_config(false, &repo.join("src")));
+        // A Hook project keeps the managed file: its remote is the account's.
+        assert!(!uses_user_config(true, &repo));
+        // A `.git` file is a worktree or a submodule, and still a repository.
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join(".git"), "gitdir: ../repo/.git/worktrees/wt").unwrap();
+        assert!(uses_user_config(false, &worktree));
+        let plain = root.join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        assert!(!uses_user_config(false, &plain));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -81,6 +81,33 @@ const written = planFiles.length
   ? JSON.parse(readFileSync(join(updatesDir, planFiles[0]), "utf8"))
   : null;
 
+// The other half of the git rule: a folder that is not one of Hook's projects.
+// Hook gives those runs no managed config, so the guard says what git can do
+// there instead - and the two answers are different, because a folder inside
+// the user's own repository keeps their credentials and one outside any
+// repository has none.
+async function promptFor(tag) {
+  const text = readFileSync(guardPath, "utf8");
+  const mod = await import(
+    "data:text/javascript;base64," + Buffer.from(text).toString("base64") + `#${tag}`
+  );
+  const seen = {};
+  mod.default({
+    on(name, fn) {
+      (seen[name] ||= []).push(fn);
+    },
+    registerTool() {},
+  });
+  const started = await seen.before_agent_start[0]({ systemPrompt: "BASE" });
+  return started?.systemPrompt ?? "";
+}
+delete process.env.GIT_CONFIG_GLOBAL;
+process.env.HOOK_SYNC = "0";
+process.env.HOOK_USER_GIT = "1";
+const userRepoPrompt = await promptFor("git-user-repo");
+process.env.HOOK_USER_GIT = "0";
+const noRepoPrompt = await promptFor("git-no-repo");
+
 const results = {
   hooks: Object.keys(handlers).sort(),
   guidelineAppended:
@@ -134,6 +161,14 @@ const results = {
   guidance: {
     checklist: /update_plan/.test(before?.systemPrompt ?? ""),
     preview: /show_preview/.test(before?.systemPrompt ?? ""),
+    identity: /running inside Hook/i.test(before?.systemPrompt ?? ""),
+  },
+  // A folder that is not a Hook project: the user's own repository keeps their
+  // git config, and a folder outside any repository has no credentials at all.
+  git: {
+    userRepo: /the user's own repository/i.test(userRepoPrompt),
+    noCredentials: /no credentials here/i.test(noRepoPrompt),
+    userRepoKeepsConfig: /reads their own config/i.test(userRepoPrompt),
   },
 };
 

@@ -856,7 +856,15 @@ Changing one side of a boundary is the most common way to break this repo.
   rules, endpoints) → `crates/hook-core/src/{sync,git}.rs` → `agent.rs` (env,
   managed config) → `hook-guard.mjs` (`sync_pull`/`sync_push`) → `turn.rs`
   (what the chat agent tells the coding agent) → Settings status →
-  `docs/sync.md` and `infra/README.md`. Add to `server/sync.test.mjs`
+  `docs/sync.md` and `infra/README.md`. A Hook project reads Hook's managed
+  gitconfig (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`, no credential helper,
+  a git-scoped header for `/api/git`); a folder that is inside a repository and
+  is not a Hook project reads the user's own config instead and runs their
+  `git`, not the bundled copy (`git::uses_user_config` + `user_git_available`,
+  `HOOK_USER_GIT`, the guard's `gitGuidance`), so their helper and SSH keys work
+  as in a terminal — the bundled MinGit has no system config, which is where
+  Windows Git declares its credential manager. `GIT_TERMINAL_PROMPT=0`
+  always: the engine's stdin is its RPC channel. Add to `server/sync.test.mjs`
   / `server/git.test.mjs` and the sync unit tests in `sync.rs`. Message order is
   transcript order, never `createdAt` order: a tool result has to sit directly
   after the assistant message that called it, while the memory frame is written

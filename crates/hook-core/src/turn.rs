@@ -16,7 +16,7 @@ use crate::tools::{self, ToolEnv};
 /// Instructions for the chat model. The user never sees any of this; it only
 /// describes the tools and how to behave around them. Override with
 /// `[agent] system_prompt` in harness.config.toml.
-const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook, a desktop assistant. You talk with the user in a chat window and put real coding work in motion for them.
+const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside Hook - the app the user has open (the desktop window, the Workspace dock, Hook Browser's dock or the phone). This conversation is where they talk to you.
 
 ## Title
 - Your first reply of a conversation names it: call `set_title` before anything else, with three to six words saying what the conversation is for, in the language the user writes in. It is how they find the conversation again in their list.
@@ -2873,6 +2873,22 @@ mod capability_tests {
         // Both products share the workspace tools.
         assert!(workspace.contains("## Hook Workspace"));
         assert!(chat.contains("## Hook Workspace"));
+    }
+
+    #[test]
+    fn the_chat_agent_knows_where_it_is_running() {
+        let cfg = config();
+        // Every product draws this same conversation, so the line names them:
+        // the agent should not describe itself as something the user installed
+        // separately from the app they are looking at.
+        for caps in [
+            crate::Capabilities::chat(),
+            crate::Capabilities::mobile(),
+        ] {
+            let prompt = system_prompt(&cfg, caps, true);
+            assert!(prompt.contains("Hook's chat agent"), "who it is");
+            assert!(prompt.contains("running inside Hook"), "where it runs");
+        }
     }
 
     #[test]

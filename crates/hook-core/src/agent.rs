@@ -1008,6 +1008,14 @@ impl AgentManager {
         // data like a conversation: free accounts and an off switch mean no git
         // remote, no sync tools and no credential.
         let git_allowed = !self.auth.is_free() && self.auth.cloud_sync() != Some(false);
+        // Which folder this is, before the policy decides what the account may
+        // use git for: a Hook project stays Hook's, and any other repository is
+        // the user's own (see `git::uses_user_config`). Their own git is what
+        // makes their credential manager reachable; without one, the bundled
+        // copy and Hook's config are the only option.
+        let account_project = !project_id.trim().is_empty();
+        let user_git = crate::git::uses_user_config(account_project, &project_path)
+            && crate::git::user_git_available();
         let project_id = if git_allowed { project_id } else { String::new() };
         let account_token = self
             .auth
@@ -1161,13 +1169,19 @@ impl AgentManager {
             // Whether this folder is one of the account's projects, so the
             // guard only advertises the git tools where they can work.
             .env("HOOK_SYNC", if project_id.is_empty() { "0" } else { "1" })
+            // Whether the run reads the user's own git config: their repository,
+            // not one of the account's projects.
+            .env("HOOK_USER_GIT", if user_git { "1" } else { "0" })
             .env("PI_BASH_MAX_TIMEOUT", self.coding.bash_max_timeout.to_string())
             .env("PI_BASH_MIN_TIMEOUT", self.coding.bash_min_timeout.to_string());
         if let Some(git) = &self.git {
-            // `git` resolves to Hook's own copy, and GIT_CONFIG_GLOBAL points
-            // at the managed file so a project cannot inherit the user's git
-            // identity, remotes or credential helper.
-            for (key, value) in git::env(git, &git_config) {
+            // `git` resolves to Hook's own copy. A Hook project also gets
+            // GIT_CONFIG_GLOBAL pointing at the managed file, so it cannot
+            // inherit the user's identity, remotes or credential helper; the
+            // user's own repository keeps their config and only loses the
+            // ability to prompt.
+            let config = if user_git { None } else { Some(git_config.as_path()) };
+            for (key, value) in git::env(git, config) {
                 command.env(key, value);
             }
         }

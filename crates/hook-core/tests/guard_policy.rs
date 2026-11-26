@@ -119,6 +119,26 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     assert_eq!(plan["written"][0]["status"], "done");
     assert_eq!(plan["written"][1]["status"], "active");
 
+    // The agent knows it is a coding agent running inside Hook, not a terminal
+    // session the user is watching.
+    assert_eq!(
+        value["guidance"]["identity"], true,
+        "the prompt must say where the agent is running"
+    );
+
+    // Git in a folder that is not a Hook project: a folder inside one of the
+    // user's own repositories reads their config (so their credentials work),
+    // and a folder outside any repository says so instead of failing at a push.
+    assert_eq!(
+        value["git"]["userRepo"], true,
+        "the user's own repository must be described as theirs"
+    );
+    assert_eq!(value["git"]["userRepoKeepsConfig"], true);
+    assert_eq!(
+        value["git"]["noCredentials"], true,
+        "a folder with no repository must say git cannot authenticate there"
+    );
+
     // The preview panel: the tool is offered, the guidance says it is optional,
     // and any HTML page on the machine is accepted while a non-HTML file is
     // still refused. The guard records an absolute path now; the panel serves

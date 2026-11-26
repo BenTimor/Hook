@@ -103,6 +103,27 @@ This project is stored in the user's Hook account and can be worked on from any 
 - Keep the repository small: do not commit node_modules, virtualenvs, build output, caches or large binaries. Hook rejects projects over its storage limit.`;
 }
 
+/**
+ * Git in a folder that is not one of Hook's projects: either the user's own
+ * repository, where their config and credentials apply, or no repository at
+ * all, where git cannot authenticate anything. Hook writes its own gitconfig
+ * for a project; this is the other half of that rule.
+ */
+function gitGuidance() {
+  if (SYNC_ENABLED) return "";
+  if (process.env.HOOK_USER_GIT === "1") {
+    return `
+
+## Git (the user's own repository)
+This folder is inside a git repository of the user's, not one of Hook's projects, so git reads their own config: their identity, their credential helper and their SSH keys work as they do in their terminal.
+- A remote that needs a password may open a credential-manager window; a prompt in the terminal is refused, so a push that can only ask there fails instead of waiting. If it fails, say what happened and offer the command the user can run themselves.
+- Never force-push, delete a branch or rewrite history here without being asked: it is the user's repository, not a copy Hook could restore.`;
+  }
+  return `
+
+## Git (no credentials here)
+This folder is not one of Hook's projects, so git runs with Hook's own config here: no credential helper, and a prompt is refused. Do not try to push or pull a remote. If the work needs a repository, say so and ask the user.`;
+}
 
 const UPDATES_DIR = process.env.HOOK_UPDATES_DIR ?? "";
 
@@ -283,6 +304,19 @@ function memoryGuidance() {
   }
 }
 
+/**
+ * Who the agent is and where it runs. A coding agent started by Hook is not a
+ * terminal session the user is watching: its words, its checklist and its
+ * previews arrive in Hook's chat. Said once, so it does not introduce itself as
+ * something else or talk about the app from the outside.
+ */
+function identityGuidance() {
+  return (
+    "\n\n## Where you are running" +
+    "\nYou are a coding agent running inside Hook, the user's app - not a terminal they are watching. Hook draws the conversation, the checklist you keep with `update_plan` and any page you put in the preview panel, and the user reads you there."
+  );
+}
+
 /** Why this run looks different from a run the chat agent started. */
 function directGuidance() {
   if (!DIRECT) return "";
@@ -325,11 +359,13 @@ export default function (pi) {
     return {
       systemPrompt:
         (event.systemPrompt ?? "") +
+        identityGuidance() +
         directGuidance() +
         guideline +
         webSearchGuidance() +
         (UPDATES_DIR ? planGuidance() + previewGuidance() : "") +
         syncGuidance() +
+        gitGuidance() +
         memoryGuidance(),
     };
   });

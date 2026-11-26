@@ -209,6 +209,22 @@ that conversation — what the engine says is what you read.
   tools that have no repository. `ChatMeta.projectPath` holds the path, and
   **Change folder…** in the chat's menu points it somewhere else (which starts a
   fresh engine session, since the old session belonged to the old folder).
+- **Your own repository keeps your git.** A folder that is inside a git
+  repository and is not one of Hook's projects is your clone, so the agent's
+  git reads your global and system config — your identity, your credential
+  helper, your SSH keys — instead of Hook's managed file. It also runs *your*
+  `git`, not the bundled copy: on Windows your Git installation's system
+  gitconfig is where the credential manager is declared, and the bundled MinGit
+  has no system config that could reach it. If there is no `git` on `PATH`, the
+  run falls back to the bundled copy and Hook's config. A push then behaves as
+  it does in your terminal; a terminal prompt is still refused (the engine's
+  stdin is its RPC channel), so a credential manager that opens a window may
+  ask, and a remote that only knows how to ask in a terminal fails instead of
+  hanging. A Hook project keeps the managed config, because its identity, its
+  remote and its token are the account's. Being in a repository is a
+  convenience, not a boundary: the agent has a shell and could reach a clone
+  from any folder, so the rule is really whether it may act as you with git at
+  all.
 - **The chat agent's own tools come along.** On top of its file, shell,
   `web_search`, `update_plan` and `show_preview` tools, a direct agent gets what
   the chat agent can do with Hook's data: `set_title`, `list_projects`,
