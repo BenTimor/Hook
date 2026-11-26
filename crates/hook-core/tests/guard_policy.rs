@@ -12,13 +12,10 @@ fn node_available() -> bool {
         .unwrap_or(false)
 }
 
-#[test]
-fn guard_blocks_bash_calls_without_a_sane_timeout() {
-    if !node_available() {
-        eprintln!("node not installed — skipping the guard policy test");
-        return;
-    }
-
+/// Load the guard the way pi does, in one of its two shapes, and collect what
+/// the harness observed. `"direct"` runs the guard for a conversation the user
+/// drives; an empty mode is an agent the chat agent relays.
+fn run_harness(mode: &str) -> serde_json::Value {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let guard = root.join("resources").join("hook-guard.mjs");
     let harness = root.join("tests").join("fixtures").join("guard-harness.mjs");
@@ -26,6 +23,7 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     let output = Command::new("node")
         .arg(&harness)
         .arg(&guard)
+        .arg(mode)
         .output()
         .expect("node should run");
     assert!(
@@ -35,7 +33,18 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     );
 
     let raw = String::from_utf8_lossy(&output.stdout);
-    let value: serde_json::Value = serde_json::from_str(&raw).expect("harness prints JSON");
+    serde_json::from_str(&raw).expect("harness prints JSON")
+}
+
+#[test]
+fn guard_blocks_bash_calls_without_a_sane_timeout() {
+    if !node_available() {
+        eprintln!("node not installed — skipping the guard policy test");
+        return;
+    }
+
+    let value = run_harness("");
+    assert_eq!(value["direct"], false, "this is the relayed shape");
 
     assert_eq!(
         value["hooks"],
@@ -134,4 +143,44 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
         Some("preview.html")
     );
     assert_eq!(preview["written"]["title"], "Insights");
+}
+
+#[test]
+fn guard_offers_the_checklist_to_a_directly_driven_agent() {
+    if !node_available() {
+        eprintln!("node not installed — skipping the guard policy test");
+        return;
+    }
+
+    let value = run_harness("direct");
+    assert_eq!(value["direct"], true);
+
+    // The user talks to the engine directly, so the task board above their
+    // composer is fed only by what this agent writes: without the tool it sat
+    // under an empty "Getting started…" until the run settled.
+    let plan = &value["plan"];
+    assert_eq!(
+        plan["toolsRegistered"], true,
+        "a direct agent must be able to write its own checklist"
+    );
+    assert_eq!(plan["guidanceExplainsPlainLanguage"], true);
+    assert_eq!(plan["resultOk"], true);
+    assert_eq!(
+        plan["emptyPlanRejected"], true,
+        "an empty plan must not blank the board"
+    );
+    assert_eq!(
+        plan["written"].as_array().map(|steps| steps.len()),
+        Some(2),
+        "the plan it wrote reaches the mailbox Hook harvests"
+    );
+    assert_eq!(plan["written"][1]["status"], "active");
+
+    // What a direct conversation shows is the same board and the same panel.
+    assert_eq!(value["guidance"]["checklist"], true);
+    assert_eq!(value["preview"]["toolsRegistered"], true);
+    assert_eq!(value["preview"]["resultOk"], true);
+
+    // Progress notes have nobody to relay them, so that tool stays out.
+    assert_eq!(value["relayOnly"]["reportProgress"], false);
 }

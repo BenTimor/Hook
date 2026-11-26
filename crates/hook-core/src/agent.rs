@@ -3446,6 +3446,46 @@ node \"%~dp0fake-pi.mjs\" %*
         );
     }
 
+    #[tokio::test]
+    async fn a_direct_agents_first_plan_reaches_an_empty_board() {
+        use std::time::Duration as StdDuration;
+
+        // Nothing seeds a plan for a conversation the user drives themselves:
+        // the board is empty until the agent writes its first checklist, and
+        // that write is what puts the task board on screen.
+        let (mgr, mut rx) = manager_channel();
+        let mut entry = plan_entry(Vec::new());
+        entry.info.direct = true;
+        let (agent_tx, _agent_rx) = mpsc::unbounded_channel();
+        entry.tx = Some(agent_tx);
+        lock(&mgr.inner).agents.insert("ag_1".into(), entry);
+
+        let dir = mgr.updates_dir("ag_1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("p-1.json"),
+            serde_json::json!({"steps": [
+                {"title": "Setting things up", "status": "done"},
+                {"title": "Designing the front page", "status": "active"}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+
+        mgr.harvest();
+
+        let info = mgr.get("ag_1").unwrap();
+        assert_eq!(info.plan.len(), 2);
+        assert_eq!(info.plan[0].status, STEP_DONE);
+        assert_eq!(info.plan[1].status, STEP_ACTIVE);
+        assert!(!dir.join("p-1.json").exists(), "harvested files are consumed");
+        let first = tokio::time::timeout(StdDuration::from_millis(500), rx.recv()).await;
+        assert!(
+            matches!(first, Ok(Some(Signal::Changed))),
+            "a direct run's board is refreshed the same way"
+        );
+    }
+
     #[test]
     fn the_overview_lists_the_plan_for_the_task_board() {
         let mgr = manager();

@@ -6,6 +6,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const guardPath = process.argv[2];
+// The guard reads its shape from the environment - and so does whatever ran
+// this test. A run started from inside a coding agent inherits `HOOK_DIRECT`,
+// `HOOK_SYNC` and the mailbox, and would quietly test the wrong shape. Start
+// from nothing; the two modes below set exactly what they mean.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("HOOK_") || key.startsWith("PI_")) delete process.env[key];
+}
+// A directly-driven agent (the user talks to it, nothing relays it) loads the
+// same guard with a different shape. The guard reads the flag at import time.
+const direct = process.argv[3] === "direct";
+if (direct) process.env.HOOK_DIRECT = "1";
 
 // The guard reads its mailbox at import time, so the folder has to exist first.
 const updatesDir = mkdtempSync(join(tmpdir(), "hook-guard-"));
@@ -106,7 +117,7 @@ const results = {
     guidanceExplainsSave: /sync_push/.test(before?.systemPrompt ?? ""),
   },
   plan: {
-    toolsRegistered: Boolean(tools.report_progress && tools.update_plan),
+    toolsRegistered: Boolean(tools.update_plan),
     guidanceIncludesSeed:
       typeof before?.systemPrompt === "string" &&
       before.systemPrompt.includes("Setting things up"),
@@ -114,6 +125,15 @@ const results = {
     resultOk: planResult?.isError !== true,
     emptyPlanRejected: emptyPlan?.isError === true,
     written: written?.steps ?? null,
+  },
+  direct,
+  // The one tool a relayed run has and a direct conversation does not.
+  relayOnly: {
+    reportProgress: Boolean(tools.report_progress),
+  },
+  guidance: {
+    checklist: /update_plan/.test(before?.systemPrompt ?? ""),
+    preview: /show_preview/.test(before?.systemPrompt ?? ""),
   },
 };
 

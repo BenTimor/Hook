@@ -83,7 +83,12 @@ mod tests {
         assert!(GUARD_SOURCE.contains("registerBridgeTools(pi)"));
         assert!(GUARD_SOURCE.contains("tools.json"));
         assert!(GUARD_SOURCE.contains("x-hook-token"));
-        assert!(GUARD_SOURCE.contains("if (UPDATES_DIR && !DIRECT)"));
+        // `report_progress` is the only tool gated on the chat agent relaying
+        // the run. The checklist and the preview are not: a direct
+        // conversation draws the same board and panel, and its own agent is
+        // the only thing that can write them.
+        assert_eq!(GUARD_SOURCE.matches("UPDATES_DIR && !DIRECT").count(), 1);
+        assert!(GUARD_SOURCE.contains("if (UPDATES_DIR) {"));
         // The pinned memory the chat agent gets rides along in the system
         // prompt, from the same account store.
         assert!(GUARD_SOURCE.contains("memory.txt"));

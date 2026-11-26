@@ -211,6 +211,17 @@ function AgentTask({
 }
 
 /**
+ * Whether this run has a board worth drawing. A relayed run always does: the
+ * card is its state line and the Stop button even before a step is written.
+ * A direct conversation has nobody to seed a plan for it, so until the agent
+ * writes its own checklist the card would be an empty "Getting started…" that
+ * vanishes the moment the run settles. A question is drawn regardless.
+ */
+function hasBoard(agent: AgentSummary): boolean {
+  return agent.plan.length > 0 || Boolean(agent.question) || !agent.direct;
+}
+
+/**
  * The live task board above the composer. It is the user's window into the
  * coding agent: what it is doing, how far along it is, and the one button that
  * stops it. It is derived entirely from `hook://agents`, so every chat gets it
@@ -226,7 +237,8 @@ export function AgentBoard() {
     () => (activeId ? agents.filter((agent) => agent.chatId === activeId) : []),
     [agents, activeId],
   );
-  const hasLive = mine.some(isLiveAgent);
+  const live = mine.filter((agent) => isLiveAgent(agent) && hasBoard(agent));
+  const hasLive = live.length > 0;
   const hasRecent = mine.some(
     (agent) =>
       agent.plan.length > 0 &&
@@ -235,7 +247,6 @@ export function AgentBoard() {
   );
   const now = useNow(hasLive || hasRecent);
 
-  const live = mine.filter(isLiveAgent);
   const recent = live.length
     ? []
     : mine

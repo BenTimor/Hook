@@ -420,10 +420,12 @@ export default function (pi) {
     return { block: true, reason };
   });
 
-  // ── Progress reporting ───────────────────────────────────────────────────
-  // Only for an agent the chat agent relays. A direct conversation has the
-  // agent's own words, so a separate note would be a mailbox nobody empties.
-  if (UPDATES_DIR && !DIRECT) {
+  // ── The checklist the user watches ───────────────────────────────────────
+  // Both kinds of run write it. A relayed agent and one the user drives
+  // directly draw the same task board from the same mailbox, so a direct agent
+  // that were not offered `update_plan` would sit under an empty card while its
+  // prompt told it to fill one in.
+  if (UPDATES_DIR) {
     // Keep the checklist in the freshest part of the context. The system prompt
     // is thousands of tokens behind by the time a step is finished; a line on
     // the tool result the model just read is not.
@@ -450,7 +452,12 @@ export default function (pi) {
         usage: event.usage,
       };
     });
+  }
 
+  // ── Progress reporting ───────────────────────────────────────────────────
+  // Only for an agent the chat agent relays. A direct conversation has the
+  // agent's own words, so a separate note would be a mailbox nobody empties.
+  if (UPDATES_DIR && !DIRECT) {
     pi.registerTool({
       name: "report_progress",
       label: "Report progress",
@@ -513,7 +520,12 @@ export default function (pi) {
         };
       },
     });
+  }
 
+  // ── What the run shows while it works ────────────────────────────────────
+  // The preview panel and the checklist draw for a direct conversation exactly
+  // as they do for a relayed run, so both write the same mailbox.
+  if (UPDATES_DIR) {
     // ── The page the user watches on the right ────────────────────────────
     pi.registerTool({
       name: "show_preview",

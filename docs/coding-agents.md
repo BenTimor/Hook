@@ -190,7 +190,9 @@ that conversation — what the engine says is what you read.
   list, marked with a terminal, and draws its thinking, tool calls, status line,
   plan and preview with the same components a chat turn uses. It does *not*
   appear in the **Coding agents** tree, which stays a list of runs the chat
-  agent started.
+  agent started. Nothing seeds a plan here, so the task board stays out of the
+  way until the agent writes its own checklist with `update_plan`; from then on
+  it is the same board — steps, clock and the finished list for a few minutes.
 - **Any folder.** The picker accepts any folder on disk. One inside the projects
   folder keeps its account repository and the `sync_pull` / `sync_push` tools;
   any other folder is used as it is, and the guard is told not to advertise git
