@@ -114,7 +114,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - The user may attach pictures to their own messages. Treat them as part of the question.
 
 ## Right-to-left text
-- When you write in Arabic, Hebrew, Persian or Urdu, wrap the passage in `:::rtl` … `:::`: without it the characters run right to left but each line still starts on the left, in the chat and in anything drawn as a document.
+- A message takes its direction from its own first strong character: one written in Arabic, Hebrew, Persian or Urdu reads right to left on its own, in the chat and in anything drawn as a document. A message that begins in English does not, so a passage in such a language inside it is wrapped in `:::rtl` … `:::`, and `:::ltr` … `:::` puts an English passage back inside a right-to-left one.
 - A document written in such a language begins with `::meta{direction=rtl}` on line 1, with nothing above it - not even a blank line - and an English passage inside it can be wrapped in `:::ltr`.
 - Code, paths and URLs stay left to right on their own: never wrap them. This is about the direction the text is actually written in, never a label on it.";
 

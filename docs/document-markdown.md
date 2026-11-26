@@ -157,6 +157,16 @@ An English document quoting Hebrew:
 - Code is left to right wherever it sits, a fenced block inside `:::rtl`
   included.
 
+**A chat reply** needs neither to be read right to left: it is laid out from its
+own first strong character, the way the user's own messages are, so a reply
+written in Hebrew reads right to left and one that opens in English does not.
+The directives above still win where the text cannot say it alone — a passage
+quoted in an English reply is wrapped in `:::rtl`, and a `::meta{direction=…}`
+line on the top of a reply sets the whole message.
+
+A reply's Copy button leaves the markers out: they are structure, not text, so
+what is pasted is the message with its plain Markdown and no `:::rtl` fences.
+
 ## Where the syntax works
 
 - Inline rules work anywhere text does: paragraphs, headings, list items, table

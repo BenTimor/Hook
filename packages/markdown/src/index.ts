@@ -4,8 +4,14 @@ export type { Rule, RuleScope } from "./rules.ts";
 export { parseInline, blockConstructs, blockTitle, firstLine, readTree } from "./parse.ts";
 export type { Construct, DocumentBlock, MdastNode } from "./parse.ts";
 
-export { readDocumentMeta } from "./meta.ts";
+export { declaredDirection, readDocumentMeta } from "./meta.ts";
 export type { DocumentMeta, TextDirection } from "./meta.ts";
+
+/**
+ * What Copy puts on the clipboard for a reply: the message, without the
+ * direction markers that are structure rather than text.
+ */
+export { copyableMarkdown } from "./copy.ts";
 
 export { documentImageSource } from "./images.ts";
 

@@ -47,7 +47,18 @@ export function metaDirection(text: string): TextDirection | null {
  * below the top is body text someone wrote, not the document's setting.
  */
 export function readDocumentMeta(markdown: string): DocumentMeta {
+  return { direction: declaredDirection(markdown) ?? "ltr" };
+}
+
+/**
+ * The direction a piece of Markdown names for itself, or null when it names
+ * none — which is not the same as naming `ltr`: a document falls back to left
+ * to right, while a chat reply is left to its own text (`dir="auto"`).
+ *
+ * Only the first line counts, here and in `readDocumentMeta`.
+ */
+export function declaredDirection(markdown: string): TextDirection | null {
   const end = markdown.search(/[\r\n]/);
   const first = end === -1 ? markdown : markdown.slice(0, end);
-  return { direction: metaDirection(first) ?? "ltr" };
+  return metaDirection(first);
 }

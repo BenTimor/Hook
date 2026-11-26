@@ -594,7 +594,13 @@ Changing one side of a boundary is the most common way to break this repo.
   three remark plugins (`remarkDirective`, `documentDirectives`,
   `documentBreaks`), so a callout or a colour in a reply draws as it does on a
   page, and a single newline is a line break. Only a reply goes through it: a
-  user's message is drawn as the text it is.
+  user's message is drawn as the text it is. A reply's direction is its own too:
+  `dir="auto"` lays it out from its first strong character, exactly as a user's
+  message does, and `:::rtl`/`:::ltr` or a top `::meta{direction=…}` line still
+  overrides that (`declaredDirection`, `meta.ts`). Copy runs the reply through
+  `copyableMarkdown` (`packages/markdown/src/copy.ts`), which drops both kinds of
+  direction marker: they are structure, never text, and a reader pasting a
+  message should not get `:::rtl` fences.
 - **Advanced-mode change (thinking, tool calls, coding-agent inspector):**
   `server/auth.mjs` (`advanced_mode` column, `advancedMode` on `publicUser` and
   `/api/auth/preferences`) → `auth.rs` (`advanced_mode` on the session,

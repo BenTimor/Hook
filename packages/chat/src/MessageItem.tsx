@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, Check, Copy, Flag, Pencil, RefreshCw } from "lucide-react";
 
+import { copyableMarkdown } from "@hook/markdown";
+
 import { copyText } from "./clipboard";
 import { Markdown } from "./Markdown";
 import { WorkGroup, type WorkStep } from "./WorkSteps";
@@ -78,7 +80,10 @@ export function MessageItem<M extends ChatMessage>({
   const empty = streaming && !body;
 
   const copy = async () => {
-    if (await copyText(body)) {
+    // A reply's direction fences are structure, not text: the copy is the
+    // message without them. What the user typed is already plain text.
+    const text = message.role === "assistant" ? copyableMarkdown(body) : body;
+    if (await copyText(text)) {
       setCopied(true);
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setCopied(false), 1500);

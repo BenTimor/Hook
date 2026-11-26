@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import {
+  declaredDirection,
   documentBreaks,
   documentDirectives,
   MATH_REHYPE,
@@ -25,6 +26,12 @@ import { CodeBlock } from "./CodeBlock";
  * `docs/document-markdown.md` gives the model), and `$x^2$` is LaTeX. Only a
  * reply goes through here:
  * what the user typed is drawn as the text it is.
+ *
+ * Its direction is the reply's own, the way a user's message is: `dir="auto"`
+ * lays it out from its first strong character, so a reply written in Hebrew or
+ * Arabic reads right to left and one that opens in English does not. A reply
+ * that says otherwise wins — `:::rtl`/`:::ltr` around a passage, and a
+ * `::meta{direction=…}` line on top for the whole message.
  */
 interface Props {
   content: string;
@@ -46,6 +53,8 @@ const remarkPlugins = [
 const rehypePlugins = MATH_REHYPE as never;
 
 function MarkdownImpl({ content, streaming = false }: Props) {
+  const direction = useMemo(() => declaredDirection(content), [content]);
+
   const components = useMemo<Components>(() => {
     return {
       pre({ children }) {
@@ -85,7 +94,11 @@ function MarkdownImpl({ content, streaming = false }: Props) {
   }, [streaming]);
 
   return (
-    <div className="md" data-streaming={streaming ? "true" : "false"}>
+    <div
+      className="md"
+      dir={direction ?? "auto"}
+      data-streaming={streaming ? "true" : "false"}
+    >
       <ReactMarkdown
         remarkPlugins={remarkPlugins as never}
         rehypePlugins={rehypePlugins}

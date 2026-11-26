@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { isMetaLine, metaDirection, metaLine, readDocumentMeta } from "./meta.ts";
+import { declaredDirection, isMetaLine, metaDirection, metaLine, readDocumentMeta } from "./meta.ts";
 
 /**
  * The document's metadata line: the one line at the very top that says what the
@@ -40,6 +40,15 @@ test("a line of ordinary prose is not metadata", () => {
 test("the toolbar writes the line it reads", () => {
   assert.equal(metaLine("rtl"), "::meta{direction=rtl}");
   assert.deepEqual(readDocumentMeta(`${metaLine("rtl")}\ntext`), { direction: "rtl" });
+});
+
+test("a message that names no direction is left to its own text", () => {
+  // A document falls back to left to right; a reply asks the browser instead,
+  // so "no line" and "a line that says ltr" must be told apart.
+  assert.equal(declaredDirection("# Hello"), null);
+  assert.equal(declaredDirection("::meta{}\nHello"), null);
+  assert.equal(declaredDirection("::meta{direction=ltr}\nHello"), "ltr");
+  assert.equal(declaredDirection("::meta{direction=rtl}\r\nHello"), "rtl");
 });
 
 test("the editor's maths is the page's maths", async () => {
