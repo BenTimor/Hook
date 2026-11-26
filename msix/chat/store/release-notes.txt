@@ -1,3 +1,21 @@
+HookCode 0.6.2
+
+Replies can be formatted now, in the same language a Hook Workspace document uses: colour, highlight, underline, keyboard keys, and callout boxes for notes, tips, warnings and dangers. A reply shrinks back to plain prose when the formatting is stripped, so it still reads correctly when it is pasted somewhere else.
+
+Copy gives you the words, not the formatting. A reply written in Hebrew or Arabic now reads right to left on its own, the way your own messages do, and Copy leaves out the fence that set the direction.
+
+Conversations are named by the agent, so the list reads like what you worked on rather than the first line you typed.
+
+A coding agent can look at a picture: a screenshot it took, an image on disk, or one you attached. A direct coding chat can attach pictures from the composer.
+
+A direct coding chat writes its own checklist, so the plan is there while the run works instead of appearing empty.
+
+If a project folder is already your own clone, the agent uses your own git, with your credential helper and SSH keys, instead of Hook's bundled copy.
+
+Projects can be deleted from the app, and the deletion reaches your other computers. A folder that holds work is never deleted; only the empty clone Hook made.
+
+The folder picker keeps the level you were reading on screen while it reads the next one, with a spinner, and no longer shows stale project rows.
+
 HookCode 0.6.1
 
 Long conversations now stay fast. When a chat grows large, Hook folds the older turns into one summary before the model reads it, so replies keep arriving instead of failing on a full context. The conversation you read is not rewritten. A chat that is still too long for the model is compacted and retried once before it gives up.

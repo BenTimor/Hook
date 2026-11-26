@@ -145,12 +145,14 @@ The Partner Center copy is kept as plain text under `msix/chat/store/`, one file
 per field, ready to select and paste without Markdown or rich text:
 
 - `short-description.txt` (228 characters; limit 256)
-- `full-description.txt` (6,625 characters; limit 10,000)
+- `full-description.txt` (8,104 characters; limit 10,000)
 - `feature-bullets.txt` (one sentence per line; each under 200 characters)
 - `release-notes.txt` (one section per version, newest first; copy only the
-  newest — the 0.6.1 section is 1,089 characters, limit 1,500)
+  newest — the 0.6.2 section is 1,389 characters, limit 1,500)
 
-These are the 0.6.1 listing and release notes. Search terms: AI chat, coding
+These are the 0.6.2 listing and release notes. The package itself is built from
+this commit at `0.6.2.0`; `release.config.json` keeps `store.latest` at the last
+certified version until Microsoft certifies this one. Search terms: AI chat, coding
 agent, AI assistant, code assistant, developer tools, cross-device sync,
 project sync. ("ChatGPT import" is tempting but it is someone else's trademark
 in a keyword field - leave it out unless you want to argue about it.)

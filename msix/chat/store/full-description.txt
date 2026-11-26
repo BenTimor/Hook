@@ -6,6 +6,12 @@ WHAT YOU CAN DO
 
 Ask anything in a clean, focused chat.
 
+Format an answer: colour, highlight, underline, keyboard keys, and callout boxes for notes, tips, warnings and dangers. The formatting lives in the reply's own text, so it draws the same on every device, and a reply shrinks back to plain prose when it is stripped.
+
+Write and read in the direction your language uses. A reply written in Hebrew or Arabic lays itself out right to left on its own, the same way your own messages do, and a passage quoted in another language can be flipped with one line. Copy gives you the words without the markers that set the direction.
+
+Every conversation is named by the agent from what it turned out to be about, so your list reads like your work instead of like the first line you typed.
+
 Keep long conversations healthy. When one grows large, Hook quietly folds the older turns into a summary before the model reads it, so replies keep arriving instead of failing on a full context. Your messages are left where they are; only what the model reads is shortened.
 
 Create projects and brief a coding agent in plain language.
@@ -49,6 +55,14 @@ HookCode uses live generative AI. Every reply and every coding-agent step is pro
 BUILT FOR CODING
 
 Coding agents work inside a project folder with a bundled Node runtime, the pi coding agent and git. They can read and edit files, run commands with timeouts, search the web and show you a live preview. Each project is backed by a private git repository in your account: agents pull the latest saved work before they start, even when the project was begun on another computer, and save when they finish. They run as child processes of HookCode on the chosen computer and stop when you quit it.
+
+An agent can look at a picture - a screenshot it took, an image on disk, or one you attached to the conversation - and talk about what is in it. A direct coding chat takes pictures from the composer.
+
+A direct coding chat writes its own checklist, so you can see the plan above the composer while the run works.
+
+A folder that is already your own clone runs your own git, with your credential helper and SSH keys, instead of the bundled copy. Hook projects keep using Hook's copy, so a run started on another computer still pulls the latest saved work.
+
+A project can be deleted from the app, and the deletion reaches your other computers. A folder that holds work is never deleted: only the empty clone Hook made, when a project was begun elsewhere.
 
 ADVANCED MODE
 
