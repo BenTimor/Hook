@@ -108,6 +108,13 @@ const userRepoPrompt = await promptFor("git-user-repo");
 process.env.HOOK_USER_GIT = "0";
 const noRepoPrompt = await promptFor("git-no-repo");
 
+// Pictures: the guard only promises `read` on an image when the model card
+// said the model can see one. A text-only model must never be told it can.
+process.env.HOOK_VISION = "1";
+const visionPrompt = await promptFor("vision-on");
+delete process.env.HOOK_VISION;
+const noVisionPrompt = await promptFor("vision-off");
+
 const results = {
   hooks: Object.keys(handlers).sort(),
   guidelineAppended:
@@ -152,6 +159,12 @@ const results = {
     resultOk: planResult?.isError !== true,
     emptyPlanRejected: emptyPlan?.isError === true,
     written: written?.steps ?? null,
+  },
+  pictures: {
+    promisedWithVision:
+      /## Pictures/.test(visionPrompt) && /returns the image itself/.test(visionPrompt),
+    silentWithoutVision: !/## Pictures/.test(noVisionPrompt),
+    absentByDefault: !/## Pictures/.test(before?.systemPrompt ?? ""),
   },
   direct,
   // The one tool a relayed run has and a direct conversation does not.

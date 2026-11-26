@@ -108,6 +108,20 @@ pub struct Compaction {
     pub tokens_after: u64,
 }
 
+/// One picture pasted, dropped or picked in a composer: a data URL and the size
+/// the window downscaled it to. Stored with [`Store::save_incoming`]; nothing
+/// else ever sees the data URL.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomingImage {
+    /// `data:image/png;base64,...`
+    pub data_url: String,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+}
+
 /// One picture attached to a message. Bytes live on disk; the chat file only
 /// keeps the reference, so a conversation with screenshots stays small and
 /// readable.
@@ -775,6 +789,38 @@ impl Store {
             kind: kind.map(str::to_string),
             sha256: Some(sha256_hex(data)),
         })
+    }
+
+    /// Store the pictures a composer sent, in the order they arrived.
+    ///
+    /// The bytes come back with each attachment because a direct coding chat
+    /// hands the same picture to its engine, and reading it off disk again to do
+    /// that would only be a second copy of the same bytes.
+    pub fn save_incoming(
+        &self,
+        chat_id: &str,
+        images: &[IncomingImage],
+    ) -> Result<Vec<(Attachment, Vec<u8>)>, String> {
+        let mut stored = Vec::with_capacity(images.len());
+        for image in images {
+            let mime = image
+                .data_url
+                .split_once(':')
+                .and_then(|(_, rest)| rest.split_once(';'))
+                .map(|(mime, _)| mime.to_string())
+                .unwrap_or_else(|| "image/png".to_string());
+            let bytes = base64_decode(&image.data_url)?;
+            let attachment = self.save_image(
+                chat_id,
+                &mime,
+                &bytes,
+                image.width,
+                image.height,
+                Some("user"),
+            )?;
+            stored.push((attachment, bytes));
+        }
+        Ok(stored)
     }
 
     /// Copy a picture from somewhere on disk (a coding agent's screenshot) into

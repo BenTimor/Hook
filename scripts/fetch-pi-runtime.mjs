@@ -16,6 +16,7 @@
  *    src-tauri/resources/pi-runtime/node.exe
  *    src-tauri/resources/pi-runtime/pi/dist/bundle/cli.js
  *    src-tauri/resources/pi-runtime/pi/package.json
+ *    src-tauri/resources/pi-runtime/pi/node_modules/@silvia-odwyer/photon-node/
  *
  * `pnpm app:build` runs this automatically.
  */
@@ -34,6 +35,8 @@ const app = resolve(process.cwd(), process.argv[2] ?? "apps/chat");
 const out = join(app, "src-tauri", "resources", "pi-runtime");
 
 const PACKAGE = "@earendil-works/pi-coding-agent";
+/** The engine's image decoder: `read` cannot hand a coding agent a picture without it. */
+const PHOTON = "@silvia-odwyer/photon-node";
 
 const nodeExe = join(out, process.platform === "win32" ? "node.exe" : "node");
 
@@ -60,6 +63,11 @@ function installed(version) {
     existsSync(nodeExe) &&
     existsSync(join(out, "pi", "dist", "bundle", "cli.js")) &&
     existsSync(join(out, "pi", "node_modules", "jiti", "package.json")) &&
+    // Without photon the engine cannot resize a picture, so its `read` tool
+    // answers every image with "[Image omitted]". A runtime built before it was
+    // shipped has to be rebuilt, or coding agents stay blind to images.
+    existsSync(join(out, "pi", "node_modules", PHOTON, "package.json")) &&
+    existsSync(join(out, "pi", "node_modules", PHOTON, "photon_rs_bg.wasm")) &&
     // The licenses are part of the shipped bundle, not a nicety. An existing
     // runtime built before they were written must be rebuilt, or an installer
     // redistributes MIT and GPL software without its notices.
@@ -147,11 +155,17 @@ async function writeLicenses(piMeta) {
     "Full text: node-LICENSE.txt, in this directory.",
     "https://nodejs.org/",
     "",
-    "--- 3/3 " + "-".repeat(60),
+    "--- 3/4 " + "-".repeat(60),
     "jiti",
     "Licensed under the MIT License.",
     "Full text: pi/node_modules/jiti/LICENSE, in this directory.",
     "https://github.com/unjs/jiti",
+    "",
+    "--- 4/4 " + "-".repeat(60),
+    "@silvia-odwyer/photon-node (Photon, the engine's image resizer)",
+    "Licensed under the Apache License 2.0.",
+    "Full text: pi/node_modules/@silvia-odwyer/photon-node/LICENSE.md, in this directory.",
+    "https://github.com/silvia-odwyer/photon",
     "",
   ].join("\n");
 
@@ -214,13 +228,19 @@ async function main() {
   await cp(join(piDir, "dist"), join(out, "pi", "dist"), { recursive: true });
   await cp(join(piDir, "package.json"), join(out, "pi", "package.json"));
 
-  const externals = ["jiti"];
+  // `jiti` loads the guard, and photon resizes the pictures a coding agent
+  // reads (`read shot.png`). Both are bare imports in the bundle, so both have
+  // to be resolvable from the shipped layout or the feature dies quietly.
+  const externals = ["jiti", PHOTON];
   for (const name of externals) {
     // npm nests dependencies under pi/node_modules; pnpm puts them next to
     // the package inside .pnpm/.../node_modules. Try both, then the hidden
     // pnpm hoist directory.
     const candidates = [
       join(piDir, "node_modules", name),
+      // pnpm's isolated layout: the package's own dependencies are siblings in
+      // `<store>/<pkg>@<version>/node_modules/`.
+      join(dirname(dirname(piDir)), name),
       join(dirname(piDir), name),
       join(root, "node_modules", ".pnpm", "node_modules", name),
       join(root, "node_modules", name),
@@ -236,7 +256,11 @@ async function main() {
       }
     }
     if (!from) {
-      throw new Error(`pi is missing ${name}; Hook's guard would not load`);
+      throw new Error(
+        name === "jiti"
+          ? `pi is missing ${name}; Hook's guard would not load`
+          : `pi is missing ${name}; a coding agent could not look at a picture`,
+      );
     }
     // dereference: pnpm's store entries are symlinks, and a copied relative
     // symlink would point outside the shipped runtime.
@@ -266,6 +290,27 @@ async function main() {
     );
   } catch (error) {
     throw new Error(`the bundled runtime cannot resolve jiti: ${error.message}`);
+  }
+
+  // And that photon really loads, wasm included: a resolvable package whose
+  // .wasm is missing is exactly the silent failure that made every screenshot
+  // come back as "[Image omitted]".
+  const bundleDir = join(out, "pi", "dist", "bundle");
+  try {
+    await run(
+      nodeExe,
+      [
+        "-e",
+        `const { createRequire } = require("module");` +
+          `const photon = createRequire(${JSON.stringify(join(bundleDir, "probe.js"))})(${JSON.stringify(
+            PHOTON,
+          )});` +
+          `if (typeof photon.PhotonImage !== "function") { throw new Error("no PhotonImage export"); }`,
+      ],
+      { cwd: out },
+    );
+  } catch (error) {
+    throw new Error(`the bundled runtime cannot load photon: ${error.message}`);
   }
 
   console.log(`pi-runtime ready: pi ${version} on node ${process.version}`);

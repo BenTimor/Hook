@@ -331,6 +331,47 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// One picture that travels with a message to the engine: pi's `ImageContent`,
+/// base64 and a mime type. The bytes stay in the chat's own image store; this is
+/// only what crosses the pipe to the process running the engine.
+pub struct Picture {
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
+impl Picture {
+    pub fn new(mime: impl Into<String>, bytes: Vec<u8>) -> Self {
+        Self {
+            mime: mime.into(),
+            bytes,
+        }
+    }
+
+    /// The shape pi's RPC takes on `prompt` and `steer`.
+    fn to_wire(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "image",
+            "data": crate::store::base64_encode(&self.bytes),
+            "mimeType": self.mime,
+        })
+    }
+}
+
+fn wire_pictures(images: &[Picture]) -> serde_json::Value {
+    serde_json::Value::Array(images.iter().map(Picture::to_wire).collect())
+}
+
+/// The first thing a run is told: the task, and the pictures the user sent with
+/// it. Empty for a run the chat agent started - its brief is text.
+fn prompt_line(task: &str, images: &[Picture]) -> serde_json::Value {
+    serde_json::json!({
+        "id": next_id("prompt"),
+        "type": "prompt",
+        "message": task,
+        "images": wire_pictures(images),
+    })
+}
+
 pub struct AgentManager {
     inner: Arc<Mutex<Inner>>,
     data_dir: PathBuf,
@@ -822,6 +863,7 @@ impl AgentManager {
             plan_titles,
             false,
             None,
+            &[],
         )
     }
 
@@ -833,6 +875,7 @@ impl AgentManager {
         chat_id: &str,
         folder: &str,
         task: &str,
+        images: &[Picture],
         title: Option<&str>,
         resume_session: Option<&str>,
     ) -> Result<AgentInfo, String> {
@@ -869,6 +912,7 @@ impl AgentManager {
             &[],
             true,
             None,
+            images,
         )
     }
 
@@ -914,6 +958,7 @@ impl AgentManager {
                 "type": "compact",
                 "customInstructions": instructions,
             })),
+            &[],
         )
     }
 
@@ -965,9 +1010,12 @@ impl AgentManager {
         plan_titles: &[String],
         direct: bool,
         kick: Option<serde_json::Value>,
+        images: &[Picture],
     ) -> Result<AgentInfo, String> {
         let task = task.trim();
-        if task.is_empty() && kick.is_none() {
+        // A picture on its own is a message: "here is the screen it looks wrong
+        // on" needs no words.
+        if task.is_empty() && kick.is_none() && images.is_empty() {
             return Err(if direct {
                 "Say something for the coding agent to do.".into()
             } else {
@@ -1166,6 +1214,17 @@ impl AgentManager {
             .env_remove("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
             .env("HOOK_UPDATES_DIR", &updates_dir)
             .env("HOOK_DIRECT", if direct { "1" } else { "0" })
+            // Whether the model card says a picture can be handed to the
+            // model. The guard only promises `read` on an image when it can
+            // deliver one, so the agent never says it looked at what it did not.
+            .env(
+                "HOOK_VISION",
+                if self.vision.load(std::sync::atomic::Ordering::Relaxed) {
+                    "1"
+                } else {
+                    "0"
+                },
+            )
             // Whether this folder is one of the account's projects, so the
             // guard only advertises the git tools where they can work.
             .env("HOOK_SYNC", if project_id.is_empty() { "0" } else { "1" })
@@ -1246,13 +1305,7 @@ impl AgentManager {
 
         // Kick off the run. A compaction is the one start that has nothing to
         // say: it replays the session and asks pi to summarize it.
-        let line = kick.unwrap_or_else(|| {
-            serde_json::json!({
-                "id": next_id("prompt"),
-                "type": "prompt",
-                "message": task,
-            })
-        });
+        let line = kick.unwrap_or_else(|| prompt_line(task, images));
         let _ = tx.send(AgentCmd::Line(line));
 
         let inner = self.inner.clone();
@@ -1276,9 +1329,16 @@ impl AgentManager {
         Ok(info)
     }
 
-    pub fn steer(&self, agent_id: &str, message: &str) -> Result<AgentInfo, String> {
+    /// Redirect a live run. A message can be pictures alone ("here is the
+    /// screen it looks wrong on"), which is why the text may be empty.
+    pub fn steer(
+        &self,
+        agent_id: &str,
+        message: &str,
+        images: &[Picture],
+    ) -> Result<AgentInfo, String> {
         let message = message.trim();
-        if message.is_empty() {
+        if message.is_empty() && images.is_empty() {
             return Err("Steering message is empty.".into());
         }
         let (info, tx) = {
@@ -1302,6 +1362,7 @@ impl AgentManager {
                 tx.send(AgentCmd::Line(serde_json::json!({
                     "type": "steer",
                     "message": message,
+                    "images": wire_pictures(images),
                 })))
                 .map_err(|_| "That coding agent is no longer running.".to_string())?;
             }
@@ -1310,6 +1371,7 @@ impl AgentManager {
                     "id": next_id("prompt"),
                     "type": "prompt",
                     "message": message,
+                    "images": wire_pictures(images),
                 })))
                 .map_err(|_| "That coding agent is no longer running.".to_string())?;
                 self.set_state(agent_id, STATE_RUNNING, |info| {
@@ -2622,6 +2684,19 @@ fn apply_record(inner: &Arc<Mutex<Inner>>, agent_id: &str, record: &serde_json::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_message_carries_its_pictures_to_the_engine() {
+        let line = prompt_line("what is wrong here", &[Picture::new("image/png", vec![1, 2, 3])]);
+        assert_eq!(line["type"], "prompt");
+        assert_eq!(line["message"], "what is wrong here");
+        // pi's ImageContent, exactly: base64 and a mime type.
+        assert_eq!(line["images"][0]["type"], "image");
+        assert_eq!(line["images"][0]["mimeType"], "image/png");
+        assert_eq!(line["images"][0]["data"], "AQID");
+        // No pictures is an empty list, not a missing field.
+        assert_eq!(prompt_line("hi", &[])["images"], serde_json::json!([]));
+    }
 
     fn test_engine(base: &Path) -> Result<PiRuntime, String> {
         Ok(PiRuntime {

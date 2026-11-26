@@ -95,6 +95,9 @@ pnpm test:cla
 
 # Bundled git and coding engine (pinned; ~93 MB and ~104 MB per app)
 pnpm git
+# The engine's bundle imports two packages at runtime: jiti (the guard) and
+# photon (the image resizer `read` needs for a picture). The fetch checks both
+# load, wasm included, before an installer can be built.
 pnpm engine
 
 # Hook Browser: the Chromium checkout lives outside the repo, see browser/README.md.
@@ -618,7 +621,12 @@ Changing one side of a boundary is the most common way to break this repo.
   `HOOK_DIRECT` branch → `bridge.ts` / `types.ts` / `mock.ts` →
   `useChatStore` (`newCodingChat`, `changeCodingFolder`, `answerAgent`) →
   `Sidebar` (the New chat menu and the advanced filter), `ChatRow`,
-  `PaneHead`, `AgentBoard`, `Composer` (`steer`). Four filters matter: the
+  `PaneHead`, `AgentBoard`, `Composer` (`steer`). A picture attached in this
+  conversation is stored by `coding::send` (`Store::save_incoming`) and travels
+  to the engine as pi's `images` on the `prompt` / `steer` line
+  (`agent::Picture`) — the composer offers the button unless the chat is a
+  cached copy (`remote`: the relay carries the message, not the image, and
+  `send_message` refuses one there). Four filters matter: the
   sidebar hides these chats while Advanced is off, the phone's archive does the
   same (`ChatList`), `setAdvancedMode` closes one that is already open (the
   simple view cannot fold its per-tool turns), and `AgentTree` skips `direct`
@@ -670,6 +678,12 @@ Changing one side of a boundary is the most common way to break this repo.
   `registerBridgeTools`; a tool the file bridge must apply to a chat (like
   `set_title`) is intercepted in `bridge::dispatch` as well as in the turn loop,
   because a turn saves the copy of the chat it loaded before the model answered.
+  A tool that opens a picture follows `look_at_picture` (`turn.rs`): the bytes
+  are stored with `Store::adopt_image` and returned as `ToolOutcome.images`, and
+  `build_history` replays them as the user frame right after the tool result,
+  because a `tool` message is text-only for every provider. A `PROJECT_TOOLS`
+  member is left out of the direct bridge: the engine's own `read` already opens
+  pictures there.
 - **New kind of memory, or a change to how it reaches a chat:**
   `memory.rs` (store, caps, frames) → `turn.rs` (`ensure_memory_frames`,
   `activity_label`, the `## Memory` prompt section) → the tool schemas in

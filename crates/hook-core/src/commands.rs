@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::auth::{AuthView, LoginOutcome, RefreshOutcome};
@@ -10,7 +10,7 @@ use crate::events::EmitExt;
 use crate::preview::PreviewView;
 use crate::projects::Project;
 use crate::state::{lock, AppState};
-use crate::store::{now_ms, Chat, ChatMeta, Message, SearchHit};
+use crate::store::{now_ms, Chat, ChatMeta, IncomingImage, Message, SearchHit};
 use crate::turn;
 
 #[derive(Serialize)]
@@ -557,18 +557,6 @@ pub fn search_chats(state: State<'_, Arc<AppState>>, query: String) -> Result<Ve
     state.store.search(&query)
 }
 
-/// One picture pasted, dropped or picked in the composer.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IncomingImage {
-    /// `data:image/png;base64,...`
-    pub data_url: String,
-    #[serde(default)]
-    pub width: u32,
-    #[serde(default)]
-    pub height: u32,
-}
-
 #[tauri::command]
 pub async fn send_message(
     state: State<'_, Arc<AppState>>,
@@ -592,6 +580,9 @@ pub async fn send_message(
     // same events a turn would produce. `/unknown` is still plain text, so a
     // user who starts a sentence with a slash reaches the model as before.
     if let Some(call) = crate::slash::parse(&text) {
+        if !images.is_empty() {
+            return Err("A command cannot carry a picture. Send the picture with a message.".into());
+        }
         crate::slash::run(&app_state, &chat, call).await?;
         return Ok(chat.meta.id);
     }
@@ -600,7 +591,7 @@ pub async fn send_message(
     // same composer and the same command drive both, so the window never has
     // to know which kind of conversation it is looking at.
     if crate::coding::is_coding(&chat) {
-        if text.is_empty() {
+        if text.is_empty() && images.is_empty() {
             return Err("The coding agent needs a message.".into());
         }
         // A free account has no coding agents unless it brought its own model
@@ -609,10 +600,17 @@ pub async fn send_message(
             crate::analytics::track(state.inner(), "coding_blocked_free");
             return Err(coding_needs_plan().into());
         }
-        // Pictures are a chat-model feature; the coding agent talks in text.
         // A cached copy's owner is the one that owns the engine: ask it to
-        // append the message and let its records come back over the relay.
+        // append the message and let its records come back over the relay. A
+        // picture cannot take that trip - the relay carries the message, not
+        // megabytes of image - so this side says no rather than losing it.
         if chat.meta.remote {
+            if !images.is_empty() {
+                return Err(
+                    "Pictures stay on the computer that runs this agent. Send them from there."
+                        .into(),
+                );
+            }
             let device = chat
                 .meta
                 .device_id
@@ -633,7 +631,7 @@ pub async fn send_message(
             .await?;
             return Ok(chat.meta.id);
         }
-        crate::coding::send(&app_state, &mut chat, &text)?;
+        crate::coding::send(&app_state, &mut chat, &text, &images)?;
         app_state.sync.wake();
         return Ok(chat.meta.id);
     }
@@ -646,19 +644,12 @@ pub async fn send_message(
 
     chat.meta.updated_at = now_ms();
     let mut message = Message::new("user", &text, "complete");
-    for image in images {
-        let mime = image
-            .data_url
-            .split_once(':')
-            .and_then(|(_, rest)| rest.split_once(';'))
-            .map(|(mime, _)| mime.to_string())
-            .unwrap_or_else(|| "image/png".to_string());
-        let bytes = crate::store::base64_decode(&image.data_url)?;
-        let attachment = state
-            .store
-            .save_image(&chat.meta.id, &mime, &bytes, image.width, image.height, Some("user"))?;
-        message.attachments.push(attachment);
-    }
+    message.attachments = state
+        .store
+        .save_incoming(&chat.meta.id, &images)?
+        .into_iter()
+        .map(|(attachment, _)| attachment)
+        .collect();
     crate::session::commit_and_start(state.inner(), &mut chat, message)
 }
 

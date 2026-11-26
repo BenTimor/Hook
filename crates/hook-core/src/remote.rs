@@ -249,6 +249,7 @@ fn start(state: &Arc<AppState>, params: StartParams) -> Result<Value, RpcFailure
             chat_id,
             folder,
             task,
+            &[],
             params.title.as_deref(),
             params.resume_session.as_deref(),
         ),
@@ -314,7 +315,7 @@ fn list(state: &Arc<AppState>, params: ListParams) -> Result<Value, RpcFailure> 
 fn steer(state: &Arc<AppState>, params: SteerParams) -> Result<Value, RpcFailure> {
     let info = state
         .agents
-        .steer(params.agent_id.trim(), &params.text)
+        .steer(params.agent_id.trim(), &params.text, &[])
         .map_err(|error| fail("steer_failed", error))?;
     publish_overview(state, &info.chat_id);
     serde_json::to_value(info).map_err(|error| fail("serialize", error.to_string()))
@@ -760,7 +761,9 @@ fn coding_send(state: &Arc<AppState>, params: CodingSendParams) -> Result<Value,
         .map_err(|_| fail("unknown_chat", "No such conversation on this machine."))?;
     host_chat(state, &chat)?;
     mark_remote(state, chat_id);
-    crate::coding::send_with_id(state, &mut chat, text, message_id.as_deref())
+    // A controller's message is text: a picture stays on the machine the user
+    // is sitting at (see `send_message`'s refusal for a cached coding chat).
+    crate::coding::send_with_id(state, &mut chat, text, &[], message_id.as_deref())
         .map_err(|error| fail("send_failed", error))?;
     state.sync.wake();
     Ok(json!({ "chatId": chat_id }))

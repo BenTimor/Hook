@@ -815,9 +815,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const { activeId } = get();
       // A coding agent's conversation accepts a message while it is working:
       // that message steers the run instead of waiting for it.
-      const coding = isCodingChat(get().chats.find((chat) => chat.id === activeId));
+      const chat = get().chats.find((chat) => chat.id === activeId);
+      const coding = isCodingChat(chat);
       const trimmed = text.trim();
-      const images = coding ? [] : get().draftImages;
+      // A coding agent that runs on this computer takes pictures like any other
+      // conversation; a cached copy's engine is on another machine.
+      const images = coding && chat?.remote ? [] : get().draftImages;
       if (!trimmed && images.length === 0) return;
       if (activeId && get().streams[activeId] && !coding) return;
       // A command is not a message the account counts; the backend runs it and

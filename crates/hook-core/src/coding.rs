@@ -21,11 +21,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::Value;
 
-use crate::agent::{AgentInfo, STATE_NEEDS_INPUT};
+use crate::agent::{AgentInfo, Picture, STATE_NEEDS_INPUT};
 use crate::state::AppState;
 use crate::store::{
-    now_ms, strip_verbatim, Chat, ChatMeta, Compaction, Message, Store, ToolCallRecord,
-    KIND_CODING,
+    now_ms, strip_verbatim, Attachment, Chat, ChatMeta, Compaction, IncomingImage, Message, Store,
+    ToolCallRecord, KIND_CODING,
 };
 use crate::turn::{self, StreamEvent};
 
@@ -176,8 +176,13 @@ pub fn recover(store: &Store) {
 ///
 /// The message is written before the engine is touched, so the conversation
 /// always shows what was asked even when the agent cannot start.
-pub fn send(state: &Arc<AppState>, chat: &mut Chat, text: &str) -> Result<(), String> {
-    send_with_id(state, chat, text, None)
+pub fn send(
+    state: &Arc<AppState>,
+    chat: &mut Chat,
+    text: &str,
+    images: &[IncomingImage],
+) -> Result<(), String> {
+    send_with_id(state, chat, text, images, None)
 }
 
 /// The same send, with a caller-chosen message id. A controller generates the
@@ -186,13 +191,39 @@ pub fn send_with_id(
     state: &Arc<AppState>,
     chat: &mut Chat,
     text: &str,
+    images: &[IncomingImage],
     message_id: Option<&str>,
 ) -> Result<(), String> {
     let Some(folder) = chat.meta.project_path.clone() else {
         return Err("This coding agent has no folder. Choose one first.".into());
     };
 
+    // A question is a dialog with options, not a message: a picture has nowhere
+    // to go in the answer, and dropping it silently is worse than saying so.
+    if !images.is_empty() {
+        if let Some(info) = state.agents.for_chat(&chat.meta.id) {
+            if info.is_live() && info.state == STATE_NEEDS_INPUT {
+                return Err(
+                    "That agent is waiting for an answer to a question. Answer it first, then send the picture."
+                        .into(),
+                );
+            }
+        }
+    }
+
+    // The pictures are stored first: the engine can fail to start, and the
+    // conversation still has to show what the user sent it.
+    let stored = state.store.save_incoming(&chat.meta.id, images)?;
+    let pictures: Vec<Picture> = stored
+        .iter()
+        .map(|(attachment, bytes)| Picture::new(attachment.mime.clone(), bytes.clone()))
+        .collect();
+
     let mut message = Message::new("user", text, "complete");
+    message.attachments = stored
+        .into_iter()
+        .map(|(attachment, _)| attachment)
+        .collect::<Vec<Attachment>>();
     if let Some(id) = message_id.map(str::trim).filter(|id| !id.is_empty()) {
         message.id = id.to_string();
     }
@@ -210,10 +241,10 @@ pub fn send_with_id(
             if info.state == STATE_NEEDS_INPUT {
                 state.agents.answer(&info.id, text)
             } else {
-                state.agents.steer(&info.id, text)
+                state.agents.steer(&info.id, text, &pictures)
             }
         }
-        _ => start(state, chat, text, &folder),
+        _ => start(state, chat, text, &pictures, &folder),
     };
 
     match result {
@@ -224,7 +255,7 @@ pub fn send_with_id(
         }
         // The engine closed between the check and the write: resume the session
         // rather than losing what the user typed.
-        Err(error) if existing.is_some() => match start(state, chat, text, &folder) {
+        Err(error) if existing.is_some() => match start(state, chat, text, &pictures, &folder) {
             Ok(_) => {
                 state.sync.wake();
                 Ok(())
@@ -280,12 +311,14 @@ fn start(
     state: &Arc<AppState>,
     chat: &mut Chat,
     text: &str,
+    pictures: &[Picture],
     folder: &str,
 ) -> Result<AgentInfo, String> {
     let info = state.agents.start_direct(
         &chat.meta.id,
         folder,
         text,
+        pictures,
         Some(&chat.meta.title),
         chat.meta.session_id.as_deref(),
     )?;

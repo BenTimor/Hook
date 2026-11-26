@@ -46,11 +46,13 @@ pub const BROWSER_TOOLS: [&str; 3] = ["list_tabs", "read_page", "find_in_page"];
 /// directory — the folders live on the desktops signed into the account — so
 /// these are removed together with the prompt section that explains them.
 /// `remember_in_project` is here rather than in the memory set because what it
-/// writes is a line in the project's own `AGENTS.md`.
-pub const PROJECT_TOOLS: [&str; 3] = [
+/// writes is a line in the project's own `AGENTS.md`; `look_at_picture` opens a
+/// file, which is the same kind of thing.
+pub const PROJECT_TOOLS: [&str; 4] = [
     "list_projects",
     "update_project_description",
     "remember_in_project",
+    "look_at_picture",
 ];
 
 /// Tool surface offered to the chat model. The chat agent never touches files
@@ -286,6 +288,21 @@ pub fn definitions() -> Value {
         {
             "type": "function",
             "function": {
+                "name": "look_at_picture",
+                "description": "Open a picture that is already on this computer and look at it yourself: a screenshot a coding agent saved, a photo or chart the user points at, an image inside a project. You get the picture, not a description of it, so use it whenever the answer depends on what is actually in the image.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Path to the image file on this computer, e.g. 'C:/Users/me/Pictures/shot.png' or a path an agent reported." }
+                    },
+                    "required": ["path"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "no_update",
                 "description": "Say nothing to the user for this progress batch. Use this when there is nothing worth interrupting them for: routine steps, 'still working', 'building now', 'I'll report back', a run that merely settled, no new picture, no milestone.",
                 "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -382,7 +399,14 @@ pub fn direct_bridge_definitions(
     if let Some(list) = definitions().as_array() {
         for tool in list {
             let name = tool["function"]["name"].as_str().unwrap_or("");
-            if AGENT_TOOLS.contains(&name) || name == "web_search" || name == "no_update" {
+            if AGENT_TOOLS.contains(&name)
+                || name == "web_search"
+                || name == "no_update"
+                // The engine can already open a picture with its own `read`,
+                // and the pictures it opens belong to its own turn: a bridge
+                // call would only hand it text.
+                || name == "look_at_picture"
+            {
                 continue;
             }
             if !caps.projects && PROJECT_TOOLS.contains(&name) {
@@ -1017,7 +1041,7 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
         "steer_agent" => {
             let id = arg_str(args, "agent_id")?;
             let message = arg_str(args, "message")?;
-            let info = env.agents.steer(id, message)?;
+            let info = env.agents.steer(id, message, &[])?;
             Ok(json!({ "agent_id": info.id, "state": info.state }))
         }
         "answer_agent" => {
@@ -1061,10 +1085,15 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
 /// A compact note appended to the chat history when a coding agent needs
 /// attention. Hidden from the user; the chat agent turns it into prose.
 /// The progress notes a coding agent sent since the last batch, oldest first.
-pub fn progress_block(updates: &[crate::agent::Update]) -> String {
+///
+/// `local_pictures` says whether this product can open a file on the machine
+/// the run happened on. A phone cannot: the paths would name files it has no
+/// way to read, and a tool it was never given.
+pub fn progress_block(updates: &[crate::agent::Update], local_pictures: bool) -> String {
     let mut block = String::from("progress:\n");
-    let mut pictures = 0usize;
+    let mut pictures: Vec<&std::path::Path> = Vec::new();
     for update in updates {
+        pictures.extend(update.images.iter().map(std::path::PathBuf::as_path));
         if update.note.is_empty() {
             continue;
         }
@@ -1076,12 +1105,28 @@ pub fn progress_block(updates: &[crate::agent::Update]) -> String {
                 block.push('\n');
             }
         }
-        pictures += update.images.len();
     }
-    if pictures > 0 {
+    if !pictures.is_empty() {
         block.push_str(&format!(
-            "pictures: {pictures} attached to this update; they are shown to the user with your reply.\n"
+            "pictures: {} attached to this update; they are shown to the user with your reply.\n",
+            pictures.len()
         ));
+        if !local_pictures {
+            return block;
+        }
+        // The paths are what make the pictures the agent's own too: without
+        // them it can only repeat what the note said, never what the screen
+        // shows.
+        block.push_str("pictures_on_disk: ");
+        for (index, path) in pictures.iter().enumerate() {
+            if index > 0 {
+                block.push_str(", ");
+            }
+            block.push_str(&path.to_string_lossy());
+        }
+        block.push_str(
+            "\nUse look_at_picture on one of these when what it shows decides what you say.\n",
+        );
     }
     block
 }
@@ -1189,6 +1234,24 @@ mod tests {
     }
 
     #[test]
+    fn a_progress_picture_is_something_the_chat_agent_can_open() {
+        let update = crate::agent::Update {
+            note: "the menu is in place".into(),
+            images: vec![std::path::PathBuf::from("C:/hook/files/shot.png")],
+        };
+        let local = progress_block(&[update.clone()], true);
+        assert!(local.contains("pictures: 1 attached"));
+        assert!(local.contains("pictures_on_disk: C:/hook/files/shot.png"));
+        assert!(local.contains("look_at_picture"));
+        // A phone has no tool and no file: naming a path it cannot read would
+        // only invite the model to describe a picture it never saw.
+        let remote = progress_block(&[update], false);
+        assert!(remote.contains("pictures: 1 attached"));
+        assert!(!remote.contains("pictures_on_disk"));
+        assert!(!remote.contains("look_at_picture"));
+    }
+
+    #[test]
     fn a_settle_with_nothing_new_hides_the_report_and_asks_for_silence() {
         let mut info = sample_agent();
         info.state = crate::agent::STATE_IDLE.into();
@@ -1240,6 +1303,7 @@ mod tests {
             "stop_agent",
             "list_coding_sessions",
             "web_search",
+            "look_at_picture",
         ] {
             assert!(names.contains(&expected), "{expected} missing");
         }
@@ -1356,6 +1420,9 @@ mod tests {
             "list_coding_sessions",
             "web_search",
             "no_update",
+            // The engine opens pictures with its own `read`; the bridge would
+            // answer this one with text and no picture.
+            "look_at_picture",
         ] {
             assert!(!names.contains(&refused), "{refused} must not be offered");
         }

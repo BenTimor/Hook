@@ -26,9 +26,12 @@ export function Composer() {
   // While an agent works, the composer is mostly a steering wheel: the chat
   // agent hands what you type to the coding agent instead of starting new work.
   const steering = useSteering();
-  const coding = useChatStore((s) =>
-    isCodingChat(s.chats.find((chat) => chat.id === s.activeId)),
-  );
+  const activeChat = useChatStore((s) => s.chats.find((chat) => chat.id === s.activeId));
+  const coding = isCodingChat(activeChat);
+  // A picture is stored on this computer and read by the engine here. A cached
+  // copy's agent runs on another machine, and the relay carries the message,
+  // not the image.
+  const pictures = !coding || !activeChat?.remote;
 
   return (
     <>
@@ -43,11 +46,9 @@ export function Composer() {
         // type steers the run, and Stop stays beside Send.
         steer={coding}
         ready={ready}
-        images={draftImages}
-        // The coding engine reads text. Offering a picture here would promise
-        // something that cannot be delivered.
-        onAddImages={coding ? undefined : addDraftImages}
-        onRemoveImage={coding ? undefined : removeDraftImage}
+        images={pictures ? draftImages : []}
+        onAddImages={pictures ? addDraftImages : undefined}
+        onRemoveImage={pictures ? removeDraftImage : undefined}
         placeholder={
           coding
             ? streaming

@@ -36,6 +36,8 @@
  *   HOOK_UPDATES_DIR     mailbox folder for progress notes, the plan and the
  *                        preview pointer
  *                        (unset = disabled)
+ *   HOOK_VISION          "1" when the model card says the engine may hand the
+ *                        model a picture (`read shot.png`)
  *
  * Plain ESM on purpose: only Node built-ins, nothing that can fail to resolve.
  */
@@ -136,6 +138,8 @@ const UPDATES_DIR = process.env.HOOK_UPDATES_DIR ?? "";
  * loopback bridge instead of being Rust-only.
  */
 const DIRECT = process.env.HOOK_DIRECT === "1";
+/** The model card said this model sees images (`read` returns the picture). */
+const VISION = process.env.HOOK_VISION === "1";
 
 const MAX_PICTURES = 4;
 const MAX_PICTURE_BYTES = 8 * 1024 * 1024;
@@ -293,6 +297,22 @@ function bridgeHandle() {
   }
 }
 
+/**
+ * Pictures: the model's card says it can see them, so `read` on a PNG hands it
+ * the picture itself. Said once, because an agent that does not know this
+ * describes a screenshot from its file name - or says it cannot look at
+ * images at all.
+ */
+function pictureGuidance() {
+  if (!VISION) return "";
+  return (
+    "\n\n## Pictures" +
+    "\nYou can see images. `read` on a picture file (png, jpeg, gif, webp) returns the image itself, not its bytes or a description: use it whenever the answer depends on what a screenshot, photo, chart or design actually shows, and answer from what you see in it." +
+    "\n- Do not guess what a picture contains. If you cannot open it, say so." +
+    "\n- Screenshots are how you check your own work in a user interface: capture the page, read the file, and look at it before you call the work done."
+  );
+}
+
 /** What Hook already remembers about the user, from the same account store. */
 function memoryGuidance() {
   if (!DIRECT || !UPDATES_DIR) return "";
@@ -363,6 +383,7 @@ export default function (pi) {
         directGuidance() +
         guideline +
         webSearchGuidance() +
+        pictureGuidance() +
         (UPDATES_DIR ? planGuidance() + previewGuidance() : "") +
         syncGuidance() +
         gitGuidance() +

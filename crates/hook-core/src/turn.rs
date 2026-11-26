@@ -29,6 +29,7 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - Each project carries a short description that you maintain. Call list_projects whenever the task might match existing work; those descriptions are your index.
 - remember_in_project writes a line into the project's own AGENTS.md, which every coding agent in that folder reads on every run. Use it when the user tells you how the project is built, tested or deployed and it should hold for all future work there. That file travels with the code, so do not use it for anything private.
 - You cannot read or edit project files yourself. create_project can create a folder on any of the user-s machines; update_project_description and remember_in_project act on this computer-s copy and are not offered on a phone. Anything about a project-s contents comes from a coding agent.
+- One exception: a picture. `look_at_picture` opens an image from this computer - a screenshot an agent saved, a path the user gave you, a chart or photo - and you see the picture itself. Use it whenever the answer is about what is in the image; never describe a picture you have not opened.
 
 ## Memory
 - You remember this person between conversations. Pinned memories are already in front of you; `memory_search` finds the rest. Search when an earlier preference, decision or fact could change the answer - most turns need no lookup.
@@ -945,13 +946,16 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                         // tool writes the chat file, and the save below would
                         // put the copy this turn loaded back over it.
                         let result = if call.name == "set_title" {
-                            title_tool(&mut chat, &call.arguments)
+                            ToolOutcome::text(title_tool(&mut chat, &call.arguments))
                         } else {
                             run_tool(&state, &chat_id, call, user_initiated).await
                         };
-                        let mut message = Message::new("tool", &result, "complete");
+                        let mut message = Message::new("tool", &result.text, "complete");
                         message.tool_call_id = Some(call.id.clone());
                         message.hidden = true;
+                        // A picture the tool opened rides on its result: it is
+                        // what `build_history` replays as the frame after it.
+                        message.attachments = result.images;
                         chat.messages.push(message);
                     }
                     chat.meta.updated_at = now_ms();
@@ -1486,6 +1490,7 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
             Some(query) => format!("Searching the web for “{}”…", short(query, 42)),
             None => "Searching the web…".into(),
         },
+        "look_at_picture" => "Looking at a picture…".into(),
         "list_projects" => "Looking at your projects…".into(),
         "list_machines" => "Checking which computers are on…".into(),
         "list_tabs" => "Looking at the tabs…".into(),
@@ -1647,53 +1652,157 @@ fn title_tool(chat: &mut Chat, arguments: &str) -> String {
     }
 }
 
+/// What one tool call answered: the text the model reads, and any picture it
+/// opened.
+///
+/// A `tool` message is text-only for every provider, so a picture cannot ride on
+/// the result itself: `build_history` replays it as the user frame right after,
+/// which is the same shape pi uses for its own `read` tool.
+#[derive(Default)]
+struct ToolOutcome {
+    text: String,
+    images: Vec<Attachment>,
+}
+
+impl ToolOutcome {
+    fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            images: Vec::new(),
+        }
+    }
+}
+
 async fn run_tool(
     state: &AppState,
     chat_id: &str,
     call: &ToolCallRecord,
     user_initiated: bool,
-) -> String {
+) -> ToolOutcome {
     let args = serde_json::from_str::<serde_json::Value>(&call.arguments)
         .unwrap_or_else(|_| json!({}));
     if call.name == "web_search" {
-        return web_search(state, &args).await;
+        return ToolOutcome::text(web_search(state, &args).await);
+    }
+    if call.name == "look_at_picture" {
+        return look_at_picture(state, chat_id, &args);
     }
     if call.name == "search_past_chats" {
-        return search_past_chats(state, &args);
+        return ToolOutcome::text(search_past_chats(state, &args));
     }
     if crate::memory::TOOLS.contains(&call.name.as_str()) {
         if !memory_on(&state.settings, &state.cfg) {
-            return json!({ "error": "Memory is turned off in Settings." }).to_string();
+            return ToolOutcome::text(
+                json!({ "error": "Memory is turned off in Settings." }).to_string(),
+            );
         }
         // A wake is not the user talking. A note can quote a coding agent, and a
         // coding agent can quote a web page: neither may become a permanent fact
         // about the person. Reading is fine; writing waits for their words.
         if !user_initiated && matches!(call.name.as_str(), "remember" | "forget") {
-            return json!({
-                "error": "Memory is only written from something the user said. Answer this update, or wait for their next message."
-            })
-            .to_string();
+            return ToolOutcome::text(
+                json!({
+                    "error": "Memory is only written from something the user said. Answer this update, or wait for their next message."
+                })
+                .to_string(),
+            );
         }
-        return crate::memory::execute(&state.memory, &call.name, &args, chat_id);
+        return ToolOutcome::text(crate::memory::execute(
+            &state.memory,
+            &call.name,
+            &args,
+            chat_id,
+        ));
     }
     // The family is defined by what `workspace::execute` answers, not by the
     // name's prefix: `document_markdown` is part of it.
     if crate::workspace::handles(&call.name) {
-        return run_workspace_tool(state, chat_id, &call.name, &args).await;
+        return ToolOutcome::text(run_workspace_tool(state, chat_id, &call.name, &args).await);
     }
-    tools::execute_async(
-        &ToolEnv {
-            agents: &state.agents,
-            projects: &state.projects,
-            settings: &state.settings,
-            chat_id,
-            user_initiated,
-            state: Some(state),
-        },
-        &call.name,
-        &args,
+    ToolOutcome::text(
+        tools::execute_async(
+            &ToolEnv {
+                agents: &state.agents,
+                projects: &state.projects,
+                settings: &state.settings,
+                chat_id,
+                user_initiated,
+                state: Some(state),
+            },
+            &call.name,
+            &args,
+        )
+        .await,
     )
-    .await
+}
+
+/// A picture from this computer, opened for the model rather than described to
+/// it: the bytes are copied into the chat's own image folder and `build_history`
+/// hands them over as the frame that follows this result.
+fn look_at_picture(state: &AppState, chat_id: &str, args: &serde_json::Value) -> ToolOutcome {
+    let path = args
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if path.is_empty() {
+        return ToolOutcome::text(
+            json!({ "error": "look_at_picture needs the path of an image file on this computer." })
+                .to_string(),
+        );
+    }
+    let attachment = match state
+        .store
+        .adopt_image(chat_id, std::path::Path::new(path), Some("picture"))
+    {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            return ToolOutcome::text(
+                json!({
+                    "error": format!("{error} It has to be the full path of an image file on this computer.")
+                })
+                .to_string(),
+            )
+        }
+    };
+    let size = if attachment.width > 0 {
+        format!(
+            "{}x{} {}",
+            attachment.width,
+            attachment.height,
+            attachment.mime.trim_start_matches("image/")
+        )
+    } else {
+        attachment.mime.trim_start_matches("image/").to_string()
+    };
+    // A model that cannot see pictures would answer from the file name alone.
+    // Say so, and let the user look at the picture in the chat instead.
+    let vision = state
+        .vision
+        .load(std::sync::atomic::Ordering::Relaxed)
+        && !state
+            .vision_off
+            .load(std::sync::atomic::Ordering::Relaxed);
+    if !vision {
+        return ToolOutcome {
+            text: json!({
+                "picture": path,
+                "size": size,
+                "note": "The picture is in the chat for the user, but this model cannot see images, so say what you know for certain and never guess what it shows."
+            })
+            .to_string(),
+            images: Vec::new(),
+        };
+    }
+    ToolOutcome {
+        text: json!({
+            "opened": path,
+            "size": size,
+            "note": "The picture is attached right after this result. Answer from what you actually see in it."
+        })
+        .to_string(),
+        images: vec![attachment],
+    }
 }
 
 /// Earlier conversations on this machine. The search is the one the chat list
@@ -1847,7 +1956,7 @@ pub fn on_agent_event(state: Arc<AppState>, info: AgentInfo) {
     let mut attachments = Vec::new();
     if !updates.is_empty() {
         text.push_str("\n");
-        text.push_str(&tools::progress_block(&updates));
+        text.push_str(&tools::progress_block(&updates, state.capabilities.projects));
         for path in updates.iter().flat_map(|u| u.images.iter()) {
             if attachments.len() >= MAX_BATCH_IMAGES {
                 break;
@@ -1968,6 +2077,13 @@ fn build_history(
                 for result in results {
                     replayed.insert(result.id.clone());
                     history.push(tool_history_entry(result));
+                    // A picture the tool opened arrives right after the result
+                    // that opened it. A `tool` message cannot carry it, and one
+                    // the model never receives is one it would describe from
+                    // the tool's own words.
+                    if let Some(entry) = tool_picture_entry(result, images) {
+                        history.push(entry);
+                    }
                 }
             }
             _ => {}
@@ -1984,6 +2100,28 @@ fn tool_history_entry(message: &Message) -> serde_json::Value {
         "tool_call_id": message.tool_call_id,
         "content": message.content,
     })
+}
+
+/// The pictures a tool opened, as the frame that carries them to the model.
+///
+/// `None` when the result has no pictures, when the model cannot see them (the
+/// tool already said so in words), or when they fell outside the newest-N image
+/// budget - in which case the model must not be told about pixels it never got.
+fn tool_picture_entry(
+    message: &Message,
+    images: Option<&dyn Fn(&Attachment) -> Option<String>>,
+) -> Option<serde_json::Value> {
+    let read = images?;
+    if message.attachments.is_empty() {
+        return None;
+    }
+    let mut parts = vec![json!({ "type": "text", "text": "Picture from the tool call above:" })];
+    for attachment in &message.attachments {
+        if let Some(url) = read(attachment) {
+            parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+        }
+    }
+    (parts.len() > 1).then(|| json!({ "role": "user", "content": parts }))
 }
 
 /// A user turn: plain text, or text plus the pictures they attached.
@@ -2315,6 +2453,41 @@ mod tests {
         let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
         let text = history[0]["content"].as_str().unwrap();
         assert!(text.contains("[attached image: 1200x800 png]"));
+    }
+
+    #[test]
+    fn a_picture_a_tool_opened_rides_on_the_frame_after_its_result() {
+        let mut args = Message::new("assistant", "", "complete");
+        args.tool_calls = Some(vec![ToolCallRecord {
+            id: "call_1".into(),
+            name: "look_at_picture".into(),
+            arguments: r#"{"path":"C:/shot.png"}"#.into(),
+        }]);
+        let mut result = Message::new("tool", r#"{"opened":"C:/shot.png"}"#, "complete");
+        result.tool_call_id = Some("call_1".into());
+        result.hidden = true;
+        result.attachments.push(picture());
+        let chat = chat_with(vec![Message::new("user", "what is in it", "complete"), args, result]);
+
+        let read = |attachment: &Attachment| {
+            Some(format!("data:{};base64,AAAA", attachment.mime))
+        };
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, false, Some(&read));
+        // user, assistant(call), tool(result), user(picture)
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[2]["role"], "tool");
+        assert_eq!(history[3]["role"], "user");
+        assert_eq!(history[3]["content"][1]["type"], "image_url");
+
+        // A model that cannot see pictures is not fed a frame of pixels it
+        // would only be told about: the tool said so in its own words.
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, false, None);
+        assert_eq!(history.len(), 3);
+
+        // And a picture outside the newest-N budget never becomes a frame.
+        let thin = |_: &Attachment| -> Option<String> { None };
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, false, Some(&thin));
+        assert_eq!(history.len(), 3);
     }
 
     fn picture_named(id: &str) -> Attachment {

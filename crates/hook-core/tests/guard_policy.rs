@@ -163,6 +163,19 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
         Some("preview.html")
     );
     assert_eq!(preview["written"]["title"], "Insights");
+
+    // Pictures: the engine can only hand the model an image when its model card
+    // says so, and the guard must not promise what the card did not.
+    let pictures = &value["pictures"];
+    assert_eq!(
+        pictures["promisedWithVision"], true,
+        "a model that sees images must be told `read` opens them"
+    );
+    assert_eq!(
+        pictures["silentWithoutVision"], true,
+        "a text-only model must not be told it can look at a picture"
+    );
+    assert_eq!(pictures["absentByDefault"], true);
 }
 
 #[test]

@@ -41,6 +41,19 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   `start_coding_agent`, `list_agents`, `agent_status`, `steer_agent`,
   `answer_agent`, `stop_agent` and `list_coding_sessions`. All code reading and
   editing happens inside a coding agent, including setting the preview panel.
+- **Both can look at a picture.** An agent opens one with `read`: on a model
+  whose card says it sees images, `read shot.png` hands the model the picture
+  itself, so an agent can check its own work in a user interface instead of
+  guessing from the file name. The guard says so only when the card said yes
+  (`HOOK_VISION`), so a text-only model is never told it can see. The chat agent
+  has `look_at_picture` for the same job: it opens an image from this computer —
+  a screenshot an agent reported, a path the user typed — copies it into the
+  chat's own image folder and hands it to the model as the frame after the tool
+  result (a `tool` message is text-only for every provider). A coding agent's
+  progress pictures arrive with their paths, so the note the chat agent reads
+  says where they are and it can open the one it is about to describe. A
+  product with no folder of its own (a phone) is offered neither, and
+  `progress_block` then leaves the paths out.
 - **The agent names the conversation.** A chat starts as *Untitled*; in its
   first reply the model calls `set_title` with a few words about what the
   conversation is for, and that becomes the name in the sidebar. Hook no longer
@@ -54,7 +67,13 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
 - **Hook ships its own engine.** The installer carries a Node runtime and the
   pi coding agent's bundle as app resources; agents run on that copy. Nothing is
   installed on the machine, nothing is looked up on `PATH`, and there is no
-  setting for it anywhere in the UI.
+  setting for it anywhere in the UI. Two packages are copied beside the bundle
+  because it imports them at runtime: `jiti`, which loads the guard, and
+  `@silvia-odwyer/photon-node`, the image resizer. Without photon `read` cannot
+  turn an image file into something the model can see, and every screenshot an
+  agent opens comes back as `[Image omitted]` — so
+  `scripts/fetch-pi-runtime.mjs` copies it, checks that it loads with its `.wasm`,
+  and lists its Apache-2.0 license in `THIRD-PARTY-LICENSES.txt`.
 - **Coding agents are pi subprocesses**, driven over `--mode rpc` with the
   project folder as their working directory:
 
@@ -140,7 +159,10 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   reasoning and stop with nothing written. The chat agent's own
   `[model] max_tokens` is separate.
 - **Pictures from you.** Paste, drag or pick an image in the composer. Bytes are
-  downscaled and stored on disk, not in the chat JSON.
+  downscaled and stored on disk, not in the chat JSON. In a conversation with a
+  coding agent the same picture goes to the engine with the message (pi's
+  `images` on `prompt` / `steer`), so `here is the screen it looks wrong on` is
+  a real instruction; the picture still sits in the chat for you.
 - **Vision is a capability, not a setting.** At startup Hook asks the provider
   what the model does (`GET /models`, right next to the chat endpoint) and reads
   `input_modalities`, OpenRouter's `architecture`, or a `vision` flag. If the
@@ -246,6 +268,15 @@ that conversation — what the engine says is what you read.
   restart. `/compact` asks the engine to fold its older turns into a summary
   (pi's own `compact` RPC); the chat's messages stay on screen, and the fold is
   drawn in advanced mode like any other.
+- **Pictures you attach are its pictures.** The composer's attach button is
+  there for a direct conversation too: the bytes are stored in the chat's image
+  folder and go to the engine with the message, so `what is wrong with this
+  layout` plus a screenshot is one message. The engine reads images from this
+  computer on its own as well (`read shot.png`), which is what makes a
+  screenshot-then-fix loop work. A cached copy — a chat whose agent runs on
+  another machine — keeps the button out and refuses one from the backend: the
+  relay carries the message, not the image, and a picture that silently never
+  arrives would be worse than a refusal.
 - **Local only.** A coding-agent chat is never uploaded: the folder, the engine
   process and the session file exist on one computer, and half of that arriving
   on another would be worse than not arriving at all. Turning **Advanced** off
