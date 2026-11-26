@@ -370,7 +370,10 @@ bash.
   does not carry them — it decodes through Windows' Media Foundation instead, the
   decision in `docs/browser-os-decoders.md`, whose stages 1–2 are the work before
   a public download; `pnpm browser:smoke --codecs` fails either way if the build
-  loses the capability), `overlay/src/hook/` the new paths that are
+  loses the capability — `0022`–`0025` in `patches/series` are that work, and
+  `docs/browser-os-decoders.md` "What is in the tree now" records what they
+  verified and what they do not: `USE_PROPRIETARY_CODECS` gates the MP4 *parsers*
+  too, so a codec-off build cannot play a file until `0025` is in), `overlay/src/hook/` the new paths that are
   junctioned into the checkout as `src/hook`, `patches/series` the small edits to
   upstream files that survive a rebase, and `tools/{sync,build,verify,patch,smoke}.mjs`
   the whole interface. The product name and icon are `0011-branding`, the largest

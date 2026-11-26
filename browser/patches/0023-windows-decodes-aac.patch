@@ -1,0 +1,48 @@
+diff --git a/media/filters/win/media_foundation_audio_decoder.cc b/media/filters/win/media_foundation_audio_decoder.cc
+index ed9529f3d6..8b4d55ec26 100644
+--- a/media/filters/win/media_foundation_audio_decoder.cc
++++ b/media/filters/win/media_foundation_audio_decoder.cc
+@@ -98,14 +98,15 @@ std::optional<MFT_REGISTER_TYPE_INFO> GetTypeInfo(
+       return MFT_REGISTER_TYPE_INFO{MFMediaType_Audio,
+                                     MFAudioFormat_Dolby_DDPlus};
+ #endif
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++    // Windows' AAC decoder is in-box, not a store package, and it decodes
++    // AAC-LC and HE-AAC on every supported version. Only xHE-AAC needs the
++    // newer MFT that arrived in Windows 11 22H2.
+     case AudioCodec::kAAC:
+       if (config.profile() == AudioCodecProfile::kXHE_AAC &&
+-          base::win::GetVersion() >= base::win::Version::WIN11_22H2) {
+-        return MFT_REGISTER_TYPE_INFO{MFMediaType_Audio, MFAudioFormat_AAC};
++          base::win::GetVersion() < base::win::Version::WIN11_22H2) {
++        return std::nullopt;
+       }
+-      [[fallthrough]];
+-#endif
++      return MFT_REGISTER_TYPE_INFO{MFMediaType_Audio, MFAudioFormat_AAC};
+ #if BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
+     case AudioCodec::kAC4:
+       return MFT_REGISTER_TYPE_INFO{MFMediaType_Audio, MFAudioFormat_Dolby_AC4};
+diff --git a/media/mojo/services/gpu_mojo_media_client_win.cc b/media/mojo/services/gpu_mojo_media_client_win.cc
+index 9716800e49..efc1a1fd09 100644
+--- a/media/mojo/services/gpu_mojo_media_client_win.cc
++++ b/media/mojo/services/gpu_mojo_media_client_win.cc
+@@ -101,9 +101,15 @@ class GpuMojoMediaClientWin final : public GpuMojoMediaClient {
+     }
+ #endif  // BUILDFLAG (ENABLE_PLATFORM_AC3_EAC3_AUDIO)
+ 
+-    if (base::win::GetVersion() >= base::win::Version::WIN11_22H2 &&
+-        InitializeMediaFoundation()) {
+-      audio_configs.emplace_back(AudioCodec::kAAC, AudioCodecProfile::kXHE_AAC);
++    // AAC-LC and HE-AAC come from the in-box decoder, which is present
++    // wherever Media Foundation started -- including the Media Feature Pack
++    // that Windows N editions install.
++    if (InitializeMediaFoundation()) {
++      audio_configs.emplace_back(AudioCodec::kAAC, AudioCodecProfile::kUnknown);
++      if (base::win::GetVersion() >= base::win::Version::WIN11_22H2) {
++        audio_configs.emplace_back(AudioCodec::kAAC,
++                                   AudioCodecProfile::kXHE_AAC);
++      }
+     }
+ 
+     return audio_configs;

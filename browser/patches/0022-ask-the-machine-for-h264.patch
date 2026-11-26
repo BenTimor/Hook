@@ -1,0 +1,188 @@
+diff --git a/content/renderer/media/render_media_client.cc b/content/renderer/media/render_media_client.cc
+index f53f8ef940..2c586c16a5 100644
+--- a/content/renderer/media/render_media_client.cc
++++ b/content/renderer/media/render_media_client.cc
+@@ -22,7 +22,7 @@
+ 
+ namespace {
+ 
+-#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+ void UpdateDecoderVideoProfilesInternal(
+     const media::SupportedVideoDecoderConfigs& supported_configs) {
+   base::flat_set<media::VideoCodecProfile> media_profiles;
+@@ -34,7 +34,7 @@ void UpdateDecoderVideoProfilesInternal(
+   }
+   media::UpdateDefaultDecoderSupportedVideoProfiles(media_profiles);
+ }
+-#endif  // BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+ 
+ #if BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+ void UpdateDecoderAudioTypesInternal(
+@@ -80,7 +80,7 @@ void RenderMediaClient::SetGpuFeatureInfo(
+ RenderMediaClient::RenderMediaClient()
+     : main_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
+-#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT) || \
++#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER) || \
+     BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+   RenderThreadImpl::current()->BindHostReceiver(
+       interface_factory_for_supported_profiles_.BindNewPipeAndPassReceiver());
+@@ -89,10 +89,10 @@ RenderMediaClient::RenderMediaClient()
+                      // base::Unretained(this) is safe because the
+                      // RenderMediaClient is never destructed.
+                      base::Unretained(this)));
+-#endif  // BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT) ||
++#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER) ||
+         // BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+ 
+-#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+   // We'll first try to query the supported video decoder configurations
+   // asynchronously. If IsDecoderSupportedVideoType() is called before we get a
+   // response, that method will block if its not on the main thread or fall
+@@ -113,7 +113,7 @@ RenderMediaClient::RenderMediaClient()
+                      // RenderMediaClient is never destructed.
+                      base::Unretained(this)));
+   video_decoder_for_supported_profiles_ = std::move(video_decoder_remote);
+-#endif  // BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+ 
+ #if BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+   interface_factory_for_supported_profiles_->CreateAudioDecoder(
+@@ -161,7 +161,7 @@ bool RenderMediaClient::IsDecoderSupportedAudioType(
+ 
+ bool RenderMediaClient::IsDecoderSupportedVideoType(
+     const media::VideoType& type) {
+-#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+   if (!did_video_decoder_update_.IsSignaled()) {
+     // The asynchronous request didn't complete in time, so we must now block
+     // or retrieve the information synchronously.
+@@ -180,7 +180,7 @@ bool RenderMediaClient::IsDecoderSupportedVideoType(
+       did_video_decoder_update_.Wait();
+     }
+   }
+-#endif  // BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+ 
+   return GetContentClient()->renderer()->IsDecoderSupportedVideoType(type);
+ }
+@@ -265,10 +265,10 @@ void RenderMediaClient::OnAudioDecoderDisconnected() {
+ }
+ 
+ void RenderMediaClient::OnVideoDecoderDisconnected() {
+-#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+   OnGetSupportedVideoDecoderConfigs(media::SupportedVideoDecoderConfigs(),
+                                     media::VideoDecoderType::kUnknown);
+-#endif  // BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+ }
+ 
+ void RenderMediaClient::OnVideoEncoderDisconnected() {
+@@ -282,7 +282,7 @@ void RenderMediaClient::OnGetSupportedVideoDecoderConfigs(
+     const media::SupportedVideoDecoderConfigs& configs,
+     media::VideoDecoderType type) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
+-#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+   if (did_video_decoder_update_.IsSignaled()) {
+     return;
+   }
+@@ -298,7 +298,7 @@ void RenderMediaClient::OnGetSupportedVideoDecoderConfigs(
+ #else
+   interface_factory_for_supported_profiles_.reset();
+ #endif  // BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+-#endif  // BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+ }
+ 
+ void RenderMediaClient::OnGetSupportedAudioDecoderConfigs(
+@@ -313,13 +313,13 @@ void RenderMediaClient::OnGetSupportedAudioDecoderConfigs(
+   did_audio_decoder_update_.Signal();
+ 
+   audio_decoder_for_supported_configs_.reset();
+-#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+   if (did_video_decoder_update_.IsSignaled()) {
+     interface_factory_for_supported_profiles_.reset();
+   }
+ #else
+   interface_factory_for_supported_profiles_.reset();
+-#endif  // BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_DECODE_SUPPORT)
++#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+ #endif  // BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+ }
+ 
+diff --git a/media/base/mime_util_internal.cc b/media/base/mime_util_internal.cc
+index 402f2e6a79..f2d29d2a9b 100644
+--- a/media/base/mime_util_internal.cc
++++ b/media/base/mime_util_internal.cc
+@@ -325,7 +325,11 @@ void MimeUtil::AddSupportedMediaFormats() {
+   mkv_video_codecs.emplace(VP8);
+   mkv_video_codecs.emplace(VP9);
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++  // H.264 and AAC are listed whether or not this build shipped FFmpeg's
++  // decoders for them: whether they *play* is a per-machine answer from
++  // IsDecoderSupportedVideoType()/IsDecoderSupportedAudioType(), which consult
++  // the platform's runtime report. A codec missing from these sets is invisible
++  // to canPlayType()/isTypeSupported() even when the machine can decode it.
+   const CodecSet aac{MPEG2_AAC, MPEG4_AAC, MPEG4_XHE_AAC};
+   mp4_audio_codecs.insert(aac.begin(), aac.end());
+   mkv_audio_codecs.insert(aac.begin(), aac.end());
+@@ -333,6 +337,11 @@ void MimeUtil::AddSupportedMediaFormats() {
+   CodecSet avc_and_aac(aac);
+   avc_and_aac.emplace(H264);
+ 
++  mp4_video_codecs.emplace(H264);
++  mkv_video_codecs.emplace(H264);
++
++#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++
+ #if BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
+   mp4_audio_codecs.emplace(AC3);
+   mp4_audio_codecs.emplace(EAC3);
+@@ -350,8 +359,6 @@ void MimeUtil::AddSupportedMediaFormats() {
+   mkv_audio_codecs.emplace(MPEG_H_AUDIO);
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_MPEG_H_AUDIO)
+ 
+-  mp4_video_codecs.emplace(H264);
+-  mkv_video_codecs.emplace(H264);
+ #if BUILDFLAG(ENABLE_PLATFORM_HEVC)
+   mp4_video_codecs.emplace(HEVC);
+   mkv_video_codecs.emplace(HEVC);
+diff --git a/media/base/supported_types.cc b/media/base/supported_types.cc
+index c68f663fb6..271eea6802 100644
+--- a/media/base/supported_types.cc
++++ b/media/base/supported_types.cc
+@@ -466,8 +466,14 @@ bool IsDefaultDecoderSupportedVideoType(const VideoType& type) {
+   }
+ 
+ #if !BUILDFLAG(USE_PROPRIETARY_CODECS)
+-  if (IsVideoCodecProprietary(type.codec))
++  // A codec this build does not ship can still play when the machine's own
++  // decoder reports it -- that is what the runtime report is for. With no
++  // report the answer stays the compile-time one.
++  if (IsVideoCodecProprietary(type.codec) &&
++      !GetSupplementalDecoderVideoProfileCache()->IsProfileSupported(
++          type.profile)) {
+     return false;
++  }
+ #endif
+ 
+   switch (type.codec) {
+@@ -503,8 +509,10 @@ bool IsDefaultDecoderSupportedAudioType(const AudioType& type) {
+     return false;
+ 
+ #if !BUILDFLAG(USE_PROPRIETARY_CODECS)
+-  if (IsAudioCodecProprietary(type.codec))
++  if (IsAudioCodecProprietary(type.codec) &&
++      !GetSupplementalDecoderAudioTypeCache()->IsProfileSupported(type)) {
+     return false;
++  }
+ #endif
+ 
+   switch (type.codec) {

@@ -105,6 +105,26 @@ and `media/gpu/windows/d3d11_*`, chosen in
 H.264, VP9 and AV1 on any machine whose GPU supports them — but the table above
 never lets it be asked, because `avc1` is not advertised.
 
+**5. The parser and the converter are gated by the same flag.** This is the layer
+the four above hide behind, and it is the one that decides whether a platform
+decoder ever sees a frame:
+
+- `media/formats/BUILD.gn` compiles `mp4/avc.cc`, `mp4/aac.cc` and the
+  Annex-B/AVC converters only `if (proprietary_codecs)`, so a codec-off build
+  cannot read an `avc1`/`mp4a` sample entry at all.
+- `media/formats/mp4/box_definitions.{h,cc}` guard `AVCDecoderConfigurationRecord`
+  and the `AAC` descriptor the same way.
+- `media/filters/BUILD.gn` and `media/filters/ffmpeg_demuxer.cc` guard the two
+  bitstream converters: MP4's length-prefixed NAL units are turned into Annex B
+  for H.264, and AAC frames get an ADTS header, only when FFmpeg's decoders are
+  in the build. A platform decoder is fed the same bitstream an FFmpeg decoder
+  would have been, so without them it fails on the first frame.
+- `media/filters/stream_parser_factory.cc` guards the MSE side: the MP4 stream
+  parser's codec list and its `avc1`/`mp4a` matching.
+
+Parsing is not decoding, which is why the fork compiles all of it in every build:
+`browser/patches/0025-parsing-is-not-decoding.patch`.
+
 ## The runtime seam already exists
 
 Chromium is not purely compile-time: `media/base/supported_types.h` is a runtime
@@ -177,7 +197,9 @@ Compile the runtime report unconditionally (drop the
 `UpdateDecoderVideoProfilesInternal` in `render_media_client.cc`); have the Windows
 client publish the H.264 profiles `D3DVideoDecoder::GetSupportedVideoDecoderConfigs`
 already reports; make the H.264 entry in `mime_util_internal.cc` consult
-`IsDefaultDecoderSupportedVideoType()` instead of the `#if`.
+`IsDefaultDecoderSupportedVideoType()` instead of the `#if`; and compile the
+parser/converter layer above (`media/formats`, `media/filters`), because without it
+the answer is advertised and then no frame is ever decoded.
 
 Outcome: hardware H.264 playback on any machine whose GPU decodes it, with
 `proprietary_codecs = false`. No licence question, no new decoder, no new
@@ -222,6 +244,41 @@ to VP8/VP9 with peers that accept them and fail against H.264-only endpoints.
 Firefox's answer is to download Cisco's binary at runtime, which is a separate
 little project (fetch, verify, sandbox, update) and a separate licence story —
 Cisco's, not ours.
+
+## What is in the tree now
+
+Four patches, each one small and independently revertable, all applied by
+`browser/patches/series`:
+
+| patch | what it changes |
+| --- | --- |
+| `0022-ask-the-machine-for-h264` | the video capability report is compiled whenever the Mojo video decoder is (`ENABLE_MOJO_VIDEO_DECODER`, not the HEVC flag); the `!USE_PROPRIETARY_CODECS` vetoes in `supported_types.cc` let a proprietary codec through when the platform reports it; the mp4/mkv tables in `mime_util_internal.cc` carry H.264 and AAC in every build |
+| `0023-windows-decodes-aac` | `MediaFoundationAudioDecoder` maps `AudioCodec::kAAC` to `MFAudioFormat_AAC` for every profile (xHE-AAC still needs Windows 11 22H2), and `GetPlatformSupportedAudioDecoderConfigs` publishes AAC-LC/HE-AAC whenever Media Foundation starts |
+| `0024-describe-an-h264-stream` | `ffmpeg_common.cc` builds an H.264 decoder config in every build — describing a stream is not decoding it |
+| `0025-parsing-is-not-decoding` | the MP4 sample-entry parsers, the AVC record, and the Annex-B/ADTS converters compile in every build, and the demuxer converts unconditionally |
+
+Verified on a non-component, `dcheck_always_on=false`, `proprietary_codecs=false`
+build (`out/NoComp`, 2026-11-26):
+
+- `canPlayType` answers "probably" for `avc1.42E01E` **and** `mp4a.40.2` — with no
+  FFmpeg H.264 or AAC decoder in the binary at all. That is the codec tables, the
+  vetoes and the runtime report (layers 1–4) working together.
+- A local H.264+AAC MP4 is **demuxed**: `duration 3`, `videoWidth 320`,
+  `videoHeight 180` reach the page. That is `0024` + `0025` working; before them the
+  element stalled at `readyState 0` with no metadata.
+- `MediaSource.isTypeSupported` still answers false for mp4: the MSE stream-parser
+  codec list (`stream_parser_factory.cc`) is not in `0025` yet. Sites that require
+  MSE for H.264 (rather than progressive playback) therefore see "not supported".
+- Decoding itself is **not** working yet. The GPU process picks
+  `D3D11VideoDecoder` (`chrome://gpu` reports "Video Decode: Hardware accelerated"),
+  and it fails on the first frame: `D3DStatus::6` = `kDecoderFailedDecode`. The next
+  step is decoder-side (the sample/sequence-header form a Media Foundation or D3D11
+  decoder expects), not another build flag.
+
+So: stage 1's *advertising* half is done and verified; its *decode* half stops at
+the decoder, and stage 2's AAC half is wired but has never been exercised, because
+the pipeline fails on video first. Testing the audio path alone (an `.m4a`) is the
+first thing to do next.
 
 ## What this does not solve
 
@@ -285,6 +342,11 @@ combination that makes the common MP4 play.
 
 ## How it would be verified
 
+0. Pass `--disable-backgrounding-occluded-windows --disable-renderer-backgrounding
+   --disable-features=CalculateNativeWinOcclusion` to anything that plays a file: an
+   occluded window never starts a media pipeline, and `<video>` sits at
+   `readyState 0` with one `stalled` event, which looks exactly like a codec
+   failure and is not one.
 1. `browser/tools/codecs.html` in a built browser — the matrix this decision was
    made on, and the first thing each stage below should move. It is a plain file,
    no build and no server: `--headless=new --dump-dom` on it prints the table.

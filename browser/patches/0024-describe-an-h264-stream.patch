@@ -1,0 +1,46 @@
+diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
+index e4c443001d..eecbbc8058 100644
+--- a/media/ffmpeg/ffmpeg_common.cc
++++ b/media/ffmpeg/ffmpeg_common.cc
+@@ -464,7 +464,6 @@ bool AVCodecContextToAudioDecoderConfig(const AVCodecContext* codec_context,
+     return true;
+ #endif
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+   if (codec == AudioCodec::kAAC) {
+     // TODO(dalecurtis): Just use the profile from the codec context if ffmpeg
+     // ever starts supporting xHE-AAC.
+@@ -478,7 +477,6 @@ bool AVCodecContextToAudioDecoderConfig(const AVCodecContext* codec_context,
+         config->set_profile(aac_parser.GetProfile());
+     }
+   }
+-#endif
+ 
+   // Verify that AudioConfig.bytes_per_channel was calculated correctly for
+   // codecs that have |sample_fmt| set by FFmpeg.
+@@ -583,11 +581,14 @@ bool AVStreamToVideoDecoderConfig(const AVStream* stream,
+       VideoPixelFormatToChromaSampling(pixel_format);
+ 
+   switch (codec) {
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++    // H.264 is described here, not decoded: the profile comes from the sample
++    // entry so a platform decoder can be configured from it.
+     case VideoCodec::kH264: {
+       profile = ProfileIDToVideoCodecProfile(codec_context->profile);
+-      // if the profile is still unknown, try to extract it from
+-      // the extradata using the internal parser
++      // If the profile is still unknown, try to extract it from the extradata
++      // using the internal parser: reading a sample entry is parsing, not
++      // decoding, and a platform decoder configured with kUnknown is not a
++      // decoder at all.
+       if (profile == VIDEO_CODEC_PROFILE_UNKNOWN && codec_context->extradata &&
+           codec_context->extradata_size) {
+         mp4::AVCDecoderConfigurationRecord avc_config;
+@@ -670,7 +671,6 @@ bool AVStreamToVideoDecoderConfig(const AVStream* stream,
+       break;
+     }
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+     case VideoCodec::kVP8:
+       profile = VP8PROFILE_ANY;
+       break;

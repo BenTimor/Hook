@@ -21,3 +21,7 @@
 0019-panel-button.patch
 0020-not-default-yet.patch
 0021-start-page-queue.patch
+0022-ask-the-machine-for-h264.patch
+0023-windows-decodes-aac.patch
+0024-describe-an-h264-stream.patch
+0025-parsing-is-not-decoding.patch

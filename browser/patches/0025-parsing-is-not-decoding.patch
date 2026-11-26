@@ -1,0 +1,250 @@
+diff --git a/media/filters/BUILD.gn b/media/filters/BUILD.gn
+index de971055f9..9636758380 100644
+--- a/media/filters/BUILD.gn
++++ b/media/filters/BUILD.gn
+@@ -132,12 +132,14 @@ source_set("filters") {
+ 
+   libs = []
+ 
+-  if (proprietary_codecs) {
+-    sources += [
+-      "h264_to_annex_b_bitstream_converter.cc",
+-      "h264_to_annex_b_bitstream_converter.h",
+-    ]
++  # Same reason as the FFmpeg converters below: the Annex-B builder is what
++  # the platform H.264 decoder is handed.
++  sources += [
++    "h264_to_annex_b_bitstream_converter.cc",
++    "h264_to_annex_b_bitstream_converter.h",
++  ]
+ 
++  if (proprietary_codecs) {
+     if (enable_platform_hevc) {
+       sources += [
+         "h265_to_annex_b_bitstream_converter.cc",
+@@ -219,20 +221,21 @@ source_set("filters") {
+   }
+ 
+   if (media_use_ffmpeg) {
+-    if (proprietary_codecs) {
++    # The converters sit between the demuxer and a decoder. A build without
++    # FFmpeg's AAC/H.264 decoders still needs them, because the platform decoder
++    # is fed the same bitstream (see browser/patches/0025-parsing-is-not-decoding.patch).
++    sources += [
++      "ffmpeg_aac_bitstream_converter.cc",
++      "ffmpeg_aac_bitstream_converter.h",
++      "ffmpeg_h264_to_annex_b_bitstream_converter.cc",
++      "ffmpeg_h264_to_annex_b_bitstream_converter.h",
++    ]
++
++    if (enable_platform_hevc) {
+       sources += [
+-        "ffmpeg_aac_bitstream_converter.cc",
+-        "ffmpeg_aac_bitstream_converter.h",
+-        "ffmpeg_h264_to_annex_b_bitstream_converter.cc",
+-        "ffmpeg_h264_to_annex_b_bitstream_converter.h",
++        "ffmpeg_h265_to_annex_b_bitstream_converter.cc",
++        "ffmpeg_h265_to_annex_b_bitstream_converter.h",
+       ]
+-
+-      if (enable_platform_hevc) {
+-        sources += [
+-          "ffmpeg_h265_to_annex_b_bitstream_converter.cc",
+-          "ffmpeg_h265_to_annex_b_bitstream_converter.h",
+-        ]
+-      }
+     }
+ 
+     if (enable_ffmpeg_video_decoders) {
+diff --git a/media/filters/ffmpeg_demuxer.cc b/media/filters/ffmpeg_demuxer.cc
+index 5db07aa59b..b9f52acea3 100644
+--- a/media/filters/ffmpeg_demuxer.cc
++++ b/media/filters/ffmpeg_demuxer.cc
+@@ -727,23 +727,19 @@ void FFmpegDemuxerStream::Read(uint32_t count, ReadCB read_cb) {
+ void FFmpegDemuxerStream::EnableBitstreamConverter() {
+   DCHECK(task_runner_->RunsTasksInCurrentSequence());
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++  // A platform decoder is fed the bitstream an FFmpeg decoder would have been
++  // fed: H.264 as Annex B, AAC with an ADTS header. Converting is not decoding,
++  // so this is not behind the codec flag (see
++  // browser/patches/0025-parsing-is-not-decoding.patch).
+   InitBitstreamConverter();
+-#else
+-  DLOG(ERROR) << "Proprietary codecs not enabled and stream requires bitstream "
+-                 "conversion. Playback will likely fail.";
+-#endif
+ }
+ 
+ void FFmpegDemuxerStream::ResetBitstreamConverter() {
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+   if (bitstream_converter_)
+     InitBitstreamConverter();
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ }
+ 
+ void FFmpegDemuxerStream::InitBitstreamConverter() {
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+   switch (stream_->codecpar->codec_id) {
+     case AV_CODEC_ID_H264:
+       // Clear |extra_data| so that future (fallback) decoders will know that
+@@ -778,7 +774,6 @@ void FFmpegDemuxerStream::InitBitstreamConverter() {
+     default:
+       break;
+   }
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ }
+ 
+ bool FFmpegDemuxerStream::SupportsConfigChanges() { return false; }
+diff --git a/media/filters/ffmpeg_demuxer.h b/media/filters/ffmpeg_demuxer.h
+index f4a2a28489..37aa470f35 100644
+--- a/media/filters/ffmpeg_demuxer.h
++++ b/media/filters/ffmpeg_demuxer.h
+@@ -187,9 +187,9 @@ class MEDIA_EXPORT FFmpegDemuxerStream : public DemuxerStream {
+   DecoderBufferQueue buffer_queue_;
+   ReadCB read_cb_;
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++  // Present in every build: a platform decoder needs the same converted
++  // bitstream an FFmpeg decoder would have been fed.
+   std::unique_ptr<FFmpegBitstreamConverter> bitstream_converter_;
+-#endif
+ 
+   std::string encryption_key_id_;
+   bool fixup_chained_ogg_ = false;
+diff --git a/media/formats/BUILD.gn b/media/formats/BUILD.gn
+index 3afcf2a6b2..631adff8b8 100644
+--- a/media/formats/BUILD.gn
++++ b/media/formats/BUILD.gn
+@@ -120,32 +120,39 @@ source_set("formats") {
+ 
+   configs += [ "//media:subcomponent_config" ]
+ 
++  # The sample-entry parsers and the two Annex-B/AVC converters are not
++  # decoders: without them a build that decodes through the platform cannot read
++  # an avc1/mp4a track at all, and cannot hand the platform a bitstream it
++  # accepts. See browser/patches/0025-parsing-is-not-decoding.patch.
++  deps += [ "//media/video" ]
++  sources += [
++    "mp4/aac.cc",
++    "mp4/aac.h",
++    "mp4/avc.cc",
++    "mp4/avc.h",
++    "mp4/h264_annex_b_to_avc_bitstream_converter.cc",
++    "mp4/h264_annex_b_to_avc_bitstream_converter.h",
++    "mp4/h26x_annex_b_to_bitstream_converter.cc",
++    "mp4/h26x_annex_b_to_bitstream_converter.h",
++    "mp4/mp4_status.h",
++    "mpeg/adts_constants.h",
++    "mpeg/adts_stream_parser.cc",
++    "mpeg/adts_stream_parser.h",
++  ]
++
++  # We need this to make h264_annex_b_to_avc_bitstream_converter.h accessible
++  # from video_encode_accelerator_adapter.cc, unfortunately we can't move
++  # h264_annex_b_to_avc_bitstream_converter.h since it depends on
++  # box_definitions.h
++  # TODO(eugene): consider moving media/video/h264_parser.(h|cc) to
++  # media/formats. It might help to break this dependency cycle.
++  allow_circular_includes_from = [ "//media/video" ]
++
+   if (proprietary_codecs) {
+-    deps += [ "//media/video" ]
+     sources += [
+-      "mp4/aac.cc",
+-      "mp4/aac.h",
+-      "mp4/avc.cc",
+-      "mp4/avc.h",
+       "mp4/dolby_vision.cc",
+       "mp4/dolby_vision.h",
+-      "mp4/h264_annex_b_to_avc_bitstream_converter.cc",
+-      "mp4/h264_annex_b_to_avc_bitstream_converter.h",
+-      "mp4/h26x_annex_b_to_bitstream_converter.cc",
+-      "mp4/h26x_annex_b_to_bitstream_converter.h",
+-      "mp4/mp4_status.h",
+-      "mpeg/adts_constants.h",
+-      "mpeg/adts_stream_parser.cc",
+-      "mpeg/adts_stream_parser.h",
+     ]
+-
+-    # We need this to make h264_annex_b_to_avc_bitstream_converter.h accessible
+-    # from video_encode_accelerator_adapter.cc, unfortunately we can't move
+-    # h264_annex_b_to_avc_bitstream_converter.h since it depends on
+-    # box_definitions.h
+-    # TODO(eugene): consider moving media/video/h264_parser.(h|cc) to
+-    # media/formats. It might help to break this dependency cycle.
+-    allow_circular_includes_from = [ "//media/video" ]
+   }
+   if (proprietary_codecs && enable_platform_hevc) {
+     sources += [
+diff --git a/media/formats/mp4/box_definitions.cc b/media/formats/mp4/box_definitions.cc
+index 017e7fbb6b..41af012344 100644
+--- a/media/formats/mp4/box_definitions.cc
++++ b/media/formats/mp4/box_definitions.cc
+@@ -30,12 +30,13 @@
+ #include "media/media_buildflags.h"
+ #include "ui/gfx/hdr_metadata.h"
+ 
++#include "media/formats/mp4/avc.h"
++#include "media/parsers/h264_parser.h"
++
+ #if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #include <optional>
+ 
+-#include "media/formats/mp4/avc.h"
+ #include "media/formats/mp4/dolby_vision.h"
+-#include "media/parsers/h264_parser.h"
+ 
+ #if BUILDFLAG(ENABLE_PLATFORM_HEVC)
+ #include "media/formats/mp4/hevc.h"
+@@ -744,7 +745,8 @@ bool HandlerReference::Parse(BoxReader* reader) {
+   return true;
+ }
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++// The AVC record is what a platform H.264 decoder is configured from, and what
++// the demuxer's Annex-B converter serializes back: reading it is parsing.
+ AVCDecoderConfigurationRecord::AVCDecoderConfigurationRecord()
+     : version(0),
+       profile_indication(0),
+@@ -966,8 +968,6 @@ bool AVCDecoderConfigurationRecord::Serialize(
+   return result;
+ }
+ 
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+-
+ VPCodecConfigurationRecord::VPCodecConfigurationRecord()
+     : profile(VIDEO_CODEC_PROFILE_UNKNOWN) {}
+ 
+diff --git a/media/formats/mp4/box_definitions.h b/media/formats/mp4/box_definitions.h
+index 08cf9684eb..07f321ab5f 100644
+--- a/media/formats/mp4/box_definitions.h
++++ b/media/formats/mp4/box_definitions.h
+@@ -229,7 +229,8 @@ struct MEDIA_EXPORT HandlerReference : Box {
+   std::string name;
+ };
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++// The sample-entry records a platform decoder is configured from: reading them
++// is parsing, not decoding.
+ struct MEDIA_EXPORT AVCDecoderConfigurationRecord : Box {
+   DECLARE_BOX_METHODS(AVCDecoderConfigurationRecord);
+ 
+@@ -260,7 +261,6 @@ struct MEDIA_EXPORT AVCDecoderConfigurationRecord : Box {
+   bool ParseInternal(BufferReader* reader, MediaLog* media_log);
+   bool ParseREXT(BufferReader* reader, MediaLog* media_log);
+ };
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+ struct MEDIA_EXPORT VPCodecConfigurationRecord : Box {
+   DECLARE_BOX_METHODS(VPCodecConfigurationRecord);
+@@ -414,9 +414,7 @@ struct MEDIA_EXPORT ElementaryStreamDescriptor : Box {
+   DECLARE_BOX_METHODS(ElementaryStreamDescriptor);
+ 
+   uint8_t object_type;
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+   AAC aac;
+-#endif
+ };
+ 
+ struct MEDIA_EXPORT FlacSpecificBox : Box {
