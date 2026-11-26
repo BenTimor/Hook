@@ -49,6 +49,13 @@ agent themselves.
   next time (Home, Projects and the drives follow it). Pins live in that
   machine's `settings.json`, so they are per-machine, at most twelve, and
   survive a restart.
+  A level is read over the relay, so it can take seconds: the rows of the
+  folder above stay on screen (dimmed, not tappable) with a spinner beside the
+  path, rather than the list emptying itself. A host that does not answer
+  leaves the last level where it is, says why, and offers **Try again**; **Up**
+  still walks back out, because the folder being left is known even when its
+  contents are not. The link back to the project list says **Pick a project**
+  so it cannot be mistaken for the **Projects** folder on the host.
   The host keeps the folder, the engine and the
   session. Only a small stub syncs — title, machine, live
   state, message count — never the transcript, a path or a session id. Opening

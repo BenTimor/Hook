@@ -115,13 +115,31 @@ export function RemoteChatDialog({
   const [newDescription, setNewDescription] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [mode, setMode] = useState<"project" | "folder">("project");
-  const [folder, setFolder] = useState<string | null>(null);
+  /**
+   * Every level walked to, the places list first. Its last entry is the folder
+   * being browsed — the one thing that is known even when that folder could
+   * not be read, which is what keeps the way back working.
+   */
+  const [trail, setTrail] = useState<(string | null)[]>([null]);
+  /** The host's answer for the level on screen. It is kept while the next one
+   * is read: a host can take seconds, and a list that empties itself reads as
+   * a broken picker rather than a slow one. */
   const [listing, setListing] = useState<RemoteFolderListing | null>(null);
   const [folderLoading, setFolderLoading] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  /** Bumped by "Try again", so the same level or project list is read once
+   * more without leaving and reopening the picker. They are separate because
+   * retrying a folder must not throw away the walk to get to it. */
+  const [projectsAttempt, setProjectsAttempt] = useState(0);
+  const [folderAttempt, setFolderAttempt] = useState(0);
   /** The host's starred folders, in its own order. The listing's flags seed
    * this, the pin RPC is what changes it, and every star is drawn from here. */
   const [pinned, setPinned] = useState<string[]>([]);
   const [pinBusy, setPinBusy] = useState<string | null>(null);
+  const folder = trail[trail.length - 1] ?? null;
+  const retryProjects = () => setProjectsAttempt((count) => count + 1);
+  const retryFolder = () => setFolderAttempt((count) => count + 1);
 
   useEffect(() => {
     if (!machines.some((machine) => machine.id === machineId)) {
@@ -140,8 +158,10 @@ export function RemoteChatDialog({
     setLoading(true);
     setProjects(null);
     setProject(null);
-    setFolder(null);
+    setTrail([null]);
     setListing(null);
+    setFolderError(null);
+    setProjectsError(null);
     setPinned([]);
     setError(null);
     setCreating(false);
@@ -154,7 +174,7 @@ export function RemoteChatDialog({
         setProject(list[0]?.project ?? null);
       })
       .catch((caught) => {
-        if (alive) setError(textOf(caught));
+        if (alive) setProjectsError(textOf(caught));
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -162,7 +182,7 @@ export function RemoteChatDialog({
     return () => {
       alive = false;
     };
-  }, [machineId, loadProjects]);
+  }, [machineId, loadProjects, projectsAttempt]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -180,7 +200,7 @@ export function RemoteChatDialog({
     if (mode !== "folder" || !machineId || !loadFolders) return;
     let alive = true;
     setFolderLoading(true);
-    setListing(null);
+    setFolderError(null);
     setError(null);
     void loadFolders(machineId, folder)
       .then((level) => {
@@ -196,7 +216,7 @@ export function RemoteChatDialog({
         }
       })
       .catch((caught) => {
-        if (alive) setError(textOf(caught));
+        if (alive) setFolderError(textOf(caught));
       })
       .finally(() => {
         if (alive) setFolderLoading(false);
@@ -204,7 +224,8 @@ export function RemoteChatDialog({
     return () => {
       alive = false;
     };
-  }, [mode, machineId, folder, loadFolders]);
+    // The attempt re-reads the same level after a failure.
+  }, [mode, machineId, folder, loadFolders, folderAttempt]);
 
   const togglePin = async (path: string) => {
     if (!machineId || !pinFolder || pinBusy) return;
@@ -259,10 +280,32 @@ export function RemoteChatDialog({
     }
   };
 
-  const machine = machines.find((entry) => entry.id === machineId);
+  const openFolder = (path: string) =>
+    setTrail((walk) => [...walk, path]);
+  // The answer that belongs to the folder on screen. A level still being read,
+  // or one that failed, is not it: its star and its Start button wait, while
+  // the rows of the level before it stay where they are (dimmed, untappable)
+  // so the picker never goes blank under the reader.
+  const current = folderLoading || folderError ? null : listing;
+  const currentPath = current?.path ?? null;
+  const canGoUp = folder !== null;
+  const atTop = folder === null && current !== null;
+  /**
+   * Up is the folder's own parent, which is the level that holds it — a
+   * shortcut can land anywhere, so the walk is not the answer. The walk is
+   * only the way out of a level that did not answer at all, which is the one
+   * case with no parent to ask for.
+   */
+  const goUp = () => {
+    if (!current) {
+      setTrail((walk) => (walk.length > 1 ? walk.slice(0, -1) : walk));
+      return;
+    }
+    const parent = current.parent;
+    setTrail((walk) => [...walk.slice(0, -1), parent]);
+  };
   // The top level draws the host's shortcuts first: the folders it starred,
   // each one still a click away the next time this picker opens.
-  const atTop = listing?.path === null;
   const pinnedRows = !atTop
     ? []
     : pinned.map(
@@ -280,8 +323,8 @@ export function RemoteChatDialog({
       : listing.entries;
   const target: RemoteChatTarget | null =
     mode === "folder"
-      ? listing?.path
-        ? { folder: listing.path }
+      ? currentPath
+        ? { folder: currentPath }
         : null
       : project
         ? { project }
@@ -359,7 +402,7 @@ export function RemoteChatDialog({
                       setError(null);
                     }}
                   >
-                    Projects
+                    Pick a project
                   </button>
                 ) : null}
                 {loadFolders && mode === "project" ? (
@@ -390,57 +433,65 @@ export function RemoteChatDialog({
               </div>
             </div>
             {mode === "folder" ? (
-              <div className="remote-browser">
+              <div key="folder" className="remote-browser">
                 <div className="remote-path">
                   <button
                     type="button"
                     className="remote-up"
                     // A drive root has no parent, so up from there means the
                     // places list — which is where the starred folders are.
-                    disabled={!listing?.path || folderLoading}
-                    title={listing?.parent ? "Up one level" : "Back to places"}
-                    onClick={() => setFolder(listing?.parent ?? null)}
+                    disabled={!canGoUp}
+                    title={
+                      current && !current.parent
+                        ? "Back to places"
+                        : "Up one level"
+                    }
+                    onClick={goUp}
                   >
                     <ArrowUp strokeWidth={2} />
                   </button>
                   <span
                     className="remote-path-text"
-                    title={listing?.path ?? undefined}
+                    title={folder ?? undefined}
                   >
-                    {listing?.path ?? "Places"}
+                    {folder ?? "Places"}
                   </span>
-                  {pinFolder && listing?.path ? (
+                  {folderLoading ? (
+                    <span
+                      className="remote-spinner remote-path-spinner"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {pinFolder && currentPath ? (
                     <button
                       type="button"
                       className="remote-star"
-                      data-on={isPinnedPath(pinned, listing.path)}
-                      disabled={pinBusy === listing.path}
+                      data-on={isPinnedPath(pinned, currentPath)}
+                      disabled={pinBusy === currentPath}
                       title={
-                        isPinnedPath(pinned, listing.path)
+                        isPinnedPath(pinned, currentPath)
                           ? "Unpin this folder on the machine"
                           : "Pin this folder on the machine"
                       }
                       aria-label={
-                        isPinnedPath(pinned, listing.path)
+                        isPinnedPath(pinned, currentPath)
                           ? "Unpin this folder"
                           : "Pin this folder"
                       }
-                      aria-pressed={isPinnedPath(pinned, listing.path)}
-                      onClick={() => void togglePin(listing.path ?? "")}
+                      aria-pressed={isPinnedPath(pinned, currentPath)}
+                      onClick={() => void togglePin(currentPath)}
                     >
-                      <StarMark on={isPinnedPath(pinned, listing.path)} />
+                      <StarMark on={isPinnedPath(pinned, currentPath)} />
                     </button>
                   ) : null}
                 </div>
-                {folderLoading && !listing ? (
-                  <p className="remote-note">
-                    Reading folders on {machine?.name}…
-                  </p>
-                ) : listing && listing.entries.length ? (
+                {listing ? (
                   <div
                     className="remote-projects"
                     role="listbox"
                     aria-label="Folder"
+                    aria-busy={folderLoading}
+                    data-loading={folderLoading}
                   >
                     {atTop && pinnedRows.length ? (
                       <span className="remote-group">Pinned</span>
@@ -452,7 +503,7 @@ export function RemoteChatDialog({
                         pinned={true}
                         busy={pinBusy === entry.path}
                         onPin={pinFolder ? togglePin : undefined}
-                        onOpen={(path) => setFolder(path)}
+                        onOpen={openFolder}
                       />
                     ))}
                     {atTop && pinnedRows.length && placeRows.length ? (
@@ -465,24 +516,45 @@ export function RemoteChatDialog({
                         pinned={isPinnedPath(pinned, entry.path)}
                         busy={pinBusy === entry.path}
                         onPin={pinFolder ? togglePin : undefined}
-                        onOpen={(path) => setFolder(path)}
+                        onOpen={openFolder}
                       />
                     ))}
                   </div>
-                ) : listing ? (
+                ) : folderLoading ? (
+                  <div
+                    className="remote-loading"
+                    role="status"
+                    aria-label="Reading this machine's folders"
+                  >
+                    <span className="remote-spinner" aria-hidden="true" />
+                  </div>
+                ) : null}
+                {current && !current.entries.length ? (
                   <p className="remote-note">
                     This folder has no folders inside it. Start here anyway, or
                     go back up.
                   </p>
                 ) : null}
-                {listing?.truncated ? (
+                {current?.truncated ? (
                   <p className="remote-note">
-                    Only the first {listing.entries.length} folders are shown.
+                    Only the first {current.entries.length} folders are shown.
+                  </p>
+                ) : null}
+                {folderError ? (
+                  <p className="remote-note remote-failed">
+                    <span>{folderError}</span>
+                    <button
+                      type="button"
+                      className="remote-link"
+                      onClick={retryFolder}
+                    >
+                      Try again
+                    </button>
                   </p>
                 ) : null}
               </div>
             ) : creating ? (
-              <div className="remote-project-form">
+              <div key="new-project" className="remote-project-form">
                 <input
                   className="remote-input"
                   autoFocus
@@ -536,9 +608,32 @@ export function RemoteChatDialog({
                 </div>
               </div>
             ) : loading ? (
-              <p className="remote-note">Reading projects on {machine?.name}…</p>
+              <div
+                key="projects-loading"
+                className="remote-loading"
+                role="status"
+                aria-label="Reading this machine's projects"
+              >
+                <span className="remote-spinner" aria-hidden="true" />
+              </div>
+            ) : projectsError ? (
+              <p key="projects-error" className="remote-note remote-failed">
+                <span>{projectsError}</span>
+                <button
+                  type="button"
+                  className="remote-link"
+                  onClick={retryProjects}
+                >
+                  Try again
+                </button>
+              </p>
             ) : projects && projects.length ? (
-              <div className="remote-projects" role="listbox" aria-label="Project">
+              <div
+                key="projects"
+                className="remote-projects"
+                role="listbox"
+                aria-label="Project"
+              >
                 {projects.map((entry) => (
                   <button
                     key={entry.project}
@@ -557,7 +652,7 @@ export function RemoteChatDialog({
                 ))}
               </div>
             ) : projects ? (
-              <p className="remote-note">
+              <p key="projects-empty" className="remote-note">
                 That machine has no projects yet.
                 {createProject
                   ? " Create one here, or add one on the machine itself."

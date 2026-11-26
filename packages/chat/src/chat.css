@@ -1182,6 +1182,61 @@
   color: var(--ink-3);
 }
 
+/* A host answers in its own time: a level that is being read says so with a
+   spinner, in the same row the level will fill. */
+.remote-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 62px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  background: var(--panel);
+}
+
+.remote-spinner {
+  width: 15px;
+  height: 15px;
+  border: 1.6px solid rgba(var(--accent-rgb), 0.18);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: remote-spin 720ms linear infinite;
+}
+
+.remote-path-spinner {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-width: 1.4px;
+}
+
+/* The previous level stays on screen while the next one is read, and neither
+   its rows nor its stars are answers about the folder being entered. */
+.remote-projects[data-loading="true"] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.remote-failed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--danger);
+}
+
+@keyframes remote-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
 .remote-machines,
 .remote-projects {
   display: flex;
