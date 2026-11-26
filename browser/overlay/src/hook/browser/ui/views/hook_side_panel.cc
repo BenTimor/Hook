@@ -5,6 +5,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/logging.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -51,7 +52,18 @@ void CloseHookPanel(base::WeakPtr<BrowserWindowInterface> browser) {
     return;
   }
   if (SidePanelUI* ui = SidePanelUI::From(browser.get())) {
-    ui->Close();
+    // Closed without the slide: `BrowserAnimationController`'s close motion
+    // holds `IsClosing()` true until its animation ticks, and a window that is
+    // occluded (or a stalled compositor) never ticks it -- which left the
+    // button doing nothing at all. A Hide button that hides instantly is the
+    // better failure.
+    ui->Close(SidePanelEntryHideReason::kSidePanelClosed,
+              /*suppress_animations=*/true);
+    // One line per press, and the only way to see the result from outside: a
+    // closed entry keeps its cached page, so neither the DevTools target nor the
+    // page's own visibility says whether the panel is actually gone.
+    LOG(INFO) << "Hook panel closed by its button; showing now: "
+              << ui->IsSidePanelShowing();
   }
 }
 
@@ -76,12 +88,23 @@ std::unique_ptr<views::View> CreateHookPanelView(Profile* profile,
 // shortly, a bounded number of times, and give up quietly: this is a dev
 // switch, not a product flow.
 void ShowWhenReady(base::WeakPtr<BrowserWindowInterface> browser,
-                   int attempts_left) {
+                   int attempts_left,
+                   bool shown) {
   if (!browser) {
     return;
   }
   if (SidePanelUI* ui = SidePanelUI::From(browser.get())) {
-    ui->Show(SidePanelEntry::Id::kHookChat, SidePanelOpenTrigger::kUnknown);
+    // Once the panel has been up, a later close is somebody else's decision --
+    // the dock's X, or the user -- and a retry must not undo it. A closed panel
+    // and a panel shown before layout look the same from here (a view of width
+    // 0), which is exactly why the first show has to be remembered.
+    if (shown && !ui->IsSidePanelShowing()) {
+      return;
+    }
+    if (!shown) {
+      ui->Show(SidePanelEntry::Id::kHookChat, SidePanelOpenTrigger::kUnknown);
+      shown = ui->IsSidePanelShowing();
+    }
     // Done once the entry's view has a width: showing before the window has laid
     // out leaves the entry marked shown and never sized.
     SidePanelRegistry* registry = SidePanelRegistry::From(browser.get());
@@ -90,7 +113,7 @@ void ShowWhenReady(base::WeakPtr<BrowserWindowInterface> browser,
                        SidePanelEntry::Id::kHookChat))
                  : nullptr;
     views::View* view = entry ? entry->CachedView().get() : nullptr;
-    if (view && view->width() > 0) {
+    if (shown && view && view->width() > 0) {
       return;
     }
   }
@@ -99,7 +122,8 @@ void ShowWhenReady(base::WeakPtr<BrowserWindowInterface> browser,
   }
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
-      base::BindOnce(&ShowWhenReady, std::move(browser), attempts_left - 1),
+      base::BindOnce(&ShowWhenReady, std::move(browser), attempts_left - 1,
+                     shown),
       base::Milliseconds(400));
 }
 
@@ -130,7 +154,8 @@ void RegisterHookSidePanel(BrowserWindowInterface* browser, Profile* profile) {
     // constructed while the window's features are.
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
-        base::BindOnce(&ShowWhenReady, browser->GetWeakPtr(), 50));
+        base::BindOnce(&ShowWhenReady, browser->GetWeakPtr(), 50,
+                             /*shown=*/false));
   }
 }
 

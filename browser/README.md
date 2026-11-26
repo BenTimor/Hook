@@ -165,9 +165,11 @@ position since 2013. `docs/browser-os-decoders.md` is the staged plan (stage 1:
 advertise the hardware H.264 the GPU process already decodes; stage 2: AAC through
 Media Foundation), and stages 1–2 are the work item before a public download.
 
-A release build must also keep `is_component_ffmpeg = true` while it still carries
-FFmpeg at all (dev gets it from `is_component_build`) so FFmpeg stays a separate,
-relinkable DLL — LGPL-2.1+.
+A release build ships FFmpeg as a separate, relinkable DLL (LGPL-2.1+) — so
+`is_component_ffmpeg = true` for a release, and a *signed* `ffmpeg.dll`, because the
+renderer's code-integrity guard refuses an unsigned one (see "A non-component
+build"). A local unsigned build therefore links FFmpeg into the image, which is
+also what the check builds do.
 
 `pnpm browser:smoke --codecs` fails if either half is missing, whichever half is
 supposed to provide it.
@@ -186,7 +188,7 @@ cd /c/Dev/cr/src
 export PATH="/c/Dev/depot_tools:$PATH" DEPOT_TOOLS_WIN_TOOLCHAIN=0
 export vs2022_install="C:\Program Files (x86)\Microsoft Visual Studio 2022\BuildTools"
 
-gn gen out/NoComp --args='is_debug=false is_component_build=false dcheck_always_on=false symbol_level=0 blink_symbol_level=0 v8_symbol_level=0 use_siso=false proprietary_codecs=true ffmpeg_branding="Chrome" enable_component_ffmpeg=true hook_host_path="C:/Users/user/Documents/Dev/Hook/target/release/hook-host.exe"'
+gn gen out/NoComp --args='is_debug=false is_component_build=false dcheck_always_on=false symbol_level=0 blink_symbol_level=0 v8_symbol_level=0 use_siso=false proprietary_codecs=true ffmpeg_branding="Chrome" hook_host_path="C:/Users/user/Documents/Dev/Hook/target/release/hook-host.exe"'
 
 autoninja -C out/NoComp chrome
 ```
@@ -199,12 +201,21 @@ What to expect, so an overnight run is not a surprise:
 
 - **Hours, not minutes.** The link alone is long; the compile is the same work with
   a different link step. Disk: budget tens of GB beside `out/Dev`.
-- **`is_official_build` stays false**, so DCHECKs stay on and the build stays closer
-  to what has been tested. Turning it on is a separate experiment (it changes
-  optimisation, symbols and crash reporting).
-- **`enable_component_ffmpeg = true` is not optional** while FFmpeg is carried: in a
-  component build `is_component_build` supplies it, otherwise FFmpeg links into the
-  image — LGPL-2.1+ requires it relinkable.
+- **`is_official_build` stays false** — turning it on is a separate experiment: it
+  changes optimisation, symbols and crash reporting. DCHECKs are compiled in but
+  not fatal (`dcheck_always_on=false`), which is what makes this the build pages
+  are judged on: a Blink assertion must not kill a page a person is reading
+  ("Assertions, and the two builds").
+- **Leave `is_component_ffmpeg` alone (it defaults to `is_component_build`, so false).**
+  There is no `enable_component_ffmpeg` — gn warns that the argument has no effect and
+  ignores it. Setting `is_component_ffmpeg = true` builds a separate, unsigned
+  `ffmpeg.dll`, and in a non-component build that kills every renderer: the sandbox's
+  code-integrity guard (`MITIGATION_FORCE_MS_SIGNED_BINS`, applied to renderers only
+  when `!defined(COMPONENT_BUILD)` in `chrome_content_browser_client.cc`) allows
+  `chrome_elf.dll` and `chrome.dll` by path and nothing else, so loading `chrome.dll`
+  pulls in an `ffmpeg.dll` the policy refuses — "Failed to load Chrome DLL … Windows
+  cannot verify the digital signature for this file", once per renderer, and pages
+  never draw.
 - **`hook_host_path`** keeps the browser able to start its own host; without the
   define it compiles, but the launcher has no path.
 
@@ -475,6 +486,25 @@ Each of these cost a night at least once.
   build dies much later with `missing and no known rule to make it`. `sync.mjs`
   finds those and removes them between attempts — that is the only in-place
   recovery.
+- **Every renderer dies with "Windows cannot verify the digital signature".** That is
+  not a signing problem, and `--allow-third-party-modules` does not help: in a
+  non-component build the renderer sandbox enforces code integrity, and the only
+  modules it allows by path are `chrome_elf.dll` and `chrome.dll`. A separate
+  `ffmpeg.dll` (from `is_component_ffmpeg = true`) is not on that list, so loading
+  `chrome.dll` fails for every child process and no page ever draws. Leave
+  `is_component_ffmpeg` false for an unsigned build. The tell in the log is one
+  `main_dll_loader_win.cc` line per process plus zero `--type=renderer` processes.
+- **A release build fails to compile on a member that only a `DCHECK` reads.**
+  `-Wunused-private-field` is an error, and with `dcheck_always_on=false` a
+  `base::ThreadChecker` that is only named in `DCHECK_CALLED_ON_VALID_THREAD` is
+  unused: `hook_host.cc`'s did exactly that. Mark such members `[[maybe_unused]]`.
+  Any shipping build compiles DCHECKs out, so this is not a dev-only annoyance.
+- **Media never starts when the window is occluded**, which a check run's window
+  always is: `<video>` sits at `readyState 0`, `networkState 2`, one `stalled` event,
+  and no media pipeline is ever created (nothing in the log). Pass
+  `--disable-backgrounding-occluded-windows --disable-renderer-backgrounding
+  --disable-features=CalculateNativeWinOcclusion`, as `smoke.mjs` does, before
+  believing a playback failure.
 - **Never run `gclient sync -D`.** With the overlay junctioned in, it can remove
   unmanaged directories. Plain `gclient sync` recreates the junction instead.
 - **"Aw, Snap! ... STATUS_BREAKPOINT" on a page that works in Chrome is a

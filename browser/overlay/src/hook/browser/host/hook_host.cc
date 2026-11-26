@@ -306,7 +306,9 @@ class Launcher {
   base::TimeTicks started_at_;
   std::string failure_;
   std::vector<Waiter> waiters_;
-  base::ThreadChecker thread_checker_;
+  // Only read by DCHECK_CALLED_ON_VALID_THREAD, and a shipping build compiles
+  // DCHECKs out: without this, -Wunused-private-field fails the build.
+  [[maybe_unused]] base::ThreadChecker thread_checker_;
 };
 
 }  // namespace
