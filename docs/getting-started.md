@@ -6,7 +6,11 @@ Prerequisites, the dev loop, a build, the outputs it leaves, and the two traps t
 
 ## Run
 
-Prerequisites: Node 20+, Rust stable (MSVC toolchain), WebView2 runtime.
+Prerequisites: Node 20+, Rust stable, and the platform's native toolchain:
+MSVC plus the WebView2 runtime on Windows, Xcode Command Line Tools on macOS
+(`xcode-select --install`; it also provides the system `git`). Hook's chat app
+builds natively on both; Hook Workspace and HookCode remain Windows/mobile-only
+for now.
 
 ```bash
 cp harness.config.ci.toml harness.config.toml   # production proxy config
@@ -22,8 +26,9 @@ The config file must exist before building — it is compiled into the binary, s
 missing file is a compile error by design.
 
 `pnpm app` is a debug build, so it keeps its own data under
-`%APPDATA%\hook-dev\` and is signed out the first time it starts. See
-[Where the data lives](data-layout.md).
+`%APPDATA%\hook-dev\` on Windows (or
+`~/Library/Application Support/hook-dev/` on macOS) and is signed out the first
+time it starts. See [Where the data lives](data-layout.md).
 
 No API key yet? Use the bundled mock provider:
 
@@ -39,9 +44,9 @@ Restore the production config afterwards (`cp harness.config.ci.toml harness.con
 
 ```bash
 pnpm engine        # fetch the coding engine into apps/chat/src-tauri/resources/pi-runtime
-pnpm git           # fetch the bundled git for coding agents
-pnpm app:build     # the chat app's NSIS installer (runs `pnpm engine` and `pnpm git` first)
-pnpm app:portable  # portable folder for the chat app, zipped
+pnpm git           # Windows only: fetch the bundled MinGit (macOS uses system git)
+pnpm app:build     # chat app: NSIS installer on Windows, unsigned .app/.dmg on macOS
+pnpm app:portable  # portable folder for the chat app, zipped (Windows)
 
 pnpm workspace:app         # Hook Workspace dev window
 pnpm workspace:app:build   # Hook Workspace NSIS installer (its own engine copy)
@@ -50,12 +55,33 @@ pnpm workspace:app:build   # Hook Workspace NSIS installer (its own engine copy)
 Both apps share one Cargo workspace, so `cargo build` output lands in `target/`
 at the repo root; the Tauri CLI still runs per app (`apps/chat`, `apps/workspace`).
 
-Outputs for the chat app:
+Outputs for the chat app on Windows:
 
 - `target/release/bundle/nsis/Hook_<version>_x64-setup.exe` — installer,
   ~78 MB (`pnpm release` copies it to `release/Hook-<version>-setup.exe`)
 - `release/Hook-<version>-portable.zip` — `Hook.exe` + `resources\pi-runtime` +
   `resources\git`, no install
+
+Outputs for the chat app on macOS (`pnpm app:build`):
+
+- `target/release/bundle/macos/Hook.app` — an ad-hoc/unsigned local app
+- `target/release/bundle/dmg/Hook_<version>_<arch>.dmg` — the same app in a disk
+  image
+
+The macOS bundle overrides the base `nsis` target with `app` and `dmg` in
+`apps/chat/src-tauri/tauri.macos.conf.json`; the MinGit resource is added only
+on Windows through `tauri.windows.conf.json`. The local build is unsigned on
+purpose: it runs on this machine, and a distributable build needs a Developer ID
+certificate, notarization and a macOS release channel (see
+[Releasing](releasing.md)).
+
+Tauri's DMG step mounts the image and opens a Finder window (Hook plus an
+Applications shortcut). That is the installer layout being written, not a
+request to install anything; close it and keep using `pnpm app` or
+`target/release/bundle/macos/Hook.app`. If a build stops with
+`hdiutil: couldn't unmount ... Resource busy`, a previous image is still mounted:
+`hdiutil detach /dev/diskN`, remove `target/release/bundle/macos/rw.*.dmg`, and
+run `pnpm app:bundle` again.
 
 `compression: "bzip2"` is a deliberate trade. Measured on this payload (195 MB of
 MinGit + Node + pi): LZMA produced 46.6 MB in 92 s, bzip2 69.9 MB in 17 s. The
@@ -73,9 +99,13 @@ two source hashes, one `target/` directory.
 
 The engine (Node + pi) is ~104 MB of binaries and is not in git; `pnpm engine`
 copies it from the pinned `@earendil-works/pi-coding-agent` dev dependency.
-`scripts/fetch-git.mjs` adds the pinned MinGit tree (~93 MB extracted) for the
-coding agents' project sync. `scripts/fetch-pi-runtime.mjs` also proves the copy
-can load Hook's guard before anything gets packaged.
+`scripts/fetch-git.mjs` adds the pinned MinGit tree (~93 MB extracted) on
+Windows; on macOS it checks for the system `git` instead, because Command Line
+Tools already provides one and a second copy would be a second trust/config
+stack. `scripts/fetch-pi-runtime.mjs` also proves the copy can load Hook's guard
+before anything gets packaged. It copies the Node running the script, so a local
+Apple-silicon build ships an arm64 runtime; a universal app needs a universal
+(or per-architecture) Node as part of the signed release work.
 
 `pnpm version:bump patch|minor|major` is the only way to change a version (see
 [Updates](releasing.md#updates)); add `--product workspace` for the second product.
@@ -96,8 +126,11 @@ Two things only break in an installed app, never in `tauri dev`:
 
 Both are covered by tests, and the portable zip is verified with
 `src-tauri/resources/pi-runtime` moved aside so the dev copy cannot mask a
-packaging bug. Agents write their stderr to `%APPDATA%\app.hook.chat\logs\`
-(`%APPDATA%\hook-dev\app.hook.chat\logs\` for a debug build).
+packaging bug. On macOS the same resource mapping applies inside `Hook.app`.
+Agents write their stderr to `%APPDATA%\app.hook.chat\logs\` on Windows
+(`%APPDATA%\hook-dev\app.hook.chat\logs\` for a debug build) and to
+`~/Library/Application Support/app.hook.chat/logs/` on macOS
+(`.../hook-dev/app.hook.chat/logs/` for a debug build).
 
 ---
 

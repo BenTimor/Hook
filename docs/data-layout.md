@@ -2,6 +2,13 @@
 
 Every file Hook writes, what a debug build does differently, and where the Shared folder sits.
 
+The tree below is Windows. macOS uses the same names and the same nesting under
+`~/Library/Application Support/` — `app.hook.chat/` for a release build,
+`hook-dev/app.hook.chat/` for a debug one, and `app.hook/` beside them for the
+account, memory and the channel descriptor. Linux, where a product links the
+same crate without a window, uses `$XDG_DATA_HOME` (or
+`~/.local/share/`). Nothing below the root changes between them.
+
 ```
 %APPDATA%\app.hook\
   account.json             the signed-in account, shared by every Hook product
@@ -49,15 +56,16 @@ Every file Hook writes, what a debug build does differently, and where the Share
 ```
 
 A **debug build** — `pnpm app`, `pnpm workspace:app`, `cargo run` — uses those
-`hook-dev` folders instead, one level deeper, so it has its own sign-in, device
-id, chats, sync cursor and agent home. Two live Hooks that shared a folder would
+`hook-dev` folders instead (on macOS:
+`~/Library/Application Support/hook-dev/app.hook.chat/`), one level deeper, so
+it has its own sign-in, device id, chats, sync cursor and agent home. Two live Hooks that shared a folder would
 write over each other — the second one to start turns a running coding agent's
 reply into an error (`coding.rs::recover`), the sync cursor flips back and forth,
 and the relay sees one machine connected twice. Signing in there registers a
 second machine on the account under the same computer name, so rename the dev
 one in Settings. `HOOK_DATA_DIR` picks the folder explicitly, for a debug build
-that does have to read the installed data; delete `%APPDATA%\hook-dev\` to reset
-it.
+that does have to read the installed data; delete `%APPDATA%\hook-dev\` (macOS:
+`~/Library/Application Support/hook-dev/`) to reset it.
 
 Hook Workspace writes to `%APPDATA%\app.hook.workspace\` and reads the same
 `%APPDATA%\app.hook\account.json`, so the two products never ask for a sign-in
@@ -76,6 +84,11 @@ folder: its manifest opts out of AppData virtualization so Store and direct
 installs share chats and sign-in. In-app updates download installers to
 `%TEMP%\hook-update\`; nothing else is written outside this folder. A debug build
 is not part of either channel; it uses `%APPDATA%\hook-dev\` above.
+
+A macOS build uses the same product folder and never offers an in-app update
+yet: the published release index names NSIS installers, so `hook-core` reports
+`UpdateChannel::Manual` there and the window shows no banner. Replacing
+`Hook.app` from a `.dmg` is the manual path until a macOS release channel exists.
 
 ---
 

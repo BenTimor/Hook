@@ -25,7 +25,8 @@ crates/hook-core/src/          the backend every product links
   settings.rs   projects folder, memory switch, advanced-mode fallback, the
                 personal endpoint and its change stamp
   projects.rs   folder scanning, stable account ids, descriptions, containment
-  git.rs        bundled git, managed config, repository preparation
+  git.rs        bundled git (Windows) or system git, managed config,
+                repository preparation
   sync.rs       background chat/picture/project/memory/endpoint sync, server-side
                 merge cursor
   auth.rs       device flow and the account file shared by every product
@@ -45,10 +46,11 @@ apps/chat/                     the chat product
   src/styles/        this product's layout (the foundation lives in packages/ui)
 apps/workspace/                Hook Workspace
 apps/mobile/                   HookCode on a phone (no agents, no folder)
-  src/components/    ChatList, Conversation, PreviewSheet, SettingsSheet
+  src/components/    AppHeader, ChatDrawer, Home, Conversation,
+                     WorkspaceTasks, PreviewSheet, SettingsSheet
   src/mobile.css     the phone's re-skin of the shared thread and composer
 packages/ui/                   tokens.css, window chrome, primitives, the mark
-packages/chat/                 Thread, Composer, ChatDock, Markdown…
+packages/chat/                 Thread, Composer, ChatDock, Markdown, greeting…
   src/preview/       a board, a task and a document, drawn from preview JSON
 ```
 
@@ -91,8 +93,11 @@ Details worth knowing:
 - **Persistence** is atomic (write temp file, then rename), so a crash can't
   leave a half-written chat.
 - **Window chrome** is frameless with a custom titlebar and native rounded
-  corners. The glass surfaces (sidebar, composer) are pure CSS — no dependency
-  on OS backdrop materials, so it looks the same on every machine.
+  corners on Windows. macOS keeps its native traffic lights in an overlay title
+  bar (`tauri.macos.conf.json`); the Windows buttons are not drawn there and the
+  top-left strip is inset for the system controls. The glass surfaces (sidebar,
+  composer) are pure CSS — no dependency on OS backdrop materials, so the
+  content looks the same on every machine.
 
 ---
 

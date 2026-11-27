@@ -42,7 +42,7 @@ export const PRODUCTS = {
     kind: "desktop",
   },
   /**
-   * HookCode on a phone. It is a Hook product in the business sense — same
+   * Hook on a phone. It is a Hook product in the business sense — same
    * account, same conversations, same Workspace — but not a desktop installer:
    * App Store Connect and the Play Console distribute it, and
    * `scripts/release.sh` deliberately leaves it out of its default product
@@ -52,8 +52,8 @@ export const PRODUCTS = {
   mobile: {
     id: "mobile",
     dir: "apps/mobile",
-    name: "HookCode",
-    binary: "HookCode",
+    name: "Hook",
+    binary: "Hook",
     identifier: "app.hook.mobile",
     kind: "mobile",
   },
@@ -96,6 +96,15 @@ export function appInputs(product) {
     `${product.dir}/src-tauri/Cargo.toml`,
     `${product.dir}/src-tauri/build.rs`,
     `${product.dir}/src-tauri/tauri.conf.json`,
+    // The chat app's platform configs override the base one (bundle targets, the
+    // macOS window and the Windows-only git resource), so a change there changes
+    // the build. Other products do not have them yet.
+    ...(product.id === "chat"
+      ? [
+          `${product.dir}/src-tauri/tauri.windows.conf.json`,
+          `${product.dir}/src-tauri/tauri.macos.conf.json`,
+        ]
+      : []),
     `${product.dir}/src-tauri/capabilities`,
     `${product.dir}/src-tauri/icons`,
     `${product.dir}/src-tauri/src`,    "scripts/app-source-hash.mjs",

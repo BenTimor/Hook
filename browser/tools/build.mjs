@@ -12,13 +12,14 @@
  *
  * Build `chrome`, never `all` — `all` drags in every test binary.
  *
- * Before ninja runs, the dock bundle is rebuilt from `browser/ui/` (Vite, about
- * half a second). It is generated JavaScript and is not committed; `build_webui`
- * can only pack static files that exist in the source tree, and GN cannot express
- * "this output depends on node_modules", so this wrapper is the one place that
- * keeps the two halves in step.
+ * Before ninja runs, two generated files are refreshed: the dock bundle from
+ * `browser/ui/` (Vite, about half a second) and the greeting catalog copied from
+ * `packages/chat/src/greeting.ts` for the new tab page. Both are not committed;
+ * `build_webui` can only pack files that exist in the source tree, and GN cannot
+ * express "this output depends on node_modules", so this wrapper is the one
+ * place that keeps the two halves in step.
  */
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -140,6 +141,16 @@ export async function main(argv) {
       }
     }
   }
+
+  // The greeting is one catalog for every product. Chromium's WebUI pipeline
+  // compiles TypeScript but cannot import from `packages/`, so the new tab page
+  // gets a copy of the shared module beside it. Unlike the bundle this is a
+  // verbatim copy: the same selection logic and rotation, not a second version.
+  step("copying the greeting catalog");
+  copyFileSync(
+    join(repoRoot, "packages", "chat", "src", "greeting.ts"),
+    join(browserDir, "overlay", "src", "hook", "resources", "greeting.generated.ts"),
+  );
 
   const depotTools = findDepotTools(flags);
   if (!depotTools) {

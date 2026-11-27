@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 /**
- * Populate `src-tauri/resources/git/` with the git Hook ships.
+ * Populate `src-tauri/resources/git/` with the git Hook ships on Windows.
  *
  * Coding agents pull and push their project from the user's Hook account, and
  * the user is not expected to install git. MinGit is the official minimal
  * git-for-Windows distribution: `cmd/git.exe`, the core commands and the HTTPS
  * transport, without bash, Perl or the Unix tools Hook does not need.
  *
+ * macOS and Linux use the system `git` instead: Command Line Tools install it
+ * at `/usr/bin/git`, and a second copy would be a second set of trust roots,
+ * credential helpers and system config to keep in step. There is nothing to
+ * download, so this script is a check rather than a fetch there.
+ *
  *   node scripts/fetch-git.mjs [app-dir]      (default: apps/chat)
  *
  * The archive is cached under `.git-runtime-cache/` and checked by SHA-256
  * before anything is extracted. `pnpm app:build` runs this automatically.
  *
- * Layout it produces:
+ * Layout it produces (Windows):
  *
  *   src-tauri/resources/git/cmd/git.exe
  *   src-tauri/resources/git/ucrt64/bin/git.exe
@@ -137,7 +142,28 @@ async function extract(archive, destination) {
   await run("unzip", ["-q", archive, "-d", destination]);
 }
 
+async function systemGit() {
+  try {
+    const { stdout } = await run("git", ["--version"]);
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
+  if (process.platform !== "win32") {
+    const version = await systemGit();
+    if (!version) {
+      throw new Error(
+        "Hook uses the system git on macOS and Linux, but no `git` is on PATH.\n" +
+          "  On macOS install the Xcode Command Line Tools: xcode-select --install",
+      );
+    }
+    console.log(`hook: using the system git (${version}); MinGit is Windows-only`);
+    return;
+  }
+
   if (installed()) {
     console.log(`hook: git ${VERSION} already in ${out}`);
     return;

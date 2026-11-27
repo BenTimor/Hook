@@ -11,14 +11,18 @@
  *
  *    node scripts/fetch-pi-runtime.mjs [app-dir] [--pi <path-to-pi-package>]
  *
- * Layout it produces:
+ * Layout it produces (Windows and macOS; the Node binary is named `node.exe`
+ * on Windows and `node` elsewhere):
  *
- *    src-tauri/resources/pi-runtime/node.exe
+ *    src-tauri/resources/pi-runtime/node.exe      (or `node` on macOS)
  *    src-tauri/resources/pi-runtime/pi/dist/bundle/cli.js
  *    src-tauri/resources/pi-runtime/pi/package.json
  *    src-tauri/resources/pi-runtime/pi/node_modules/@silvia-odwyer/photon-node/
  *
- * `pnpm app:build` runs this automatically.
+ * `pnpm app:build` runs this automatically. The copy is the Node running the
+ * script, so a local Apple-silicon build ships an arm64 runtime; a universal
+ * app needs a universal (or per-architecture) Node, which is part of the
+ * signed macOS release work rather than this dev path.
  */
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";

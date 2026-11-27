@@ -150,8 +150,11 @@ export interface UpdateInfo {
   current: string;
   latest: string;
   minimum: string;
-  /** direct = Hook installs it; store = Microsoft Store installs it. */
-  channel: "direct" | "store";
+  /**
+   * direct = Hook installs it; store = Microsoft Store installs it;
+   * manual = this platform has no in-app installer (the macOS build today).
+   */
+  channel: "direct" | "store" | "manual";
   /** A newer build exists. */
   available: boolean;
   /** The running build is below the supported floor and must update. */

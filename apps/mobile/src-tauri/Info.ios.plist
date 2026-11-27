@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The composer's photo picker and camera are the WebView's own file
+       inputs; iOS still requires a human-readable reason in the bundle. -->
+  <key>NSCameraUsageDescription</key>
+  <string>Take a photo to send with a message to Hook.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Choose a photo to send with a message to Hook.</string>
+</dict>
+</plist>

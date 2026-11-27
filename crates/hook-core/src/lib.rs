@@ -258,6 +258,7 @@ pub fn builder(
         .setup(move |app| setup(app, product, capabilities, version))
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::set_status_bar_style,
             commands::list_chats,
             commands::get_chat,
             commands::rename_chat,
@@ -351,7 +352,9 @@ fn install_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .icon(icon)
         .tooltip("Hook — agents keep working while this window is closed")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        // A Windows tray icon opens its menu on right-click; a macOS menu-bar
+        // icon opens it on the left click, as every other menu-bar app does.
+        .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => {
                 if let Some(window) = app.get_webview_window("main") {
@@ -367,6 +370,11 @@ fn install_tray(app: &mut tauri::App) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
+            // macOS already opened the menu above; there is no second gesture
+            // to give the window. Windows keeps its left-click-to-show.
+            if cfg!(target_os = "macos") {
+                return;
+            }
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,

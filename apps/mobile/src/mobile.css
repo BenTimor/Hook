@@ -61,57 +61,6 @@ body {
 
 /* ── Bars ──────────────────────────────────────────────────────────────── */
 
-.bar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 52px;
-  padding: calc(env(safe-area-inset-top) + 6px) 10px 6px;
-  border-bottom: 1px solid var(--line);
-  background: var(--canvas);
-  z-index: 3;
-}
-
-.bar-root {
-  justify-content: space-between;
-  padding-left: 14px;
-}
-
-.bar-brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--ink);
-}
-
-.bar-brand svg {
-  width: 22px;
-  height: 22px;
-}
-
-.bar-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.bar-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 15.5px;
-  font-weight: 570;
-  letter-spacing: -0.01em;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink);
-}
-
 .icon-btn {
   display: grid;
   place-items: center;
@@ -132,254 +81,6 @@ body {
 .icon-btn svg {
   width: 20px;
   height: 20px;
-}
-
-/* ── The home screen ───────────────────────────────────────────────────── */
-
-.home .hero {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  overflow-y: auto;
-  padding: 12px 20px 28px;
-}
-
-.home .hero-inner {
-  width: 100%;
-  max-width: 520px;
-  display: flex;
-  flex-direction: column;
-  /* Centred while there is room, but scrollable from the top when the
-     keyboard leaves less room than the greeting and composer need. */
-  margin: auto 0;
-}
-
-.home .hero h1 {
-  margin: 0 0 7px;
-  font-size: 30px;
-  font-weight: 540;
-  letter-spacing: -0.035em;
-  line-height: 1.15;
-  color: var(--ink);
-}
-
-.home .hero p {
-  margin: 0 0 22px;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--ink-3);
-}
-
-.home .chips {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.home .chip {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 11px 13px;
-  border: 1px solid var(--line-soft);
-  border-radius: 13px;
-  background: rgba(255, 253, 249, 0.52);
-  font: inherit;
-  font-size: 13.5px;
-  text-align: left;
-  color: var(--ink-2);
-}
-
-.home .chip:active {
-  background: rgba(var(--ink-rgb), 0.06);
-}
-
-.bar-title .bar-sub {
-  display: block;
-  margin-top: 1px;
-  font-size: 10.5px;
-  font-weight: 450;
-  color: var(--ink-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.home .chip.chip-machine {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--ink);
-}
-
-.home .chip.chip-machine svg {
-  color: var(--accent);
-}
-
-.home .chip svg {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 15px;
-  color: var(--sage);
-}
-
-/* ── The list ──────────────────────────────────────────────────────────── */
-
-.list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  padding: 6px 8px 96px;
-}
-
-.row-wrap {
-  display: flex;
-  align-items: center;
-  border-radius: 13px;
-}
-
-.row-wrap:active {
-  background: rgba(var(--ink-rgb), 0.05);
-}
-
-.row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-  padding: 13px 4px 13px 12px;
-  border: 0;
-  border-radius: 13px;
-  background: transparent;
-  text-align: left;
-  color: var(--ink);
-}
-
-.row-more {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-  margin-right: 2px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--ink-4);
-}
-
-.row-more:active {
-  background: rgba(var(--ink-rgb), 0.07);
-  color: var(--ink-2);
-}
-
-.row-more svg {
-  width: 18px;
-  height: 18px;
-}
-
-.row-pin {
-  width: 12px;
-  height: 12px;
-  margin-right: 6px;
-  vertical-align: -1px;
-  color: var(--ink-4);
-}
-
-.row-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.row-title {
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 560;
-  letter-spacing: -0.012em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-preview {
-  overflow: hidden;
-  font-size: 13px;
-  color: var(--ink-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-when {
-  flex: 0 0 auto;
-  font-size: 11.5px;
-  color: var(--ink-4);
-  font-variant-numeric: tabular-nums;
-}
-
-.empty {
-  padding: 64px 28px;
-  text-align: center;
-  color: var(--ink-3);
-}
-
-.empty-title {
-  margin-bottom: 6px;
-  font-size: 16px;
-  font-weight: 580;
-  color: var(--ink);
-}
-
-.empty p {
-  margin: 0;
-  font-size: 13.5px;
-  line-height: 1.6;
-}
-
-.fab-row {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  justify-content: center;
-  padding: 10px 16px calc(env(safe-area-inset-bottom) + 12px);
-  /* The list scrolls under the button rather than stopping above it. */
-  background: linear-gradient(to top, var(--canvas) 62%, transparent);
-  pointer-events: none;
-}
-
-.fab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 46px;
-  padding: 0 20px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--ivory);
-  font-size: 14.5px;
-  font-weight: 560;
-  box-shadow: var(--shadow-md);
-  pointer-events: auto;
-  transition: transform 140ms var(--ease), background 140ms;
-}
-
-.fab:active {
-  transform: scale(0.97);
-  background: var(--accent-hover);
-}
-
-.fab svg {
-  width: 17px;
-  height: 17px;
 }
 
 /* ── The conversation ──────────────────────────────────────────────────── */
@@ -456,6 +157,10 @@ body {
 }
 
 .mobile-composer .composer-row {
+  /* One line of the field, from the textarea rule just below: 16px type at the
+     shared 1.55 line-height, plus its 9px top and bottom padding. The row is
+     bottom-aligned, so this is the height a button has to centre in. */
+  --composer-line: calc(16px * 1.55 + 18px);
   padding: 4px 4px 4px 10px;
 }
 
@@ -470,7 +175,9 @@ body {
 .mobile-composer .attach-btn {
   width: 34px;
   height: 34px;
-  margin-bottom: 2px;
+  /* Bottom-aligned so a growing textarea never lifts the buttons; on one line
+     the leftover above and below a button is what centres it. */
+  margin-bottom: calc((var(--composer-line) - 34px) / 2);
 }
 
 .mobile-composer .send-btn svg {
@@ -735,26 +442,600 @@ body {
 
 /* ── Sign in ───────────────────────────────────────────────────────────── */
 
-/* The sign-in screen is the shared card (`packages/ui/src/SignInCard.tsx`)
-   standing on the phone's canvas. Its type and spacing were lifted from the
-   chat window, so the phone inherits nearly all of it; what is left is a width
-   the margins set and buttons that stack, because a thumb aims at a row, not
-   at the middle of a sentence. The old screen's own card rules are gone. */
+/* The phone's front door is the same `SignInCard` the desktop uses, but the
+   desktop's centred poster is the wrong shape for a hand. This is one quiet
+   column: mark, headline, one line of context, the action, and one reassurance.
+   The hero sits on its own forest-green band, cut into the warm canvas with a
+   single asymmetric curve. No `backdrop-filter` here — see the note at the top
+   of the file. */
 .signin {
+  --signin-top-space: clamp(52px, 7vh, 68px);
+  --signin-hero-height: min(75vw - 36px, 279px);
+  /* The one display face in the phone product, used by the sign-in headline
+     only. Reverting to Inter is one declaration: delete this variable's use. */
+  --font-display: "Instrument Sans Variable", var(--font-sans);
+  position: relative;
   align-items: center;
-  justify-content: center;
-  padding: calc(env(safe-area-inset-top) + 24px) 22px
-    calc(env(safe-area-inset-bottom) + 24px);
-  background: var(--canvas);
+  justify-content: flex-start;
+  /* No scrolling on the welcome screen: a native scroll edge effect would
+     otherwise paint a gray fade over the green under the status bar, and the
+     fitted layout is reached without scrolling on supported iPhones. */
+  overflow: hidden;
+  padding: calc(env(safe-area-inset-top) + var(--signin-top-space)) 24px
+    calc(env(safe-area-inset-bottom) + 28px);
+  background:
+    radial-gradient(110% 70% at 104% -12%, rgba(203, 212, 194, 0.5), transparent 62%),
+    radial-gradient(90% 64% at -18% 108%, rgba(255, 250, 241, 0.96), transparent 62%),
+    var(--canvas);
+}
+
+/* The green band starts below the status-bar inset so the black status icons
+   stay readable; the hero itself begins one comfortable top-space below it.
+   Its bottom edge is one asymmetric curve, not a wave, and the card above sits
+   in a stacking context so the band never covers the copy or the action. */
+.signin::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: calc(
+    env(safe-area-inset-top) + var(--signin-top-space) +
+      var(--signin-hero-height) + 30px
+  );
+  border-radius: 0 0 46% 54% / 0 0 16px 26px;
+  background: var(--accent);
+  box-shadow: 0 32px 56px -46px rgba(26, 26, 25, 0.7);
+  pointer-events: none;
 }
 
 .signin .signin-card {
+  position: relative;
+  z-index: 1;
   width: 100%;
-  max-width: 340px;
+  max-width: 372px;
+  min-height: calc(
+    100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) -
+      var(--signin-top-space) - 28px
+  );
+  flex: 1 0 auto;
+  align-items: stretch;
+  margin: 0;
+  text-align: center;
+}
+
+/* ── Sign-in hero ──────────────────────────────────────────────────────── */
+
+/* Three miniature surfaces around the real mark. The wires are behind the
+   cards, the cards are translucent paper rather than glass (see rule 1 at the
+   top: no backdrop-filter on a phone), and every motion pauses for Reduce
+   Motion. The composition is one SVG coordinate space scaled with the card, so
+   the same proportions survive a small iPhone. */
+.signin .signin-hero {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 300px;
+  margin-bottom: 40px;
+}
+
+.hero-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.hero-wire {
+  fill: none;
+  stroke: rgba(246, 246, 243, 0.3);
+  stroke-width: 1.1;
+  stroke-dasharray: 2.5 5.5;
+  stroke-linecap: round;
+  animation: hero-wire-drift 18s linear infinite;
+}
+
+.hero-wire-node {
+  fill: rgba(246, 246, 243, 0.72);
+  opacity: 0.8;
+}
+
+.hero-core {
+  position: absolute;
+  top: 48%;
+  left: 50%;
+  width: 82px;
+  height: 82px;
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  animation: hero-core-in 800ms var(--ease) both;
+}
+
+.hero-halo {
+  position: absolute;
+  inset: -24px;
+  border: 1px solid rgba(246, 246, 243, 0.16);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(246, 246, 243, 0.15) 0%, rgba(246, 246, 243, 0.045) 58%, transparent 72%);
+  box-shadow: 0 24px 50px -38px rgba(0, 0, 0, 0.6);
+}
+
+.hero-mark {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  border-radius: 22px;
+  box-shadow: 0 0 0 1px rgba(246, 246, 243, 0.1);
+}
+
+.hero-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 22px;
+  filter: drop-shadow(0 16px 26px rgba(0, 0, 0, 0.35));
+}
+
+.hero-slot {
+  position: absolute;
+  animation: hero-slot-in 700ms var(--ease) both;
+}
+
+.hero-slot-chat {
+  top: 16%;
+  left: 0;
+  width: 39%;
+  height: 29%;
+  --hero-rotate: -2.5deg;
+  animation-delay: 80ms;
+}
+
+.hero-slot-workspace {
+  top: 0;
+  right: 0;
+  width: 37%;
+  height: 28%;
+  --hero-rotate: 2.5deg;
+  animation-delay: 160ms;
+}
+
+.hero-slot-code {
+  right: 1%;
+  bottom: 1%;
+  width: 40%;
+  height: 31%;
+  --hero-rotate: -1.5deg;
+  animation-delay: 240ms;
+}
+
+.hero-card {
+  width: 100%;
+  height: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgba(var(--ink-rgb), 0.075);
+  border-radius: 15px;
+  background: rgba(255, 253, 249, 0.86);
+  box-shadow:
+    0 24px 40px -32px rgba(var(--ink-rgb), 0.55),
+    0 2px 6px rgba(var(--ink-rgb), 0.04);
+  transform: rotate(var(--hero-rotate));
+  animation: hero-float 9s ease-in-out infinite;
+}
+
+.hero-slot-chat .hero-card {
+  animation-duration: 8.5s;
+  animation-delay: 900ms;
+}
+
+.hero-slot-workspace .hero-card {
+  animation-duration: 10s;
+  animation-delay: 600ms;
+}
+
+.hero-slot-code .hero-card {
+  animation-duration: 9.5s;
+  animation-delay: 1.2s;
+}
+
+.hero-card-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-3);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.hero-card-head svg {
+  width: 10px;
+  height: 10px;
+  color: var(--sage);
+}
+
+.hero-live-dot {
+  width: 4px;
+  height: 4px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--sage);
+  box-shadow: 0 0 0 2px rgba(82, 100, 87, 0.12);
+}
+
+.hero-chat-line {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(var(--ink-rgb), 0.09);
+}
+
+.hero-chat-line-user {
+  width: 58%;
+  height: 7px;
+  margin: 8px 0 4px auto;
+  border-radius: 4px 4px 1px 4px;
+  background: rgba(82, 100, 87, 0.72);
+}
+
+.hero-chat-line-ai {
+  display: flex;
+  width: 72%;
+  gap: 3px;
+}
+
+.hero-chat-line-ai span {
+  height: 4px;
+  flex: 1;
+  border-radius: 2px;
+  background: rgba(var(--ink-rgb), 0.1);
+}
+
+.hero-chat-line-short {
+  width: 44%;
+  margin-top: 4px;
+}
+
+.hero-board {
+  display: flex;
+  height: calc(100% - 21px);
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.hero-board > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 5px;
+  background: rgba(82, 100, 87, 0.055);
+}
+
+.hero-board i {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(var(--ink-rgb), 0.13);
+}
+
+.hero-board > span:first-child i:first-child {
+  width: 72%;
+  background: rgba(82, 100, 87, 0.52);
+}
+
+.hero-board > span:nth-child(2) i:first-child {
+  width: 55%;
+  background: rgba(82, 100, 87, 0.32);
+}
+
+.hero-card-code {
+  border-color: rgba(246, 246, 243, 0.14);
+  background: #151b16;
+  box-shadow:
+    0 28px 44px -28px rgba(0, 0, 0, 0.82),
+    inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.hero-code-head {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.hero-code-head > i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(246, 246, 243, 0.2);
+}
+
+.hero-code-head > span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  color: rgba(246, 246, 243, 0.42);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.hero-code-head svg {
+  width: 9px;
+  height: 9px;
+}
+
+.hero-code-line {
+  display: flex;
+  gap: 3px;
+  margin-top: 7px;
+}
+
+.hero-code-line b {
+  display: block;
+  height: 3.5px;
+  border-radius: 2px;
+}
+
+.code-green {
+  width: 26%;
+  background: #8fb99a;
+}
+
+.code-cream {
+  width: 44%;
+  background: rgba(246, 246, 243, 0.55);
+}
+
+.code-muted {
+  width: 18%;
+  background: rgba(246, 246, 243, 0.18);
+}
+
+.code-sage {
+  width: 34%;
+  background: rgba(143, 185, 154, 0.45);
+}
+
+.code-wide {
+  width: 62%;
+}
+
+@keyframes hero-slot-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes hero-core-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes hero-float {
+  0%,
+  100% {
+    transform: rotate(var(--hero-rotate)) translateY(0);
+  }
+  50% {
+    transform: rotate(var(--hero-rotate)) translateY(-4px);
+  }
+}
+
+@keyframes hero-wire-drift {
+  to {
+    stroke-dashoffset: -80;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signin .signin-hero * {
+    animation: none !important;
+  }
+}
+
+/* The mark is the hero's opening note, not a navigation bar: it sits on its
+   own above the headline, and the headline carries the product name. */
+.signin .signin-mark {
+  display: block;
+  width: 64px;
+  height: 64px;
+  align-self: flex-start;
+  margin-bottom: 30px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.signin .signin-mark svg {
+  display: block;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  filter: drop-shadow(0 12px 24px rgba(var(--ink-rgb), 0.18));
+}
+
+.signin .signin-kicker {
+  margin-bottom: 10px;
+  color: var(--sage);
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
 }
 
 .signin .signin-title {
-  font-size: 26px;
+  margin: 0 0 14px;
+  font-family: var(--font-display);
+  font-size: clamp(33px, 9vw, 39px);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.signin-title-line {
+  display: block;
+}
+
+.signin-title-accent {
+  color: var(--accent);
+}
+
+.signin .signin-copy {
+  max-width: none;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--ink-3);
+}
+
+/* The message stays at the top; this spacer absorbs the extra height and
+   leaves the action area anchored just above the bottom safe area. */
+.signin .signin-spacer {
+  display: block;
+  min-height: 28px;
+  flex: 1 0 auto;
+}
+
+/* The label is the centre; the arrow and its spacer are equal and invisible on
+   the right, so the words do not drift away from the middle. */
+.signin .signin-primary {
+  width: 100%;
+  min-height: 54px;
+  margin-top: 0;
+  padding: 0 18px;
+  border-radius: 15px;
+  font-size: 14.5px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.14),
+    0 12px 26px -16px rgba(var(--accent-rgb), 0.8);
+}
+
+.signin .signin-primary:not(:disabled):active {
+  transform: scale(0.985);
+}
+
+.signin .signin-primary-content {
+  gap: 8px;
+}
+
+.signin .signin-primary-icon,
+.signin .signin-primary-spacer {
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
+}
+
+.signin .signin-primary-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.signin .signin-link {
+  align-self: center;
+  margin-top: 13px;
+  font-size: 13px;
+}
+
+/* The Sign in with Apple row is a visual prototype for now; the badge is the
+   honest part. A real flow can replace the `secondaryAction` element without
+   changing the layout. */
+.signin .signin-apple {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 54px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 11px;
+  padding: 0 18px;
+  border: 1px solid rgba(var(--ink-rgb), 0.12);
+  border-radius: 15px;
+  background: var(--ivory);
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow:
+    0 1px 2px rgba(var(--ink-rgb), 0.04),
+    0 10px 22px -20px rgba(var(--ink-rgb), 0.35);
+}
+
+.signin .signin-apple[aria-disabled="true"] {
+  cursor: default;
+}
+
+.signin .signin-apple:not([aria-disabled="true"]):active {
+  transform: scale(0.985);
+}
+
+.signin .signin-apple-icon {
+  position: absolute;
+  top: 50%;
+  left: 17px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  transform: translateY(-50%);
+}
+
+.signin .signin-apple-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.signin .signin-apple-label {
+  display: block;
+}
+
+.signin .signin-apple-badge {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.07);
+  color: var(--ink-3);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transform: translateY(-50%);
+}
+
+.signin .signin-privacy {
+  max-width: none;
+  margin: 18px 0 0;
+  justify-content: center;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.signin .signin-error {
+  max-width: none;
+  margin-top: 18px;
 }
 
 .signin .signin-actions {
@@ -762,13 +1043,15 @@ body {
   flex-direction: column;
 }
 
-.signin .signin-primary,
 .signin .signin-secondary {
   width: 100%;
 }
 
 .signin .signin-code {
-  font-size: 26px;
+  width: 100%;
+  margin: 24px 0 10px;
+  font-size: 30px;
+  text-align: center;
 }
 
 /* ── Toast ─────────────────────────────────────────────────────────────── */
@@ -793,22 +1076,6 @@ body {
 }
 
 /* ── Plan, sync and a personal model endpoint ───────────────────────────── */
-
-.row-sync {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 40px;
-  flex: 0 0 34px;
-  border: 0;
-  background: transparent;
-  color: var(--ink-4);
-}
-
-.row-sync svg {
-  width: 16px;
-  height: 16px;
-}
 
 .settings-block {
   padding: 14px 8px;
@@ -942,4 +1209,787 @@ body {
   border: 0;
   border-radius: var(--radius-panel);
   background: var(--ivory);
+}
+
+/* ── App header ────────────────────────────────────────────────────────── */
+
+/* One bar for the welcome screen, a conversation and Workspace. The centre is
+   a real grid cell, so the brand stays centred between the two 44px actions. */
+.app-header {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  min-height: calc(52px + env(safe-area-inset-top));
+  padding: calc(env(safe-area-inset-top) + 4px) 8px 4px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--canvas);
+  z-index: 3;
+}
+
+.app-header-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.app-header-btn:active {
+  background: rgba(var(--ink-rgb), 0.06);
+}
+
+.app-header-btn svg {
+  width: 21px;
+  height: 21px;
+}
+
+.app-header-center {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.app-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.app-header-brand svg {
+  width: 21px;
+  height: 21px;
+  border-radius: 6px;
+}
+
+.app-header-sub {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10.5px;
+  font-weight: 450;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Chat drawer ───────────────────────────────────────────────────────── */
+
+.chat-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 54;
+  background: rgba(24, 28, 22, 0.34);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 260ms var(--ease);
+}
+
+.chat-drawer-backdrop[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 55;
+  display: flex;
+  width: min(86vw, 340px);
+  flex-direction: column;
+  padding: calc(env(safe-area-inset-top) + 10px) 12px
+    calc(env(safe-area-inset-bottom) + 10px);
+  border-right: 1px solid var(--line-soft);
+  background: var(--canvas);
+  box-shadow: 22px 0 52px -34px rgba(var(--ink-rgb), 0.48);
+  transform: translateX(-100%);
+  transition: transform 280ms var(--ease);
+  touch-action: pan-y;
+}
+
+.chat-drawer[data-open="true"] {
+  transform: translateX(0);
+}
+
+.chat-drawer:not([data-open="true"]) {
+  pointer-events: none;
+}
+
+.chat-drawer[data-dragging="true"] {
+  transition: none;
+}
+
+.drawer-edge {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 56px);
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  width: 22px;
+  touch-action: none;
+}
+
+.drawer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 10px;
+}
+
+.drawer-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.drawer-brand svg {
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
+}
+
+.drawer-new {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--ivory);
+  font-size: 14.5px;
+  font-weight: 580;
+  text-align: left;
+  box-shadow: 0 8px 18px -14px rgba(var(--accent-rgb), 0.8);
+}
+
+.drawer-new:active {
+  background: var(--accent-hover);
+}
+
+.drawer-new svg {
+  width: 18px;
+  height: 18px;
+}
+
+.drawer-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: rgba(255, 253, 249, 0.52);
+  color: var(--ink-4);
+}
+
+.drawer-search svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.drawer-search input {
+  width: 100%;
+  height: 40px;
+  min-width: 0;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.drawer-search input::placeholder {
+  color: var(--ink-4);
+}
+
+.drawer-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+}
+
+.drawer-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 14px;
+  text-align: left;
+}
+
+.drawer-nav-row:active,
+.drawer-nav-row[data-active="true"] {
+  background: rgba(var(--accent-rgb), 0.07);
+  color: var(--ink);
+}
+
+.drawer-nav-row svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  color: var(--sage);
+}
+
+.drawer-nav-row .drawer-nav-mark {
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+}
+
+.drawer-nav-row .drawer-nav-chevron {
+  width: 15px;
+  height: 15px;
+  margin-left: auto;
+  color: var(--ink-4);
+}
+
+.drawer-history {
+  flex: 1;
+  min-height: 0;
+  margin: 8px -4px 0;
+  padding: 0 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.drawer-group + .drawer-group {
+  margin-top: 12px;
+}
+
+.drawer-group-label {
+  padding: 10px 8px 5px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+.drawer-chat {
+  display: flex;
+  align-items: center;
+  border-radius: 11px;
+}
+
+.drawer-chat[data-active="true"] {
+  background: rgba(var(--accent-rgb), 0.07);
+}
+
+.drawer-chat-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 4px 9px 9px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.drawer-chat-title {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 540;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-chat-pin {
+  width: 11px;
+  height: 11px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  color: var(--ink-4);
+}
+
+.drawer-chat-preview {
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-chat-unsynced {
+  display: grid;
+  width: 26px;
+  height: 34px;
+  flex: 0 0 26px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+}
+
+.drawer-chat-unsynced svg {
+  width: 13px;
+  height: 13px;
+}
+
+.drawer-chat-time {
+  flex: 0 0 auto;
+  padding: 0 2px;
+  font-size: 10px;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.drawer-chat-more {
+  display: grid;
+  width: 32px;
+  height: 36px;
+  flex: 0 0 32px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+}
+
+.drawer-chat-more svg {
+  width: 16px;
+  height: 16px;
+}
+
+.drawer-empty {
+  margin: 0;
+  padding: 24px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-4);
+}
+
+.drawer-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 11px 6px 2px;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  background: transparent;
+  text-align: left;
+}
+
+.drawer-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--ivory);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.drawer-account-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drawer-account-copy strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-account-copy em {
+  overflow: hidden;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-account > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  color: var(--ink-4);
+}
+
+/* ── Welcome / conversation ─────────────────────────────────────────────── */
+
+.home {
+  background: var(--canvas);
+}
+
+.home-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 22px;
+}
+
+/* The greeting is centred in the room above the sync line, and both give way
+   to a scroll when the keyboard leaves less room than they need. */
+.home-body {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.home-empty {
+  width: 100%;
+  max-width: 520px;
+  margin: auto;
+  padding: 16px 0 22px;
+  text-align: center;
+}
+
+.home-empty h1 {
+  margin: 0 0 8px;
+  font-size: 30px;
+  font-weight: 540;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+  color: var(--ink);
+}
+
+.home-empty > p {
+  margin: 0 0 26px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.home-suggestions {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  text-align: left;
+  border-top: 1px solid var(--line-soft);
+}
+
+.home-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 4px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--ink);
+  font-size: 14.5px;
+  text-align: left;
+}
+
+.home-suggestion:active {
+  background: rgba(var(--ink-rgb), 0.04);
+}
+
+.home-suggestion-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: rgba(82, 100, 87, 0.08);
+  color: var(--sage);
+}
+
+.home-suggestion-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.home-suggestion-workspace svg {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+}
+
+.home-sync {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 2px 10px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.home-sync-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.home-sync-line svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: var(--sage);
+}
+
+.home-sync-action {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.home-composer {
+  flex: 0 0 auto;
+}
+
+.conversation {
+  position: relative;
+}
+
+.conversation-tools {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding: 8px 14px 0;
+}
+
+.conversation-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(255, 253, 249, 0.58);
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 550;
+  box-shadow: var(--shadow-xs);
+}
+
+.conversation-preview svg {
+  width: 14px;
+  height: 14px;
+  color: var(--sage);
+}
+
+/* ── Workspace tasks ────────────────────────────────────────────────────── */
+
+.workspace {
+  background: var(--canvas);
+}
+
+.workspace-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 18px calc(env(safe-area-inset-bottom) + 24px);
+}
+
+.workspace-heading {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto 18px;
+}
+
+.workspace-heading h1 {
+  margin: 0 0 6px;
+  font-size: 27px;
+  font-weight: 560;
+  letter-spacing: -0.035em;
+  color: var(--ink);
+}
+
+.workspace-heading p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.workspace-tasks {
+  display: flex;
+  width: 100%;
+  max-width: 520px;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 auto;
+}
+
+.workspace-task {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 13px 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: rgba(255, 253, 249, 0.58);
+  text-align: left;
+}
+
+.workspace-task:active {
+  background: rgba(var(--ink-rgb), 0.05);
+}
+
+.workspace-task-status {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.07);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-transform: capitalize;
+}
+
+.workspace-task-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workspace-task-copy strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-task-copy em {
+  overflow: hidden;
+  font-size: 11.5px;
+  font-style: normal;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-task > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--ink-4);
+}
+
+.workspace-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 64px 0;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.workspace-spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 2px solid rgba(var(--ink-rgb), 0.14);
+  border-top-color: var(--sage);
+  border-radius: 50%;
+  animation: workspace-spin 800ms linear infinite;
+}
+
+@keyframes workspace-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.workspace-empty {
+  width: 100%;
+  max-width: 400px;
+  margin: 52px auto 0;
+  text-align: center;
+  color: var(--ink-3);
+}
+
+.workspace-empty strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 16px;
+  font-weight: 570;
+  color: var(--ink);
+}
+
+.workspace-empty p {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.workspace-empty .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.action:disabled {
+  opacity: 0.46;
+}
+
+.action-badge {
+  margin-left: auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.07);
+  color: var(--ink-3);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-drawer,
+  .chat-drawer-backdrop {
+    transition: none;
+  }
 }

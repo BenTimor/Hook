@@ -15,6 +15,25 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Hook")
         .run(|app, event| {
+            // Closing the window hides it to the tray, and on macOS the Dock
+            // icon is then the natural way back. `applicationShouldHandleReopen`
+            // reaches us as this event; without it a hidden window would stay
+            // hidden even though the user clicked the Dock.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = &event
+            {
+                if !has_visible_windows {
+                    use tauri::Manager;
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+
             // Coding agents are children of this process: make sure none of them
             // survive the window closing.
             if matches!(

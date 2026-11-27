@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/instrument-sans";
 import "@hook/ui/tokens.css";
 import "./mobile.css";
 

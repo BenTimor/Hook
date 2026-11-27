@@ -1,4 +1,5 @@
 import { openExternal } from "../lib/bridge";
+import { isMac } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 import { HookMark, SignInCard, WindowControls } from "@hook/ui";
 
@@ -24,7 +25,7 @@ export function LoginScreen({ maximized }: { maximized: boolean }) {
           <HookMark />
           <span>Hook</span>
         </div>
-        <WindowControls />
+        {!isMac && <WindowControls />}
       </header>
 
       <main className="login-main">

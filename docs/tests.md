@@ -10,14 +10,16 @@ pnpm typecheck                                  # the only static gate: every pa
 pnpm waitlist:test                              # API, auth, proxy, download, sync, git, devices, relay, preview, workspace
 pnpm test:release                               # "is this tree already published?"
 pnpm test:markdown                              # the document dialect: parser, live editor, renderer, reference
+pnpm test:greetings                             # greeting windows, boundaries, shuffle rotation and the first-name rule
 pnpm test:licenses                              # every dep still fits AGPL-3.0-only
 pnpm release                                    # build + publish the installers
 ```
 
 GitHub Actions runs the checks on every push to `main` that can change a desktop
 product, and on every pull request (`.github/workflows/checks.yml`): a `verify`
-job (landing-page tests and build, the release-gate tests, `pnpm typecheck`, both
-window builds) and a `rust-test` job (`cargo test -p hook-core`), in parallel.
+job (landing-page tests and build, the release-gate tests, the document and
+greeting suites, `pnpm typecheck`, both window builds) and a `rust-test` job
+(`cargo test -p hook-core`), in parallel.
 Nothing there builds an installer — `pnpm release` does that, locally, when you
 decide to ship (see [Releasing](releasing.md)). The release profile is
 `lto = "thin"` with parallel codegen units, and a product ships one `rlib` plus

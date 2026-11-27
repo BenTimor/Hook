@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, History, PanelTop } from "lucide-react";
+import { PanelTop } from "lucide-react";
 
 import { MessageImages, ReportDialog, Thread } from "@hook/chat";
 
@@ -13,12 +13,15 @@ import { ChatComposer } from "./ChatComposer";
  * One conversation. Store wiring only, exactly like `apps/chat`'s adapters: the
  * thread, the messages, the composer and the report dialog are the shared ones,
  * so the phone cannot drift from the window.
+ *
+ * The top bar is `AppHeader`; this screen owns only the thread and the bottom
+ * composer, which is what keeps the conversation reading edge to edge even when
+ * the keyboard is open.
  */
-export function Conversation({ onChats }: { onChats: () => void }) {
+export function Conversation() {
   const activeId = useMobileChat((s) => s.activeId);
   const messages = useMobileChat((s) => s.messages);
   const chats = useMobileChat((s) => s.chats);
-  const devices = useMobileChat((s) => s.devices?.devices);
   const streams = useMobileChat((s) => s.streams);
   const activity = useMobileChat((s) => s.activity);
   const preview = useMobileChat((s) => s.preview);
@@ -37,53 +40,21 @@ export function Conversation({ onChats }: { onChats: () => void }) {
   const labels = activeId ? activity[activeId] : undefined;
   const activeChat = chats.find((chat) => chat.id === activeId);
   const coding = activeChat?.kind === "coding";
-  const title = activeChat?.title ?? "New chat";
-  const remoteDevice = activeChat?.remote
-    ? devices?.find((device) => device.id === activeChat.deviceId)
-    : undefined;
-  const machine = activeChat?.remote
-    ? remoteDevice?.name ?? activeChat.deviceName ?? "another machine"
-    : null;
-  const machineOffline = Boolean(
-    activeChat?.remote && remoteDevice && !remoteDevice.hostOnline,
-  );
   const hasPreview = Boolean(preview?.active && preview.chatId === activeId);
 
   return (
-    <section className="screen conversation" aria-label={title}>
-      <header className="bar">
-        <button className="icon-btn" title="Back" onClick={back}>
-          <ChevronLeft strokeWidth={2} />
-        </button>
-        <div className="bar-title">
-          {title}
-          {machine ? (
-            <span className="bar-sub">
-              On {machine}
-              {machineOffline ? " · offline" : ""}
-            </span>
-          ) : null}
-        </div>
-        <div className="bar-actions">
-          {hasPreview ? (
-            <button
-              className="icon-btn"
-              title="Open the preview"
-              onClick={() => setPreviewOpen(true)}
-            >
-              <PanelTop strokeWidth={1.9} />
-            </button>
-          ) : null}
+    <section className="screen conversation" aria-label={activeChat?.title ?? "Conversation"}>
+      {hasPreview ? (
+        <div className="conversation-tools">
           <button
-            className="icon-btn"
-            title="Your chats"
-            aria-label="Your chats"
-            onClick={onChats}
+            className="conversation-preview"
+            onClick={() => setPreviewOpen(true)}
           >
-            <History strokeWidth={1.8} />
+            <PanelTop strokeWidth={1.9} />
+            Preview
           </button>
         </div>
-      </header>
+      ) : null}
 
       <Thread
         messages={messages}

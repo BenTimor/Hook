@@ -8,7 +8,7 @@ export { MessageItem } from "./MessageItem";
 export { Thread } from "./Thread";
 export { WorkGroup, ReasoningStepView, ToolStepView } from "./WorkSteps";
 export { buildBlocks, toolStepFromTranscript } from "./turns";
-export { Composer } from "./Composer";
+export { Composer, fileToDraftImage } from "./Composer";
 export { ReportDialog } from "./ReportDialog";
 export { REPORT_REASONS } from "./ReportDialog";
 export { Lightbox, MessageImages } from "./images";

@@ -19,6 +19,7 @@
   "dependencies": {
     "@fontsource-variable/inter": "catalog:",
     "@fontsource-variable/jetbrains-mono": "catalog:",
+    "@fontsource-variable/instrument-sans": "catalog:",
     "@hook/chat": "workspace:*",
     "@hook/ui": "workspace:*",
     "@tauri-apps/api": "catalog:",

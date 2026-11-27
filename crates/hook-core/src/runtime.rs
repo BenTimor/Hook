@@ -1,10 +1,10 @@
 //! Locating and configuring the coding engine that runs inside Hook.
 //!
-//! Hook ships its own runtime: a `node.exe` plus the pi coding agent's JS
-//! bundle, both copied next to the app at build time. Nothing else on the
-//! machine is consulted, so the coding agents behave the same on a clean
-//! Windows install as they do on a developer box — and the user never learns
-//! that pi exists.
+//! Hook ships its own runtime: a `node` (or `node.exe` on Windows) plus the pi
+//! coding agent's JS bundle, both copied next to the app at build time. Nothing
+//! else on the machine is consulted, so the coding agents behave the same on a
+//! clean install as they do on a developer box — and the user never learns that
+//! pi exists.
 //!
 //! The engine also gets its own configuration directory. Pi normally reads
 //! `~/.pi/agent`; pointing `PI_CODING_AGENT_DIR` elsewhere means Hook's agents
@@ -19,7 +19,7 @@ use crate::config::HarnessConfig;
 /// How to launch the engine.
 #[derive(Debug, Clone)]
 pub struct PiRuntime {
-    /// Absolute path to the executable to spawn (`node.exe` when bundled).
+    /// Absolute path to the executable to spawn (`node` / `node.exe` when bundled).
     pub program: PathBuf,
     /// The pi JS bundle, when running on the bundled Node runtime.
     pub cli: Option<PathBuf>,

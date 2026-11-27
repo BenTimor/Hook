@@ -650,11 +650,14 @@ hookcode.io, which is the one thing a browser cannot do on its own: the account
 file belongs to `auth.rs`.
 
 The New Tab page is `chrome://hook-newtab` (`newtab.html`, `newtab.css`,
-`newtab.ts`: the wordmark, a greeting that is true of the clock, three chips) and
-a new tab opens it because `ChromeUINewTabURLAsGURL()` returns it — one hunk in
+`newtab.ts`: the wordmark, the shared greeting, three chips) and a new tab opens
+it because `ChromeUINewTabURLAsGURL()` returns it — one hunk in
 `chrome/common/webui_url_constants.cc`, since Ctrl+T, the plus button, the first
 window and a crash-restore tab all ask that one function. `chrome://newtab` typed
-by hand is still Chrome's own page.
+by hand is still Chrome's own page. Its greeting is not a copy written by hand:
+`browser/tools/build.mjs` copies `packages/chat/src/greeting.ts` in as
+`greeting.generated.ts` before the build (generated, not committed), so the
+catalog, the six windows and the rotation are the same ones the apps run.
 
 The tab strip is restyled (patch 0010): `chrome/browser/ui/tabs/tab_style.cc` is
 narrower tabs (214 DIP), rounder corners (13/15), and

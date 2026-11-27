@@ -2,11 +2,11 @@
 
 A family of local-first desktop products around one account. **Hook** is an AI
 chat app with coding agents; **Hook Workspace** — projects, boards, tasks and
-documents — is the second; **HookCode** is the same account on a phone. Tauri 2
+documents — is the second; **Hook** also runs on a phone. Tauri 2
 (Rust) + React 19 + TypeScript in one pnpm + Cargo workspace.
 
 ![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-283b31)
-![Platform: Windows](https://img.shields.io/badge/platform-Windows-283b31)
+![Platform: Windows and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-283b31)
 
 ![Hook's chat window: a conversation with a formatted answer and a code block](docs/assets/hook-chat.png)
 
@@ -32,7 +32,7 @@ server.
 - **Hook Workspace.** Boards, tasks, documents written in a Markdown dialect,
   roadmaps and roles — all on the account, so the chat agent can do the same work
   on a machine where Workspace is not installed.
-- **The same conversation on a phone.** HookCode runs the same `hook-core` turn
+- **The same conversation on a phone.** Hook on a phone runs the same `hook-core` turn
   loop with the chat agent's hands in Workspace, and can start and steer work on
   your computers.
 - **Local-first by default.** Chats and pictures are ordinary files on disk. A
@@ -50,19 +50,24 @@ Ten seconds of the real UI, driven against the mock backend (`pnpm dev`):
 | --- | --- |
 | ![The plan, the thinking fold and the agents tree](docs/assets/hook-advanced.png) | ![A board in the side panel](docs/assets/hook-preview.png) |
 
-| HookCode | A document in the preview panel |
+| Hook on a phone | A document in the preview panel |
 | --- | --- |
 | ![The phone's home screen](docs/assets/hook-phone.png) | ![A board, a callout and a checklist](docs/assets/hook-document.png) |
 
 ## Quick start
 
-Prerequisites: Node 20+, Rust stable (MSVC toolchain), WebView2 runtime.
+Prerequisites: Node 20+, Rust stable and the native toolchain — MSVC plus the
+WebView2 runtime on Windows, Xcode Command Line Tools on macOS. The chat app
+builds on both; Hook Workspace remains Windows-only, and the phone app ships through the mobile stores.
 
 ```bash
 cp harness.config.ci.toml harness.config.toml   # required before any cargo build
 pnpm install
-pnpm app          # a real window, hot reload, its own data under %APPDATA%\hook-dev
+pnpm app          # a real window, hot reload, its own debug data folder
 ```
+
+The debug data folder is `%APPDATA%\hook-dev\` on Windows and
+`~/Library/Application Support/hook-dev/` on macOS.
 
 Without an approved account, point the app at the bundled mock provider:
 

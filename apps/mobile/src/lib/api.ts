@@ -34,6 +34,15 @@ export const mobile = {
   appInfo: (): Promise<AppInfo> =>
     isTauri() ? invoke<AppInfo>("app_info") : demo.appInfo(),
 
+  /**
+   * The native status bar follows the screen behind it: light content on the
+   * green sign-in hero, dark content on the beige app. A no-op elsewhere.
+   */
+  setStatusBarStyle: (style: "light" | "dark"): Promise<void> =>
+    isTauri()
+      ? invoke<void>("set_status_bar_style", { style })
+      : Promise.resolve(),
+
   authStatus: (): Promise<AuthView> =>
     isTauri() ? invoke<AuthView>("auth_status") : demo.authStatus(),
 
@@ -79,6 +88,34 @@ export const mobile = {
       { serverClientId: clientId },
     );
     return invoke<AuthView>("auth_google", { idToken });
+  },
+
+  /**
+   * The phone's read-only window into Hook Workspace. The backend keeps the
+   * permission checks; this is the same `ws_request` command the workspace
+   * window uses.
+   */
+  wsRequest: async (
+    method: "GET" | "POST" | "PATCH" | "DELETE",
+    path: string,
+    body?: unknown,
+  ): Promise<unknown> => {
+    if (!isTauri()) return demo.wsRequest(method, path, body);
+    // The command returns the status beside the body, because a 403 or a 409
+    // is an answer, not a transport failure. The screen only wants the body,
+    // and a refusal has to read like a sentence.
+    const result = await invoke<{ status: number; body: unknown }>("ws_request", {
+      method,
+      path,
+      body: body ?? null,
+    });
+    if (result.status >= 400) {
+      const message =
+        (result.body as { error?: { message?: string } })?.error?.message ??
+        "The workspace service refused that request.";
+      throw new Error(message);
+    }
+    return result.body;
   },
 
   listChats: (): Promise<ChatMeta[]> =>

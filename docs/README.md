@@ -23,14 +23,14 @@ obvious fix is sometimes wrong.
 | [Coding agents](coding-agents.md) | How a run starts, follows a checklist, reports back, shows a preview — and the chat you can have with the engine directly |
 | [Your machines](machines.md) | Running work on another computer of the same account |
 | [Hook Workspace](workspace.md) | Projects, boards, tasks, documents, roadmaps, roles, and the service behind them |
-| [Hook on a phone](mobile.md) | HookCode: the same account and the same chat surface, with no folder and no local engine |
+| [Hook on a phone](mobile.md) | Hook: the same account and the same chat surface, with no folder and no local engine |
 
 ## How it works
 
 | Document | What it answers |
 | --- | --- |
 | [Architecture](architecture.md) | The crate map, the two kinds of conversation, streaming, cancellation, persistence |
-| [Where the data lives](data-layout.md) | Every file under `%APPDATA%`, and what a debug build does differently |
+| [Where the data lives](data-layout.md) | Every file under `%APPDATA%` (or `~/Library/Application Support`), and what a debug build does differently |
 | [Sync between computers](sync.md) | What travels, what merges, what never leaves the machine |
 | [Plans, limits and your own model](plans.md) | The free plan, the account-wide sync switch, a personal endpoint, analytics |
 | [Memory](memory.md) | What the agent remembers, how frames reach a chat, why the request prefix is append-only |

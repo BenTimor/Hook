@@ -99,6 +99,12 @@ jobs:
       - name: Test the document dialect
         run: pnpm test:markdown
 
+      # The greeting is shared copy and shared rules: six clock windows, a
+      # per-window shuffle and the two phrases allowed a first name. Pure
+      # functions, so no window and no device.
+      - name: Test the greeting catalog
+        run: pnpm test:greetings
+
       # The browser tooling drives a Chromium checkout that CI does not have, so
       # what is tested here is the part that decides a rebase's fate: the pin and
       # version parsers, the patch-series reader and the overlay rule that stops a

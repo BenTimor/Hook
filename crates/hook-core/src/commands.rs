@@ -269,6 +269,85 @@ pub fn app_info(state: State<'_, Arc<AppState>>) -> Result<AppInfo, String> {
     })
 }
 
+/// Pick the native status bar's appearance for the screen that is showing.
+///
+/// The phone's sign-in hero is forest-green to the top edge, so its status bar
+/// needs light content; every screen after sign-in is warm beige and keeps the
+/// system's dark content. The UI is a webview and iOS has no web API for this,
+/// so the call has to reach the window's root view controller. A no-op on every
+/// other product: only the phone has a status bar to change.
+#[allow(deprecated)]
+#[tauri::command]
+pub fn set_status_bar_style(app: AppHandle, style: String) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        let light = style == "light";
+        app.run_on_main_thread(move || {
+            use objc2::MainThreadMarker;
+            use objc2_ui_kit::{UIApplication, UIUserInterfaceStyle};
+
+            let Some(marker) = MainThreadMarker::new() else {
+                return;
+            };
+            let Some(window) = UIApplication::sharedApplication(marker).keyWindow() else {
+                return;
+            };
+            let style = if light {
+                UIUserInterfaceStyle::Dark
+            } else {
+                UIUserInterfaceStyle::Light
+            };
+            // `default` follows the trait collection: a dark window asks for
+            // light status-bar content without repainting the web page itself.
+            // The window's trait, not only the controller's, is what the status
+            // bar reads here.
+            window.setOverrideUserInterfaceStyle(style);
+            if let Some(root) = window.rootViewController() {
+                root.setOverrideUserInterfaceStyle(style);
+                root.setNeedsStatusBarAppearanceUpdate();
+            }
+        })
+        .map_err(|error| format!("Could not update the status bar: {error}"))?;
+        set_webview_scroll_edge(&app, light);
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, style);
+    }
+    Ok(())
+}
+
+/// Switch the WKWebView's own top edge effect. The status bar's trait alone
+/// does not cover it; the webview has to be addressed directly.
+#[cfg(target_os = "ios")]
+fn set_webview_scroll_edge(app: &AppHandle, hidden: bool) {
+    use objc2::runtime::{AnyObject, NSObjectProtocol};
+    use objc2_ui_kit::UIScrollView;
+    use tauri::Manager;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let _ = window.with_webview(move |webview| {
+        let webview = webview.inner() as *mut AnyObject;
+        if webview.is_null() {
+            return;
+        }
+        let webview = unsafe { &*webview };
+        let scroll: *mut AnyObject = unsafe { objc2::msg_send![webview, scrollView] };
+        if scroll.is_null() {
+            return;
+        }
+        let scroll = unsafe { &*scroll };
+        if let Some(scroll) = scroll.downcast_ref::<UIScrollView>() {
+            if scroll.respondsToSelector(objc2::sel!(topEdgeEffect)) {
+                scroll.topEdgeEffect().setHidden(hidden);
+            }
+        }
+    });
+}
+
+
 
 /// Drop everything that belonged to the signed-in account: live coding
 /// agents, in-flight chat streams and the preview server. Used when the token

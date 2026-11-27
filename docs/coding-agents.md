@@ -30,12 +30,14 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   the work began elsewhere) and `sync_push` when they finish, are blocked or
   stop early. The guard blocks force-pushes, branch deletion and mirroring, so a
   shared project cannot lose another computer's history.
-- **Git ships with Hook.** `scripts/fetch-git.mjs` installs a pinned MinGit into
-  `src-tauri/resources/git` (per app, next to the engine) like the coding engine (its GPL `LICENSE.txt` ships
-  with it). Agents get it on `PATH` and a managed `gitconfig` in `agent-home`;
-  the account's git token is scoped to `/api/git/*` and cannot read chats or
-  spend model credits. The token lives in that config, never in a project or a
-  remote URL.
+- **Git ships with Hook on Windows.** `scripts/fetch-git.mjs` installs a pinned
+  MinGit into `src-tauri/resources/git` (per app, next to the engine) like the
+  coding engine (its GPL `LICENSE.txt` ships with it). On macOS and Linux the
+  system `git` is used instead — Command Line Tools provides `/usr/bin/git`,
+  which is also what the user's terminal has. Agents get the chosen git on
+  `PATH` and a managed `gitconfig` in `agent-home`; the account's git token is
+  scoped to `/api/git/*` and cannot read chats or spend model credits. The token
+  lives in that config, never in a project or a remote URL.
 - **The chat agent never touches files.** Its tools are `set_title`,
   `list_projects`, `create_project`, `update_project_description`,
   `start_coding_agent`, `list_agents`, `agent_status`, `steer_agent`,
@@ -78,12 +80,15 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   project folder as their working directory:
 
   ```
-  <resources>/node.exe <resources>/pi/dist/bundle/cli.js --mode rpc
+  <resources>/node <resources>/pi/dist/bundle/cli.js --mode rpc
      --session-dir <appdata>/agent-sessions --session-id <id> --name "<title>"
      -ne -e hook-guard.mjs -ns -np --no-mcp -na --model hook/<model>
   ```
 
-  `PI_CODING_AGENT_DIR` points at `%APPDATA%\app.hook.chat\agent-home`, whose
+  (`node.exe` on Windows; the rest of the line is the same.)
+  `PI_CODING_AGENT_DIR` points at the product's `agent-home`
+  (`%APPDATA%\app.hook.chat\agent-home` on Windows,
+  `~/Library/Application Support/app.hook.chat/agent-home` on macOS), whose
   `models.json` is written atomically from `harness.config.toml` before launch.
   The model credential is referenced as `$HOOK_PROVIDER_TOKEN` and supplied
   through the agent's environment — the account token for Hook's proxy, the
@@ -226,9 +231,10 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   There is no log, no tool feed and no session browser: the raw run stays
   between Hook and the chat agent, and everything you read in the conversation
   is written by the chat agent.
-- **Sessions are resumable.** They live in
-  `%APPDATA%\app.hook.chat\agent-sessions\`. A finished agent — or one that
-  was cut off when Hook closed — can be continued by session id.
+- **Sessions are resumable.** They live in the product's `agent-sessions\`
+  folder (`%APPDATA%\app.hook.chat\` on Windows,
+  `~/Library/Application Support/app.hook.chat/` on macOS). A finished agent —
+  or one that was cut off when Hook closed — can be continued by session id.
 
 Agents are children of Hook: closing the window kills their process trees and
 marks the run `interrupted`, so nothing keeps running behind your back.
@@ -258,10 +264,11 @@ that conversation — what the engine says is what you read.
   repository and is not one of Hook's projects is your clone, so the agent's
   git reads your global and system config — your identity, your credential
   helper, your SSH keys — instead of Hook's managed file. It also runs *your*
-  `git`, not the bundled copy: on Windows your Git installation's system
-  gitconfig is where the credential manager is declared, and the bundled MinGit
-  has no system config that could reach it. If there is no `git` on `PATH`, the
-  run falls back to the bundled copy and Hook's config. A push then behaves as
+  `git`, not Hook's copy: on Windows your Git installation's system gitconfig is
+  where the credential manager is declared, and the bundled MinGit has no system
+  config that could reach it; on macOS the system git is the only copy. If there
+  is no `git` on `PATH`, the run falls back to the bundled copy (Windows) and
+  Hook's config. A push then behaves as
   it does in your terminal; a terminal prompt is still refused (the engine's
   stdin is its RPC channel), so a credential manager that opens a window may
   ask, and a remote that only knows how to ask in a terminal fails instead of

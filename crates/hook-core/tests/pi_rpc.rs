@@ -10,12 +10,31 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+fn node_executable() -> &'static str {
+    if cfg!(windows) {
+        "node.exe"
+    } else {
+        "node"
+    }
+}
+
 fn detect_pi() -> Option<PathBuf> {
-    let out = Command::new("where").arg("pi.cmd").output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let line = text.lines().next()?.trim().to_string();
-    let path = PathBuf::from(line);
-    path.is_file().then_some(path)
+    #[cfg(windows)]
+    {
+        let out = Command::new("where").arg("pi.cmd").output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let line = text.lines().next()?.trim().to_string();
+        let path = PathBuf::from(line);
+        return path.is_file().then_some(path);
+    }
+    #[cfg(not(windows))]
+    {
+        // A developer's `pi` on PATH; the bundled runtime is preferred below.
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("pi"))
+            .find(|candidate| candidate.is_file())
+    }
 }
 
 /// How to launch the engine: the bundled runtime if it is present, else PATH.
@@ -23,12 +42,21 @@ fn engine() -> Option<(PathBuf, Vec<String>)> {
     let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("resources")
         .join("pi-runtime");
-    let node = runtime.join("node.exe");
+    let node = runtime.join(node_executable());
     let cli = runtime.join("pi").join("dist").join("bundle").join("cli.js");
     if node.is_file() && cli.is_file() {
         return Some((node, vec![cli.to_string_lossy().to_string()]));
     }
-    detect_pi().map(|pi| (PathBuf::from("cmd"), vec!["/C".into(), pi.to_string_lossy().to_string()]))
+    detect_pi().map(|pi| {
+        #[cfg(windows)]
+        {
+            (PathBuf::from("cmd"), vec!["/C".into(), pi.to_string_lossy().to_string()])
+        }
+        #[cfg(not(windows))]
+        {
+            (pi, Vec::new())
+        }
+    })
 }
 
 #[test]
@@ -66,8 +94,19 @@ fn rpc_handshake_returns_state_without_calling_a_model() {
     let pid = child.id();
     let watchdog = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(40));
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
+        #[cfg(windows)]
+        let mut kill = {
+            let mut command = Command::new("taskkill");
+            command.args(["/F", "/T", "/PID", &pid.to_string()]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut kill = {
+            let mut command = Command::new("kill");
+            command.args(["-9", &pid.to_string()]);
+            command
+        };
+        let _ = kill
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();

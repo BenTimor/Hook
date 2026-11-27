@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, CornerDownLeft, ImagePlus, Square, X } from "lucide-react";
+import { ArrowUp, CornerDownLeft, ImagePlus, Plus, Square, X } from "lucide-react";
 
 import type { DraftImage, SlashCommand } from "./types";
 import "./chat.css";
@@ -10,7 +10,7 @@ const MAX_EDGE = 1600;
 /** How long the command menu stays mounted after it closes (`chat.css`). */
 const MENU_EXIT_MS = 90;
 
-async function fileToDraftImage(file: File): Promise<DraftImage | null> {
+export async function fileToDraftImage(file: File): Promise<DraftImage | null> {
   if (!file.type.startsWith("image/")) return null;
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (!bitmap) return null;
@@ -51,9 +51,12 @@ export interface ComposerProps {
   /** Omit to hide the attach button — a dock without picture support must not offer it. */
   onAddImages?: (images: DraftImage[]) => void;
   onRemoveImage?: (id: string) => void;
+  /** A host-owned attachment menu; replaces the built-in image picker button. */
+  onAttach?: () => void;
   placeholder?: string;
-  /** The line under the box. Products use it to explain what Enter will do. */
-  hint?: ReactNode;
+  /** The line under the box. Products use it to explain what Enter will do.
+      `null` hides it entirely. */
+  hint?: ReactNode | null;
   /** Change it to move the caret here (a new chat, a new conversation). */
   focusKey?: string | number | null;
   /**
@@ -80,6 +83,7 @@ export function Composer({
   images = [],
   onAddImages,
   onRemoveImage,
+  onAttach,
   placeholder = "Ask anything…",
   hint,
   focusKey,
@@ -170,7 +174,13 @@ export function Composer({
   }, [fit]);
 
   useEffect(() => {
-    ref.current?.focus();
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    // A staged prompt is meant to be continued: the caret goes after it, not
+    // to the start of the line where the pointer would put it.
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
   }, [focusKey]);
 
   const stage = async (files: FileList | File[] | null) => {
@@ -257,24 +267,26 @@ export function Composer({
             <>
               <button
                 className="attach-btn"
-                title="Attach a picture"
-                aria-label="Attach a picture"
+                title={onAttach ? "Add to chat" : "Attach a picture"}
+                aria-label={onAttach ? "Add to chat" : "Attach a picture"}
                 disabled={!ready}
-                onClick={() => fileInput.current?.click()}
+                onClick={() => (onAttach ? onAttach() : fileInput.current?.click())}
               >
-                <ImagePlus strokeWidth={1.9} />
+                {onAttach ? <Plus strokeWidth={2} /> : <ImagePlus strokeWidth={1.9} />}
               </button>
-              <input
-                ref={fileInput}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                multiple
-                hidden
-                onChange={(event) => {
-                  void stage(event.target.files);
-                  event.target.value = "";
-                }}
-              />
+              {onAttach ? null : (
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    void stage(event.target.files);
+                    event.target.value = "";
+                  }}
+                />
+              )}
             </>
           )}
           <textarea
@@ -358,16 +370,19 @@ export function Composer({
           )}
         </div>
       </div>
-      {hint ? (
+      {hint !== null ? (
         <div className="composer-hint" data-active={canSend}>
-          {hint}
+          {hint ?? (
+            <>
+              <CornerDownLeft
+                size={10}
+                style={{ display: "inline", verticalAlign: "-1px" }}
+              />{" "}
+              Enter to send · Shift + Enter for a new line
+            </>
+          )}
         </div>
-      ) : (
-        <div className="composer-hint" data-active={canSend}>
-          <CornerDownLeft size={10} style={{ display: "inline", verticalAlign: "-1px" }} /> Enter to
-          send · Shift + Enter for a new line
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -2698,12 +2698,52 @@ mod tests {
         assert_eq!(prompt_line("hi", &[])["images"], serde_json::json!([]));
     }
 
+    /// The fake engine's launcher: a `.cmd` shim on Windows (what an npm
+    /// install produces) and an executable shell script elsewhere. Tests that
+    /// do not start an agent never need the file to exist; the ones that do
+    /// call [`write_fake_pi`].
+    fn fake_pi_program(base: &Path) -> PathBuf {
+        base.join(if cfg!(windows) {
+            "fake-pi.cmd"
+        } else {
+            "fake-pi"
+        })
+    }
+
     fn test_engine(base: &Path) -> Result<PiRuntime, String> {
         Ok(PiRuntime {
-            program: base.join("fake-pi.cmd"),
+            program: fake_pi_program(base),
             cli: None,
             agent_home: base.join("agent-home"),
         })
+    }
+
+    fn write_fake_pi(base: &Path) -> PathBuf {
+        std::fs::write(
+            base.join("fake-pi.mjs"),
+            include_str!("../tests/fixtures/fake-pi.mjs"),
+        )
+        .unwrap();
+        let shim = fake_pi_program(base);
+        #[cfg(windows)]
+        {
+            std::fs::write(
+                &shim,
+                "@echo off\r\nnode \"%~dp0fake-pi.mjs\" %*\r\n",
+            )
+            .unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(
+                &shim,
+                "#!/bin/sh\nexec node \"$(dirname \"$0\")/fake-pi.mjs\" \"$@\"\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        shim
     }
 
     fn manager() -> AgentManager {
@@ -3039,14 +3079,7 @@ name = "test-model"
 
         let base = std::env::temp_dir().join(format!("hook-agent-batch-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
-        std::fs::write(base.join("fake-pi.mjs"), include_str!("../tests/fixtures/fake-pi.mjs")).unwrap();
-        std::fs::write(
-            base.join("fake-pi.cmd"),
-            "@echo off
-node \"%~dp0fake-pi.mjs\" %*
-",
-        )
-        .unwrap();
+        write_fake_pi(&base);
 
         let settings = Arc::new(SettingsStore::new(&base));
         let projects = Arc::new(ProjectsStore::new(&base));
@@ -3171,11 +3204,7 @@ node \"%~dp0fake-pi.mjs\" %*
     async fn quitting_kills_live_agents() {
         let base = std::env::temp_dir().join(format!("hook-agent-quit-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
-        std::fs::write(base.join("fake-pi.mjs"), include_str!("../tests/fixtures/fake-pi.mjs")).unwrap();
-        let shim = base.join("fake-pi.cmd");
-        std::fs::write(&shim, "@echo off
-node \"%~dp0fake-pi.mjs\" %*
-").unwrap();
+        write_fake_pi(&base);
 
         let settings = Arc::new(SettingsStore::new(&base));
         let projects = Arc::new(ProjectsStore::new(&base));
@@ -3214,21 +3243,9 @@ node \"%~dp0fake-pi.mjs\" %*
         let base = std::env::temp_dir().join(format!("hook-agent-run-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
 
-        // A .cmd shim so the manager launches it exactly like a real npm shim.
-        let script = base.join("fake-pi.mjs");
-        std::fs::write(
-            &script,
-            include_str!("../tests/fixtures/fake-pi.mjs"),
-        )
-        .unwrap();
-        let shim = base.join("fake-pi.cmd");
-        std::fs::write(
-            &shim,
-            format!("@echo off
-node \"%~dp0fake-pi.mjs\" %*
-"),
-        )
-        .unwrap();
+        // A launcher shim so the manager launches it the way it launches a real
+        // npm shim (`.cmd`) or a bundled/Unix executable.
+        write_fake_pi(&base);
 
         let settings = Arc::new(SettingsStore::new(&base));
         let projects = Arc::new(ProjectsStore::new(&base));

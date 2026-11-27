@@ -79,6 +79,7 @@ export function ChatDock({
   open,
   onClose,
   title = "Hook",
+  userName,
   suggestions = [],
   blurb = "Ask anything. Hook can read what you are looking at.",
   notice,
@@ -92,6 +93,8 @@ export function ChatDock({
   onClose?: () => void;
   /** Said to a screen reader only: the dock never prints the product's name. */
   title?: string;
+  /** The account's display name; only the greeting's two named entries use it. */
+  userName?: string | null;
   /** Three things worth asking here, offered on the empty screen. */
   suggestions?: string[];
   /** One line under the greeting, in the product's words. */
@@ -398,7 +401,7 @@ export function ChatDock({
       ) : messages.length === 0 && !busy ? (
         <div className="dock-hero">
           <HookMark className="dock-hero-mark" />
-          <h1>{greeting()}</h1>
+          <h1>{greeting(userName)}</h1>
           <p>{blurb}</p>
           {suggestions.length > 0 ? (
             <div className="dock-chips">

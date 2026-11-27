@@ -1,6 +1,8 @@
 //! Git for coding agents.
 //!
-//! Hook ships MinGit (`scripts/fetch-git.mjs`) so a user never installs git.
+//! On Windows Hook ships MinGit (`scripts/fetch-git.mjs`) so a user never
+//! installs git. macOS and Linux use the system `git` from Command Line Tools
+//! (or the distribution), which is also the git a developer's terminal has.
 //! Nothing about a project's remote is visible in the app: Hook writes one
 //! managed global config into the agent home with the account's **git-only**
 //! token and points `GIT_CONFIG_GLOBAL` at it. Plain `git pull` / `git push`

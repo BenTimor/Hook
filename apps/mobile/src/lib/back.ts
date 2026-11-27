@@ -20,6 +20,8 @@ import { isTauri } from "./api";
 
 export const BACK_LAYER = {
   screen: 10,
+  /** Chat history, which slides over a screen but under its own menus. */
+  drawer: 15,
   sheet: 20,
   dialog: 30,
 } as const;

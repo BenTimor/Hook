@@ -63,10 +63,48 @@ release is still a manual download; everything after it is one click. `release.c
 `/api/download/windows?version=` pins an exact build. The website links the
 Microsoft Store listing instead of an installer.
 
+## macOS builds (local, unsigned)
+
+The chat app builds natively on macOS. This is a development/local path, not a
+published channel:
+
+```bash
+pnpm app:build
+```
+
+writes `target/release/bundle/macos/Hook.app` and
+`target/release/bundle/dmg/Hook_<version>_<arch>.dmg`. The bundle is ad-hoc /
+unsigned, so it runs on the machine that built it; it is not a distributable
+artifact. `tauri.macos.conf.json` selects the `app` and `dmg` targets, keeps the
+native traffic lights (overlay title bar), and bundles only the engine — macOS
+uses the system `git` from Command Line Tools instead of MinGit.
+
+What a signed, distributable macOS release still needs:
+
+- an Apple Developer ID Application certificate and a Developer ID Installer
+  certificate (for a signed DMG) in the build keychain;
+- hardened runtime plus the entitlements Tauri and the bundled Node/pi need,
+  then Tauri's signing identity (or `codesign --deep`) over every nested Mach-O,
+  including `Contents/Resources/pi-runtime/node`;
+- notarization with `notarytool` and a stapled ticket, so Gatekeeper accepts the
+  app on another Mac;
+- an architecture decision: a local Apple-silicon build ships the arm64 Node
+  copied by `pnpm engine`; Intel or universal support needs a matching or
+  universal Node runtime;
+- a macOS release index and update path (the current `/api/releases` entries are
+  NSIS `.exe` files), or a documented manual `.dmg` download;
+- a decision on the Store/App Store channel if one is wanted (the phone already
+  ships through App Store Connect; the desktop does not).
+
+Until then there is no `pnpm release:mac`; use `pnpm app:build`, and
+`pnpm release` refuses to run on macOS rather than pretending a Windows index
+can publish it.
+
 ## Releasing
 
 Installers are built and published from the machine that makes the release, not
-from CI:
+from CI. `pnpm release` is the Windows channel (NSIS + MSIX); macOS is the local
+build above:
 
 ```bash
 pnpm version:bump patch                 # patch|minor|major, add --product workspace

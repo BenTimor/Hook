@@ -36,6 +36,14 @@ if [ -f "$SSH_KEY" ]; then SSH_OPTS+=(-i "$SSH_KEY"); fi
 step() { printf '\n\033[1m→ %s\033[0m\n' "$1"; }
 fail() { printf '\033[31m!! %s\033[0m\n' "$1" >&2; exit 1; }
 
+# Publishing still means NSIS installers and the Windows release index. A
+# macOS build is local for now: `pnpm app:build` writes an unsigned .app/dmg
+# under target/release/bundle, and a signed/notarized channel is separate work
+# (docs/releasing.md). Refuse here instead of failing halfway through.
+if [ "$(uname -s)" = "Darwin" ]; then
+  fail "pnpm release publishes Windows installers only; on macOS use 'pnpm app:build' for a local build"
+fi
+
 PRODUCTS=()
 DRY_RUN=0
 STORE=0

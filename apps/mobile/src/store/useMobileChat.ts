@@ -42,6 +42,8 @@ interface MobileState {
   streams: Record<string, Stream>;
   activity: Record<string, string[]>;
   draft: string;
+  /** Bumped when a suggestion or a new chat should move the caret to the composer. */
+  composerFocus: number;
   /** Pictures staged in the composer, already downscaled by the surface. */
   draftImages: DraftImage[];
   /**
@@ -69,6 +71,7 @@ interface MobileState {
   newRemoteCodingChat: (deviceId: string, target: RemoteTarget) => Promise<void>;
   back: () => void;
   setDraft: (value: string) => void;
+  focusComposer: () => void;
   addDraftImages: (images: DraftImage[]) => void;
   removeDraftImage: (id: string) => void;
   renameChat: (id: string, title: string) => Promise<void>;
@@ -115,6 +118,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   streams: {},
   activity: {},
   draft: "",
+  composerFocus: 0,
   draftImages: [],
   sending: false,
   settings: null,
@@ -250,7 +254,13 @@ export const useMobileChat = create<MobileState>((set, get) => ({
   newChat() {
     const previous = get().activeId;
     if (previous) void mobile.unsubscribeChat(previous);
-    set({ activeId: null, messages: [], draft: "", error: null });
+    set((state) => ({
+      activeId: null,
+      messages: [],
+      draft: "",
+      error: null,
+      composerFocus: state.composerFocus + 1,
+    }));
   },
 
   async newRemoteCodingChat(deviceId, target) {
@@ -273,6 +283,10 @@ export const useMobileChat = create<MobileState>((set, get) => ({
 
   setDraft(value) {
     set({ draft: value });
+  },
+
+  focusComposer() {
+    set((state) => ({ composerFocus: state.composerFocus + 1 }));
   },
 
   addDraftImages(images) {

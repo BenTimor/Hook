@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Code2, FileText, History, Lightbulb, Settings, SquareTerminal } from "lucide-react";
+import { Cloud, Code2, Lightbulb, SquareTerminal } from "lucide-react";
 
 import { greeting, RemoteChatDialog } from "@hook/chat";
 import { HookMark } from "@hook/ui";
@@ -10,42 +10,42 @@ import { useMobileChat } from "../store/useMobileChat";
 import { ChatComposer } from "./ChatComposer";
 
 const SUGGESTIONS = [
-  { icon: Lightbulb, label: "Explain a tricky concept simply" },
-  { icon: Code2, label: "Debug this snippet with me" },
-  { icon: FileText, label: "Draft release notes for v2" },
-];
+  {
+    icon: <Lightbulb strokeWidth={1.7} />,
+    label: "Explain something to me",
+    prompt: "Explain something to me: ",
+  },
+  {
+    icon: <Code2 strokeWidth={1.7} />,
+    label: "Help me with code",
+    prompt: "Help me with code: ",
+  },
+] as const;
 
 /**
- * The home screen: a new conversation, not the archive.
+ * The welcome screen: a conversation with no id yet.
  *
- * Like the desktop window, what opens first is the composer with a greeting;
- * the conversations are one tap away behind the history button. Sending here
- * creates the chat, and the same screen becomes its conversation.
- *
- * Starting a coding agent on a computer is an advanced-mode action, exactly as
- * it is on the desktop: with advanced off, the chat agent gets the work and
- * decides for itself whether a machine is needed. The phone does not offer a
- * second, simpler way into the same agent.
+ * It is deliberately not a dashboard. The greeting and the quiet rows are the
+ * whole content; the composer is the action. A suggestion only stages its
+ * prompt, so the person can edit it before sending. Tasks are the exception:
+ * they open Workspace, where the real task data lives.
  */
 export function Home({
-  onChats,
+  onWorkspace,
   onSettings,
 }: {
-  onChats: () => void;
+  onWorkspace: () => void;
   onSettings: () => void;
 }) {
+  const auth = useMobileChat((s) => s.auth);
   const setDraft = useMobileChat((s) => s.setDraft);
+  const focusComposer = useMobileChat((s) => s.focusComposer);
+  const sync = useMobileChat((s) => s.sync);
   const devices = useMobileChat((s) => s.devices);
   const advanced = useMobileChat((s) => Boolean(s.settings?.advancedMode));
   const newRemoteCodingChat = useMobileChat((s) => s.newRemoteCodingChat);
   const [remoteOpen, setRemoteOpen] = useState(false);
-  // The Android back gesture closes the picker before it leaves the screen.
-  useBackHandler(BACK_LAYER.dialog, remoteOpen, () => setRemoteOpen(false));
-  useEffect(() => {
-    // Turning advanced off elsewhere (the computer, the settings sheet) must
-    // close a picker that is already open.
-    if (!advanced) setRemoteOpen(false);
-  }, [advanced]);
+
   const hosts =
     devices?.devices.filter(
       (device) =>
@@ -55,60 +55,81 @@ export function Home({
         device.remoteAllowed,
     ) ?? [];
 
+  useBackHandler(BACK_LAYER.dialog, remoteOpen, () => setRemoteOpen(false));
+  useEffect(() => {
+    if (!advanced) setRemoteOpen(false);
+  }, [advanced]);
+
+  const stage = (prompt: string) => {
+    setDraft(prompt);
+    focusComposer();
+  };
+
+  const syncOn = Boolean(sync?.enabled);
+  const syncStatus = syncOn
+    ? sync?.state === "syncing"
+      ? "Cloud sync is on · syncing"
+      : "Cloud sync is on"
+    : "Chats saved on this device";
+
   return (
     <section className="screen home" aria-label="New chat">
-      <header className="bar bar-root">
-        <div className="bar-brand">
-          <HookMark />
-          <span>Hook</span>
-        </div>
-        <div className="bar-actions">
-          <button
-            className="icon-btn"
-            title="Your chats"
-            aria-label="Your chats"
-            onClick={onChats}
-          >
-            <History strokeWidth={1.8} />
-          </button>
-          <button
-            className="icon-btn"
-            title="Settings"
-            aria-label="Settings"
-            onClick={onSettings}
-          >
-            <Settings strokeWidth={1.8} />
-          </button>
-        </div>
-      </header>
+      <div className="home-scroll">
+        <div className="home-body">
+          <div className="home-empty">
+            <h1>{greeting(auth?.name)}</h1>
+            <p>What can I help you with today?</p>
 
-      <div className="hero">
-        <div className="hero-inner">
-          <h1>{greeting()}</h1>
-          <p>Ask anything. Nothing leaves this phone unless your plan syncs it.</p>
-          <ChatComposer className="mobile-composer" />
-          <div className="chips">
-            {advanced && hosts.length > 0 && (
-              <button
-                className="chip chip-machine"
-                onClick={() => setRemoteOpen(true)}
-              >
-                <SquareTerminal strokeWidth={1.7} />
-                Code on {hosts[0].name}
+            <div className="home-suggestions">
+              {SUGGESTIONS.map(({ icon, label, prompt }) => (
+                <button
+                  key={label}
+                  className="home-suggestion"
+                  onClick={() => stage(prompt)}
+                >
+                  <span className="home-suggestion-icon" aria-hidden="true">
+                    {icon}
+                  </span>
+                  <span>{label}</span>
+                </button>
+              ))}
+              <button className="home-suggestion" onClick={onWorkspace}>
+                <span
+                  className="home-suggestion-icon home-suggestion-workspace"
+                  aria-hidden="true"
+                >
+                  <HookMark />
+                </span>
+                <span>Show my tasks</span>
               </button>
-            )}
-            {SUGGESTIONS.map(({ icon: Icon, label }) => (
-              <button
-                key={label}
-                className="chip"
-                onClick={() => setDraft(label)}
-              >
-                <Icon strokeWidth={1.7} />
-                {label}
-              </button>
-            ))}
+              {advanced && hosts.length > 0 ? (
+                <button
+                  className="home-suggestion"
+                  onClick={() => setRemoteOpen(true)}
+                >
+                  <span className="home-suggestion-icon" aria-hidden="true">
+                    <SquareTerminal strokeWidth={1.7} />
+                  </span>
+                  <span>Code on {hosts[0].name}</span>
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
+
+        <div className="home-sync">
+          <span className="home-sync-line">
+            <Cloud strokeWidth={1.7} />
+            {syncStatus}
+          </span>
+          <button className="home-sync-action" onClick={onSettings}>
+            {syncOn ? "Manage" : "Enable Cloud Sync"}
+          </button>
+        </div>
+      </div>
+
+      <div className="home-composer">
+        <ChatComposer className="mobile-composer" />
       </div>
 
       {advanced && remoteOpen && (
@@ -120,9 +141,7 @@ export function Home({
           createProject={mobile.createRemoteProject}
           loadFolders={mobile.remoteFolders}
           pinFolder={mobile.pinRemoteFolder}
-          onCreate={(deviceId, target) =>
-            newRemoteCodingChat(deviceId, target)
-          }
+          onCreate={(deviceId, target) => newRemoteCodingChat(deviceId, target)}
         />
       )}
     </section>

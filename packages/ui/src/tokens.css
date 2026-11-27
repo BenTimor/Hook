@@ -1254,6 +1254,86 @@ textarea {
   opacity: 0.7;
 }
 
+/* The icon sits immediately left of the label, but the pair is not the thing
+   that gets centred: an equal spacer on the right keeps the words themselves
+   in the middle of the button. */
+.signin-spacer {
+  display: none;
+}
+
+.signin-primary-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.signin-primary-icon,
+.signin-primary-spacer {
+  display: inline-flex;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  align-items: center;
+  justify-content: center;
+}
+
+.signin-primary-label {
+  display: block;
+}
+
+.signin-highlights {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 12px;
+  margin: 22px 0 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.signin-highlight {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.signin-highlight-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: rgba(255, 253, 249, 0.66);
+  color: var(--sage);
+}
+
+.signin-highlight-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.signin-highlight-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.signin-highlight-copy strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.signin-highlight-copy span {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
 .signin-card[data-surface="true"] .signin-primary {
   margin-top: 18px;
 }

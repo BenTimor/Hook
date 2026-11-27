@@ -28,9 +28,16 @@ single pnpm + Cargo workspace.
 | --- | --- | --- | --- | --- |
 | **Hook** (AI chat + coding agents) | `apps/chat/` | `pnpm app` | `pnpm app:build` / `pnpm app:portable` | `pnpm release` |
 | **Hook Workspace** (projects, boards, tasks, docs) | `apps/workspace/` | `pnpm workspace:app` | `pnpm workspace:app:build` | `pnpm release` |
-| **HookCode** (phone: chat + Workspace, no coding agents) | `apps/mobile/` | `pnpm mobile:android` / `pnpm mobile:ios` | `pnpm mobile:build` | App Store Connect / Play Console |
+| **Hook** (phone: chat + Workspace, no coding agents) | `apps/mobile/` | `pnpm mobile:android` / `pnpm mobile:ios` | `pnpm mobile:build` | App Store Connect / Play Console |
 | Landing page | `waitlist/` | `pnpm waitlist:dev` → :5173 | `pnpm waitlist:build` → `dist-waitlist/` | `.github/workflows/deploy-waitlist.yml`, on a `deploy-*` tag |
 | Account service | `server/` | `pnpm waitlist:start` | Docker image | `scripts/deploy-waitlist.sh` |
+
+Windows is the published desktop channel today. **Hook's chat app also runs and
+builds natively on macOS** (`pnpm app`; `pnpm app:build` produces an unsigned
+`Hook.app` and `.dmg` under `target/release/bundle/`), using the system git,
+native traffic lights and an overlay title bar. Publishing a signed/notarized
+macOS build is separate work; `pnpm release` still means the Windows index.
+Hook Workspace and the phone app are unchanged; their platform support is as before.
 
 Shared, and the reason the products look and behave alike:
 
@@ -66,10 +73,11 @@ pnpm workspace:dev                # Workspace UI in a plain browser
 pnpm workspace:app                # Workspace: real Tauri window
 pnpm mobile:dev                   # phone UI in a plain browser (mock backend)
 pnpm mobile:android               # phone product on an emulator or device
-pnpm mobile:ios                   # phone product on a simulator (macOS, Xcode)
+pnpm mobile:ios                   # phone product on a simulator or iPhone (Vite dev server)
 pnpm typecheck                    # every package + the landing page (the only static gate)
-pnpm app:build                    # chat NSIS installer (fetches engine + git first)
-pnpm workspace:app:build          # Workspace NSIS installer
+pnpm app:build                    # chat build: NSIS on Windows, .app/.dmg on macOS
+                                  # (fetches the engine; MinGit only on Windows)
+pnpm workspace:app:build          # Workspace NSIS installer (Windows)
 pnpm version:bump patch           # patch|minor|major, add --product workspace
 pnpm release                      # build + publish installers (-- --dry-run, -- --store)
 cargo test                        # whole workspace, at the repo root; no engine or network
@@ -126,6 +134,11 @@ and sync cursor. That is what lets a dev Hook and the Store one run at the same
 time. `HOOK_DATA_DIR` overrides the folder — point it at `%APPDATA%\app.hook.chat`
 to read the installed app's data from a debug build. A release build is the
 installed product and is never redirected on its own.
+
+On macOS the same layout lives under `~/Library/Application Support/`:
+`app.hook.chat/` for an installed or release build, `hook-dev/app.hook.chat/`
+for a debug one, and the shared `app.hook/` beside them (`account.json`,
+`memory/`, the channel descriptor). `HOOK_DATA_DIR` wins there too.
 
 No ESLint, Prettier or rustfmt config. Match the file you are editing.
 
@@ -215,7 +228,8 @@ bash.
 - `crates/hook-core/src/lib.rs` — `Product`, `Capabilities`, and the Tauri
   builder every product calls. `resolve_data_dir` / `product_data_dir` are the
   one place that decides where a process keeps its data: `%APPDATA%\<identifier>`
-  for an installed build, `%APPDATA%\hook-dev\<identifier>` for a debug one,
+  on Windows and `~/Library/Application Support/<identifier>` on macOS for an
+  installed build, `hook-dev\<identifier>` below either for a debug one,
   `HOOK_DATA_DIR` over both (see **Commands**); `Product::identifier()` names the
   folder and `Product::slug()` the word used everywhere a product is named to a
   machine (`/health`, the descriptor file, analytics). A capability trims the
@@ -333,6 +347,16 @@ bash.
   nothing about which app it is running in; a `DockChat.unsynced` flag draws the
   "not in the cloud" mark in its history, and the product supplies it;
   `apps/workspace/src/lib/chatTransport.ts` is that adapter.
+- `packages/chat/src/greeting.ts` — the one greeting catalog and its selection
+  logic: six windows on the device's local clock (night wraps 23:00–04:59), a
+  per-window shuffle kept in `localStorage` so all twelve lines appear before any
+  repeat, a pick frozen for the session until the window changes, and the only
+  two entries allowed a first name (`Good morning.` / `Good evening.`, rendered
+  from `auth.name`). Every home screen calls it: the desktop `Hero`, the phone's
+  `Home`, `ChatDock` (whose host passes `userName`), and Hook Browser's new tab
+  through a generated copy — `browser/tools/build.mjs` copies this file in
+  before the Chromium build, so a copy edit is still one file.
+  `pnpm test:greetings` covers the boundaries, the rotation and the name rule.
 - `packages/chat/src/RemoteChatDialog.tsx` — the host/project picker for a direct
   coding chat. It asks the chosen host for its projects (`remote_projects`), so
   it never types a path; the desktop's New chat menu and the phone's home screen
@@ -375,13 +399,19 @@ bash.
   on purpose: a `.msg` is `isolation: isolate`, so a fixed overlay opened
   *inside* a message lost its z-index to the composer and the plan board and drew
   under them.
-- `apps/mobile/` — HookCode on a phone. Three screens (a new chat, the chat
-  list, a thread), two sheets (preview, settings) and `mobile.css`, which is
-  the phone's re-skin of the shared surface the way `dock.css` is the 380px one.
-  The home screen is a new conversation, like the desktop's; the archive opens
-  behind the history button on the home screen and in the conversation header.
+- `apps/mobile/` — Hook on a phone. One shell (`AppHeader` + `ChatDrawer`),
+  three views (a new chat, a thread, the Workspace task list) and the sheets
+  (preview, settings, attach, chat actions), with `mobile.css` as the phone's
+  re-skin of the shared surface the way `dock.css` is the 380px one. The home
+  screen is a new conversation, like the desktop's; history is the drawer,
+  opened by the header button or a right-swipe from the edge and closed by a
+  left-swipe, the scrim or a chosen row. `WorkspaceTasks` reads the account's
+  projects, boards and tasks through `ws_request` — the same command the
+  Workspace window uses, so the server still owns permissions — and is
+  read-only: there is no phone Workspace app and no invented task data.
   `src/lib/back.ts` routes the Android back gesture
-  to that navigation and closes a sheet or dialog before leaving a screen.
+  to the top layer (dialog, sheet, drawer, screen) and closes a sheet or dialog
+  before leaving a screen.
   `src-tauri` passes `Product::Mobile` + `Capabilities::mobile()`; it can drive
   agents on the account's computers (`remote_agents`) but has no local engine
   and no folder picker. It ships through the stores, and `scripts/release.sh`
@@ -433,7 +463,8 @@ bash.
   a side-panel entry (`chrome://hook-panel`; its toolbar action is pinned by
   default, `0019-panel-button`, and `--hook-side-panel` opens it at startup),
   `browser/ui/webui/hook_newtab_ui.*` is the New Tab page (a new tab is ours via
-  `ChromeUINewTabURLAsGURL`, patch 0009), `browser/service/hook_service.cc` is the
+  `ChromeUINewTabURLAsGURL`, patch 0009; its greeting is the generated copy of
+  `packages/chat/src/greeting.ts`), `browser/service/hook_service.cc` is the
   task poller (one per profile, started at browser startup by
   `browser/startup/hook_extra_parts.cc`, patch 0021 — not by a page, because a
   read has to work with the side panel closed), `browser/tabs/hook_page.cc` reads
@@ -476,6 +507,13 @@ bash.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
   `hook://sync`, `hook://import`, `hook://update`).
+- `apps/chat/src-tauri/tauri.{windows,macos}.conf.json` — the platform overrides
+  of `tauri.conf.json`. Windows keeps the frameless custom chrome and bundles
+  MinGit; macOS sets `app`/`dmg` targets, keeps native traffic lights as an
+  overlay title bar, and bundles only the engine (system git). `main.tsx` marks
+  the page `data-platform="mac"` so the chat CSS hides the Windows buttons and
+  leaves the top-left to the system; `lib.rs` handles Dock reopen and the
+  menu-bar tray. Workspace and the phone do not have these files.
 - `apps/chat/src/store/useChatStore.ts` — all chat state; coalesces stream deltas.
 - `apps/workspace/src/components/WorkspaceHome.tsx` — invitations, projects and
   getting-started actions. `InvitationCard.tsx` shares response states with the
@@ -697,8 +735,8 @@ Changing one side of a boundary is the most common way to break this repo.
   (`agent::Picture`) — the composer offers the button unless the chat is a
   cached copy (`remote`: the relay carries the message, not the image, and
   `send_message` refuses one there). Four filters matter: the
-  sidebar hides these chats while Advanced is off, the phone's archive does the
-  same (`ChatList`), `setAdvancedMode` closes one that is already open (the
+  sidebar hides these chats while Advanced is off, the phone's drawer does the
+  same (`ChatDrawer`), `setAdvancedMode` closes one that is already open (the
   simple view cannot fold its per-tool turns), and `AgentTree` skips `direct`
   runs; `apps/workspace`'s chat transport always filters them out. The phone's
   **Code on <machine>** chip is an Advanced action for the same reason: with it
@@ -845,7 +883,7 @@ Changing one side of a boundary is the most common way to break this repo.
   `tauri ios init` once, and it ships through App Store Connect and the Play
   Console. `scripts/release.sh` keeps its own list and does not build it.
   "Product" in this repo means a business product sharing the account — Hook,
-  Hook Workspace, HookCode on a phone, and Hook Browser — not every `apps/*`
+  Hook Workspace, Hook on a phone, and Hook Browser — not every `apps/*`
   directory. A product with no window is not an `apps/<id>` Tauri crate:
   `crates/hook-host` is the browser's, and it links `hook-core` with
   `default-features = false`.
@@ -990,6 +1028,13 @@ Changing one side of a boundary is the most common way to break this repo.
   otherwise). The back gesture is `src/lib/back.ts` plus
   `core:app:allow-exit`; registering a `back-button` listener turns off the
   app plugin's own close, so every press must be answered.
+- **The iOS project is generated too.** `src-tauri/gen/apple` is disposable: run
+  `pnpm --dir apps/mobile exec tauri ios init`, restore the Hook icons
+  (`pnpm --dir apps/mobile exec tauri icon src-tauri/icons/source.png`), then
+  choose the Personal Team in Signing & Capabilities. `pnpm mobile:ios` is the
+  Vite dev-server loop; a standalone device build is
+  `pnpm --dir apps/mobile exec tauri ios build --debug --target aarch64`, which
+  embeds the frontend and renews a free 7-day profile. See `docs/mobile.md`.
 - **The Android project is generated, and two of its defaults are wrong.**
   `src-tauri/gen/android` is disposable: run `tauri android init`, then
   `pnpm tauri icon src-tauri/icons/source.png`, then build. Init copies the
@@ -1230,7 +1275,8 @@ reference lives in `docs/`. Read the document instead of guessing:
 - AI reporting for users and reviewers → `docs/reporting.md`
 - Microsoft Store setup/submission, MSIX, Store update cadence →
   `docs/microsoft-store.md`
-- Local data layout (`%APPDATA%\app.hook*`) → `docs/data-layout.md`
+- Local data layout (`%APPDATA%\app.hook*`, `~/Library/Application Support/app.hook*`)
+  → `docs/data-layout.md`
 - What syncs, merges and is refused → `docs/sync.md`
 - Landing page, OAuth → `docs/waitlist.md`; the container, deploy and model
   proxy → `docs/server.md` and `docs/model-proxy.md` (+ `infra/README.md`)

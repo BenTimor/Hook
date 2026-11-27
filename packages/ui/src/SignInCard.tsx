@@ -19,6 +19,12 @@ import { HookMark } from "./HookMark";
  */
 export type SignInState = "checking" | "idle" | "pending";
 
+export type SignInHighlight = {
+  icon: ReactNode;
+  title: string;
+  detail?: string;
+};
+
 export type SignInCardProps = {
   state: SignInState;
   /** The code the person types in the browser while `state` is `pending`. */
@@ -28,12 +34,23 @@ export type SignInCardProps = {
   error?: string;
   surface?: boolean;
 
-  kicker?: string;
-  title?: string;
-  copy?: ReactNode;
+  /** `null` drops the line on this host; omitted uses the default sentence. */
+  kicker?: string | null;
+  title?: ReactNode;
+  /** `null` drops the supporting paragraph on this host. */
+  copy?: ReactNode | null;
+  /**
+   * Replaces the small mark on the idle screen. The phone uses this for its
+   * hero composition; every other host keeps the plain mark.
+   */
+  hero?: ReactNode;
+  /** A short benefit list, for a host with room for one (the phone). */
+  highlights?: SignInHighlight[];
   /** The idle button. A phone says "Continue with Google", a desktop "Sign in". */
   signInLabel?: string;
   signInIcon?: ReactNode;
+  /** A full-size second action under the primary button (the Apple preview). */
+  secondaryAction?: ReactNode;
   /** What to do while `pending`; the flow itself is already running. */
   hint?: string;
 
@@ -58,8 +75,11 @@ export function SignInCard({
   kicker,
   title,
   copy,
+  hero,
+  highlights,
   signInLabel = "Continue with Google",
   signInIcon,
+  secondaryAction,
   hint,
   onSignIn,
   onOpenPage,
@@ -70,9 +90,13 @@ export function SignInCard({
 }: SignInCardProps) {
   return (
     <section className="signin-card" data-surface={surface} aria-live="polite">
-      <div className="signin-mark" aria-hidden="true">
-        <HookMark />
-      </div>
+      {state === "idle" && hero ? (
+        <div className="signin-hero">{hero}</div>
+      ) : (
+        <div className="signin-mark" aria-hidden="true">
+          <HookMark />
+        </div>
+      )}
 
       {state === "checking" ? (
         <>
@@ -114,21 +138,52 @@ export function SignInCard({
         </>
       ) : (
         <>
-          <p className="signin-kicker">{kicker ?? "Welcome to Hook"}</p>
+          {kicker !== null && (
+            <p className="signin-kicker">{kicker ?? "Welcome to Hook"}</p>
+          )}
           <h1 className="signin-title">{title ?? "Sign in to get started."}</h1>
-          <p className="signin-copy">
-            {copy ??
-              "Hook is invite-only for now. Use the same Google account you joined the waiting list with — once you’re approved, chat and coding agents unlock together."}
-          </p>
+          {copy !== null && (
+            <p className="signin-copy">
+              {copy ??
+                "Hook is invite-only for now. Use the same Google account you joined the waiting list with — once you’re approved, chat and coding agents unlock together."}
+            </p>
+          )}
+          {highlights && highlights.length > 0 && (
+            <ul className="signin-highlights">
+              {highlights.map((highlight) => (
+                <li className="signin-highlight" key={highlight.title}>
+                  <span className="signin-highlight-icon" aria-hidden="true">
+                    {highlight.icon}
+                  </span>
+                  <span className="signin-highlight-copy">
+                    <strong>{highlight.title}</strong>
+                    {highlight.detail && <span>{highlight.detail}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* A host that fills the screen (the phone) makes this the flexible
+              space between the message and the action; every other host hides
+              it and keeps the button under the copy. */}
+          <span className="signin-spacer" aria-hidden="true" />
           <button
             className="signin-primary"
             onClick={onSignIn}
             disabled={busy}
             aria-busy={busy}
           >
-            {signInIcon ?? <LogIn size={17} strokeWidth={1.9} />}
-            {busy ? "Opening your browser…" : signInLabel}
+            <span className="signin-primary-content">
+              <span className="signin-primary-icon" aria-hidden="true">
+                {signInIcon ?? <LogIn size={17} strokeWidth={1.9} />}
+              </span>
+              <span className="signin-primary-label">
+                {busy ? "Opening your browser…" : signInLabel}
+              </span>
+              <span className="signin-primary-spacer" aria-hidden="true" />
+            </span>
           </button>
+          {secondaryAction}
           {alternate && (
             <button className="signin-link" onClick={alternate.onClick}>
               {alternate.label}

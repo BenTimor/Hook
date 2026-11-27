@@ -2,7 +2,7 @@ import { useState } from "react";
 import { PanelLeft, PanelRight, PanelRightClose, SquareTerminal } from "lucide-react";
 
 import { win } from "../lib/bridge";
-import { isCodingChat, modKey } from "../lib/utils";
+import { isCodingChat, isMac, modKey } from "../lib/utils";
 import { useChatStore } from "../store/useChatStore";
 import { AgentPill } from "./AgentPill";
 import { WindowControls } from "@hook/ui";
@@ -126,7 +126,7 @@ export function PaneHead() {
         </button>
       )}
       <AgentPill />
-      <WindowControls />
+      {!isMac && <WindowControls />}
     </div>
   );
 }

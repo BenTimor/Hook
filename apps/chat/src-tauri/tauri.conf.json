@@ -56,8 +56,7 @@
       }
     },
     "resources": {
-      "resources/pi-runtime": "pi-runtime",
-      "resources/git": "git"
+      "resources/pi-runtime": "pi-runtime"
     }
   }
 }

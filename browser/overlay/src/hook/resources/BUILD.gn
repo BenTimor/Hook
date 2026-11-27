@@ -36,6 +36,7 @@ build_webui("build") {
   ]
 
   ts_files = [
+    "greeting.generated.ts",
     "hook.ts",
     "newtab.ts",
   ]

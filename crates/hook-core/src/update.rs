@@ -9,9 +9,18 @@
 //! Nothing here needs a signing key or an extra release channel: the version
 //! index is public, the installer stays behind the approved-account gate, and
 //! the whole thing speaks the same HTTP API as the website.
+//!
+//! The published index is a Windows channel today. A macOS build therefore
+//! reports [`UpdateChannel::Manual`] and never offers an installer it cannot
+//! run: a `.dmg` cannot be replaced the way NSIS replaces an `.exe`, and
+//! silently pointing macOS at the Windows download would be worse than saying
+//! nothing. A real macOS channel needs its own index, signature and install
+//! step before this branch becomes automatic.
 
 use std::cmp::Ordering;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::time::Duration;
 
@@ -75,6 +84,10 @@ pub struct StoreIndex {
 pub enum UpdateChannel {
     Direct,
     Store,
+    /// A platform with no installer in the published index. The app still
+    /// knows its own version, but there is nothing to download and nothing to
+    /// promise the user.
+    Manual,
 }
 
 /// What the window needs to draw the banner, the blocking dialog, or nothing.
@@ -84,7 +97,8 @@ pub struct UpdateInfo {
     pub current: String,
     pub latest: String,
     pub minimum: String,
-    /// `direct` (Hook installs it) or `store` (Microsoft Store installs it).
+    /// `direct` (Hook installs it), `store` (Microsoft Store installs it) or
+    /// `manual` (this platform has no in-app installer).
     pub channel: UpdateChannel,
     /// A newer build exists.
     pub available: bool,
@@ -173,6 +187,9 @@ pub fn build_info(
     channel: UpdateChannel,
 ) -> Option<UpdateInfo> {
     let (latest, minimum) = match channel {
+        // There is no artifact this platform can install, so no release entry
+        // can make it "behind". `check` returns an idle `Manual` result.
+        UpdateChannel::Manual => return None,
         UpdateChannel::Direct => {
             let latest = index.latest.clone().or_else(|| {
                 index
@@ -247,16 +264,26 @@ fn packaged() -> bool {
     result != APPMODEL_ERROR_NO_PACKAGE
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn packaged() -> bool {
     false
 }
 
 pub fn current_channel() -> UpdateChannel {
-    if packaged() {
-        UpdateChannel::Store
-    } else {
-        UpdateChannel::Direct
+    #[cfg(target_os = "macos")]
+    {
+        // The published `/api/releases` index names NSIS installers. Until a
+        // macOS app/dmg channel exists, the honest answer is "no in-app
+        // update" rather than offering the Windows build.
+        return UpdateChannel::Manual;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if packaged() {
+            UpdateChannel::Store
+        } else {
+            UpdateChannel::Direct
+        }
     }
 }
 
@@ -369,6 +396,12 @@ async fn fetch_index(cfg: &HarnessConfig, product: crate::Product) -> Result<Rel
 pub async fn check(cfg: &HarnessConfig, product: crate::Product) -> Result<UpdateInfo, String> {
     let current = current_version();
     let channel = current_channel();
+    // No downloaded artifact exists for this platform, so there is nothing to
+    // compare against; an idle result draws no banner and never promises an
+    // installer the user cannot run.
+    if matches!(channel, UpdateChannel::Manual) {
+        return Ok(idle(&current, channel));
+    }
     if !cfg.auth.required {
         // Local mock builds never talk to hookcode.io.
         return Ok(idle(&current, channel));
@@ -424,6 +457,12 @@ async fn install_inner(
     }
     if current_channel() == UpdateChannel::Store {
         return Err("This build updates through the Microsoft Store.".into());
+    }
+    if current_channel() == UpdateChannel::Manual {
+        return Err(
+            "Hook for macOS is updated by downloading a new build; in-app updates are not available yet."
+                .into(),
+        );
     }
 
     let index = fetch_index(cfg, product).await?;
@@ -672,6 +711,26 @@ mod tests {
     fn an_empty_index_is_not_an_update() {
         let index = index(r#"{ "latest": null, "releases": [] }"#);
         assert!(build_info(&index, "0.1.0", UpdateChannel::Direct).is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_does_not_offer_the_windows_installer() {
+        assert_eq!(current_channel(), UpdateChannel::Manual);
+    }
+
+    #[test]
+    fn a_platform_without_an_installer_never_reports_an_update() {
+        // The macOS build uses this channel: the index may be newer, but this
+        // platform cannot install the NSIS artifact it names.
+        let index = index(
+            r#"{
+                "latest": "0.9.0",
+                "minimum": "0.1.0",
+                "releases": [{ "version": "0.9.0" }]
+            }"#,
+        );
+        assert!(build_info(&index, "0.1.0", UpdateChannel::Manual).is_none());
     }
 
     #[test]

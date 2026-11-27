@@ -652,6 +652,27 @@ export const demo = {
     if (at >= 0) demoDevices.splice(at, 1);
   },
 
+  async wsRequest(
+    _method: "GET" | "POST" | "PATCH" | "DELETE",
+    path: string,
+    _body?: unknown,
+  ): Promise<unknown> {
+    if (path === "/projects") {
+      return {
+        projects: [
+          {
+            id: "prj_1",
+            name: "Hook",
+            description: "The desktop app and its account service.",
+          },
+        ],
+      };
+    }
+    if (path === "/projects/prj_1/boards") return { boards: [board] };
+    if (path === "/boards/board_1/tasks") return { tasks };
+    return {};
+  },
+
   async previewState(): Promise<PreviewEvent | null> {
     return null;
   },

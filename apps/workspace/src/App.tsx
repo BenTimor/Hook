@@ -351,6 +351,7 @@ function Workspace({
       <ChatDock
         transport={chatTransport}
         open={dockOpen}
+        userName={auth.name}
         suggestions={suggestions}
         onClose={() => setDockOpen(false)}
       />

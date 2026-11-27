@@ -15,12 +15,13 @@ const SUGGESTIONS = [
 export function Hero() {
   const setDraft = useChatStore((s) => s.setDraft);
   const focusComposer = useChatStore((s) => s.focusComposer);
+  const name = useChatStore((s) => s.auth?.name);
 
   return (
     <div className="hero">
       <div className="hero-inner">
         <HookMark className="hero-mark" />
-        <h1>{greeting()}</h1>
+        <h1>{greeting(name)}</h1>
         <p>Ask anything. Every conversation is stored on this machine.</p>
         <Composer />
         <div className="chips">

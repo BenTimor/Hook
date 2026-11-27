@@ -1,6 +1,34 @@
 /* Hook's application shell: everything that is specific to the chat product.
    Load order (see main.tsx): tailwind.css, @hook/ui/tokens.css, this file. */
 
+/* ── macOS native chrome ────────────────────────────────────────────────── */
+
+/* The macOS window uses the system title bar as an overlay
+   (src-tauri/tauri.macos.conf.json), so the traffic lights are drawn by macOS.
+   The Windows custom buttons are not rendered, the window's own rounded frame
+   replaces the CSS haircut, and the top-left of every 44px strip leaves the
+   ~74px the three buttons occupy. */
+[data-platform="mac"] .shell,
+[data-platform="mac"] .login-screen {
+  border-radius: 0;
+}
+
+[data-platform="mac"] .shell::after,
+[data-platform="mac"] .login-screen::after {
+  display: none;
+}
+
+[data-platform="mac"] .sidebar-head,
+[data-platform="mac"] .login-head {
+  padding-left: 84px;
+}
+
+/* With the sidebar collapsed the pane starts at the window edge, under the
+   traffic lights, so its own header takes the inset instead. */
+[data-platform="mac"] .sidebar[data-collapsed="true"] ~ .pane .pane-head {
+  padding-left: 84px;
+}
+
 /* ── Sidebar ───────────────────────────────────────────────────────────── */
 
 .sidebar {
