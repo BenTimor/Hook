@@ -264,6 +264,17 @@ fn guard_offers_picture_making_only_when_the_account_service_is_there() {
         "an empty prompt must not spend the user's money"
     );
 
+    // A reference is a path here - a relayed run has no chat to point at - and
+    // it reaches the account service as inline bytes, never as a URL the
+    // service would have to fetch.
+    assert_eq!(making["referenceSent"], true);
+    assert_eq!(making["referenceRatio"], "16:9", "a ratio travels with the call");
+    assert_eq!(
+        making["missingReferenceRejected"], true,
+        "a path that is not there must not become a silent request without it"
+    );
+    assert_eq!(making["callsTheAccountService"], true);
+
     // The guidance for seeing a picture and the guidance for making one are
     // separate sections: a text-only model may still make a picture.
     assert_eq!(value["pictures"]["absentByDefault"], true);

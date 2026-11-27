@@ -1066,13 +1066,21 @@ Cite the URLs you use. Search results can be incomplete or disagree; say so when
           },
           aspect_ratio: {
             type: "string",
-            description: "Shape of the picture, e.g. '1:1', '16:9', '9:16', '4:3'. Omit for the model's own choice.",
+            enum: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "9:20", "20:9", "9:21", "21:9", "2.35:1"],
+            description: "Shape of the picture. A portrait for a person standing, 16:9 for a landscape or a slide, 1:1 for an icon or a profile picture. Omit for the model's own choice.",
           },
           count: {
             type: "integer",
             minimum: 1,
             maximum: 4,
             description: "How many pictures to make. Default 1; each one costs the user money.",
+          },
+          references: {
+            type: "array",
+            items: { type: "string" },
+            maxItems: 10,
+            description:
+              "Pictures to work from, at most 10: paths of image files on this computer. Use this to change, extend or restyle a picture instead of describing it again from scratch.",
           },
           save_to: {
             type: "string",
@@ -1099,6 +1107,11 @@ Cite the URLs you use. Search results can be incomplete or disagree; say so when
         };
         const ratio = String(params?.aspect_ratio ?? "").trim();
         if (/^\d{1,4}(\.\d{1,3})?:\d{1,4}(\.\d{1,3})?$/.test(ratio)) body.aspect_ratio = ratio;
+        const references = pictureReferences(params?.references);
+        if (references.error) {
+          return { content: [{ type: "text", text: references.error }], isError: true, details: {} };
+        }
+        if (references.urls.length) body.references = references.urls;
         try {
           const response = await fetch(`${API_BASE}/api/v1/images`, {
             method: "POST",
@@ -1164,6 +1177,43 @@ Cite the URLs you use. Search results can be incomplete or disagree; say so when
  * What the picture tool writes with: a file name from the prompt, the format the
  * bytes actually are, and one picture per file with no overwrites.
  */
+
+/** A reference picture bigger than this is refused here, not halfway through. */
+const MAX_REFERENCE_BYTES = 3 * 1024 * 1024;
+
+/**
+ * Reference pictures, read here and sent as data URLs.
+ *
+ * The service only accepts inline bytes, which is also why nothing this agent
+ * names can make it fetch a URL of its choosing. This run has no chat to point
+ * at, so a reference is always a path on this computer.
+ */
+function pictureReferences(value) {
+  if (value === undefined || value === null) return { urls: [] };
+  if (!Array.isArray(value)) return { error: "`references` must be an array of image paths." };
+  if (value.length > 10) return { error: "A picture can work from at most 10 references." };
+  const urls = [];
+  for (const entry of value) {
+    const raw = String(entry ?? "").trim();
+    if (!raw) continue;
+    const path = resolve(raw.replace(/^~(?=$|[\\/])/, homedir()));
+    if (!existsSync(path)) return { error: `${raw} does not exist` };
+    if (!statSync(path).isFile()) return { error: `${raw} is not a file` };
+    const size = statSync(path).size;
+    if (size > MAX_REFERENCE_BYTES) {
+      return {
+        error: `${raw} is ${(size / 1048576).toFixed(1)} MB; a reference picture can be at most ${
+          MAX_REFERENCE_BYTES / 1048576
+        } MB.`,
+      };
+    }
+    const buffer = readFileSync(path);
+    const extension = pictureExtension(buffer, "");
+    const mime = extension === "jpg" ? "image/jpeg" : `image/${extension}`;
+    urls.push(`data:${mime};base64,${buffer.toString("base64")}`);
+  }
+  return { urls };
+}
 
 /** "A red panda, in space" → "a-red-panda-in-space"; short, for a file name. */
 function pictureSlug(prompt) {

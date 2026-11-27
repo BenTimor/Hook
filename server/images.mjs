@@ -30,6 +30,16 @@ import { apiError, requireApiUser } from "./tokens.mjs";
 const DEFAULT_MODEL = "meta/muse-image";
 /** Pictures one request may ask for, and the endpoint's own ceiling. */
 const MAX_PER_CALL = 4;
+/**
+ * Reference pictures: the endpoint takes `input_references` as image URLs, and
+ * Hook's app sends them as data URLs because the picture it works from is
+ * usually one the conversation already holds. Only that shape is accepted - a
+ * plain `https://` URL here would turn the route into an open fetcher.
+ */
+const MAX_REFERENCES = 10;
+const MAX_REFERENCE_BYTES = 3 * 1024 * 1024;
+const MAX_REFERENCE_TOTAL_BYTES = 24 * 1024 * 1024;
+const DATA_URL = /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 /** A picture is a minute of work upstream; four of them are not four minutes. */
 const UPSTREAM_TIMEOUT_MS = 180_000;
 const MAX_CONCURRENT = 2;
@@ -45,6 +55,42 @@ function cleanRatio(value) {
   if (typeof value !== "string") return null;
   const ratio = value.trim();
   return /^\d{1,4}(\.\d{1,3})?:\d{1,4}(\.\d{1,3})?$/.test(ratio) ? ratio : null;
+}
+
+/**
+ * The reference pictures a request carries, checked as a batch.
+ *
+ * Each one is a data URL the app built from a picture in the chat or a file on
+ * the user's computer; ten is the endpoint's own ceiling and the byte caps are
+ * what keep one request from being a hundred megabytes.
+ */
+function cleanReferences(value) {
+  if (value === undefined || value === null) return { urls: [] };
+  if (!Array.isArray(value))
+    return { error: "`references` must be an array of image data URLs." };
+  if (value.length > MAX_REFERENCES)
+    return { error: `A picture can work from at most ${MAX_REFERENCES} references.` };
+  const urls = [];
+  let total = 0;
+  for (const entry of value) {
+    if (typeof entry !== "string" || !DATA_URL.test(entry))
+      return {
+        error:
+          "Each reference must be an image data URL (`data:image/png;base64,...`).",
+      };
+    const bytes = Math.floor((entry.length - entry.indexOf(",") - 1) * 0.75);
+    if (bytes > MAX_REFERENCE_BYTES)
+      return {
+        error: `A reference picture is ${(bytes / 1_048_576).toFixed(1)} MB; the limit is ${
+          MAX_REFERENCE_BYTES / 1_048_576
+        } MB.`,
+      };
+    total += bytes;
+    if (total > MAX_REFERENCE_TOTAL_BYTES)
+      return { error: "The reference pictures together are too large." };
+    urls.push(entry);
+  }
+  return { urls };
 }
 
 /**
@@ -79,8 +125,10 @@ function createLimiter(maxConcurrent = MAX_CONCURRENT, maxPerMinute = MAX_PER_MI
 
 export function createImageRouter({ env, db }) {
   const router = Router();
-  // A prompt is a paragraph; a multipart body or a data URL is not one.
-  router.use(json({ limit: "64kb" }));
+  // A prompt is a paragraph, but a request can also carry up to ten reference
+  // pictures as data URLs, so the body is bounded by them rather than by the
+  // prompt (`MAX_REFERENCE_*`).
+  router.use(json({ limit: "40mb" }));
   const limiter = createLimiter();
   const apiKey = (env.OPENROUTER_API_KEY || "").trim();
   const model = (env.OPENROUTER_IMAGE_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -162,6 +210,10 @@ export function createImageRouter({ env, db }) {
 
     const wanted = Number.isInteger(body.n) ? body.n : 1;
     const count = Math.min(MAX_PER_CALL, Math.max(1, wanted));
+    const references = cleanReferences(body.references);
+    if (references.error)
+      return apiError(res, 400, references.error, "invalid_references");
+
     const upstream = {
       model,
       prompt,
@@ -169,6 +221,12 @@ export function createImageRouter({ env, db }) {
       // Inline bytes: the app stores the picture, and a signed URL expires.
       response_format: "b64_json",
     };
+    if (references.urls.length) {
+      upstream.input_references = references.urls.map((url) => ({
+        type: "image_url",
+        image_url: { url },
+      }));
+    }
     const ratio = cleanRatio(body.aspect_ratio);
     if (ratio) upstream.aspect_ratio = ratio;
 

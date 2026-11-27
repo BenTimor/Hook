@@ -195,6 +195,10 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   server's) and puts it in the conversation; `save_to`
   also writes a copy to a folder or file, which is what `attach: false` implies.
   `attach_image` puts a picture that is already on this computer into the chat.
+  Both take a shape (the ratios the endpoint lists), and `generate_image` takes
+  up to ten references — `#3`/`#last` for a picture in the conversation, or a
+  path — so "make it blue" is a change to the picture in front of them rather
+  than a description from scratch.
   Both go through one place: a `role: "picture"` message that the thread draws
   with its caption and that `build_history` replays as a user frame where it
   sits — a `tool` message can carry no pictures. A direct coding agent reaches

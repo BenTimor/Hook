@@ -326,13 +326,19 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "generate_image",
-                "description": "Make a picture from a description. The picture appears in this conversation for the user to look at, and `save_to` writes a copy to a folder or file on this computer as well (a picture without `save_to` and with attach=false goes to Pictures/Hook). Describe what should be in the frame - subject, style, light, composition - and put any words that must appear in the image in quotes. It cannot edit an existing picture.",
+                "description": "Make a picture from a description. The picture appears in this conversation for the user to look at, and `save_to` writes a copy to a folder or file on this computer as well (a picture without `save_to` and with attach=false goes to Pictures/Hook). Describe what should be in the frame - subject, style, light, composition - and put any words that must appear in the image in quotes. Give `references` to work from a picture that already exists: a change to it, a style to carry over, two things to combine.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "prompt": { "type": "string", "description": "What the picture shows, in one or two sentences. Say the medium or style when it matters (a photo, a flat illustration, a watercolour)." },
-                        "aspect_ratio": { "type": "string", "description": "Shape of the picture, e.g. '1:1', '16:9', '9:16', '4:3'. Omit for the model's own choice." },
+                        "aspect_ratio": { "type": "string", "enum": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "9:20", "20:9", "9:21", "21:9", "2.35:1"], "description": "Shape of the picture. A portrait for a person standing, 16:9 for a landscape or a slide, 1:1 for an icon or a profile picture. Omit for the model's own choice." },
                         "count": { "type": "integer", "minimum": 1, "maximum": 4, "description": "How many pictures to make. Default 1; each one costs the user money." },
+                        "references": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "maxItems": 10,
+                            "description": "Pictures to work from, at most 10. `#3` is the third picture in this conversation (they are numbered from 1 in the order they appear, and every picture tool says which number it was given), `#last` is the newest one, and anything else is the path of an image file on this computer. Use this to change, extend or restyle a picture instead of describing it again from scratch."
+                        },
                         "save_to": { "type": "string", "description": "A folder or a file path on this computer to also write the picture to, e.g. 'C:/Users/me/Desktop/cover.png'. Omit to leave it in the conversation only." },
                         "attach": { "type": "boolean", "description": "Whether the picture belongs in this conversation. Default true. Use false when the user only asked for a file." }
                     },

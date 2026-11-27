@@ -912,7 +912,9 @@ Changing one side of a boundary is the most common way to break this repo.
   disk; `Target` carries the service base and the token, never a key) → `[image]`
   in `harness.config.toml` and `docs/configure.md` → the tool in `tools.rs`
   (`definitions()`, `IMAGE_TOOLS`, and `activity_label` in `turn.rs`, which a test
-  enforces) → `turn.rs` (`run_tool`, and `run_picture_tool` for a chat Hook does
+  enforces; `references` are resolved by `resolve_references` — `#N` is the
+  chat's Nth *visible* picture, `chat_pictures` is the one definition of that
+  order, and a path is read into a data URL the service accepts inline) → `turn.rs` (`run_tool`, and `run_picture_tool` for a chat Hook does
   not drive itself) → `bridge.rs` (a direct coding agent's tools come from the
   same `definitions()`) → `resources/hook-guard.mjs` for a relayed coding agent,
   which gets its own copy that writes files only, gated on the account service

@@ -112,7 +112,8 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - Every picture costs the user money. Make the one they asked for instead of a set of options to choose from, and ask one short question first when the request is vague. Never generate a picture as decoration.
 - `save_to` also writes it to this computer - a folder or a full file path such as C:/Users/me/Desktop/cover.png - when they want the file itself: on the Desktop, in a project, somewhere they will use it. Leave it out when the picture belongs in the conversation.
 - `attach_image` puts a picture that is already on this computer into the conversation: one a coding agent saved, a file they name, a picture inside a project. The original is left where it is.
-- You cannot edit a picture. Make a new one, and say in one line what changed.
+- Pictures in a conversation are numbered from 1 in the order they appear, and every picture tool tells you the number it was given. `references` in `generate_image` takes up to ten of them by number (`#3`, `#last`) or as paths on this computer, so you can change a picture, carry its style over, or combine several - instead of describing from scratch what you can see in the conversation.
+- You cannot edit a picture in place. Make the new version from the old one with `references`, and say in one line what changed.
 - Then describe what you made in one plain line - what it shows, and where it is if you saved it. Do not guess at details you cannot see: `look_at_picture` opens a picture, and it is the only way to know what is really in one.
 
 ## Style
@@ -1903,6 +1904,171 @@ fn look_at_picture(state: &AppState, chat_id: &str, args: &serde_json::Value) ->
     )
 }
 
+/// Pictures a `generate_image` call may work from. The endpoint takes ten; the
+/// per-picture cap matches the service's, so a refusal happens here with a
+/// sentence rather than as a 400 from halfway through a request.
+const MAX_REFERENCES: usize = 10;
+const MAX_REFERENCE_BYTES: usize = 3 * 1024 * 1024;
+
+/// Every picture the conversation shows, in the order the thread draws it,
+/// numbered from 1. Hidden tool traffic is skipped: a picture the reader cannot
+/// see is not one the model can point at.
+fn chat_pictures(chat: &Chat) -> Vec<Attachment> {
+    chat.messages
+        .iter()
+        .filter(|message| {
+            !message.hidden
+                && !matches!(message.role.as_str(), "system" | "tool" | "compaction")
+        })
+        .flat_map(|message| message.attachments.iter().cloned())
+        .collect()
+}
+
+/// How many pictures the conversation shows right now: what the next one will be
+/// numbered after.
+fn picture_count(state: &AppState, chat_id: &str) -> usize {
+    state
+        .store
+        .load(chat_id)
+        .map(|chat| chat_pictures(&chat).len())
+        .unwrap_or(0)
+}
+
+/// What one `references` entry names.
+#[derive(Debug, PartialEq)]
+enum Reference {
+    /// A picture in this conversation: 1-based, or `None` for the newest one.
+    Picture(Option<usize>),
+    /// An image file on this computer.
+    Path(String),
+}
+
+/// `#3`, `#last`, `3` or a path. A bare number is a picture too: a model that
+/// drops the `#` still means the same one, and no image file is called "3".
+fn parse_reference(value: &str) -> Reference {
+    let trimmed = value.trim();
+    if let Some(rest) = trimmed.strip_prefix('#') {
+        if rest.eq_ignore_ascii_case("last") {
+            return Reference::Picture(None);
+        }
+        if let Ok(index) = rest.parse::<usize>() {
+            return Reference::Picture(Some(index));
+        }
+        return Reference::Path(trimmed.to_string());
+    }
+    if !trimmed.is_empty() && trimmed.chars().all(|character| character.is_ascii_digit()) {
+        if let Ok(index) = trimmed.parse::<usize>() {
+            return Reference::Picture(Some(index));
+        }
+    }
+    Reference::Path(trimmed.to_string())
+}
+
+/// Turn what the model named into data URLs: `#3` is the third picture in this
+/// conversation, `#last` the newest one, anything else is an image file on this
+/// computer. Answers the label to report back, so the model can see which
+/// picture it actually used.
+fn resolve_references(
+    state: &AppState,
+    chat_id: &str,
+    args: &serde_json::Value,
+) -> Result<Vec<(String, String)>, String> {
+    let wanted: Vec<String> = args
+        .get("references")
+        .and_then(serde_json::Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    if wanted.len() > MAX_REFERENCES {
+        return Err(format!(
+            "A picture can work from at most {MAX_REFERENCES} references; {} were named.",
+            wanted.len()
+        ));
+    }
+
+    let mut resolved = Vec::with_capacity(wanted.len());
+    let mut pictures: Option<Vec<Attachment>> = None;
+    for reference in wanted {
+        match parse_reference(&reference) {
+            Reference::Picture(number) => {
+                let all = pictures.get_or_insert_with(|| {
+                    state
+                        .store
+                        .load(chat_id)
+                        .map(|chat| chat_pictures(&chat))
+                        .unwrap_or_default()
+                });
+                if all.is_empty() {
+                    return Err(
+                        "This conversation has no pictures to work from yet. Generate or attach one first, or give a path."
+                            .into(),
+                    );
+                }
+                let index = match number {
+                    None => all.len() - 1,
+                    Some(value) if value >= 1 && value <= all.len() => value - 1,
+                    Some(_) => {
+                        return Err(format!(
+                            "There is no picture {reference} in this conversation; it has {} (use #1 to #{}, or #last).",
+                            all.len(),
+                            all.len()
+                        ))
+                    }
+                };
+                let attachment = &all[index];
+                // Same ceiling as a file on disk: the service refuses anything
+                // bigger, and a sentence about the picture beats a 400.
+                if attachment.bytes as usize > MAX_REFERENCE_BYTES {
+                    return Err(format!(
+                        "Picture #{} is {:.1} MB; a reference picture can be at most {} MB.",
+                        index + 1,
+                        attachment.bytes as f64 / 1_048_576.0,
+                        MAX_REFERENCE_BYTES / 1_048_576
+                    ));
+                }
+                let url = state.store.read_image(chat_id, &attachment.id)?;
+                resolved.push((format!("#{}", index + 1), url));
+            }
+            Reference::Path(path) => {
+                // The same limits the service enforces, said here so the
+                // sentence is about the picture and not about a request.
+                let source = std::path::Path::new(&path);
+                let meta = std::fs::metadata(source)
+                    .map_err(|error| format!("{}: {error}", source.display()))?;
+                if !meta.is_file() {
+                    return Err(format!("{} is not a file.", source.display()));
+                }
+                if meta.len() as usize > MAX_REFERENCE_BYTES {
+                    return Err(format!(
+                        "{} is {:.1} MB; a reference picture can be at most {} MB.",
+                        source.display(),
+                        meta.len() as f64 / 1_048_576.0,
+                        MAX_REFERENCE_BYTES / 1_048_576
+                    ));
+                }
+                let bytes =
+                    std::fs::read(source).map_err(|error| format!("{}: {error}", source.display()))?;
+                if bytes.is_empty() {
+                    return Err(format!("{} is empty.", source.display()));
+                }
+                let mime = crate::imagegen::mime_of(&bytes, None);
+                let url = format!("data:{mime};base64,{}", crate::store::base64_encode(&bytes));
+                resolved.push((path, url));
+            }
+        }
+    }
+    Ok(resolved)
+}
+
 /// A picture Hook made, or one the user can see.
 ///
 /// The endpoint answers with bytes (see `imagegen`), and the picture then goes
@@ -1939,10 +2105,17 @@ async fn generate_image(state: &AppState, chat_id: &str, args: &serde_json::Valu
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(1)
         .clamp(1, state.cfg.image.max_per_call() as u64) as u8;
+    // Pictures to work from, resolved here so the error names the picture
+    // rather than arriving as a 400 from the service.
+    let references = match resolve_references(state, chat_id, args) {
+        Ok(references) => references,
+        Err(error) => return ToolOutcome::text(json!({ "error": error }).to_string()),
+    };
     let request = crate::imagegen::Request {
         prompt,
         aspect_ratio: args.get("aspect_ratio").and_then(serde_json::Value::as_str),
         count,
+        references: references.iter().map(|(_, url)| url.clone()).collect(),
     };
 
     // The account service makes it, with the token this turn already uses.
@@ -1993,15 +2166,21 @@ async fn generate_image(state: &AppState, chat_id: &str, args: &serde_json::Valu
         }
     }
 
+    // The thread numbers pictures from 1 as they are drawn, so the model can
+    // point at this one next time without a path or an id.
+    let before = picture_count(state, chat_id);
+    let numbers: Vec<usize> = (1..=attached.len()).map(|step| before + step).collect();
     let mut text = json!({
         "made": made.len(),
         "size": described,
         "in_chat": !attached.is_empty(),
+        "pictures": numbers,
         "saved": saved,
+        "worked_from": references.iter().map(|(label, _)| label).collect::<Vec<_>>(),
         "note": if attached.is_empty() {
             "The picture is on this computer at the paths above."
         } else {
-            "The picture is in the conversation now, above this reply. Say what you made in one line."
+            "The picture is in the conversation now, above this reply. Say what you made in one line; it is picture numbers above if you need it again."
         },
     });
     if !problems.is_empty() {
@@ -2055,11 +2234,13 @@ fn attach_image(state: &AppState, chat_id: &str, args: &serde_json::Value) -> To
     } else {
         attachment.mime.trim_start_matches("image/").to_string()
     };
+    let number = picture_count(state, chat_id) + 1;
     ToolOutcome::pictures(
         json!({
             "attached": path,
             "size": size,
-            "note": "The picture is in the conversation now, under this result. Do not describe what is in it unless you have opened it with look_at_picture."
+            "picture": number,
+            "note": "The picture is in the conversation now, under this result, as picture #{number}. Do not describe what is in it unless you have opened it with look_at_picture."
         })
         .to_string(),
         caption,
@@ -3224,6 +3405,43 @@ mod tests {
         let mut message = Message::new("picture", caption, "complete");
         message.attachments.push(picture());
         message
+    }
+
+    #[test]
+    fn a_reference_names_a_picture_by_number_or_a_file_by_path() {
+        assert_eq!(parse_reference("#3"), Reference::Picture(Some(3)));
+        assert_eq!(parse_reference(" #last "), Reference::Picture(None));
+        assert_eq!(parse_reference("#LAST"), Reference::Picture(None));
+        // A model that drops the `#` still means the same picture.
+        assert_eq!(parse_reference("2"), Reference::Picture(Some(2)));
+        // Anything else is a file, including things that merely look numeric.
+        assert_eq!(
+            parse_reference("C:/Users/me/Pictures/shot.png"),
+            Reference::Path("C:/Users/me/Pictures/shot.png".into())
+        );
+        assert_eq!(parse_reference("#0"), Reference::Picture(Some(0)));
+        assert_eq!(parse_reference("#12ab.png"), Reference::Path("#12ab.png".into()));
+    }
+
+    #[test]
+    fn pictures_are_numbered_in_the_order_the_thread_draws_them() {
+        // The numbering the model talks about: visible pictures only, oldest
+        // first. A hidden tool result carries pictures for the model's context,
+        // and a number the reader cannot see is one the model must not use.
+        let mut first = Message::new("user", "", "complete");
+        first.attachments.push(picture());
+        let mut hidden = Message::hidden("tool", "{\"opened\":1}");
+        hidden.attachments.push(picture());
+        let mut later = Message::new("picture", "a red panda", "complete");
+        later.attachments.push(picture());
+        later.attachments.push(picture());
+        let chat = chat_with(vec![
+            Message::new("user", "make me something", "complete"),
+            hidden,
+            first,
+            later,
+        ]);
+        assert_eq!(chat_pictures(&chat).len(), 3);
     }
 
     #[test]

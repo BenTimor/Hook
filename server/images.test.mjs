@@ -217,6 +217,43 @@ test("a free account has a daily window, and it is counted in pictures", async (
   assert.equal(other.status, 200);
 });
 
+test("reference pictures travel inline, and only inline", async (t) => {
+  const { origin, seen } = await setup(t);
+  const reference = `data:image/png;base64,${PNG_B64}`;
+
+  const ok = await ask(origin, {
+    prompt: "make it blue",
+    aspect_ratio: "16:9",
+    references: [reference, reference],
+  });
+  assert.equal(ok.status, 200);
+  // The app's `references` become the endpoint's own `input_references`, in the
+  // shape it documents, and the ratio travels with them.
+  assert.deepEqual(seen.body.input_references, [
+    { type: "image_url", image_url: { url: reference } },
+    { type: "image_url", image_url: { url: reference } },
+  ]);
+  assert.equal(seen.body.aspect_ratio, "16:9");
+
+  // A URL would turn this route into a fetcher for whoever calls it.
+  const remote = await ask(origin, {
+    prompt: "make it blue",
+    references: ["https://example.com/pic.png"],
+  });
+  assert.equal(remote.status, 400);
+  assert.equal((await remote.json()).error.code, "invalid_references");
+
+  const tooMany = await ask(origin, {
+    prompt: "make it blue",
+    references: Array.from({ length: 11 }, () => reference),
+  });
+  assert.equal(tooMany.status, 400);
+  assert.match((await tooMany.json()).error.message, /at most 10/);
+
+  const notAnArray = await ask(origin, { prompt: "make it blue", references: "a.png" });
+  assert.equal(notAnArray.status, 400);
+});
+
 test("the request is cleaned up before it reaches the endpoint", async (t) => {
   const { origin, seen } = await setup(t);
 

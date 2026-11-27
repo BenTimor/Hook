@@ -156,11 +156,15 @@ if (wasDirect) process.env.HOOK_DIRECT = wasDirect;
 // show a picture in.
 const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
 const imageDir = mkdtempSync(join(tmpdir(), "hook-image-"));
-globalThis.fetch = async () => ({
-  ok: true,
-  status: 200,
-  text: async () => JSON.stringify({ data: [{ b64_json: PNG.toString("base64"), media_type: "image/png" }] }),
-});
+let pictureRequest = null;
+globalThis.fetch = async (url, options) => {
+  pictureRequest = { url, body: JSON.parse(String(options?.body ?? "{}")) };
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ data: [{ b64_json: PNG.toString("base64"), media_type: "image/png" }] }),
+  };
+};
 const madeOnce = await picturesOn.tools.generate_image.execute("c_img", {
   prompt: "A red panda, in space",
   save_to: imageDir,
@@ -170,6 +174,20 @@ const madeTwice = await picturesOn.tools.generate_image.execute("c_img2", {
   save_to: imageDir,
 });
 const madeNothing = await picturesOn.tools.generate_image.execute("c_img3", { prompt: " " });
+// A reference is a path here (this run has no chat to point at), and it travels
+// as a data URL: the service only accepts inline bytes.
+const referenceDir = mkdtempSync(join(tmpdir(), "hook-image-ref-"));
+const referencePath = join(referenceDir, "reference.png");
+writeFileSync(referencePath, PNG);
+const madeFromReference = await picturesOn.tools.generate_image.execute("c_img4", {
+  prompt: "make it blue",
+  aspect_ratio: "16:9",
+  references: [referencePath],
+});
+const madeFromMissing = await picturesOn.tools.generate_image.execute("c_img5", {
+  prompt: "make it blue",
+  references: [join(referenceDir, "nope.png")],
+});
 const imageFiles = readdirSync(imageDir).sort();
 
 const results = {
@@ -232,7 +250,15 @@ const results = {
       typeof madeOnce?.content?.[0]?.text === "string" &&
       madeOnce.content[0].text.includes(imageDir),
     emptyPromptRejected: madeNothing?.isError === true,
-    secondCallDidNotOverwrite: madeTwice?.isError !== true && imageFiles.length === 2,
+    secondCallDidNotOverwrite: madeTwice?.isError !== true,
+    referenceSent:
+      madeFromReference?.isError !== true &&
+      Array.isArray(pictureRequest?.body?.references) &&
+      pictureRequest.body.references.length === 1 &&
+      /^data:image\/png;base64,/.test(pictureRequest.body.references[0]),
+    referenceRatio: pictureRequest?.body?.aspect_ratio,
+    missingReferenceRejected: madeFromMissing?.isError === true,
+    callsTheAccountService: String(pictureRequest?.url ?? "").endsWith("/api/v1/images"),
     guidanceWithService: /## Making pictures/.test(picturesOn.prompt),
     guidanceWithoutService: !/## Making pictures/.test(picturesOff.prompt),
   },

@@ -113,7 +113,7 @@ result:
 
 | Caller | What it gets |
 | --- | --- |
-| the chat agent | `generate_image` (in the conversation, optionally saved to a folder or file) and `attach_image` (a file on this computer, put in front of the user) |
+| the chat agent | `generate_image` (up to ten reference pictures, in the conversation, optionally saved to a folder or file) and `attach_image` (a file on this computer, put in front of the user) |
 | a direct coding agent | the same two, over the loopback bridge — its conversation *is* the chat |
 | a coding agent the chat agent relays | `generate_image` only, and only to a file: nothing relays its pictures into a conversation |
 
@@ -121,6 +121,18 @@ A picture Hook made or one an agent attached is a message of role `picture`: the
 thread draws it with its caption, and `build_history` replays it as a user frame
 where it sits, so the model reads it on the next turn. `look_at_picture` is the
 other half — it opens a picture for the model without claiming anything about it.
+
+A picture can be made *from* pictures. `generate_image` takes up to ten
+references, each either a picture in the conversation (`#3`, `#last` — the thread
+numbers them from 1 and every picture tool reports the number it was given) or a
+path on this computer. They travel as data URLs and become the endpoint's
+`input_references`: the route accepts only inline bytes, so nothing a caller
+names can make the server fetch a URL. A reference over 3 MB is refused with a
+sentence about the picture rather than a 400 from halfway through.
+
+The shape is the model's own choice, from the ratios the endpoint lists
+(`1:1`, `16:9`, `9:16`, `21:9` …), and the request validates it: an unrecognised
+ratio is dropped instead of forwarded.
 
 The service decides what a picture costs the account: a free plan gets a small
 daily window (`FREE_IMAGE_LIMIT`, counted in pictures), a paid one has none, and

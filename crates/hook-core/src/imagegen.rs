@@ -66,11 +66,14 @@ impl Generated {
     }
 }
 
-/// What to ask for. `count` is already clamped to the build's ceiling.
+/// What to ask for. `count` is already clamped to the build's ceiling, and the
+/// references are data URLs the caller resolved - a picture from the chat, or a
+/// file on this computer.
 pub struct Request<'a> {
     pub prompt: &'a str,
     pub aspect_ratio: Option<&'a str>,
     pub count: u8,
+    pub references: Vec<String>,
 }
 
 /// The endpoint's own idea of an aspect ratio: `16:9`, `2.35:1`, `9:19.5`.
@@ -92,6 +95,23 @@ fn clean_ratio(value: &str) -> Option<String> {
     }
 }
 
+/// The body the account service takes: `{ prompt, n, aspect_ratio?, references? }`.
+/// Its own function so the field names are something a test can pin; the
+/// service's own `input_references` mapping stays on the service.
+fn request_body(request: &Request<'_>, prompt: &str) -> Value {
+    let mut body = json!({
+        "prompt": prompt,
+        "n": request.count.max(1),
+    });
+    if let Some(ratio) = request.aspect_ratio.and_then(clean_ratio) {
+        body["aspect_ratio"] = json!(ratio);
+    }
+    if !request.references.is_empty() {
+        body["references"] = json!(request.references);
+    }
+    body
+}
+
 /// Ask the endpoint for pictures. Every byte that comes back is decoded here, so
 /// a caller only ever deals with files.
 pub async fn generate(
@@ -106,13 +126,7 @@ pub async fn generate(
         return Err("That prompt is too long; describe the picture in a paragraph.".into());
     }
 
-    let mut body = json!({
-        "prompt": prompt,
-        "n": request.count.max(1),
-    });
-    if let Some(ratio) = request.aspect_ratio.and_then(clean_ratio) {
-        body["aspect_ratio"] = json!(ratio);
-    }
+    let body = request_body(request, prompt);
 
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
@@ -191,7 +205,7 @@ pub async fn generate(
 }
 
 /// What the bytes actually are, trusting the header over the service's label.
-fn mime_of(bytes: &[u8], declared: Option<&str>) -> String {
+pub(crate) fn mime_of(bytes: &[u8], declared: Option<&str>) -> String {
     if bytes.starts_with(b"\x89PNG") {
         return "image/png".into();
     }
@@ -412,6 +426,39 @@ mod tests {
         assert_eq!(saved, target);
         assert!(saved.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_request_only_carries_what_the_service_documents() {
+        let reference = "data:image/png;base64,AAAA".to_string();
+        let body = request_body(
+            &Request {
+                prompt: "ignored: the trimmed prompt is passed in",
+                aspect_ratio: Some(" 16:9 "),
+                count: 2,
+                references: vec![reference.clone()],
+            },
+            "a red panda",
+        );
+        assert_eq!(body["prompt"], "a red panda");
+        assert_eq!(body["n"], 2);
+        assert_eq!(body["aspect_ratio"], "16:9");
+        assert_eq!(body["references"][0], reference);
+
+        // A shape that is not one is dropped rather than forwarded, and no
+        // reference means no key at all.
+        let plain = request_body(
+            &Request {
+                prompt: "",
+                aspect_ratio: Some("very wide"),
+                count: 0,
+                references: Vec::new(),
+            },
+            "a cat",
+        );
+        assert!(plain.get("aspect_ratio").is_none());
+        assert!(plain.get("references").is_none());
+        assert_eq!(plain["n"], 1, "a count of zero is still one picture");
     }
 
     #[test]
