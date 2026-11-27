@@ -454,6 +454,47 @@ export function createWorkspaceRouter({ db, env = {} }) {
       .prepare("SELECT * FROM ws_projects WHERE id = ? AND deleted_at IS NULL")
       .get(projectId) ?? null;
 
+  // Every id Hook hands out already says what it is, but a stale caller can
+  // still ask the wrong route (a preview uses the route its kind names). Name
+  // that kind instead of claiming the item is gone.
+  const ENTITY_KINDS = [
+    ["ws_tasks", "task"],
+    ["ws_documents", "document"],
+    ["ws_boards", "board"],
+    ["ws_brainstorms", "brainstorm"],
+    ["ws_brainstorm_ideas", "idea"],
+    ["ws_roadmaps", "roadmap"],
+    ["ws_milestones", "milestone"],
+    ["ws_folders", "folder"],
+  ];
+  const KIND_OF_TABLE = Object.fromEntries(ENTITY_KINDS.map(([table, kind]) => [table, kind]));
+
+  function wrongKind(req, res, expectedTable, id) {
+    for (const [table, kind] of ENTITY_KINDS) {
+      if (table === expectedTable) continue;
+      const row = db
+        .prepare(`SELECT project_id, deleted_at FROM ${table} WHERE id = ?`)
+        .get(id);
+      if (!row || row.deleted_at) continue;
+      const result = requireApiUser(db, req, res);
+      if (!result) return;
+      if (!member(row.project_id, result.google_subject)) {
+        notFound(res);
+        return;
+      }
+      const expected = KIND_OF_TABLE[expectedTable] ?? "item";
+      res.status(409).json({
+        error: {
+          message: `That item is a ${kind}, not a ${expected}.`,
+          type: "invalid_request_error",
+          code: "wrong_kind",
+        },
+      });
+      return;
+    }
+    notFound(res);
+  }
+
   /** Resolve the signed-in account and their role in a project. */
   function actor(req, res, projectId, action) {
     const result = requireApiUser(db, req, res);
@@ -475,7 +516,11 @@ export function createWorkspaceRouter({ db, env = {} }) {
     const row = db
       .prepare(`SELECT project_id, deleted_at FROM ${table} WHERE id = ?`)
       .get(id);
-    if (!row || row.deleted_at) {
+    if (!row) {
+      wrongKind(req, res, table, id);
+      return null;
+    }
+    if (row.deleted_at) {
       notFound(res);
       return null;
     }
@@ -1113,7 +1158,7 @@ export function createWorkspaceRouter({ db, env = {} }) {
 
   router.get("/tasks/:id", (req, res) => {
     const task = db.prepare("SELECT * FROM ws_tasks WHERE id = ? AND deleted_at IS NULL").get(req.params.id);
-    if (!task) return notFound(res);
+    if (!task) return wrongKind(req, res, "ws_tasks", req.params.id);
     if (!actor(req, res, task.project_id, "read")) return;
     const comments = db
       .prepare(
@@ -1191,7 +1236,7 @@ export function createWorkspaceRouter({ db, env = {} }) {
 
   router.get("/tasks/:id/comments", (req, res) => {
     const task = db.prepare("SELECT * FROM ws_tasks WHERE id = ? AND deleted_at IS NULL").get(req.params.id);
-    if (!task) return notFound(res);
+    if (!task) return wrongKind(req, res, "ws_tasks", req.params.id);
     if (!actor(req, res, task.project_id, "read")) return;
     const comments = db
       .prepare("SELECT * FROM ws_comments WHERE task_id = ? AND deleted_at IS NULL ORDER BY created_at")

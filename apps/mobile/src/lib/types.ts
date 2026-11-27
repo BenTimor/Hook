@@ -188,7 +188,7 @@ export type StreamEvent =
   | { kind: "done"; messages: Message[] }
   | { kind: "error"; message: string };
 
-export type WorkspacePreviewKind = "document" | "task" | "board";
+export type WorkspacePreviewKind = "document" | "task" | "board" | "roadmap" | "brainstorm";
 
 /**
  * What the preview sheet is showing. `page` (an HTML file served from a project
@@ -204,6 +204,10 @@ export interface PreviewView {
   comments?: import("@hook/chat").WorkspaceComment[];
   board?: import("@hook/chat").WorkspaceBoard;
   tasks?: import("@hook/chat").WorkspaceTask[];
+  roadmap?: import("@hook/chat").WorkspaceRoadmap;
+  milestones?: import("@hook/chat").WorkspaceMilestone[];
+  brainstorm?: import("@hook/chat").WorkspaceBrainstorm;
+  ideas?: import("@hook/chat").WorkspaceBrainstormIdea[];
   title?: string;
   /** The remote ticket URL for a page the machine is serving. */
   url?: string;

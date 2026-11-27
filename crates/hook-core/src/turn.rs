@@ -79,9 +79,10 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - The panel opens itself the first time in a coding session. When that run finishes it stays open and simply stops refreshing on its own; the user can collapse it or reload it by hand. Never ask permission and never explain the mechanics. A few plain words when it matters is enough ('the pricing page is in the preview').
 
 ## Hook Workspace
-- Hook Workspace holds the user's projects: boards of tasks, Markdown documents and roadmaps of milestones, shared with people. You can do everything a person can do there, except transfer ownership.
+- Hook Workspace holds the user's projects: boards of tasks, Markdown documents, roadmaps of milestones and brainstorms of ideas, shared with people. You can do everything a person can do there, except transfer ownership.
 - Find things by id: workspace_projects (list) → workspace_boards (list, project) → workspace_tasks (list, board). Never invent an id; list first when the request names something you have not seen.
 - A roadmap is a project item. Create it with workspace_roadmaps, then add its milestones with workspace_milestones. A milestone has a title, a target date, a status (planned, active or done) and a description.
+- A brainstorm is a project item too: one central word with ideas around it. Create it with workspace_brainstorms, then add the ideas with workspace_brainstorm_ideas. Add each idea from the user's list.
 - A task has a title, a Markdown description, one status from the board's status column, optional assignees and values for the board's other columns. Read the board before creating tasks so the ids are real.
 - Assign a task to one or more members by their account subjects. Someone who was invited but has not accepted yet has no subject on the project: workspace_members lists them under `pending` with only their email, and assigning that address is how work reaches them. It becomes their name, here and on every existing task, the moment they accept.
 - Comments you write are in the user's name, marked as written by their Hook agent. Write the comment itself, as it should read to the team; do not narrate that you wrote it.
@@ -89,8 +90,8 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - When an edit names something that is not there, the answer lists the headings that are: correct the name and call again instead of retyping the document. When it comes back refused, someone wrote in between — the current headings come with the refusal, so re-read the section and re-apply the change.
 - Beyond plain Markdown, formatting is Hook's own directive syntax: colours, highlight, underline, keys and callout boxes. Read `document_markdown` before you style a document, a task description or a comment — it is the exact syntax, and it is short. Never write `<span>`, `<u>` or `<mark>`: raw HTML is shown as text.
 - You may invite people as viewer or editor, change roles, remove people, and accept an invitation the user asked you to accept. Never transfer ownership — tell the user to do that in Workspace.
-- Deleting a project, board, document, roadmap or milestone is permanent for everyone in it. Say what will disappear and ask first unless the user was unambiguous.
-- workspace_preview puts a task, board or document beside the chat. Call it before you write the reply that describes the change, never after: the tool result has to be followed by another message, so answering first turns that message into a redundant confirmation. The panel is visible; do not say it is open.
+- Deleting a project, board, document, roadmap, milestone, brainstorm or idea is permanent for everyone in it. Say what will disappear and ask first unless the user was unambiguous.
+- workspace_preview puts a task, board, document, roadmap or brainstorm beside the chat. Call it before you write the reply that describes the change, never after: the tool result has to be followed by another message, so answering first turns that message into a redundant confirmation. The panel is visible; do not say it is open.
 
 ## Steering a running agent
 - While a coding agent is working, a message from the user is guidance for that agent, not a request for you to do work. Call list_agents or agent_status, find the live agent in this chat, and pass the instruction on with steer_agent. Then reply with one short line saying what you told it to change.
@@ -1387,7 +1388,7 @@ fn system_prompt(cfg: &config::HarnessConfig, caps: crate::Capabilities, memory:
     if !caps.preview_workspace {
         text = without_line(
             text,
-            "workspace_preview puts a task, board or document beside the chat.",
+            "workspace_preview puts a task, board, document, roadmap or brainstorm beside the chat.",
         );
     }
     if !memory {
@@ -1459,11 +1460,17 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
     let comments = preview.get("comments").cloned();
     let board = preview.get("board").cloned();
     let tasks = preview.get("tasks").cloned();
+    let roadmap = preview.get("roadmap").cloned();
+    let milestones = preview.get("milestones").cloned();
+    let brainstorm = preview.get("brainstorm").cloned();
+    let ideas = preview.get("ideas").cloned();
     let title = document
         .as_ref()
         .and_then(|value| value.get("title"))
         .or_else(|| task.as_ref().and_then(|value| value.get("title")))
         .or_else(|| board.as_ref().and_then(|value| value.get("name")))
+        .or_else(|| roadmap.as_ref().and_then(|value| value.get("name")))
+        .or_else(|| brainstorm.as_ref().and_then(|value| value.get("name")))
         .and_then(Value::as_str)
         .unwrap_or("Preview")
         .to_string();
@@ -1485,6 +1492,10 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
         comments,
         board,
         tasks,
+        roadmap,
+        milestones,
+        brainstorm,
+        ideas,
     );
     let hint = "The panel is already open. Do not say so in your reply. Make sure your final message contains the complete answer, with all the details the user needs.";
     json!({
@@ -1673,6 +1684,18 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
             "delete" => "Deleting a milestone…".into(),
             "get" => "Opening a milestone…".into(),
             _ => "Reading the milestones…".into(),
+        },
+        "workspace_brainstorms" => match action {
+            "create" => titled("Creating", "name", "Creating a brainstorm…"),
+            "update" => "Updating a brainstorm…".into(),
+            "delete" => "Deleting a brainstorm…".into(),
+            "get" => "Opening a brainstorm…".into(),
+            _ => "Reading the brainstorms…".into(),
+        },
+        "workspace_brainstorm_ideas" => match action {
+            "create" => titled("Adding", "text", "Adding an idea…"),
+            "delete" => "Deleting an idea…".into(),
+            _ => "Reading the ideas…".into(),
         },
         "workspace_members" => match action {
             "invite" => titled("Inviting", "email", "Inviting someone…"),
@@ -3787,7 +3810,7 @@ mod capability_tests {
         // has, so the section (and the machine-aware project tools) stay.
         assert!(phone.contains("## Projects"));
         assert!(phone.contains("This device is a controller"));
-        assert!(phone.contains("workspace_preview puts a task, board or document"));
+        assert!(phone.contains("workspace_preview puts a task, board, document, roadmap or brainstorm"));
         assert!(phone.contains("Call it before you write the reply"));
         // ...and a product without the Workspace preview keeps the section but
         // loses that one line, without touching the ones around it.

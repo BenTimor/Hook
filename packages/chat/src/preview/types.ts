@@ -2,7 +2,7 @@
  * The Hook Workspace entities a chat can put in front of the user.
  *
  * They live here rather than in one app because the desktop's side panel and
- * the phone's sheet draw the same three things from the same JSON. The backend
+ * the phone's sheet draw the same five things from the same JSON. The backend
  * hands `workspace_preview` straight through (`crates/hook-core/src/workspace.rs`),
  * so these shapes are the wire format, not a view model.
  */
@@ -43,6 +43,53 @@ export interface WorkspaceBoard {
   columns: WorkspaceColumn[];
 }
 
+export interface WorkspaceRoadmap {
+  id: string;
+  projectId: string;
+  folderId: string | null;
+  name: string;
+  description: string;
+  position: number;
+  updatedAt: number;
+  seq: number;
+}
+
+export interface WorkspaceMilestone {
+  id: string;
+  projectId: string;
+  roadmapId: string;
+  title: string;
+  description: string;
+  dueDate: string | null;
+  status: "planned" | "active" | "done";
+  position: number;
+  createdAt: number;
+  updatedAt: number;
+  seq: number;
+}
+
+export interface WorkspaceBrainstorm {
+  id: string;
+  projectId: string;
+  folderId: string | null;
+  name: string;
+  description: string;
+  position: number;
+  updatedAt: number;
+  seq: number;
+}
+
+export interface WorkspaceBrainstormIdea {
+  id: string;
+  projectId: string;
+  brainstormId: string;
+  text: string;
+  position: number;
+  createdAt: number;
+  updatedAt: number;
+  seq: number;
+}
+
 export interface WorkspaceComment {
   id: string;
   author: string;
@@ -53,7 +100,7 @@ export interface WorkspaceComment {
 }
 
 /** What `workspace_preview` can show. A page preview is not one of these. */
-export type WorkspacePreviewKind = "document" | "task" | "board";
+export type WorkspacePreviewKind = "document" | "task" | "board" | "roadmap" | "brainstorm";
 
 /** Everything one preview can carry, exactly as the tool returned it. */
 export interface WorkspacePreviewBody {
@@ -63,6 +110,10 @@ export interface WorkspacePreviewBody {
   comments?: WorkspaceComment[];
   board?: WorkspaceBoard;
   tasks?: WorkspaceTask[];
+  roadmap?: WorkspaceRoadmap;
+  milestones?: WorkspaceMilestone[];
+  brainstorm?: WorkspaceBrainstorm;
+  ideas?: WorkspaceBrainstormIdea[];
 }
 
 /**
@@ -71,7 +122,7 @@ export interface WorkspacePreviewBody {
  * beside the AI-output report rather than inside it.
  */
 export interface PreviewTarget {
-  kind: WorkspacePreviewKind;
+  kind: "task" | "document" | "board";
   id: string;
   projectId?: string;
   title: string;

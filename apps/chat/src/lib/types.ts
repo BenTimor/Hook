@@ -445,23 +445,31 @@ export interface AgentTranscript {
 
 /** One HTML page shown in the right-side preview panel. */
 /** What the preview panel is showing: a project page, or a Workspace entity. */
-export type PreviewKind = "page" | "document" | "task" | "board";
+export type PreviewKind = "page" | "document" | "task" | "board" | "roadmap" | "brainstorm";
 
 // The entity shapes and the components that draw them live in `packages/chat`,
-// because the phone shows the same board/task/document in a sheet. Keeping one
-// definition is what stops the two surfaces drifting apart.
+// because the phone shows the same board/task/document/roadmap/brainstorm in a sheet.
+// Keeping one definition is what stops the two surfaces drifting apart.
 export type {
   WorkspaceBoard,
+  WorkspaceBrainstorm,
+  WorkspaceBrainstormIdea,
   WorkspaceColumn,
   WorkspaceComment,
   WorkspaceDocument,
+  WorkspaceMilestone,
+  WorkspaceRoadmap,
   WorkspaceTask,
 } from "@hook/chat";
 
 import type {
   WorkspaceBoard,
+  WorkspaceBrainstorm,
+  WorkspaceBrainstormIdea,
   WorkspaceComment,
   WorkspaceDocument,
+  WorkspaceMilestone,
+  WorkspaceRoadmap,
   WorkspaceTask,
 } from "@hook/chat";
 
@@ -475,6 +483,10 @@ export interface PreviewView {
   comments?: WorkspaceComment[];
   board?: WorkspaceBoard;
   tasks?: WorkspaceTask[];
+  roadmap?: WorkspaceRoadmap;
+  milestones?: WorkspaceMilestone[];
+  brainstorm?: WorkspaceBrainstorm;
+  ideas?: WorkspaceBrainstormIdea[];
   project?: string;
   file?: string;
   title?: string;

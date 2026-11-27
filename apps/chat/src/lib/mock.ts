@@ -32,6 +32,8 @@ import type {
   StreamEvent,
   SyncView,
   UpdateInfo,
+  WorkspaceMilestone,
+  WorkspaceRoadmap,
 } from "./types";
 
 const HOUR = 3_600_000;
@@ -145,7 +147,7 @@ const PREVIEW_HTML = `<!doctype html>
 const PREVIEW_URL = `data:text/html;charset=utf-8,${encodeURIComponent(PREVIEW_HTML)}`;
 
 /**
- * A Workspace board, task and document for the design-time preview
+ * A Workspace board, task, document, roadmap and brainstorm for the design-time preview
  * (`?preview=board`). The shapes are the ones `workspace_preview` returns, so
  * the panel can be laid out without a coding agent and without a signed-in
  * account.
@@ -199,6 +201,88 @@ const DEMO_TASKS = [
   },
 ];
 
+
+const DEMO_ROADMAP: WorkspaceRoadmap = {
+  id: "rm_demo",
+  projectId: "prj_demo",
+  folderId: null,
+  name: "Launch roadmap",
+  description: "The milestones between today and the public release.",
+  position: 0,
+  updatedAt: Date.now(),
+  seq: 1,
+};
+
+const DEMO_MILESTONES: WorkspaceMilestone[] = [
+  {
+    id: "ms_demo_1",
+    projectId: "prj_demo",
+    roadmapId: DEMO_ROADMAP.id,
+    title: "MVP",
+    description: "The first end-to-end build the team can use.",
+    dueDate: "2026-12-03",
+    status: "active",
+    position: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    seq: 1,
+  },
+  {
+    id: "ms_demo_2",
+    projectId: "prj_demo",
+    roadmapId: DEMO_ROADMAP.id,
+    title: "Public beta",
+    description: "Invite the first group outside the studio.",
+    dueDate: "2027-01-18",
+    status: "planned",
+    position: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    seq: 2,
+  },
+  {
+    id: "ms_demo_3",
+    projectId: "prj_demo",
+    roadmapId: DEMO_ROADMAP.id,
+    title: "Launch",
+    description: "Ship it.",
+    dueDate: "2027-03-02",
+    status: "planned",
+    position: 2,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    seq: 3,
+  },
+];
+
+const DEMO_BRAINSTORM = {
+  id: "bs_demo",
+  projectId: "prj_demo",
+  folderId: null,
+  name: "Launch",
+  description: "Everything the release could be about.",
+  position: 0,
+  updatedAt: Date.now(),
+  seq: 1,
+};
+
+const DEMO_IDEAS = [
+  ["bi_demo_1", "A quiet launch", 0],
+  ["bi_demo_2", "One page that explains the whole thing", 1],
+  ["bi_demo_3", "Invite-only week", 2],
+  ["bi_demo_4", "A short film of the studio", 3],
+  ["bi_demo_5", "Pricing that fits on a card", 4],
+  ["bi_demo_6", "A launch page that loads fast", 5],
+].map(([id, text, position]) => ({
+  id: id as string,
+  projectId: "prj_demo",
+  brainstormId: DEMO_BRAINSTORM.id,
+  text: text as string,
+  position: position as number,
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+  seq: (position as number) + 1,
+}));
 
 function build(): Record<string, Chat> {
   const now = Date.now();
@@ -1454,10 +1538,39 @@ export const mock = {
     // Design-time preview: `?preview=1` opens the panel with a sample page,
     // `?preview=waiting` shows the state before the coding agent writes it,
     // `?preview=done` shows the panel after the run settled,
-    // `?preview=board|task|document` a Hook Workspace entity, and
+    // `?preview=board|task|document|roadmap|brainstorm` a Hook Workspace
+    // entity, `?preview=brainstorm-empty` its empty state, and
     // `?preview=document-rtl` the same document right-to-left.
     const demo = new URLSearchParams(window.location.search).get("preview");
     if (!demo) return null;
+    if (demo === "roadmap") {
+      return {
+        active: true,
+        chatId: "c8",
+        kind: "roadmap",
+        roadmap: DEMO_ROADMAP,
+        milestones: DEMO_MILESTONES,
+        title: DEMO_ROADMAP.name,
+        version: 1,
+        open: true,
+        waiting: false,
+        live: false,
+      };
+    }
+    if (demo === "brainstorm" || demo === "brainstorm-empty") {
+      return {
+        active: true,
+        chatId: "c8",
+        kind: "brainstorm",
+        brainstorm: DEMO_BRAINSTORM,
+        ideas: demo === "brainstorm-empty" ? [] : DEMO_IDEAS,
+        title: DEMO_BRAINSTORM.name,
+        version: 1,
+        open: true,
+        waiting: false,
+        live: false,
+      };
+    }
     if (demo === "board") {
       return {
         active: true,

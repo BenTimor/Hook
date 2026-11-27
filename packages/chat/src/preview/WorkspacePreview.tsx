@@ -1,17 +1,24 @@
+import type { CSSProperties } from "react";
+import { Lightbulb } from "lucide-react";
+
 import { DocumentMarkdown, readDocumentMeta } from "@hook/markdown";
 
 import { openExternal } from "../open";
 import type {
   PreviewTarget,
   WorkspaceBoard,
+  WorkspaceBrainstorm,
+  WorkspaceBrainstormIdea,
   WorkspaceComment,
   WorkspaceDocument,
+  WorkspaceMilestone,
   WorkspacePreviewBody,
+  WorkspaceRoadmap,
   WorkspaceTask,
 } from "./types";
 
 /**
- * A board, a task or a document, drawn from the JSON `workspace_preview`
+ * A board, a task, a document, a roadmap or a brainstorm, drawn from the JSON `workspace_preview`
  * returned. The desktop puts this inside its side panel and the phone inside a
  * sheet, so it owns no frame: no close button, no title bar, no resize handle.
  * The chrome belongs to whoever is presenting it.
@@ -27,6 +34,20 @@ export function WorkspacePreview({ body }: { body: WorkspacePreviewBody }) {
     case "board":
       return body.board ? (
         <BoardPreview board={body.board} tasks={body.tasks ?? []} />
+      ) : null;
+    case "roadmap":
+      return body.roadmap ? (
+        <RoadmapPreview
+          roadmap={body.roadmap}
+          milestones={body.milestones ?? []}
+        />
+      ) : null;
+    case "brainstorm":
+      return body.brainstorm ? (
+        <BrainstormPreview
+          brainstorm={body.brainstorm}
+          ideas={body.ideas ?? []}
+        />
       ) : null;
   }
 }
@@ -136,6 +157,180 @@ export function BoardPreview({
   );
 }
 
+const MILESTONE_STATUS: Record<
+  WorkspaceMilestone["status"],
+  { label: string }
+> = {
+  planned: { label: "Planned" },
+  active: { label: "In progress" },
+  done: { label: "Done" },
+};
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+function milestoneDate(value: string | null): string {
+  if (!value) return "";
+  const [year, month, day] = value.split("-");
+  const monthName = MONTHS[Number(month) - 1];
+  if (!year || !monthName || !day) return value;
+  return `${Number(day)} ${monthName} ${year}`;
+}
+
+/**
+ * A roadmap, read-only: the milestones on their timeline, in date order.
+ *
+ * The panel is narrower than the Workspace window, so the timeline runs down
+ * the panel instead of across it. Each point keeps the milestone's status,
+ * target date, title and description.
+ */
+export function RoadmapPreview({
+  roadmap,
+  milestones,
+}: {
+  roadmap: WorkspaceRoadmap;
+  milestones: WorkspaceMilestone[];
+}) {
+  const ordered = [...milestones].sort((left, right) => {
+    if (left.dueDate && right.dueDate) return left.dueDate.localeCompare(right.dueDate);
+    if (left.dueDate) return -1;
+    if (right.dueDate) return 1;
+    return left.position - right.position || left.createdAt - right.createdAt;
+  });
+
+  return (
+    <div
+      className="preview-entity preview-roadmap"
+      data-preview-entity="roadmap"
+      data-id={roadmap.id}
+    >
+      <h2 className="preview-entity-title">{roadmap.name}</h2>
+      {roadmap.description ? (
+        <p className="preview-entity-note">{roadmap.description}</p>
+      ) : null}
+      {ordered.length === 0 ? (
+        <p className="preview-roadmap-empty">No milestones yet.</p>
+      ) : (
+        <ol className="preview-roadmap-timeline">
+          {ordered.map((milestone) => (
+            <li
+              className="preview-roadmap-item"
+              data-status={milestone.status}
+              key={milestone.id}
+            >
+              <span className="preview-roadmap-dot" aria-hidden="true" />
+              <div className="preview-roadmap-card">
+                <div className="preview-roadmap-meta">
+                  <span className="preview-roadmap-status">
+                    {MILESTONE_STATUS[milestone.status].label}
+                  </span>
+                  {milestone.dueDate ? (
+                    <time dateTime={milestone.dueDate}>
+                      {milestoneDate(milestone.dueDate)}
+                    </time>
+                  ) : null}
+                </div>
+                <h3>{milestone.title || "Untitled"}</h3>
+                {milestone.description.trim() ? (
+                  <p>{milestone.description}</p>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A brainstorm, read-only: the central word and the ideas around it.
+ *
+ * A narrow panel gets a plain list instead. Both views read the same stored
+ * order (`position`, then when the idea was written), and more than six ideas
+ * use the list at every width: a ring without overlap needs the room.
+ */
+export function BrainstormPreview({
+  brainstorm,
+  ideas,
+}: {
+  brainstorm: WorkspaceBrainstorm;
+  ideas: WorkspaceBrainstormIdea[];
+}) {
+  const ordered = [...ideas].sort(
+    (left, right) => left.position - right.position || left.createdAt - right.createdAt,
+  );
+  const radial = ordered.length > 0 && ordered.length <= 6;
+  const radius =
+    ordered.length <= 2 ? "min(22cqw, 88px)" : "min(30cqw, 118px)";
+
+  const list = (
+    <ol className="preview-brainstorm-list">
+      {ordered.map((idea) => (
+        <li className="preview-brainstorm-idea-list" key={idea.id}>
+          {idea.text}
+        </li>
+      ))}
+    </ol>
+  );
+
+  return (
+    <div
+      className="preview-entity preview-brainstorm"
+      data-preview-entity="brainstorm"
+      data-id={brainstorm.id}
+      data-layout={radial ? "orbit" : "list"}
+    >
+      <h2 className="preview-entity-title">{brainstorm.name}</h2>
+      {brainstorm.description ? (
+        <p className="preview-entity-note">{brainstorm.description}</p>
+      ) : null}
+      {ordered.length === 0 ? (
+        <p className="preview-brainstorm-empty">No ideas yet.</p>
+      ) : (
+        <>
+          {radial && (
+            <div className="preview-brainstorm-map">
+              <div className="preview-brainstorm-center">
+                <Lightbulb aria-hidden="true" />
+                <span>{brainstorm.name}</span>
+              </div>
+              {ordered.map((idea, index) => (
+                <div
+                  className="preview-brainstorm-idea"
+                  key={idea.id}
+                  title={idea.text}
+                  style={
+                    {
+                      "--angle": `${(index / ordered.length) * 360 - 90}deg`,
+                      "--orbit-radius": radius,
+                    } as CSSProperties
+                  }
+                >
+                  {idea.text}
+                </div>
+              ))}
+            </div>
+          )}
+          {list}
+        </>
+      )}
+    </div>
+  );
+}
+
 /**
  * What a preview would report, if the person asks to.
  *
@@ -180,5 +375,8 @@ export function reportableFrom(body: WorkspacePreviewBody): PreviewTarget | null
             excerpt: (body.tasks ?? []).map((task) => task.title).join("\n"),
           }
         : null;
+    case "roadmap":
+    case "brainstorm":
+      return null;
   }
 }

@@ -15,7 +15,9 @@ export { Lightbox, MessageImages } from "./images";
 export type { ChatAttachment, LightboxProps, MessageImagesProps } from "./images";
 export {
   BoardPreview,
+  BrainstormPreview,
   DocumentPreview,
+  RoadmapPreview,
   TaskPreview,
   WorkspacePreview,
   previewDirection,
@@ -25,11 +27,15 @@ export { ReportContentDialog } from "./preview";
 export type {
   PreviewTarget,
   WorkspaceBoard,
+  WorkspaceBrainstorm,
+  WorkspaceBrainstormIdea,
   WorkspaceColumn,
   WorkspaceComment,
   WorkspaceDocument,
+  WorkspaceMilestone,
   WorkspacePreviewBody,
   WorkspacePreviewKind,
+  WorkspaceRoadmap,
   WorkspaceTask,
 } from "./preview";
 export { ChatDock } from "./ChatDock";

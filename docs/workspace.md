@@ -206,15 +206,19 @@ rows written before this rule are adopted when the service starts.
 - **The chat agent can do everything a person can, except transfer ownership.**
   `workspace_projects`, `workspace_folders`, `workspace_boards`,
   `workspace_tasks`, `workspace_comments`, `workspace_documents`,
-  `workspace_roadmaps`, `workspace_milestones`, `workspace_members`,
-  `workspace_invites` and `workspace_preview` are ordinary
+  `workspace_roadmaps`, `workspace_milestones`, `workspace_brainstorms`,
+  `workspace_brainstorm_ideas`, `workspace_members`, `workspace_invites` and
+  `workspace_preview` are ordinary
   chat tools (`crates/hook-core/src/workspace.rs`) that call the account API with
   the user's token, so the server checks the user's real role. `document_markdown`
   is the one that answers from the binary: the dialect's reference, so a style it
   writes is a style documents can render.
-- **Previews.** `workspace_preview` puts a task, board or document in the preview
+- **Previews.** `workspace_preview` puts a task, board, document, roadmap or brainstorm in the preview
   panel. It is a second kind of preview next to the HTML page a coding agent can
-  show, and the panel renders it directly instead of in an iframe.
+  show, and the panel renders it directly instead of in an iframe. A roadmap
+  draws its milestones on a vertical timeline. A brainstorm
+  shows its central word with the ideas around it, or the ideas as a list when
+  the panel is too narrow for a ring.
 - **Folders are rows, not a client feature.** A folder carries a name, an
   optional parent and a position; a board, a document, a roadmap or a
   brainstorm carries a `folderId`. Deleting a folder deletes what it holds ׳’ג‚¬ג€ nested folders, boards with their

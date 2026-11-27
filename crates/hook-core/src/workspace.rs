@@ -265,6 +265,38 @@ pub fn definitions() -> Vec<Value> {
             }),
         ),
         tool(
+            "workspace_brainstorms",
+            "Brainstorms are project items like documents and roadmaps: one central word with ideas around it. Create the brainstorm first, then add its ideas with workspace_brainstorm_ideas.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "get", "create", "update", "delete"] },
+                    "project": { "type": "string" },
+                    "brainstorm": { "type": "string", "description": "Brainstorm id (bs_…)." },
+                    "name": { "type": "string", "description": "The central word or short name." },
+                    "description": { "type": "string" },
+                    "folder": { "type": "string" }
+                },
+                "required": ["action"]
+            }),
+        ),
+        tool(
+            "workspace_brainstorm_ideas",
+            "The text ideas inside a brainstorm, arranged around its central word. Add several calls in one turn when the user gave a list of ideas. Use workspace_brainstorms first when the brainstorm does not exist yet.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "create", "delete"] },
+                    "project": { "type": "string", "description": "For list without a brainstorm: every idea in the project." },
+                    "brainstorm": { "type": "string", "description": "Brainstorm id (bs_…), required to create and useful to list." },
+                    "idea": { "type": "string", "description": "Idea id (bi_…)." },
+                    "text": { "type": "string", "description": "One idea, 500 characters at most." },
+                    "position": { "type": "integer" }
+                },
+                "required": ["action"]
+            }),
+        ),
+        tool(
             "document_markdown",
             "The exact syntax of Hook's document Markdown, on demand: the colour, highlight, underline and key directives, the callout blocks and how they nest, where each is allowed, what stays literal, the traps, the document direction (`::meta{direction=rtl}` and the `:::rtl` block), and the one document option that is not Markdown (title). Call it before you style a document, a task description or a comment, or when you are not sure whether something is allowed. Plain Markdown and plain prose need no lookup.",
             json!({ "type": "object", "properties": {} }),
@@ -298,11 +330,11 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_preview",
-            "Show a task, board or document in the user's preview panel. Call it as soon as you know what to show and before you write the reply: the tool result has to be followed by another message, so previewing after the answer turns that message into a redundant confirmation. The user can read it beside the chat; do not say that it is open.",
+            "Show a task, board, document, roadmap or brainstorm in the user's preview panel. A roadmap draws its milestones on a timeline and a brainstorm draws its central word with the ideas around it. Call it as soon as you know what to show and before you write the reply: the tool result has to be followed by another message, so previewing after the answer turns that message into a redundant confirmation. The user can read it beside the chat; do not say that it is open.",
             json!({
                 "type": "object",
                 "properties": {
-                    "kind": { "type": "string", "enum": ["task", "document", "board"] },
+                    "kind": { "type": "string", "enum": ["task", "document", "board", "roadmap", "brainstorm"] },
                     "id": { "type": "string" }
                 },
                 "required": ["kind", "id"]
@@ -369,6 +401,8 @@ pub async fn execute(
         "workspace_documents" => documents(client, args).await,
         "workspace_roadmaps" => roadmaps(client, args).await,
         "workspace_milestones" => milestones(client, args).await,
+        "workspace_brainstorms" => brainstorms(client, args).await,
+        "workspace_brainstorm_ideas" => brainstorm_ideas(client, args).await,
         "workspace_members" => members(client, args).await,
         "workspace_invites" => invites(client, args).await,
         "workspace_preview" => preview(client, args).await,
@@ -828,6 +862,65 @@ fn milestone_fields(args: &Value) -> Value {
     body
 }
 
+async fn brainstorms(client: &WorkspaceClient, args: &Value) -> ToolResult {
+    match action(args)?.as_str() {
+        "list" => client.get(&format!("/projects/{}/brainstorms", required(args, "project")?)).await,
+        "get" => client.get(&format!("/brainstorms/{}", required(args, "brainstorm")?)).await,
+        "create" => {
+            let project = required(args, "project")?;
+            let mut body = brainstorm_fields(args);
+            if body.get("name").is_none() {
+                body["name"] = json!("Brainstorm");
+            }
+            client.post(&format!("/projects/{project}/brainstorms"), body).await
+        }
+        "update" => {
+            let brainstorm = required(args, "brainstorm")?;
+            client.patch(&format!("/brainstorms/{brainstorm}"), brainstorm_fields(args)).await
+        }
+        "delete" => client.delete(&format!("/brainstorms/{}", required(args, "brainstorm")?)).await,
+        other => Err(format!("Unknown action: {other}")),
+    }
+}
+
+/// Only the brainstorm fields the call named; an absent field is left unchanged.
+fn brainstorm_fields(args: &Value) -> Value {
+    let mut body = json!({});
+    for (key, field) in [("name", "name"), ("description", "description")] {
+        if let Some(value) = string(args, key) {
+            body[field] = json!(value);
+        }
+    }
+    if let Some(folder) = string(args, "folder") {
+        body["folderId"] = json!(folder);
+    }
+    body
+}
+
+async fn brainstorm_ideas(client: &WorkspaceClient, args: &Value) -> ToolResult {
+    match action(args)?.as_str() {
+        "list" => {
+            if let Some(brainstorm) = string(args, "brainstorm") {
+                client.get(&format!("/brainstorms/{brainstorm}/ideas")).await
+            } else {
+                client
+                    .get(&format!("/projects/{}/brainstorm-ideas", required(args, "project")?))
+                    .await
+            }
+        }
+        "create" => {
+            let brainstorm = required(args, "brainstorm")?;
+            let mut body = json!({ "text": required(args, "text")? });
+            if let Some(position) = args.get("position").and_then(Value::as_u64) {
+                body["position"] = json!(position);
+            }
+            client.post(&format!("/brainstorms/{brainstorm}/ideas"), body).await
+        }
+        "delete" => client.delete(&format!("/ideas/{}", required(args, "idea")?)).await,
+        other => Err(format!("Unknown action: {other}")),
+    }
+}
+
 async fn members(client: &WorkspaceClient, args: &Value) -> ToolResult {
     match action(args)?.as_str() {
         "list" => client.get(&format!("/projects/{}/members", required(args, "project")?)).await,
@@ -906,6 +999,33 @@ async fn preview(client: &WorkspaceClient, args: &Value) -> ToolResult {
                 }
             }))
         }
+        "roadmap" => {
+            // The roadmap plus its milestones: the panel draws the timeline,
+            // not a document that happens to describe it.
+            let roadmap = client.get(&format!("/roadmaps/{id}")).await?;
+            let milestones = client.get(&format!("/roadmaps/{id}/milestones")).await?;
+            Ok(json!({
+                "preview": {
+                    "kind": "roadmap",
+                    "roadmap": roadmap["roadmap"],
+                    "milestones": milestones["milestones"],
+                }
+            }))
+        }
+        "brainstorm" => {
+            // The brainstorm plus its ideas, in their stored order: the panel
+            // places them around the central word the way the Workspace window
+            // does.
+            let brainstorm = client.get(&format!("/brainstorms/{id}")).await?;
+            let ideas = client.get(&format!("/brainstorms/{id}/ideas")).await?;
+            Ok(json!({
+                "preview": {
+                    "kind": "brainstorm",
+                    "brainstorm": brainstorm["brainstorm"],
+                    "ideas": ideas["ideas"],
+                }
+            }))
+        }
         other => Err(format!("Unknown preview kind: {other}")),
     }
 }
@@ -946,6 +1066,8 @@ mod tests {
             "workspace_documents",
             "workspace_roadmaps",
             "workspace_milestones",
+            "workspace_brainstorms",
+            "workspace_brainstorm_ideas",
             "workspace_members",
             "workspace_invites",
             "workspace_preview",
@@ -1040,6 +1162,22 @@ mod tests {
             .find(|tool| tool["function"]["name"] == "workspace_tasks")
             .expect("workspace_tasks is advertised");
         assert!(tasks["function"]["parameters"]["properties"]["edits"].is_object());
+    }
+
+    #[test]
+    fn the_preview_tool_names_every_kind_the_panel_can_draw() {
+        let preview = definitions()
+            .into_iter()
+            .find(|tool| tool["function"]["name"] == "workspace_preview")
+            .expect("workspace_preview is advertised");
+        let kinds = preview["function"]["parameters"]["properties"]["kind"]["enum"]
+            .to_string();
+        for expected in ["task", "document", "board", "roadmap", "brainstorm"] {
+            assert!(kinds.contains(&format!("\"{expected}\"")), "{expected} is not a preview kind");
+        }
+        let description = preview["function"]["description"].as_str().unwrap_or_default();
+        assert!(description.contains("roadmap"));
+        assert!(description.contains("brainstorm"));
     }
 
     #[test]

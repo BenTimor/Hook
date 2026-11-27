@@ -42,6 +42,10 @@ export function PreviewSheet() {
     comments: preview.comments,
     board: preview.board,
     tasks: preview.tasks,
+    roadmap: preview.roadmap,
+    milestones: preview.milestones,
+    brainstorm: preview.brainstorm,
+    ideas: preview.ideas,
   };
   const reportTarget = page ? null : reportableFrom(body);
   const canReport = Boolean(reportTarget && reportTarget.excerpt.trim());

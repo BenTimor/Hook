@@ -148,6 +148,10 @@ export function PreviewPanel() {
           comments: shown.comments,
           board: shown.board,
           tasks: shown.tasks,
+          roadmap: shown.roadmap,
+          milestones: shown.milestones,
+          brainstorm: shown.brainstorm,
+          ideas: shown.ideas,
         });
   const canReport = Boolean(reportTarget && reportTarget.excerpt.trim());
 
@@ -310,6 +314,10 @@ export function PreviewPanel() {
                 comments: shown.comments,
                 board: shown.board,
                 tasks: shown.tasks,
+                roadmap: shown.roadmap,
+                milestones: shown.milestones,
+                brainstorm: shown.brainstorm,
+                ideas: shown.ideas,
               }}
             />
           ) : waiting ? (

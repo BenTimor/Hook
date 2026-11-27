@@ -52,7 +52,7 @@ packages/ui/         tokens.css, window chrome, buttons/inputs, dialogs, the mar
 packages/chat/       the chat surface: Markdown, CodeBlock, Thread, MessageItem,
                      Composer, and the ChatDock panel every product embeds
 packages/chat/src/preview/
-                     the Hook Workspace preview: a board, a task and a document,
+                     the Hook Workspace preview: a board, a task, a document, a roadmap and a brainstorm,
                      drawn from the JSON `workspace_preview` returns. The
                      desktop puts it in its side panel, the phone in a sheet.
 packages/markdown/  the document dialect: one registry of rules, the parser the
@@ -239,7 +239,7 @@ bash.
   machine (`/health`, the descriptor file, analytics). A capability trims the
   prompt and the toolset; it must never change the data model. The six fields are places an answer can
   appear or things a device can reach: `preview_pages` (an HTML file served from
-  a project), `preview_workspace` (a board, task or document — just account
+  a project), `preview_workspace` (a board, task, document, roadmap or brainstorm — just account
   data), `coding_agents` (this process can run `pi`), `remote_agents` (it can
   drive a Hook host on another machine), `workspace_tools`, `projects` (a folder
   on this machine). `Capabilities::mobile()` is the phone: Workspace and the
@@ -384,8 +384,12 @@ bash.
   three files a new rule touches: the last is the syntax a model reads through
   the `document_markdown` tool, embedded into `hook-core` by `include_str!`, and
   `reference.test.ts` fails when a registered rule is missing from it.
-- `packages/chat/src/preview/` — `WorkspacePreview` and its three renderers,
-  `reportableFrom` and `ReportContentDialog`. A document is drawn as a page:
+- `packages/chat/src/preview/` — `WorkspacePreview` and its five renderers,
+  `reportableFrom` and `ReportContentDialog`. A roadmap draws its milestones on
+  a vertical timeline in the panel. A brainstorm draws its central
+  word with the ideas around it, and falls back to the stored-order list when
+  the panel is narrow or the ring cannot hold every idea. A document is drawn
+  as a page:
   `.hook-doc` (`packages/ui/src/tokens.css`) is the read view's typography, and
   its numbers are the formatted editor's, so the panel and the phone sheet match
   the Workspace window instead of approximating it. The direction is the

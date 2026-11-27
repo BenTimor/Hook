@@ -48,7 +48,7 @@ pub struct PreviewView {
     pub active: bool,
     pub chat_id: String,
     /// "page" (an HTML file served from a project) or one of the workspace
-    /// kinds: "document", "task", "board".
+    /// kinds: "document", "task", "board", "roadmap", "brainstorm".
     pub kind: String,
     pub project: String,
     /// Project-relative path, always with forward slashes.
@@ -72,6 +72,16 @@ pub struct PreviewView {
     pub board: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tasks: Option<serde_json::Value>,
+    /// A roadmap and its milestones, for the timeline view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roadmap: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestones: Option<serde_json::Value>,
+    /// A brainstorm and the ideas around its central word.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brainstorm: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ideas: Option<serde_json::Value>,
     /// The page file does not exist yet. The watcher loads it when it appears.
     pub waiting: bool,
     /// The run is still working and the page refreshes itself as files change.
@@ -127,6 +137,10 @@ struct Active {
     comments: Option<serde_json::Value>,
     board: Option<serde_json::Value>,
     tasks: Option<serde_json::Value>,
+    roadmap: Option<serde_json::Value>,
+    milestones: Option<serde_json::Value>,
+    brainstorm: Option<serde_json::Value>,
+    ideas: Option<serde_json::Value>,
     /// The coding agent that pointed the panel at this page. The preview stops
     /// refreshing when that run settles, but stays open.
     agent_id: String,
@@ -159,6 +173,10 @@ impl Active {
             comments: self.comments.clone(),
             board: self.board.clone(),
             tasks: self.tasks.clone(),
+            roadmap: self.roadmap.clone(),
+            milestones: self.milestones.clone(),
+            brainstorm: self.brainstorm.clone(),
+            ideas: self.ideas.clone(),
             project: self.project.clone(),
             file: self.file.clone(),
             title: self.title.clone(),
@@ -285,6 +303,10 @@ impl PreviewManager {
             comments: None,
             board: None,
             tasks: None,
+            roadmap: None,
+            milestones: None,
+            brainstorm: None,
+            ideas: None,
             agent_id: agent_id.to_string(),
             project: project.to_string(),
             file,
@@ -320,6 +342,10 @@ impl PreviewManager {
         comments: Option<serde_json::Value>,
         board: Option<serde_json::Value>,
         tasks: Option<serde_json::Value>,
+        roadmap: Option<serde_json::Value>,
+        milestones: Option<serde_json::Value>,
+        brainstorm: Option<serde_json::Value>,
+        ideas: Option<serde_json::Value>,
     ) -> PreviewView {
         self.clear(false);
         let active = Active {
@@ -330,6 +356,10 @@ impl PreviewManager {
             comments,
             board,
             tasks,
+            roadmap,
+            milestones,
+            brainstorm,
+            ideas,
             // No coding-agent run owns this preview, so it never settles.
             agent_id: String::new(),
             project: "Workspace".to_string(),
@@ -900,6 +930,10 @@ fn start_watch(
                     comments: None,
                     board: None,
                     tasks: None,
+                    roadmap: None,
+                    milestones: None,
+                    brainstorm: None,
+                    ideas: None,
                     project: project.clone(),
                     file: file.clone(),
                     title: title.clone(),
@@ -989,6 +1023,10 @@ mod tests {
             comments: None,
             board: None,
             tasks: None,
+            roadmap: None,
+            milestones: None,
+            brainstorm: None,
+            ideas: None,
             project: "demo".into(),
             file: "dist/index.html".into(),
             title: "Demo".into(),

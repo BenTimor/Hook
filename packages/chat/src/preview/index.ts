@@ -6,7 +6,9 @@ import "./preview.css";
 
 export {
   BoardPreview,
+  BrainstormPreview,
   DocumentPreview,
+  RoadmapPreview,
   TaskPreview,
   WorkspacePreview,
   previewDirection,
@@ -16,10 +18,14 @@ export { ReportContentDialog } from "./ReportContentDialog";
 export type {
   PreviewTarget,
   WorkspaceBoard,
+  WorkspaceBrainstorm,
+  WorkspaceBrainstormIdea,
   WorkspaceColumn,
   WorkspaceComment,
   WorkspaceDocument,
+  WorkspaceMilestone,
   WorkspacePreviewBody,
   WorkspacePreviewKind,
+  WorkspaceRoadmap,
   WorkspaceTask,
 } from "./types";

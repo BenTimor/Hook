@@ -1,5 +1,5 @@
 /* ── Hook Workspace previews ────────────────────────────────────────────────
-   A document, a task or a board, rendered from data rather than an iframe. The
+   A document, a task, a board, a roadmap or a brainstorm, rendered from data rather than an iframe. The
    desktop draws it in its side panel and the phone draws it in a sheet; only
    the frame around these rules differs. */
 
@@ -128,4 +128,228 @@
   padding: 6px 3px;
   font-size: 11.5px;
   color: var(--ink-4);
+}
+
+/* A brainstorm is the same page as a board: a title, its note, then the map.
+   The map is a ring around the central word. A narrow panel - or a brainstorm
+   with more ideas than a ring can hold - draws the list below instead. */
+.preview-brainstorm {
+  container-type: inline-size;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.preview-brainstorm-map {
+  position: relative;
+  height: clamp(300px, 78cqw, 380px);
+  margin: 6px 0 10px;
+  overflow: hidden;
+}
+
+.preview-brainstorm-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  display: flex;
+  max-width: min(120px, 28cqw);
+  align-items: center;
+  gap: 6px;
+  padding: 10px 13px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 999px;
+  background: var(--ivory);
+  box-shadow: 0 14px 32px rgba(36, 36, 30, 0.1);
+  color: var(--ink);
+  font-size: 12.8px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.preview-brainstorm-center svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.preview-brainstorm-center span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-brainstorm-idea {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: -webkit-box;
+  width: min(108px, 26cqw);
+  overflow: hidden;
+  padding: 8px 9px;
+  transform: translate(-50%, -50%) rotate(var(--angle)) translateX(var(--orbit-radius))
+    rotate(calc(var(--angle) * -1));
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+  box-shadow: 0 6px 16px rgba(36, 36, 30, 0.06);
+  color: var(--ink-2);
+  font-size: 11.4px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.preview-brainstorm-list {
+  display: flex;
+  margin: 4px 0 0;
+  padding: 0;
+  flex-direction: column;
+  gap: 7px;
+  list-style: none;
+}
+
+.preview-brainstorm-idea-list {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink-2);
+  font-size: 12.2px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.preview-brainstorm[data-layout="orbit"] .preview-brainstorm-list {
+  display: none;
+}
+
+.preview-brainstorm[data-layout="list"] .preview-brainstorm-map {
+  display: none;
+}
+
+.preview-brainstorm-empty {
+  margin: 4px 0 0;
+  padding: 7px 2px;
+  color: var(--ink-4);
+  font-size: 11.8px;
+}
+
+@container (max-width: 360px) {
+  .preview-brainstorm[data-layout="orbit"] .preview-brainstorm-map {
+    display: none;
+  }
+
+  .preview-brainstorm[data-layout="orbit"] .preview-brainstorm-list {
+    display: flex;
+  }
+}
+
+/* A roadmap is the milestones themselves: a vertical timeline in the panel,
+   because the Workspace window's long horizontal track does not fit here. */
+.preview-roadmap-timeline {
+  position: relative;
+  display: flex;
+  margin: 12px 0 0;
+  padding: 0;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+}
+
+.preview-roadmap-timeline::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 7px;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.preview-roadmap-item {
+  --milestone-color: #7a5d28;
+  --milestone-bg: rgba(138, 106, 47, 0.1);
+  --milestone-ring: rgba(138, 106, 47, 0.35);
+  position: relative;
+  display: flex;
+  padding-left: 24px;
+}
+
+.preview-roadmap-item[data-status="active"] {
+  --milestone-color: #365f88;
+  --milestone-bg: rgba(54, 95, 136, 0.1);
+  --milestone-ring: rgba(54, 95, 136, 0.35);
+}
+
+.preview-roadmap-item[data-status="done"] {
+  --milestone-color: #2f6a48;
+  --milestone-bg: rgba(56, 124, 84, 0.1);
+  --milestone-ring: rgba(56, 124, 84, 0.35);
+}
+
+.preview-roadmap-dot {
+  position: absolute;
+  top: 9px;
+  left: 0;
+  width: 15px;
+  height: 15px;
+  border: 3px solid var(--ivory);
+  border-radius: 50%;
+  background: var(--milestone-color);
+  box-shadow: 0 0 0 1px var(--milestone-ring);
+}
+
+.preview-roadmap-card {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+}
+
+.preview-roadmap-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--ink-4);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+}
+
+.preview-roadmap-status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--milestone-bg);
+  color: var(--milestone-color);
+  font-weight: 620;
+}
+
+.preview-roadmap-card h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13.2px;
+  font-weight: 590;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.preview-roadmap-card p {
+  margin: 4px 0 0;
+  color: var(--ink-3);
+  font-size: 11.8px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.preview-roadmap-empty {
+  margin: 8px 0 0;
+  color: var(--ink-4);
+  font-size: 11.8px;
 }

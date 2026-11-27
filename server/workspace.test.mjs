@@ -959,6 +959,44 @@ test("brainstorms hold ideas and travel through the changes feed", async (t) => 
   assert.ok(changes.body.changes.some((change) => change.kind === "brainstorm_idea"));
 });
 
+test("an id from another kind names both kinds, and only a missing id is gone", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+
+  const brainstorm = await request(`/projects/${project.id}/brainstorms`, {
+    method: "POST",
+    body: { name: "Naming" },
+  });
+  const document = await request(`/projects/${project.id}/documents`, {
+    method: "POST",
+    body: { title: "Brief", markdown: "# Brief\n" },
+  });
+  const board = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: { name: "Launch" },
+  });
+
+  const asDocument = await request(`/documents/${brainstorm.body.brainstorm.id}`);
+  assert.equal(asDocument.status, 409);
+  assert.match(asDocument.body.error.message, /brainstorm/);
+  assert.match(asDocument.body.error.message, /document/);
+  assert.doesNotMatch(asDocument.body.error.message, /no longer exists/);
+
+  const asBrainstorm = await request(`/brainstorms/${document.body.document.id}`);
+  assert.equal(asBrainstorm.status, 409);
+  assert.match(asBrainstorm.body.error.message, /document/);
+  assert.match(asBrainstorm.body.error.message, /brainstorm/);
+
+  const asTask = await request(`/tasks/${board.body.board.id}`);
+  assert.equal(asTask.status, 409);
+  assert.match(asTask.body.error.message, /board/);
+  assert.match(asTask.body.error.message, /task/);
+
+  const missing = await request("/documents/dc_missing");
+  assert.equal(missing.status, 404);
+  assert.match(missing.body.error.message, /no longer exists/);
+});
+
 test("the changes feed is one cursor, filtered by membership, tombstones included", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);
