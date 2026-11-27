@@ -7,6 +7,7 @@ import { createPreviewTunnel } from "./preview-tunnel.mjs";
 import { createDownloadRouter, publicReleaseInfo } from "./download.mjs";
 import { createEventsRouter } from "./events.mjs";
 import { createGitRouter } from "./git.mjs";
+import { createImageRouter } from "./images.mjs";
 import { createProviderRouter } from "./provider.mjs";
 import { createReportsRouter } from "./reports.mjs";
 import { createSyncRouter } from "./sync.mjs";
@@ -107,6 +108,12 @@ export function createPlatform(env, { verifyGoogle } = {}) {
     router.use(
       "/download",
       createDownloadRouter({ env, db: waitlist.db, auth: waitlist.auth }),
+    );
+    // Pictures before the model proxy: same `/v1` prefix, its own upstream and
+    // its own key, so nothing that ships carries an image credential.
+    router.use(
+      "/v1/images",
+      createImageRouter({ env, db: waitlist.db }),
     );
     router.use(
       "/v1",

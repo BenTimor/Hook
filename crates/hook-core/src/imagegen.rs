@@ -1,12 +1,15 @@
 //! Making pictures, and putting the ones already on this computer into a chat.
 //!
-//! Hook does not draw images itself: one endpoint answers with bytes and the
-//! picture is then an ordinary attachment — stored in the chat's own image
-//! folder (`store::Store::save_image`), synced like a screenshot, drawn by the
-//! same strip and opened by the same lightbox. The default endpoint is
-//! OpenRouter's Image API, which serves any image model it lists
-//! (`GET {base_url}/images/models`); `[image]` in `harness.config.toml` says
-//! which one and holds the key.
+//! Hook does not draw images itself, and it does not hold the key that could:
+//! a picture is an account request, made the way a message is. This module
+//! posts `{ prompt, aspect_ratio, n }` to `POST {account}/api/v1/images` with
+//! the account's own token and gets `{ data: [{ b64_json, media_type }] }`
+//! back; the service holds the endpoint key, the plan rule and the daily
+//! window (`server/images.mjs`).
+//!
+//! What comes back is then an ordinary attachment — stored in the chat's own
+//! image folder (`store::Store::save_image`), synced like a screenshot, drawn
+//! by the same strip and opened by the same lightbox.
 //!
 //! A picture can also be written to a folder the user names, which is what a
 //! coding agent gets and all it gets: a run started by the chat agent has no
@@ -16,8 +19,32 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::config::ImageConfig;
 use crate::store::{base64_decode, image_size};
+
+/// Where a picture is made: the account service, and the token every other
+/// account call uses. The image endpoint's key never leaves the server.
+pub struct Target {
+    pub base_url: String,
+    pub token: String,
+}
+
+impl Target {
+    /// `None` for the token means "not signed in", which is the one case worth
+    /// its own sentence: everything else would be a server error.
+    pub fn new(base_url: &str, token: Option<String>) -> Result<Self, String> {
+        let token = token
+            .filter(|token| !token.trim().is_empty())
+            .ok_or_else(|| "Sign in to Hook to make pictures.".to_string())?;
+        Ok(Self {
+            base_url: base_url.trim().trim_end_matches('/').to_string(),
+            token,
+        })
+    }
+
+    pub fn url(&self) -> String {
+        format!("{}/api/v1/images", self.base_url)
+    }
+}
 
 /// One picture that came back from the endpoint, decoded.
 pub struct Generated {
@@ -67,10 +94,10 @@ fn clean_ratio(value: &str) -> Option<String> {
 
 /// Ask the endpoint for pictures. Every byte that comes back is decoded here, so
 /// a caller only ever deals with files.
-pub async fn generate(cfg: &ImageConfig, request: &Request<'_>) -> Result<Vec<Generated>, String> {
-    let Some(key) = cfg.key() else {
-        return Err("Picture generation is not set up in this build.".into());
-    };
+pub async fn generate(
+    target: &Target,
+    request: &Request<'_>,
+) -> Result<Vec<Generated>, String> {
     let prompt = request.prompt.trim();
     if prompt.is_empty() {
         return Err("generate_image needs a prompt describing the picture.".into());
@@ -80,12 +107,8 @@ pub async fn generate(cfg: &ImageConfig, request: &Request<'_>) -> Result<Vec<Ge
     }
 
     let mut body = json!({
-        "model": cfg.model(),
         "prompt": prompt,
-        // Inline bytes: a signed URL expires in a day, and the picture is meant
-        // to outlive the turn that made it.
-        "response_format": "b64_json",
-        "n": request.count.clamp(1, cfg.max_per_call()),
+        "n": request.count.max(1),
     });
     if let Some(ratio) = request.aspect_ratio.and_then(clean_ratio) {
         body["aspect_ratio"] = json!(ratio);
@@ -93,18 +116,16 @@ pub async fn generate(cfg: &ImageConfig, request: &Request<'_>) -> Result<Vec<Ge
 
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
-        // A picture is a minute of work on the other end, not a stream.
-        .timeout(std::time::Duration::from_secs(180))
+        // A picture is a minute of work upstream, and the service gives it 180
+        // seconds before it gives up: this budget outlives the service's.
+        .timeout(std::time::Duration::from_secs(240))
         .build()
         .map_err(|error| format!("Could not prepare the picture request: {error}"))?;
 
     let response = client
-        .post(cfg.images_url())
-        .header("Authorization", format!("Bearer {key}"))
+        .post(target.url())
+        .header("Authorization", format!("Bearer {}", target.token))
         .header("Content-Type", "application/json")
-        // OpenRouter's attribution headers: they cost nothing and say who asked.
-        .header("HTTP-Referer", "https://hookcode.io")
-        .header("X-Title", "Hook")
         .json(&body)
         .send()
         .await
@@ -117,8 +138,9 @@ pub async fn generate(cfg: &ImageConfig, request: &Request<'_>) -> Result<Vec<Ge
         .map_err(|error| format!("The picture service answered unreadably: {error}"))?;
     let value: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
     if !status.is_success() {
-        // The endpoint's message is written for a person ("insufficient credits",
-        // "no endpoints found"); hand it on unchanged.
+        // The service writes its refusals for a person - the daily window, a
+        // prompt that is too long, a plan that has none - and the model repeats
+        // them. Nothing about the endpoint's own credential is in here.
         let message = value
             .pointer("/error/message")
             .and_then(Value::as_str)
@@ -126,7 +148,7 @@ pub async fn generate(cfg: &ImageConfig, request: &Request<'_>) -> Result<Vec<Ge
             .map(str::trim)
             .filter(|message| !message.is_empty())
             .unwrap_or("The picture service refused the request.");
-        return Err(format!("{message} ({status})"));
+        return Err(message.to_string());
     }
 
     let entries = value
@@ -144,32 +166,12 @@ pub async fn generate(cfg: &ImageConfig, request: &Request<'_>) -> Result<Vec<Ge
             .get("media_type")
             .and_then(Value::as_str)
             .map(str::to_string);
-        let bytes = match entry.get("b64_json").and_then(Value::as_str) {
-            Some(encoded) if !encoded.trim().is_empty() => base64_decode(encoded)?,
-            // Some endpoints only ever answer with a URL, even when asked for
-            // bytes. It is signed and short-lived, so take it now.
-            _ => match entry.get("url").and_then(Value::as_str) {
-                Some(url) if !url.trim().is_empty() => {
-                    let response = client
-                        .get(url)
-                        .send()
-                        .await
-                        .map_err(|error| format!("The picture could not be downloaded: {error}"))?;
-                    if !response.status().is_success() {
-                        return Err(format!(
-                            "The picture could not be downloaded ({}).",
-                            response.status()
-                        ));
-                    }
-                    response
-                        .bytes()
-                        .await
-                        .map_err(|error| format!("The picture was cut short: {error}"))?
-                        .to_vec()
-                }
-                _ => continue,
-            },
+        // Bytes only: the service asks its own endpoint for `b64_json` and
+        // hands on nothing else, so this never fetches a URL a response named.
+        let Some(encoded) = entry.get("b64_json").and_then(Value::as_str) else {
+            continue;
         };
+        let bytes = base64_decode(encoded)?;
         if bytes.is_empty() {
             continue;
         }
@@ -413,16 +415,12 @@ mod tests {
     }
 
     #[test]
-    fn the_endpoint_and_the_model_are_configurable() {
-        let mut cfg = ImageConfig::default();
-        assert_eq!(cfg.images_url(), "https://openrouter.ai/api/v1/images");
-        assert_eq!(cfg.model(), "meta/muse-image");
-        cfg.base_url = "https://example.test/api/v1/".into();
-        cfg.model = "  ".into();
-        cfg.max_per_call = 40;
-        assert_eq!(cfg.images_url(), "https://example.test/api/v1/images");
-        // An empty model falls back, and the ceiling is a ceiling.
-        assert_eq!(cfg.model(), "meta/muse-image");
-        assert_eq!(cfg.max_per_call(), 10);
+    fn the_account_service_is_the_only_place_a_picture_is_made() {
+        let target = Target::new("https://hookcode.io/", Some("hk_token".into())).unwrap();
+        assert_eq!(target.url(), "https://hookcode.io/api/v1/images");
+        assert_eq!(target.token, "hk_token");
+        // Not signed in is its own sentence, not a server error.
+        assert!(Target::new("https://hookcode.io", None).is_err());
+        assert!(Target::new("https://hookcode.io", Some("  ".into())).is_err());
     }
 }

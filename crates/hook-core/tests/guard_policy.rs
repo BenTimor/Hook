@@ -219,7 +219,7 @@ fn guard_offers_the_checklist_to_a_directly_driven_agent() {
 }
 
 #[test]
-fn guard_offers_picture_making_only_when_hook_handed_it_a_key() {
+fn guard_offers_picture_making_only_when_the_account_service_is_there() {
     if !node_available() {
         eprintln!("node not installed — skipping the guard policy test");
         return;
@@ -229,21 +229,22 @@ fn guard_offers_picture_making_only_when_hook_handed_it_a_key() {
     let making = &value["pictureMaking"];
     // A coding agent started by the chat agent has no conversation to put a
     // picture into, so the tool it gets writes a file and nothing else - and it
-    // only exists when Hook set HOOK_IMAGE_KEY.
+    // only exists when Hook handed down the account service (the engine is never
+    // given an endpoint key).
     assert_eq!(
-        making["registeredWithKey"], true,
-        "generate_image should be offered when the endpoint is configured"
+        making["registeredWithService"], true,
+        "generate_image should be offered when the account service is configured"
     );
     assert_eq!(
-        making["silentWithoutKey"], true,
-        "no key, no tool: a tool that can only fail is worse than none"
+        making["silentWithoutService"], true,
+        "no service, no tool: a tool that can only fail is worse than none"
     );
     assert_eq!(
-        making["guidanceWithKey"], true,
+        making["guidanceWithService"], true,
         "the prompt has to say how pictures are made"
     );
     assert_eq!(
-        making["guidanceWithoutKey"], true,
+        making["guidanceWithoutService"], true,
         "the prompt must not describe a tool the agent does not have"
     );
 

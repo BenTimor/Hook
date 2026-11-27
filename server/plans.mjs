@@ -12,6 +12,7 @@
  * - conversations, projects, memory and pictures are not synced to the cloud
  * - the model proxy serves 100 user messages per rolling 24 hours
  * - coding agents are refused (`surface: coding` on the proxy)
+ * - picture generation serves 10 pictures per rolling 24 hours
  *
  * A request that never reaches this service — a user's own endpoint configured
  * in the app — is not metered here, which is why the free limit lives in the
@@ -35,6 +36,17 @@ export function isFreePlan(row) {
 
 /** The proxy surface a message belongs to. Only a chat message counts. */
 export const COUNTED_SURFACE = "chat";
+
+/**
+ * Pictures, which are the expensive thing an account can ask for.
+ *
+ * One generated image costs about a cent at the endpoint Hook uses - roughly ten
+ * times a message - so a free account gets a small window of its own rather than
+ * the message one. The rows live in `usage_events` with `surface: "image"`, one
+ * per picture: `n` pictures in one request are `n` pictures to pay for.
+ */
+export const FREE_IMAGE_LIMIT = 10;
+export const IMAGE_SURFACE = "image";
 
 /* Same shape `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` writes: ISO-8601 with a
  * trailing Z, so string comparison is chronological. `datetime('now')` would
@@ -85,6 +97,54 @@ export function quotaResetAt(db, subject) {
   const oldest = Date.parse(row.oldest);
   if (!Number.isFinite(oldest)) return null;
   return new Date(oldest + FREE_MESSAGE_WINDOW_MS).toISOString();
+}
+
+/** Pictures this account has made inside the rolling window. */
+export function imageQuotaUsed(db, subject) {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS used
+         FROM usage_events
+        WHERE google_subject = ?
+          AND surface = ?
+          AND created_at >= ${WINDOW_SQL}`,
+    )
+    .get(subject, IMAGE_SURFACE);
+  return Number(row?.used) || 0;
+}
+
+/** When the oldest counted picture falls out of the window. */
+export function imageResetAt(db, subject) {
+  const row = db
+    .prepare(
+      `SELECT MIN(created_at) AS oldest
+         FROM usage_events
+        WHERE google_subject = ?
+          AND surface = ?
+          AND created_at >= ${WINDOW_SQL}`,
+    )
+    .get(subject, IMAGE_SURFACE);
+  if (!row?.oldest) return null;
+  const oldest = Date.parse(row.oldest);
+  if (!Number.isFinite(oldest)) return null;
+  return new Date(oldest + FREE_MESSAGE_WINDOW_MS).toISOString();
+}
+
+/**
+ * Why this account may not make pictures right now, or null when it may.
+ *
+ * A free account has a small window instead of an outright refusal: the tools
+ * are visible, and running out of them is something the user can see and wait
+ * out. A paid account has no such window; the rate limiter in `images.mjs` is
+ * what stops a runaway loop, not the plan.
+ */
+export function imageRefusal(db, row) {
+  if (!isFreePlan(row)) return null;
+  if (imageQuotaUsed(db, row.google_subject) < FREE_IMAGE_LIMIT) return null;
+  return {
+    code: "image_limit",
+    message: `Making pictures is limited to ${FREE_IMAGE_LIMIT} a day on this plan. It frees up within 24 hours, or add your own model endpoint in Settings.`,
+  };
 }
 
 /**

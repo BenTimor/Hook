@@ -153,19 +153,15 @@ context_role = "system"
 # ─────────────────────────────────────────────────────────────────────────────
 #  Picture generation
 #
-#  Hook can ask an endpoint for pictures and put them in a chat or on disk.
-#  The default is OpenRouter's Image API, which serves any image model it lists
-#  at GET {base_url}/images/models (`meta/muse-image` by default). Nothing else
-#  in Hook depends on it: with no key the agent is simply not offered the tools.
+#  The picture tools ask the account service (POST /api/v1/images), and the
+#  service holds the image endpoint's key in its own environment. Nothing that
+#  ships from here carries that key: a build-time secret is a secret every
+#  person who extracts strings from the binary has.
 #
-#  Like [provider] api_key, this is compiled into the binary. `HOOK_IMAGE_KEY` in
-#  the environment overrides it, which is how a dev build tries a key without a
-#  rebuild.
+#  A standalone build with no account service has no pictures behind them, so
+#  `enabled = false` is what it wants.
 
 [image]
-base_url = "https://openrouter.ai/api/v1"
-# Empty turns the picture tools off.
-api_key = "sk-or-v1-REPLACE-ME"
-model = "meta/muse-image"
-# Ceiling on how many pictures one call may ask for (1-10).
+enabled = true
+# Ceiling on how many pictures one call may ask for (the service clamps again).
 max_per_call = 4

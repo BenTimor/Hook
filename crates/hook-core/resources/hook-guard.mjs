@@ -38,11 +38,11 @@
  *                        (unset = disabled)
  *   HOOK_VISION          "1" when the model card says the engine may hand the
  *                        model a picture (`read shot.png`)
- *   HOOK_IMAGE_KEY       the picture endpoint's key; unset means the agent is
- *                        not offered `generate_image` at all
- *   HOOK_IMAGE_BASE      that endpoint (default https://openrouter.ai/api/v1)
- *   HOOK_IMAGE_MODEL     which model draws the picture (default
- *                        meta/muse-image)
+ *   HOOK_API_BASE        the account service (with HOOK_API_TOKEN); unset means
+ *                        the agent is offered neither `web_search` nor
+ *                        `generate_image`, because both are account requests
+ *   HOOK_API_TOKEN       this account's opaque token; the endpoint's own key
+ *                        and the picture model stay on the service
  *
  * Plain ESM on purpose: only Node built-ins, nothing that can fail to resolve.
  */
@@ -153,14 +153,14 @@ const PICTURE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
 const PREVIEW_TITLE_MAX = 80;
 
 /**
- * Making pictures. Hook hands the endpoint and the key down (they are not in
- * this file), and an unset key simply means the tool is never registered.
+ * The account service Hook handed down: web search and pictures are its
+ * requests, not the engine's. The endpoint keys behind them - search's and
+ * the image model's - stay on the server, so this file, which runs inside
+ * the engine on the user's disk, never holds one.
  */
-const IMAGE_KEY = String(process.env.HOOK_IMAGE_KEY ?? "").trim();
-const IMAGE_BASE = String(process.env.HOOK_IMAGE_BASE ?? "https://openrouter.ai/api/v1")
-  .trim()
-  .replace(/\/+$/, "");
-const IMAGE_MODEL = String(process.env.HOOK_IMAGE_MODEL ?? "meta/muse-image").trim() || "meta/muse-image";
+const API_BASE = String(process.env.HOOK_API_BASE ?? "").trim().replace(/\/+$/, "");
+const API_TOKEN = String(process.env.HOOK_API_TOKEN ?? "").trim();
+const ACCOUNT_API = Boolean(API_BASE && API_TOKEN);
 
 const PLAN_SEED_FILE = join(UPDATES_DIR || ".", "plan.json");
 const MAX_PLAN_STEPS = 12;
@@ -331,7 +331,7 @@ function pictureGuidance() {
 
 /** What a run can do about pictures it does not have yet. */
 function pictureMakingGuidance() {
-  if (!IMAGE_KEY) return "";
+  if (!ACCOUNT_API) return "";
   return (
     "\n\n## Making pictures" +
     "\n`generate_image` draws a picture from a description and writes it to a file on this computer (Pictures/Hook unless you pass `save_to`)." +
@@ -383,7 +383,7 @@ function directGuidance() {
 
 /** Search uses Hook's account service, which holds the provider key. */
 function webSearchGuidance() {
-  if (!process.env.HOOK_API_BASE || !process.env.HOOK_API_TOKEN) return "";
+  if (!ACCOUNT_API) return "";
   return `
 
 ## Web search (Hook)
@@ -1044,7 +1044,7 @@ Cite the URLs you use. Search results can be incomplete or disagree; say so when
   }
 
   // ── Making pictures ───────────────────────────────────────────────────────
-  if (IMAGE_KEY && !DIRECT) {
+  if (ACCOUNT_API && !DIRECT) {
     pi.registerTool({
       name: "generate_image",
       label: "Make a picture",
@@ -1093,25 +1093,23 @@ Cite the URLs you use. Search results can be incomplete or disagree; say so when
           };
         }
         const body = {
-          model: IMAGE_MODEL,
+          // The model is the server's decision: this only says what to draw.
           prompt,
           n: Math.min(4, Math.max(1, Number(params?.count) || 1)),
-          response_format: "b64_json",
         };
         const ratio = String(params?.aspect_ratio ?? "").trim();
         if (/^\d{1,4}(\.\d{1,3})?:\d{1,4}(\.\d{1,3})?$/.test(ratio)) body.aspect_ratio = ratio;
         try {
-          const response = await fetch(`${IMAGE_BASE}/images`, {
+          const response = await fetch(`${API_BASE}/api/v1/images`, {
             method: "POST",
             headers: {
               "content-type": "application/json",
-              authorization: `Bearer ${IMAGE_KEY}`,
-              "HTTP-Referer": "https://hookcode.io",
-              "X-Title": "Hook",
+              authorization: `Bearer ${API_TOKEN}`,
             },
             body: JSON.stringify(body),
-            // A picture is a minute of work on the other end, not a stream.
-            signal: AbortSignal.timeout(180_000),
+            // A picture is a minute of work behind the service, and the
+            // service gives it 180 seconds before it gives up.
+            signal: AbortSignal.timeout(240_000),
           });
           const text = await response.text();
           let payload;

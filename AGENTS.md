@@ -906,15 +906,18 @@ Changing one side of a boundary is the most common way to break this repo.
   (`navigation_throttle_registry_impl.cc`). `pnpm browser:host` builds the
   release binary; `browser:smoke --host` is the check that both hold.
 
-- **New picture, or anything that draws one:** `crates/hook-core/src/imagegen.rs`
-  (the endpoint call, the naming, the copy on disk) → `[image]` in
-  `harness.config.toml` and `docs/configure.md` → the tool in `tools.rs`
+- **New picture, or anything that draws one:** `server/images.mjs` (the account
+  route, its plan rule in `plans.mjs`, the key in the server's `.env`) →
+  `crates/hook-core/src/imagegen.rs` (the account call, the naming, the copy on
+  disk; `Target` carries the service base and the token, never a key) → `[image]`
+  in `harness.config.toml` and `docs/configure.md` → the tool in `tools.rs`
   (`definitions()`, `IMAGE_TOOLS`, and `activity_label` in `turn.rs`, which a test
   enforces) → `turn.rs` (`run_tool`, and `run_picture_tool` for a chat Hook does
   not drive itself) → `bridge.rs` (a direct coding agent's tools come from the
   same `definitions()`) → `resources/hook-guard.mjs` for a relayed coding agent,
-  which gets its own copy that writes files only, gated on `HOOK_IMAGE_KEY` and
-  handed down by `agent.rs`. What all of them produce is a `role: "picture"`
+  which gets its own copy that writes files only, gated on the account service
+  (`HOOK_API_BASE` + `HOOK_API_TOKEN`, the same pair `web_search` uses) — the
+  engine is never given an endpoint key. What all of them produce is a `role: "picture"`
   message: the thread draws it (`turns.ts` → `MessageItem` → `renderExtras`) and
   `build_history` replays it as a user frame where it sits. Never put pictures on
   a `tool` message for the user to see: it is hidden, so nothing draws it, and
@@ -1192,7 +1195,10 @@ Changing one side of a boundary is the most common way to break this repo.
   Center declaration, and a way to review reports (`scripts/ai-reports.sh`).
 - **Never add a signing certificate or secret to the repo.** MSIX packages are
   re-signed by Microsoft; direct Windows signing, when added, belongs in CI
-  secrets.
+  secrets. An endpoint key that a product needs is the *server's*, in
+  `/opt/hook-web/.env` behind an account route: the image key (`OPENROUTER_API_KEY`,
+  `server/images.mjs`) and the model key (`DEEPSEEK_API_KEY`) are both reached
+  that way, never compiled into a binary and never sent to a renderer.
 - Persistence is atomic on purpose (temp file + rename). Go through `store.rs`.
 - Preview serving is loopback-only and path-contained (`preview.rs`); keep that
   when adding routes or file kinds. The remote tunnel is the only other way in:

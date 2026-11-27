@@ -139,12 +139,15 @@ const noVisionPrompt = await promptFor("vision-off");
 // registered - a tool that can only fail is worse than no tool.
 // A direct conversation gets `generate_image` from the bridge instead (it can
 // put the picture in front of the user), so the local-only tool is loaded from
-// the relayed shape whatever mode this harness was started in.
+// the relayed shape whatever mode this harness was started in. The tool is an
+// account request, so what turns it on is the service Hook handed down - never
+// an endpoint key, which the engine does not get.
 const wasDirect = process.env.HOOK_DIRECT;
 delete process.env.HOOK_DIRECT;
-process.env.HOOK_IMAGE_KEY = "sk-or-test";
+process.env.HOOK_API_BASE = "https://hookcode.test";
+process.env.HOOK_API_TOKEN = "hk_test_token_0123456789abcdefghij";
 const picturesOn = await toolsFor("image-on");
-delete process.env.HOOK_IMAGE_KEY;
+delete process.env.HOOK_API_BASE, process.env.HOOK_API_TOKEN;
 const picturesOff = await toolsFor("image-off");
 if (wasDirect) process.env.HOOK_DIRECT = wasDirect;
 
@@ -221,8 +224,8 @@ const results = {
     absentByDefault: !/## Pictures/.test(before?.systemPrompt ?? ""),
   },
   pictureMaking: {
-    registeredWithKey: picturesOn.names.includes("generate_image"),
-    silentWithoutKey: !picturesOff.names.includes("generate_image"),
+    registeredWithService: picturesOn.names.includes("generate_image"),
+    silentWithoutService: !picturesOff.names.includes("generate_image"),
     wrote: imageFiles,
     resultOk: madeOnce?.isError !== true,
     reportsThePath:
@@ -230,8 +233,8 @@ const results = {
       madeOnce.content[0].text.includes(imageDir),
     emptyPromptRejected: madeNothing?.isError === true,
     secondCallDidNotOverwrite: madeTwice?.isError !== true && imageFiles.length === 2,
-    guidanceWithKey: /## Making pictures/.test(picturesOn.prompt),
-    guidanceWithoutKey: !/## Making pictures/.test(picturesOff.prompt),
+    guidanceWithService: /## Making pictures/.test(picturesOn.prompt),
+    guidanceWithoutService: !/## Making pictures/.test(picturesOff.prompt),
   },
   direct,
   // The one tool a relayed run has and a direct conversation does not.

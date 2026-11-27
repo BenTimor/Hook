@@ -36,6 +36,11 @@ exist so the user reads a sentence instead of an HTTP error.
   chat agent's toolset omits the agent tools, and the proxy refuses
   `X-Hook-Surface: coding`. Running work on another machine is also paid-only,
   and needs cloud sync on.
+- **10 pictures per rolling 24 hours.** `POST /api/v1/images` is the only way to
+  make one, and every picture costs the deployment roughly a cent, so the free
+  window is counted in pictures rather than messages: `n: 2` is two of the ten.
+  A paid account has no window; the per-account rate limit is what stops a
+  runaway loop. The refusal is `image_limit`, and the app repeats its message.
 - **Normal chats, Hook Workspace and integrations are unaffected.** Workspace
   data lives on the account by design; the free plan does not restrict it.
 

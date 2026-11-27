@@ -190,8 +190,9 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   lightbox is drawn in a portal on `document.body`: inside a message it sat in
   that message's own stacking context, which is how the composer and the
   checklist above it used to paint over a picture opened full-screen.
-- **Making a picture.** `generate_image` asks the endpoint in `[image]`
-  (`docs/configure.md`) for a picture and puts it in the conversation; `save_to`
+- **Making a picture.** `generate_image` asks the account service for a picture
+  (`POST /api/v1/images`, `docs/configure.md`; the endpoint's key is the
+  server's) and puts it in the conversation; `save_to`
   also writes a copy to a folder or file, which is what `attach: false` implies.
   `attach_image` puts a picture that is already on this computer into the chat.
   Both go through one place: a `role: "picture"` message that the thread draws

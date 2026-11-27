@@ -82,6 +82,9 @@ Required environment (local `.env.waitlist.local`, server `/opt/hook-web/.env`):
 | `DEEPSEEK_BASE_URL` | Upstream chat API, default `https://api.deepseek.com`. |
 | `DEEPSEEK_MODEL` | Model the proxy asks for, default `deepseek-flash`. The model field in app requests is ignored. |
 | `DEEPSEEK_API_KEY` | Server-side provider key. It never reaches the desktop binary. |
+| `OPENROUTER_API_KEY` | Server-side key for picture generation (`POST /api/v1/images`). Empty means the route answers `503 image_unavailable`; it never reaches a build. |
+| `OPENROUTER_BASE_URL` | Upstream image API, default `https://openrouter.ai/api/v1`. |
+| `OPENROUTER_IMAGE_MODEL` | Which image model draws the picture, default `meta/muse-image`. The app never names it. |
 | `HOOK_MODEL_ID` | Model id the app and its coding engine see, default `hook`; must match `[model] name` in `harness.config.toml`. |
 | `HOOK_CONTEXT_WINDOW` / `HOOK_MAX_OUTPUT_TOKENS` | Optional limits advertised to the app; default `1048576` / `393216`. Keep `[coding]` in `harness.config.ci.toml` in step. |
 | `DOWNLOAD_DIR` | Installer directory, `/data/releases` in the container. |

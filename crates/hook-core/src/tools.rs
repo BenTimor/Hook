@@ -580,7 +580,7 @@ pub fn direct_bridge_definitions(
                 continue;
             }
             // No endpoint, no picture: a tool that can only fail is not offered.
-            if !cfg.image.enabled() && IMAGE_TOOLS.contains(&name) {
+            if !cfg.image.available(cfg.auth.required) && IMAGE_TOOLS.contains(&name) {
                 continue;
             }
             out.push(tool.clone());
@@ -1618,10 +1618,10 @@ mod tests {
         ] {
             assert!(!names.contains(&refused), "{refused} must not be offered");
         }
-        // This build has no picture endpoint, so the picture tools are absent
-        // rather than failing the first time the model tries one.
-        assert!(!names.contains(&"generate_image"));
-        assert!(!names.contains(&"attach_image"));
+        // Pictures are an account request, so a build signed in to the service
+        // offers them: the key behind them is the server's, not this binary's.
+        assert!(names.contains(&"generate_image"));
+        assert!(names.contains(&"attach_image"));
 
         // Without memory or Workspace, only the project tools remain.
         let bare = direct_bridge_definitions(
@@ -1649,10 +1649,11 @@ mod tests {
     #[test]
     fn picture_tools_follow_the_endpoint_and_the_folder() {
         let mut cfg = crate::config::get().expect("config").clone();
+        cfg.image.enabled = false;
         assert!(!direct_bridge_definitions(&cfg, crate::Capabilities::chat(), false)
             .iter()
             .any(|tool| tool["function"]["name"] == "generate_image"));
-        cfg.image.api_key = "sk-or-test".into();
+        cfg.image.enabled = true;
         let names = |caps: crate::Capabilities| -> Vec<String> {
             direct_bridge_definitions(&cfg, caps, false)
                 .iter()

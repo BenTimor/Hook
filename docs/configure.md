@@ -77,10 +77,8 @@ keep_turns = 3   # recent user turns kept verbatim after the summary
 window = 0       # 0 = [coding] context_window; the share is measured against it
 
 [image]
-base_url = "https://openrouter.ai/api/v1"
-api_key = "sk-or-v1-..."   # empty = the picture tools are not offered at all
-model = "meta/muse-image"  # any model OpenRouter lists at GET /images/models
-max_per_call = 4           # ceiling on `count` in one call
+enabled = true   # false = the tools are never offered
+max_per_call = 4 # ceiling on `count` in one call; the service clamps again
 ```
 
 `[compact]` is the one place the request prefix is rewritten on purpose: a long
@@ -97,15 +95,18 @@ build a standalone copy without the account service.
 
 ## Pictures
 
-`[image]` is where Hook gets a picture it did not have. It posts to OpenRouter's
-Image API (`POST {base_url}/images`, `response_format: "b64_json"`) and keeps the
-bytes like any other attachment: in the chat's own image folder, uploaded by the
-sync engine, drawn by the same strip and opened by the same lightbox as a
-screenshot. The key is compiled into the binary exactly like `[provider]
-api_key`, so treat it as extractable; `HOOK_IMAGE_KEY` in the environment
-overrides it, which is how a dev build tries a key without a rebuild. An empty
-key is a supported state: the two tools are never advertised, the prompt loses
-its "Pictures" section, and nothing else changes.
+`[image]` has no secret in it: a picture is an account request. The app posts
+`{ prompt, aspect_ratio?, n? }` to `POST /api/v1/images` with the same opaque
+token a message uses, and the service asks the image endpoint with its own key
+(`OPENROUTER_API_KEY` in the server's `.env`, see [Server](server.md)). A key
+compiled into a desktop binary is a key anyone who extracts strings from it has,
+and Hook's model key already lives on the server for exactly that reason.
+
+What comes back is an ordinary attachment: the bytes are stored in the chat's own
+image folder, uploaded by the sync engine, drawn by the same strip and opened by
+the same lightbox as a screenshot. `enabled = false` is for a standalone build
+with no account service behind it; a mock or offline build has no pictures to
+make either.
 
 One endpoint serves three callers, and they differ in what they can do with the
 result:
@@ -120,6 +121,10 @@ A picture Hook made or one an agent attached is a message of role `picture`: the
 thread draws it with its caption, and `build_history` replays it as a user frame
 where it sits, so the model reads it on the next turn. `look_at_picture` is the
 other half — it opens a picture for the model without claiming anything about it.
+
+The service decides what a picture costs the account: a free plan gets a small
+daily window (`FREE_IMAGE_LIMIT`, counted in pictures), a paid one has none, and
+a runaway loop meets a per-account rate limit. `docs/plans.md` has the rule.
 
 ---
 

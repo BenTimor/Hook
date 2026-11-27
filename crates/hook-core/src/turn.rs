@@ -658,7 +658,7 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
             }
             // Pictures need an endpoint to ask and, for a picture already on
             // this computer, a folder to read it from.
-            if !state.cfg.image.enabled() {
+            if !state.cfg.image.available(state.cfg.auth.required) {
                 list.retain(|tool| {
                     let name = tool["function"]["name"].as_str().unwrap_or("");
                     !tools::IMAGE_TOOLS.contains(&name)
@@ -1391,7 +1391,7 @@ fn system_prompt(cfg: &config::HarnessConfig, caps: crate::Capabilities, memory:
     }
     // No endpoint to ask means no picture tools, so the paragraphs about them
     // would describe something that is not in the list.
-    if !cfg.image.enabled() {
+    if !cfg.image.available(cfg.auth.required) {
         text = without_section(text, "## Pictures");
     }
     text
@@ -1920,9 +1920,9 @@ async fn generate_image(state: &AppState, chat_id: &str, args: &serde_json::Valu
             json!({ "error": "generate_image needs a prompt describing the picture." }).to_string(),
         );
     }
-    if !state.cfg.image.enabled() {
+    if !state.cfg.image.available(state.cfg.auth.required) {
         return ToolOutcome::text(
-            json!({ "error": "Making pictures is not set up in this build." }).to_string(),
+            json!({ "error": "Sign in to Hook to make pictures." }).to_string(),
         );
     }
     let attach = args
@@ -1945,7 +1945,15 @@ async fn generate_image(state: &AppState, chat_id: &str, args: &serde_json::Valu
         count,
     };
 
-    let made = match crate::imagegen::generate(&state.cfg.image, &request).await {
+    // The account service makes it, with the token this turn already uses.
+    let target = match crate::imagegen::Target::new(
+        &state.cfg.auth.base_url,
+        state.auth.token(),
+    ) {
+        Ok(target) => target,
+        Err(error) => return ToolOutcome::text(json!({ "error": error }).to_string()),
+    };
+    let made = match crate::imagegen::generate(&target, &request).await {
         Ok(made) => made,
         Err(error) => return ToolOutcome::text(json!({ "error": error }).to_string()),
     };
