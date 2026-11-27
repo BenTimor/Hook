@@ -104,7 +104,7 @@ renderer does not learn that the run is remote.
   `sessions.list`, `coding.create`,
   `coding.fetch`, `coding.send`, `coding.stop`, `coding.answer`,
   `coding.rename`, `coding.delete`, `coding.compact`, `projects.create`,
-  `preview.open` are the method names v1 uses.
+  `projects.delete`, `preview.open` are the method names v1 uses.
 - `browser.tabs`, `browser.read`, `browser.find`, `browser.eval` and
   `browser.cdp` are answered by a machine running Hook Browser. The first three
   read a tab; `browser.eval` runs a script there with the page helpers installed,
@@ -125,6 +125,10 @@ renderer does not learn that the run is remote.
   host — an owner's delete also queues the stub tombstone, which is what takes
   the chat off every other device. `projects.create` creates a folder there from
   a name and an optional description; the host chooses the path.
+  `projects.delete` takes `{project}` — the name `projects.list` showed — and
+  removes the account's row and the folder. The host refuses a folder that still
+  holds files: work in a folder is the user's, and Hook deletes it only when it
+  is an empty clone.
 - `folders.browse` walks the host's directories one level per call, so a
   controller can start a chat in a folder that is not one of the account's
   projects. `{path}` is a full path; an empty or missing `path` answers the

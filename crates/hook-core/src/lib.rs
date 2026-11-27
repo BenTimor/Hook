@@ -163,9 +163,9 @@ pub struct Capabilities {
     pub remote_agents: bool,
     /// Read and write Hook Workspace projects, boards, tasks and documents.
     pub workspace_tools: bool,
-    /// Project folders on this machine: list, create, describe, remember in.
-    /// Without a projects directory these tools can only fail, so a device with
-    /// no folder of its own must not advertise them.
+    /// Project folders on this machine: list, create, delete, describe,
+    /// remember in. Without a projects directory these tools can only fail, so a
+    /// device with no folder of its own must not advertise them.
     pub projects: bool,
     /// A Hook Browser on this machine, whose tabs the account's chats may read.
     /// Only the browser's own host has one; every other product reaches a

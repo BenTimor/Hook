@@ -90,6 +90,12 @@ struct ProjectCreateParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectDeleteParams {
+    project: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CodingCreateParams {
     #[serde(default)]
     project: String,
@@ -173,6 +179,7 @@ pub async fn handle(
         "agent.stopChat" => stop_chat(state, decode(params)?),
         "projects.list" => projects(state),
         "projects.create" => projects_create(state, decode(params)?),
+        "projects.delete" => projects_delete(state, decode(params)?),
         "folders.browse" => folders_browse(state, decode(params)?),
         "folders.pin" => folders_pin(state, decode(params)?),
         "sessions.list" => sessions(state, decode(params)?),
@@ -387,6 +394,25 @@ fn projects_create(
         "project": project.name,
         "description": project.description,
         "git": project.is_git,
+    }))
+}
+
+/// Delete a project a controller named: the folder here, the account's row
+/// through the tombstone, and nothing else. `ProjectsStore::delete` decides
+/// whether the folder may go — a folder with work in it is refused and stays.
+fn projects_delete(
+    state: &Arc<AppState>,
+    params: ProjectDeleteParams,
+) -> Result<Value, RpcFailure> {
+    let project = state
+        .projects
+        .delete_reference(&state.settings.projects_dir(), params.project.trim())
+        .map_err(|error| fail("project_delete_failed", error))?;
+    state.sync.project_deleted(&project.id);
+    state.sync.wake();
+    Ok(json!({
+        "deleted": project.name,
+        "hint": "It is gone from that machine and from the account.",
     }))
 }
 

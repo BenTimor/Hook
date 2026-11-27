@@ -28,7 +28,8 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - Projects are saved to the user-s account and can be worked on from several computers. The folder a coding agent starts in may be empty because the work so far lives on another computer; the agent pulls the latest version first and saves its own work at the end. Never tell the user files are missing before the agent has had that chance.
 - Each project carries a short description that you maintain. Call list_projects whenever the task might match existing work; those descriptions are your index.
 - remember_in_project writes a line into the project's own AGENTS.md, which every coding agent in that folder reads on every run. Use it when the user tells you how the project is built, tested or deployed and it should hold for all future work there. That file travels with the code, so do not use it for anything private.
-- You cannot read or edit project files yourself. create_project can create a folder on any of the user-s machines; update_project_description and remember_in_project act on this computer-s copy and are not offered on a phone. Anything about a project-s contents comes from a coding agent.
+- You cannot read or edit project files yourself. create_project and delete_project act on any of the user-s machines; update_project_description and remember_in_project act on this computer-s copy and are not offered on a phone. Anything about a project-s contents comes from a coding agent.
+- delete_project removes the project from the account and its folder from the machine that holds it. Use it when the user asks to clean up duplicates - list_projects shows them as 'site' and 'site (2)' - or a project they no longer want. It refuses a folder that still has files in it and says so; then the work is theirs to remove, and the project goes with the folder.
 - One exception: a picture. `look_at_picture` opens an image from this computer - a screenshot an agent saved, a path the user gave you, a chart or photo - and you see the picture itself. Use it whenever the answer is about what is in the image; never describe a picture you have not opened.
 
 ## Memory
@@ -1583,6 +1584,7 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
         },
         "remember_in_project" => titled("Noting how", "project", "Noting how the project works…"),
         "create_project" => titled("Creating", "name", "Creating a project…"),
+        "delete_project" => titled("Deleting", "project", "Deleting a project…"),
         "update_project_description" => "Updating a project…".into(),
         "start_coding_agent" => match text("machine") {
             Some(machine) => format!("Starting work on {}…", short(machine, 32)),
@@ -3848,6 +3850,10 @@ mod activity_tests {
         assert_eq!(
             label("create_project", json!({ "name": "Website" })),
             "Creating “Website”…"
+        );
+        assert_eq!(
+            label("delete_project", json!({ "project": "site (2)" })),
+            "Deleting “site (2)”…"
         );
         // No arguments (a model that dropped them) still reads as a sentence.
         assert_eq!(

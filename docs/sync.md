@@ -49,12 +49,22 @@ Several independent mechanisms are at work:
 Project identities belong to the account, not to an installation. Because both
 Hook and Hook Workspace open the same projects folder on a machine, two windows
 can see the same folder under two different local ids; the account's id wins. A
-folder bound to an account project keeps its id and its place, and a duplicate
-name coming back from the server makes the local copy adopt the account's id
-rather than create a second folder. A folder the account cannot accept — a name
+folder bound to an account project keeps its id and its place — including a
+folder that already holds work — and a duplicate name coming back from the
+server makes the local copy adopt the account's id rather than create a second
+folder. A folder the account cannot accept — a name
 over 64 characters, or one Windows reserves — stays on that machine and is
 skipped by itself, so one impossible name cannot stop the rest of the account
 from syncing.
+
+Hook 0.3.0 got that wrong, and an install that ran it can still show the
+result: `site`, `site (2)`, `site (2) (2)`, one level per sync round, because
+each window listed the other's collision folder as a project of its own and
+pushed it as a new one. `dev/cleanup-duplicates.py` repairs that: it keeps the
+folder at the project's own name, deletes the empty copies and their account
+rows (a dry run first, `--apply` to do it), and rewrites the products' notes to
+the account's ids. **Remove** in Settings and the agent's `delete_project` do
+the same one project at a time.
 
 A project is deleted by deleting its folder or with **Remove** in Settings. The
 note goes with it and the account gets a tombstone, so the next pull cannot

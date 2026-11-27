@@ -976,16 +976,21 @@ Changing one side of a boundary is the most common way to break this repo.
   `ProjectsStore::bind` or `push_projects`, know that a folder is the same
   project even when two windows call it by different ids: `bind` adopts the
   account's id for a folder it already owns, and a push that comes back
-  `duplicate_name` adopts `conflictId` instead of retrying forever. One project
+  `duplicate_name` adopts `conflictId` instead of retrying forever. A folder at
+  the project's own name that no note claims is that project's copy, so it is
+  adopted too, whether or not it holds work: suffixing it is what made ten
+  renamed copies of one project (the other window listed "name (2)" as a
+  project of its own and pushed it as a new one). One project
   the account refuses (a >64-character or reserved name) is skipped locally and
   logged — never allowed to 400 the batch. A project is deleted by removing its
-  folder or through `delete_project`: `list` drops a note whose folder is gone,
-  `take_dropped` hands it to the sync engine, and `push_projects` sends
-  `{deleted: true}` — without that tombstone the account's row survives and the
-  next pull creates the folder again. The folder itself is deleted only when it
-  holds nothing but `.git` (`is_reusable`), so Hook never removes the user's
-  work; a deletion on one computer keeps another computer's copy, which pushes
-  the project back.
+  folder, through `delete_project` (the sidebar) or through the agent's
+  `delete_project` tool (local, or `projects.delete` on the machine that holds
+  it): `list` drops a note whose folder is gone, `take_dropped` hands it to the
+  sync engine, and `push_projects` sends `{deleted: true}` — without that
+  tombstone the account's row survives and the next pull creates the folder
+  again. The folder itself is deleted only when it holds nothing but `.git`
+  (`is_reusable`), so Hook never removes the user's work; a deletion on one
+  computer keeps another computer's copy, which pushes the project back.
 - **A turn that seems to never answer:** run the app with `HOOK_DEBUG_TURN=1`
   and watch stderr — every step (placeholder saved, calling the model, model
   returned) is logged. `%APPDATA%\app.hook.chat\panic.log` catches panics (a

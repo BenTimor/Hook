@@ -23,10 +23,11 @@ pub const AGENT_TOOLS: [&str; 8] = [
 
 /// Tools that may have to travel to another machine. They are the only ones
 /// the async dispatcher intercepts; everything else stays a local call.
-pub const MACHINE_TOOLS: [&str; 10] = [
+pub const MACHINE_TOOLS: [&str; 11] = [
     "list_machines",
     "list_projects",
     "create_project",
+    "delete_project",
     "start_coding_agent",
     "list_agents",
     "agent_status",
@@ -124,6 +125,22 @@ pub fn definitions() -> Value {
                         "machine": { "type": "string", "description": "The exact machine name from list_machines. Use 'this computer' on the desktop that will hold the folder." }
                     },
                     "required": ["name", "description", "machine"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "delete_project",
+                "description": "Delete a project: remove its entry from the account and its folder from the machine that holds it, so no other computer brings it back. Use it when the user asks to clean up duplicates ('site (2)') or a project they no longer want. Hook refuses a folder that still holds work, and says so; never promise the files are gone. Name the machine, even on a desktop; call list_machines first.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "The project's name, exactly as list_projects shows it." },
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines. Use 'this computer' on the desktop that holds the folder." }
+                    },
+                    "required": ["project", "machine"],
                     "additionalProperties": false
                 }
             }
@@ -575,6 +592,9 @@ pub fn direct_bridge_definitions(
             if (AGENT_TOOLS.contains(&name) && name != "list_machines")
                 || name == "web_search"
                 || name == "no_update"
+                // A direct agent works inside one folder; removing projects is
+                // the chat agent's job, and this one could delete its own.
+                || name == "delete_project"
                 // The engine can already open a picture with its own `read`,
                 // and the pictures it opens belong to its own turn: a bridge
                 // call would only hand it text.
@@ -969,6 +989,11 @@ async fn run_machine(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Valu
             }),
             std::time::Duration::from_secs(30),
         ),
+        "delete_project" => (
+            "projects.delete",
+            json!({ "project": arg_str(args, "project")? }),
+            std::time::Duration::from_secs(30),
+        ),
         "list_agents" => (
             "agent.list",
             json!({ "chatId": env.chat_id }),
@@ -1119,6 +1144,30 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
             Ok(json!({
                 "created": project.name,
                 "description": project.description,
+            }))
+        }
+        "delete_project" => {
+            let reference = arg_str(args, "project")?;
+            let project = env.projects.delete_reference(&root, reference)?;
+            // The account has to hear about it, or the next pull creates the
+            // folder again: `delete` removes the note, and the tombstone is
+            // what takes the account's row with it (see `sync::project_deleted`).
+            if let Some(state) = env.state {
+                state.sync.project_deleted(&project.id);
+                state.sync.wake();
+                state.events.emit_value(
+                    "hook://sync",
+                    json!({
+                        "chats": false,
+                        "projects": true,
+                        "memory": false,
+                        "at": crate::store::now_ms(),
+                    }),
+                );
+            }
+            Ok(json!({
+                "deleted": project.name,
+                "hint": "It is gone from this computer and from the account.",
             }))
         }
         "update_project_description" => {
@@ -1483,6 +1532,7 @@ mod tests {
             "set_title",
             "list_projects",
             "create_project",
+            "delete_project",
             "update_project_description",
             "start_coding_agent",
             "list_agents",
@@ -1523,6 +1573,7 @@ mod tests {
         let defs = definitions();
         for name in [
             "create_project",
+            "delete_project",
             "start_coding_agent",
             "list_agents",
             "agent_status",
@@ -1621,6 +1672,9 @@ mod tests {
             // The engine opens pictures with its own `read`; the bridge would
             // answer this one with text and no picture.
             "look_at_picture",
+            // It works inside one project; removing projects is the chat
+            // agent's job, and this one could delete its own folder.
+            "delete_project",
         ] {
             assert!(!names.contains(&refused), "{refused} must not be offered");
         }
@@ -1740,6 +1794,62 @@ mod tests {
         };
         let out = execute(&env, "create_project", &json!({}));
         assert!(out.contains("Missing"));
+    }
+
+    #[test]
+    fn a_project_is_deleted_by_the_name_the_agent_knows() {
+        let base = std::env::temp_dir().join(format!("hook-tools-{}", uuid::Uuid::new_v4()));
+        let projects_dir = base.join("projects");
+        std::fs::create_dir_all(&projects_dir).unwrap();
+        let settings = SettingsStore::new(&base);
+        settings
+            .set_projects_dir(&projects_dir.to_string_lossy())
+            .unwrap();
+        let projects = ProjectsStore::new(&base);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let agents = AgentManager::new(
+            &base,
+            std::sync::Arc::new(crate::config::get().expect("config").clone()),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Ok(crate::runtime::PiRuntime {
+                program: std::path::PathBuf::from("pi"),
+                cli: None,
+                agent_home: base.join("agent-home"),
+            }),
+            std::sync::Arc::new(SettingsStore::new(&base)),
+            std::sync::Arc::new(ProjectsStore::new(&base)),
+            tx,
+        );
+        let env = ToolEnv {
+            agents: &agents,
+            projects: &projects,
+            settings: &settings,
+            chat_id: "c1",
+            user_initiated: true,
+            state: None,
+        };
+
+        // A duplicate is what this is for: an empty folder the account knows.
+        let created = execute(
+            &env,
+            "create_project",
+            &json!({ "name": "site (2)", "description": "a copy" }),
+        );
+        assert!(created.contains("\"created\":\"site (2)\""), "{created}");
+        let removed = execute(&env, "delete_project", &json!({ "project": "site (2)" }));
+        assert!(removed.contains("\"deleted\":\"site (2)\""), "{removed}");
+        assert!(!projects_dir.join("site (2)").exists());
+        assert!(projects.list(&projects_dir).unwrap().is_empty());
+        // A second call is a sentence, not a panic.
+        let again = execute(&env, "delete_project", &json!({ "project": "site (2)" }));
+        assert!(again.contains("does not exist"), "{again}");
+
+        // Work in the folder is the user's: the tool refuses and nothing goes.
+        let real = projects.create(&projects_dir, "real", "").unwrap();
+        std::fs::write(std::path::Path::new(&real.path).join("index.html"), "hi").unwrap();
+        let refused = execute(&env, "delete_project", &json!({ "project": "real" }));
+        assert!(refused.contains("never deletes your work"), "{refused}");
+        assert!(std::path::Path::new(&real.path).join("index.html").exists());
     }
 
     #[test]

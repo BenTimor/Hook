@@ -495,6 +495,22 @@ impl ProjectsStore {
         Ok(true)
     }
 
+    /// Remove the project the user or an agent knows by `reference`: a folder
+    /// name, an account id or an absolute path, resolved the way [`resolve`]
+    /// resolves it. This is what a tool or a controller deletes one by, so the
+    /// folder rules in [`delete`] still decide whether anything is removed.
+    ///
+    /// [`resolve`]: Self::resolve
+    /// [`delete`]: Self::delete
+    pub fn delete_reference(&self, root: &Path, reference: &str) -> Result<Project, String> {
+        let path = self.resolve(root, reference)?;
+        let id = self
+            .id_for_path(&path)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| format!("\"{reference}\" is not one of your projects."))?;
+        self.delete(&id)
+    }
+
     pub fn id_for_path(&self, path: &Path) -> Option<String> {
         let key = key_of(&canonical(path));
         lock(&self.notes)
@@ -577,8 +593,8 @@ impl ProjectsStore {
 
     /// Bind a project that arrived from the account to a folder on this
     /// machine. Creates the folder when this is the first time the project is
-    /// seen here; an existing folder with the same name is reused only when it
-    /// is not already another project.
+    /// seen here; a folder at the project's own name is reused whenever no
+    /// note of this product claims it, because the account's names are unique.
     pub fn bind(
         &self,
         root: &Path,
@@ -643,15 +659,25 @@ impl ProjectsStore {
             return Ok(project);
         }
 
-        // Pick a folder: the project's name, or a suffixed variant when that
-        // name belongs to a different project on this machine.
+        // The folder the project already has on this machine, or a suffixed
+        // variant when that name belongs to a different project.
+        //
+        // A folder sitting at the project's own name that no note here claims
+        // *is* this project's copy: each product keeps its own notes, so the
+        // other window made it, and the account's names are unique, so it
+        // cannot be a different project of the same name. Adopting it is what
+        // keeps one project in one folder — suffixing it is what turned one
+        // collision into ten renamed copies: the other product listed "name
+        // (2)" as a project of its own, pushed it as a new one, and both sides
+        // then made "name (3)" from that. A folder with work in it is still
+        // the user's, so it is adopted, never emptied or moved.
         let mut folder = wanted.clone();
         let mut suffix = 2;
         loop {
             let candidate = root.join(&folder);
             let key = key_of(&canonical(&candidate));
             let taken = notes.iter().any(|n| n.path.eq_ignore_ascii_case(&key));
-            if !taken && (!candidate.exists() || is_reusable(&candidate)) {
+            if !taken && (folder == wanted || !candidate.exists() || is_reusable(&candidate)) {
                 break;
             }
             if suffix > 50 {
@@ -794,7 +820,10 @@ fn suffixed_folder(folder: &str, base: &str) -> bool {
 }
 
 /// A folder with nothing but a `.git` directory (created by a previous bind or
-/// by hand) is safe to adopt. A folder with files is somebody's work.
+/// by hand) is safe to reuse under a *suffixed* name — `name (2)` and its kind.
+/// A folder with files in it is somebody's work, so it is never shared with
+/// another project's copy; the folder at a project's own name is adopted
+/// instead, whatever it holds (see `bind`).
 fn is_reusable(path: &Path) -> bool {
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
@@ -1089,35 +1118,74 @@ mod tests {
         let numbered = numbered_folder(&long, 2);
         assert_eq!(numbered.chars().count(), 64);
         assert!(numbered.ends_with(" (2)"));
-
-        // The same folder, created twice: the second gets a suffix that still
-        // fits, so it can be pushed instead of being rejected as too long.
-        let (_base, root, store) = temp_store();
-        fs::create_dir_all(root.join(&long)).unwrap();
-        fs::write(root.join(&long).join("notes.txt"), "mine").unwrap();
-        let bound = store.bind(&root, "pj_long", &long, "", 1, 1).unwrap();
-        let folder = Path::new(&bound.path)
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        assert!(folder.chars().count() <= 64, "{folder}");
-        assert!(folder.ends_with(" (2)"), "{folder}");
+        // The suffix never grows past the account's limit, whatever the base.
+        let number: String = std::iter::repeat_n('2', 60).collect();
+        let numbered = numbered_folder(&format!("{long} ({number})"), 3);
+        assert!(numbered.chars().count() <= 64, "{numbered}");
+        assert!(numbered.ends_with(" (3)"), "{numbered}");
     }
 
     #[test]
-    fn a_name_collision_uses_a_suffixed_folder() {
-        // A folder the user filled by hand is not the account's project with
-        // the same name, so the incoming copy gets its own folder.
+    fn a_folder_the_other_product_filled_is_the_projects_folder() {
+        // The reported bug: Hook and Hook Workspace share one projects folder
+        // but keep their own notes, so the second product saw the folder with
+        // work in it and made "name (2)" beside it. It then listed that new
+        // folder as a project of its own, pushed it as a new one, and both
+        // sides made "name (3)" from that — ten levels, until a name was too
+        // long for the account and sync failed for good.
+        let (base, root, chat) = temp_store();
+        let project = chat.create(&root, "site", "ours").unwrap();
+        fs::write(root.join("site").join("index.html"), "<h1>mine</h1>").unwrap();
+
+        let workspace_dir = base.join("workspace");
+        fs::create_dir_all(&workspace_dir).unwrap();
+        let workspace = ProjectsStore::new(&workspace_dir);
+        let bound = workspace
+            .bind(&root, &project.id, "site", "ours", 1, 2)
+            .unwrap();
+        assert_eq!(bound.path, project.path);
+        assert!(!root.join("site (2)").exists());
+
+        // Each product lists the one project, and the one folder is the work.
+        assert_eq!(chat.list(&root).unwrap().len(), 1);
+        let listed = workspace.list(&root).unwrap();
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert!(Path::new(&listed[0].path).join("index.html").exists());
+    }
+
+    #[test]
+    fn a_folder_with_work_is_not_suffixed_for_the_same_project() {
+        // A folder the user filled by hand, that no note here claims, is at the
+        // project's own name — and the account cannot have a second project by
+        // that name. Adopting it keeps the work where it is and gives the
+        // project one folder; making "same-name (2)" gave the same project two
+        // folders and made the second one a project of its own.
         let (_base, root, store) = temp_store();
         fs::create_dir_all(root.join("same-name")).unwrap();
         fs::write(root.join("same-name").join("notes.txt"), "mine").unwrap();
         let bound = store
             .bind(&root, "pj_remote2", "same-name", "remote one", 10, 20)
             .unwrap();
-        assert!(bound.path.ends_with("same-name (2)"), "{}", bound.path);
+        assert!(bound.path.ends_with("same-name"), "{}", bound.path);
         assert_eq!(bound.name, "same-name");
-        // Both resolve through their own name; the local one stays first.
-        assert!(store.resolve(&root, "same-name").is_ok());
+        assert!(!root.join("same-name (2)").exists());
+        // The note is the account's, and the user's file is untouched.
+        assert_eq!(
+            store.id_for_path(Path::new(&bound.path)).as_deref(),
+            Some("pj_remote2")
+        );
+        assert!(root.join("same-name").join("notes.txt").exists());
+        assert_eq!(store.list(&root).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_project_is_deleted_by_the_name_a_tool_knows_it_by() {
+        let (_base, root, store) = temp_store();
+        let bound = store.bind(&root, "pj_dup", "dupe (2)", "", 1, 2).unwrap();
+        let removed = store.delete_reference(&root, "dupe (2)").unwrap();
+        assert_eq!(removed.id, bound.id);
+        assert!(!Path::new(&bound.path).exists());
+        assert!(store.list(&root).unwrap().is_empty());
+        assert!(store.delete_reference(&root, "dupe (2)").is_err());
     }
 }

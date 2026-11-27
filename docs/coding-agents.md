@@ -39,10 +39,11 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   scoped to `/api/git/*` and cannot read chats or spend model credits. The token
   lives in that config, never in a project or a remote URL.
 - **The chat agent never touches files.** Its tools are `set_title`,
-  `list_projects`, `create_project`, `update_project_description`,
-  `start_coding_agent`, `list_agents`, `agent_status`, `steer_agent`,
-  `answer_agent`, `stop_agent` and `list_coding_sessions`. All code reading and
-  editing happens inside a coding agent, including setting the preview panel.
+  `list_projects`, `create_project`, `delete_project`,
+  `update_project_description`, `start_coding_agent`, `list_agents`,
+  `agent_status`, `steer_agent`, `answer_agent`, `stop_agent` and
+  `list_coding_sessions`. All code reading and editing happens inside a coding
+  agent, including setting the preview panel.
 - **Both can look at a picture.** An agent opens one with `read`: on a model
   whose card says it sees images, `read shot.png` hands the model the picture
   itself, so an agent can check its own work in a user interface instead of
@@ -282,10 +283,11 @@ that conversation — what the engine says is what you read.
   the chat agent can do with Hook's data: `set_title`, `list_projects`,
   `create_project`, `update_project_description`, `remember_in_project`,
   `remember` / `memory_search` / `forget` and the `workspace_*` family. The
-  pinned memory the chat agent gets is in its prompt too. Two things are left
+  pinned memory the chat agent gets is in its prompt too. Three things are left
   out on purpose: `report_progress` (nobody relays it — the answer itself is the
-  update) and every tool that starts, inspects or steers another coding agent
-  (there are no subagents in this direction).
+  update), `delete_project` (a run works inside one folder; removing projects is
+  the chat agent's job) and every tool that starts, inspects or steers another
+  coding agent (there are no subagents in this direction).
 - **How those tools reach it.** The guard cannot call Rust, so `bridge.rs`
   listens on loopback and the guard `fetch`es it with a token minted for that
   chat. The schemas are written into the agent's mailbox (`tools.json`) from the

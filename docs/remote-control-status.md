@@ -366,8 +366,9 @@ Known limits (do not mistake them for bugs):
   instances would need a pub/sub layer.
 - **Free-with-BYOK** still runs local agents. `list_machines` shows the paid
   refusal; "this computer" works locally. Remote stays paid.
-- **`list_projects` and `create_project` on the phone** name a machine;
-  `create_project` travels as `projects.create`. `update_project_description`
+- **`list_projects`, `create_project` and `delete_project` on the phone** name a
+  machine; `create_project` travels as `projects.create` and `delete_project` as
+  `projects.delete`. `update_project_description`
   and `remember_in_project` are still local-only and removed on the phone.
 - **A remote direct chat can be renamed, steered and stopped from any device;
   the folder change and the delete stay on the host.** See 4.1 for why.
