@@ -55,6 +55,13 @@ export interface ChatTransport {
   send(chatId: string | null, text: string): Promise<string>;
   stop(chatId: string): Promise<void>;
   subscribe(listener: (chatId: string, event: DockEvent) => void): () => void;
+  /**
+   * Advanced mode, as the account holds it. The dock asks when it opens: with it
+   * on, a turn draws its thinking and its tool calls in reading order, the same
+   * way the chat window does; with it off, only the answers. A product that does
+   * not answer gets the simple view.
+   */
+  advancedMode?(): Promise<boolean>;
   /** Optional: full-text search. Without it the list filters by title. */
   searchChats?(query: string): Promise<DockChat[]>;
   /**
@@ -114,6 +121,14 @@ export function ChatDock({
   // A turn is running while the activity line exists, which outlives each
   // model call: the line is what keeps the panel honest during tools.
   const busy = activity !== null;
+  // Advanced mode is account state, not this panel's: the chat window's Settings
+  // writes it, and every product follows. It is re-read when the dock opens, so
+  // a switch flipped in Hook arrives with the next look at the panel.
+  const [showDetails, setShowDetails] = useState(false);
+  // The thinking of the reply that is still arriving. The saved reasoning is on
+  // the message; this is the part the provider has sent and the store has not
+  // written yet.
+  const [streamReasoning, setStreamReasoning] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<DockChat[] | null>(null);
@@ -139,6 +154,30 @@ export function ChatDock({
     if (!open) return;
     void refreshChats();
   }, [open, refreshChats]);
+
+  const readAdvanced = useCallback(async () => {
+    if (!transport.advancedMode) return;
+    try {
+      setShowDetails(Boolean(await transport.advancedMode()));
+    } catch {
+      // Keep whichever view is already drawn: a failed read must not reshape a
+      // conversation the reader is in the middle of.
+    }
+  }, [transport]);
+
+  useEffect(() => {
+    if (!open) return;
+    void readAdvanced();
+    // A panel that stays mounted — the browser's side panel — is not closed and
+    // reopened the way the workspace's dock is, so showing it again is also a
+    // moment to ask. Deliberately not `focus`: the read is a whole settings view,
+    // and alt-tabbing should not keep listing the projects folder.
+    const onShown = () => {
+      if (document.visibilityState === "visible") void readAdvanced();
+    };
+    document.addEventListener("visibilitychange", onShown);
+    return () => document.removeEventListener("visibilitychange", onShown);
+  }, [open, readAdvanced]);
 
   // Escape closes the conversation list, the way it closes a sheet.
   useEffect(() => {
@@ -211,7 +250,8 @@ export function ChatDock({
             activeRef.current = chatId;
             setActiveId(chatId);
           }
-          setMessages(visible(event.messages ?? []));
+          setMessages(event.messages ?? []);
+          setStreamReasoning("");
           setActivity((current) => current ?? []);
           break;
         case "activity": {
@@ -224,9 +264,11 @@ export function ChatDock({
           if (frame.current === null) frame.current = requestAnimationFrame(flush);
           break;
         case "reasoning":
+          setStreamReasoning((current) => current + (event.text ?? ""));
           break;
         case "done": {
-          if (event.messages) setMessages(visible(event.messages));
+          if (event.messages) setMessages(event.messages);
+          setStreamReasoning("");
           // A reply that ended in a tool call hands the turn to the next model
           // call; anything else is the end of it, and the line goes with it
           // rather than waiting for the turn's final event.
@@ -238,7 +280,8 @@ export function ChatDock({
           break;
         }
         case "error":
-          if (event.messages) setMessages(visible(event.messages));
+          if (event.messages) setMessages(event.messages);
+          setStreamReasoning("");
           setError(event.message ?? "The reply failed.");
           setActivity(null);
           void refreshChats();
@@ -261,7 +304,8 @@ export function ChatDock({
       const chat = await transport.getChat(id);
       setActiveId(id);
       activeRef.current = id;
-      setMessages(visible(chat.messages));
+      setMessages(chat.messages);
+      setStreamReasoning("");
     } catch (failure) {
       setError(String(failure));
     }
@@ -271,6 +315,7 @@ export function ChatDock({
     setActiveId(null);
     activeRef.current = null;
     setMessages([]);
+    setStreamReasoning("");
     setActivity(null);
     setError(null);
     setHistoryOpen(false);
@@ -307,6 +352,16 @@ export function ChatDock({
 
   const activeChat = chats.find((chat) => chat.id === activeId) ?? null;
   const listed = hits ?? chats;
+  // Whether this conversation has anything a reader would see. The whole message
+  // list is handed to the thread, tool traffic and hidden frames included, so the
+  // builder can fold it in advanced mode; the empty screen is the lack of a
+  // conversation, not the lack of messages in the list.
+  const started = messages.some(
+    (message) =>
+      message.role === "user" ||
+      message.role === "assistant" ||
+      message.role === "picture",
+  );
 
   return (
     <aside className="dock" aria-label={`${title} chat`}>
@@ -398,7 +453,7 @@ export function ChatDock({
             )}
           </div>
         </div>
-      ) : messages.length === 0 && !busy ? (
+      ) : !started && !busy ? (
         <div className="dock-hero">
           <HookMark className="dock-hero-mark" />
           <h1>{greeting(userName)}</h1>
@@ -424,7 +479,9 @@ export function ChatDock({
         <Thread
           className="dock-thread"
           messages={messages}
+          streamReasoning={streamReasoning}
           activity={activity ?? undefined}
+          showDetails={showDetails}
           onReport={
             transport.report
               ? (message) => {
@@ -476,12 +533,6 @@ export function ChatDock({
         </div>
       )}
     </aside>
-  );
-}
-
-function visible(messages: DockMessage[]): DockMessage[] {
-  return messages.filter(
-    (message) => !message.hidden && message.role !== "system" && message.role !== "tool",
   );
 }
 

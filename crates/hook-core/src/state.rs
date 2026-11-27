@@ -105,6 +105,16 @@ pub(crate) fn revoke_local(state: &AppState) {
 }
 
 impl AppState {
+    /// Advanced mode: the account's answer, and this device's only when the
+    /// account has none (a signed-out window, or a server that never sent it).
+    /// One definition, because the Settings sheet, the slash commands and every
+    /// dock ask the same question.
+    pub fn advanced_mode(&self) -> bool {
+        self.auth
+            .advanced_mode()
+            .unwrap_or_else(|| self.settings.advanced_mode())
+    }
+
     /// The live context block, if the product set one.
     pub fn chat_context(&self) -> Option<String> {
         lock(&self.context).clone()

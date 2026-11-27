@@ -215,6 +215,7 @@ The routes are on the same channel and the same token:
 | --- | --- |
 | `GET /browser/tasks` | the browser asking for work; held open for a few seconds when there is none, so an idle browser is one request per hold. Every poll is also the heartbeat a tool reads to say "Hook Browser is running" instead of "that machine is offline" |
 | `POST /browser/tasks/<id>` | the answer: the tab list, a page's text and headings, or one protocol command's `result` |
+| `GET /settings` | the dock asking how to draw a turn (`{ advancedMode }`). Append-only: a host that does not know the route is an older Hook, and the panel keeps the simple view instead of failing to draw |
 
 The poller is `hook/browser/service/hook_service.cc`, one per profile, started by
 `hook/browser/startup/hook_extra_parts.cc` at browser startup (one line in

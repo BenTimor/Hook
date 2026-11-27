@@ -39,18 +39,42 @@ struct ChatSummary {
   bool unsynced;
 };
 
-// A message as the dock draws it. Tool calls are deliberately not carried: the
-// panel renders the conversation, and the inspector's view of a turn is the
-// window's, not the browser's.
+// How much context one compaction took away, so advanced mode can say where the
+// conversation was folded and how much went.
+struct Compaction {
+  int32 messages;
+  double tokens_before;
+  double tokens_after;
+};
+
+// One tool call a message made. Advanced mode draws it as a step; a simple-mode
+// page drops it.
+struct ToolCall {
+  string id;
+  string name;
+  // Raw JSON arguments exactly as the model produced them.
+  string arguments;
+};
+
+// A message as the dock draws it.
 struct ChatMessage {
   string id;
   string role;
   string content;
   // complete | streaming | error | aborted
   string status;
-  // Hidden messages stay in the store for replay; the dock filters them out.
+  // Hidden messages stay in the store for replay; the simple view filters them
+  // out and advanced mode draws the ones that are worth reading.
   bool hidden;
   string error;
+  // What the model thought before it answered, when the provider sends it.
+  string reasoning;
+  array<ToolCall> tool_calls;
+  // Set on role=tool results: the call they belong to. The result itself is the
+  // content, and advanced mode folds it into that call's step.
+  string tool_call_id;
+  // Set on a compaction: what the summary folded away.
+  Compaction? compaction;
 };
 
 struct ChatView {
@@ -94,6 +118,12 @@ interface PageHandler {
   // the descriptor and makes the calls; a chrome:// renderer cannot open a
   // socket to loopback at all (Chromium kills it for "Incorrect scheme").
   GetChannel() => (bool available, string reason);
+
+  // Whether advanced mode is on for this account: the dock draws a turn's
+  // thinking and tool calls with it, and only the answers without it. A host
+  // that does not know the route is an older Hook, and the page says false
+  // rather than failing to draw.
+  GetSettings() => (bool advanced_mode);
 
   // The dock's history and one conversation, read from that channel.
   ListChats() => (array<ChatSummary> chats, string error);

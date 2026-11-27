@@ -54,6 +54,10 @@ pub trait ChannelBackend: Send + Sync {
     fn product(&self) -> &'static str;
     fn version(&self) -> String;
     fn signed_in(&self) -> bool;
+    /// Advanced mode, as the account holds it. The dock asks once when it opens
+    /// and draws the turn's thinking and tool calls from it; the rest of the
+    /// surface is the same either way.
+    fn advanced_mode(&self) -> bool;
     /// Every conversation the dock may show, newest first, without content.
     fn chats(&self) -> Result<Value, String>;
     /// One conversation with its messages, or `None` for a chat this channel
@@ -95,6 +99,9 @@ pub struct LiveBackend {
 }
 
 fn message_json(message: &crate::store::Message) -> Value {
+    // Advanced mode draws what a reply did on the way to answering it, so the
+    // thinking, the calls and the result rows travel too. A simple-mode page
+    // ignores the extra fields; the builder in `packages/chat` is what decides.
     json!({
         "id": message.id,
         "role": message.role,
@@ -102,6 +109,27 @@ fn message_json(message: &crate::store::Message) -> Value {
         "status": message.status,
         "hidden": message.hidden,
         "error": message.error,
+        "reasoning": message.reasoning,
+        "toolCalls": message.tool_calls.as_ref().map(|calls| {
+            calls
+                .iter()
+                .map(|call| {
+                    json!({
+                        "id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    })
+                })
+                .collect::<Vec<Value>>()
+        }),
+        "toolCallId": message.tool_call_id,
+        "compaction": message.compaction.as_ref().map(|fold| {
+            json!({
+                "messages": fold.messages,
+                "tokensBefore": fold.tokens_before,
+                "tokensAfter": fold.tokens_after,
+            })
+        }),
     })
 }
 
@@ -126,6 +154,10 @@ impl ChannelBackend for LiveBackend {
 
     fn signed_in(&self) -> bool {
         self.state.auth.token().is_some()
+    }
+
+    fn advanced_mode(&self) -> bool {
+        self.state.advanced_mode()
     }
 
     fn chats(&self) -> Result<Value, String> {
@@ -567,6 +599,17 @@ async fn handle(
     }
 
     match (request.method.as_str(), segments.as_slice()) {
+        // How the dock draws a turn. Append-only like every route here: a host
+        // that does not know it is an older Hook, and the page keeps the simple
+        // view rather than failing to draw.
+        ("GET", ["settings"]) => {
+            respond(
+                &mut stream,
+                200,
+                &json!({ "ok": true, "advancedMode": backend.advanced_mode() }),
+            )
+            .await
+        }
         ("GET", ["chats"]) => match backend.chats() {
             Ok(chats) => respond(&mut stream, 200, &json!({ "ok": true, "chats": chats })).await,
             Err(error) => respond(&mut stream, 500, &json!({ "ok": false, "error": error })).await,
@@ -666,6 +709,9 @@ mod tests {
         }
         fn signed_in(&self) -> bool {
             self.signed_in.load(Ordering::SeqCst)
+        }
+        fn advanced_mode(&self) -> bool {
+            true
         }
         fn chats(&self) -> Result<Value, String> {
             Ok(json!([
@@ -834,6 +880,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_dock_asks_whether_the_advanced_view_is_on() {
+        let (port, token) = serve(Fake::new());
+        // The account's answer, and the same gate as the rest: it is account
+        // state behind the token, not something `/health` says.
+        let (status, _) = get(port, "/settings", None).await;
+        assert_eq!(status, 403);
+        let (status, body) = get(port, "/settings", Some(&token)).await;
+        assert_eq!(status, 200);
+        assert_eq!(body["advancedMode"], true);
+    }
+
+    #[tokio::test]
     async fn chats_and_one_chat_read_back() {
         let (port, token) = serve(Fake::new());
         let (status, body) = get(port, "/chats", Some(&token)).await;
@@ -879,6 +937,37 @@ mod tests {
         let (status, body) = call(port, "POST", "/chats", Some(&token), Some("{}")).await;
         assert_eq!(status, 202);
         assert_eq!(body["chatId"], "c2");
+    }
+
+    /// A reply that used a tool, with the thinking that led to it: what advanced
+    /// mode needs and what the simple view ignores.
+    #[test]
+    fn a_message_carries_what_the_advanced_view_draws() {
+        let message = crate::store::Message {
+            id: "m1".into(),
+            role: "assistant".into(),
+            content: "Here it is.".into(),
+            reasoning: Some("the file is in src".into()),
+            reasoning_field: None,
+            created_at: 1,
+            status: "complete".into(),
+            error: None,
+            usage: None,
+            tool_calls: Some(vec![crate::store::ToolCallRecord {
+                id: "call-1".into(),
+                name: "read_file".into(),
+                arguments: r#"{"path":"src/lib.rs"}"#.into(),
+            }]),
+            tool_call_id: None,
+            hidden: false,
+            kind: None,
+            attachments: Vec::new(),
+            compaction: None,
+        };
+        let json = message_json(&message);
+        assert_eq!(json["reasoning"], "the file is in src");
+        assert_eq!(json["toolCalls"][0]["name"], "read_file");
+        assert_eq!(json["toolCalls"][0]["arguments"], r#"{"path":"src/lib.rs"}"#);
     }
 
     #[test]

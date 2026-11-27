@@ -103,7 +103,7 @@ pub fn parse(text: &str) -> Option<Invocation> {
 /// Run one command for this chat. The caller returns the chat id, so a command
 /// answers exactly like a message did.
 pub async fn run(state: &Arc<AppState>, chat: &Chat, call: Invocation) -> Result<(), String> {
-    if !state.settings.advanced_mode() {
+    if !state.advanced_mode() {
         return Err("Commands are available in advanced mode.".into());
     }
     let Some(command) = COMMANDS.iter().find(|command| command.name == call.name) else {

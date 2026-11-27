@@ -1269,10 +1269,7 @@ fn settings_view(state: &AppState) -> SettingsView {
         projects_dir: projects_dir.to_string_lossy().to_string(),
         projects,
         trashed: state.projects.trashed(),
-        advanced_mode: state
-            .auth
-            .advanced_mode()
-            .unwrap_or_else(|| state.settings.advanced_mode()),
+        advanced_mode: state.advanced_mode(),
         plan: state.auth.plan(),
         cloud_sync: state.auth.cloud_sync().unwrap_or(true),
         custom_provider: state.settings.custom_provider().map(|provider| CustomProviderView {
@@ -1293,7 +1290,7 @@ pub fn get_settings(state: State<'_, Arc<AppState>>) -> Result<SettingsView, Str
 /// them independently.
 #[tauri::command]
 pub fn slash_commands(state: State<'_, Arc<AppState>>) -> Vec<crate::slash::CommandView> {
-    crate::slash::list(state.settings.advanced_mode())
+    crate::slash::list(state.advanced_mode())
 }
 
 #[tauri::command]

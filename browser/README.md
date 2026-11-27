@@ -736,6 +736,14 @@ chat says `busy`, and emits the dock's `delta` events from the text that grew.
 That is enough for the typing to read as live, and it leaves the dock's event
 contract untouched for the day a real stream (or the sidecar) arrives.
 
+The dock is the account's chat, so it draws the account's view of it: on open it
+asks the host for advanced mode (`GetSettings` → `GET /settings`), and with it on
+it folds each turn's thinking and tool calls the way the chat window does. The
+message shape carries `reasoning`, `toolCalls` and `toolCallId` for exactly that;
+the simple view never reads them. Polling is why the panel's thinking appears when
+a model call ends rather than token by token — the saved message has it, the
+snapshot in between does not.
+
 The sidecar this stands in for is Step 3's shipping shape: auth and the turn out
 of process, published at the same routes, with `browser/ui/transport.ts` as the
 only file that changes. `docs/browser-poc-plan.md`, "What shipping needs", lists

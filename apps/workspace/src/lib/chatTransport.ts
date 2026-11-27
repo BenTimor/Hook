@@ -108,6 +108,22 @@ export const chatTransport: ChatTransport = {
     await invoke("stop_stream", { chatId });
   },
 
+  /**
+   * Advanced mode is the account's, not this window's: the setting lives in
+   * Hook's Settings sheet and reaches every product through `/api/auth/me`. The
+   * dock asks when it opens, so a switch flipped there arrives with the next look
+   * at the panel.
+   */
+  async advancedMode(): Promise<boolean> {
+    if (!isTauri()) return false;
+    try {
+      const settings = await invoke<{ advancedMode: boolean }>("get_settings");
+      return Boolean(settings.advancedMode);
+    } catch {
+      return false;
+    }
+  },
+
   async report(input: DockReport): Promise<void> {
     if (!isTauri()) {
       // Nothing to review in a browser preview, but the flow must be clickable.

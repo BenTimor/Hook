@@ -39,6 +39,9 @@ const message = (id: string, role: string, content: string, status: string): Cha
   status,
   hidden: false,
   error: "",
+  reasoning: "",
+  toolCalls: [],
+  toolCallId: "",
 });
 
 const tab: Tab = { index: 0, id: 1, active: true, title: "Hook", domain: "hook" };
@@ -50,6 +53,7 @@ function fakeHandler(): HookPageHandler {
     getTabs: async () => ({ tabs: [tab] }),
     showUI: () => {},
     getChannel: async () => ({ available: true, reason: "" }),
+    getSettings: async () => ({ advancedMode: false }),
     listChats: async () => ({ chats: [summary(false)], error: "" }),
     createChat: async () => ({ id: "c1", error: "" }),
     sendMessage: async () => ({ ok: true, error: "" }),

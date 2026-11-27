@@ -70,7 +70,7 @@ pub fn create(state: &Arc<AppState>, folder: &str) -> Result<ChatMeta, String> {
     // command refuses even if a stale window still shows the option. A remote
     // create skips this: the controller's paid, sync-enabled account and the
     // host's accept-remote-work switch are the door on that side.
-    if !state.settings.advanced_mode() {
+    if !state.advanced_mode() {
         return Err("Coding agents are part of advanced mode.".into());
     }
     // A free account has no coding agents unless it brought its own endpoint.

@@ -731,6 +731,16 @@ export async function main(argv) {
         const handler = module.PageHandler.getRemote();
         const status = await handler.getChannel();
         const list = await handler.listChats();
+        // How the dock is told to draw a turn. `/settings` is append-only, so a
+        // host too old to know it answers an error here and the panel falls back
+        // to the simple view; this check is where that gets noticed.
+        let settings = null;
+        let settingsError = null;
+        try {
+          settings = await handler.getSettings();
+        } catch (error) {
+          settingsError = String(error);
+        }
         const first = list.chats[0];
         let view = null;
         let refused = null;
@@ -750,16 +760,28 @@ export async function main(argv) {
           listError: list.error,
           view,
           refused,
+          settings,
+          settingsError,
         };
       })()`);
       console.log(`    channel: ${JSON.stringify(state)}`);
       if (!state?.available) {
         failures.push(`the browser sees no channel: ${state?.reason ?? "no answer"}`);
-      } else if (!(state.chats > 0)) {
-        failures.push(`the channel returned no chats (${state.listError})`);
       } else {
-        if (!state.view || state.view.messages < 1) failures.push("the first conversation came back empty");
-        if (!state.refused || state.refused.ok) failures.push("an empty message was accepted");
+        if (typeof state.settings?.advancedMode !== "boolean") {
+          failures.push(
+            state.settingsError
+              ? `the host answered no advanced mode (${state.settingsError}): ` +
+                  `rebuild it, /settings is what the dock asks`
+              : "the host answered no advanced mode: /settings carries no advancedMode",
+          );
+        }
+        if (!(state.chats > 0)) {
+          failures.push(`the channel returned no chats (${state.listError})`);
+        } else {
+          if (!state.view || state.view.messages < 1) failures.push("the first conversation came back empty");
+          if (!state.refused || state.refused.ok) failures.push("an empty message was accepted");
+        }
       }
     }
 

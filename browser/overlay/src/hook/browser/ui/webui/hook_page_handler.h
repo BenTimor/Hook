@@ -55,6 +55,7 @@ class HookPageHandler : public mojom::PageHandler {
   void ShowUI() override;
   void CloseUI() override;
   void GetChannel(GetChannelCallback callback) override;
+  void GetSettings(GetSettingsCallback callback) override;
   void ListChats(ListChatsCallback callback) override;
   void GetChat(const std::string& id, GetChatCallback callback) override;
   void CreateChat(CreateChatCallback callback) override;

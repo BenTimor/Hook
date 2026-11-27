@@ -350,7 +350,9 @@ bash.
   embeds, built from those same pieces. It takes a `ChatTransport`, so it knows
   nothing about which app it is running in; a `DockChat.unsynced` flag draws the
   "not in the cloud" mark in its history, and the product supplies it;
-  `apps/workspace/src/lib/chatTransport.ts` is that adapter.
+  `apps/workspace/src/lib/chatTransport.ts` is that adapter. `advancedMode()` on
+  the transport is how the dock knows to draw a turn's thinking and tool calls
+  (`Thread showDetails`), and it is asked each time the panel opens.
 - `packages/chat/src/greeting.ts` — the one greeting catalog and its selection
   logic: six windows on the device's local clock (night wraps 23:00–04:59), a
   per-window shuffle kept in `localStorage` so all twelve lines appear before any
@@ -738,7 +740,17 @@ Changing one side of a boundary is the most common way to break this repo.
   `Thread showDetails` → `packages/chat/src/turns.ts` and `WorkSteps.tsx`.
   It is account state, not product state: the phone follows the computer, a free
   account may set it (it is a boolean, not content), and `settings.json` only
-  answers when the account has no value.
+  answers when the account has no value. `AppState::advanced_mode()` is that one
+  answer; it is what `settings_view` and the channel's `GET /settings` report.
+  **Every product that draws a conversation follows it, not just the desktop
+  window:** the shared `ChatDock` asks its transport (`ChatTransport.advancedMode`)
+  when it opens and hands `Thread` the `showDetails` it gets back, so the dock
+  draws the same folds. A product implements it once — the Workspace adapter asks
+  `get_settings`, the browser's asks the channel (`/settings` → mojom
+  `GetSettings`) — and the dock itself never guesses. A dock that keeps its own
+  filtered copy of the messages silently loses the thinking and the tool results
+  the advanced view is made of: hand `Thread` the whole list and let `turns.ts`
+  decide which view draws what.
   The agent half is `agent.rs::transcript` + `commands::agent_transcript` →
   `AgentInspector.tsx`; live thinking comes from the `message_update` records
   that are otherwise skipped. Hidden messages and tool results must stay in

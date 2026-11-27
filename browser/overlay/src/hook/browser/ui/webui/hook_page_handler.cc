@@ -98,6 +98,49 @@ mojom::ChatMessagePtr ToMessage(const base::DictValue& row) {
     message->error = *error;
   }
   message->hidden = row.FindBool("hidden").value_or(false);
+  // Advanced mode draws the way to an answer, not just the answer: the thinking
+  // and the calls (each result is a separate `role: "tool"` row, keyed by the
+  // call it belongs to). A simple-mode page simply never reads them.
+  if (const std::string* reasoning = row.FindString("reasoning")) {
+    message->reasoning = *reasoning;
+  }
+  if (const std::string* tool_call_id = row.FindString("toolCallId")) {
+    message->tool_call_id = *tool_call_id;
+  }
+  if (const base::ListValue* calls = row.FindList("toolCalls")) {
+    for (const base::Value& call : *calls) {
+      if (!call.is_dict()) {
+        continue;
+      }
+      mojom::ToolCallPtr step = mojom::ToolCall::New();
+      if (const std::string* id = call.GetDict().FindString("id")) {
+        step->id = *id;
+      }
+      if (const std::string* name = call.GetDict().FindString("name")) {
+        step->name = *name;
+      }
+      if (const std::string* arguments = call.GetDict().FindString("arguments")) {
+        step->arguments = *arguments;
+      }
+      message->tool_calls.push_back(std::move(step));
+    }
+  }
+  if (const base::DictValue* fold = row.FindDict("compaction")) {
+    mojom::CompactionPtr compaction = mojom::Compaction::New();
+    compaction->messages = fold->FindInt("messages").value_or(0);
+    // Rust writes these as integers, and `FindDouble` does not coerce one: a
+    // count that parses as an int has to be read as an int (the same trap
+    // `updatedAt` has in `ToSummary`).
+    const auto count = [&fold](const char* key) -> double {
+      if (std::optional<int> whole = fold->FindInt(key)) {
+        return *whole;
+      }
+      return fold->FindDouble(key).value_or(0);
+    };
+    compaction->tokens_before = count("tokensBefore");
+    compaction->tokens_after = count("tokensAfter");
+    message->compaction = std::move(compaction);
+  }
   return message;
 }
 
@@ -163,6 +206,25 @@ void HookPageHandler::GetChannel(GetChannelCallback callback) {
         std::move(done).Run(available, reason);
       },
       std::move(callback)));
+}
+
+void HookPageHandler::GetSettings(GetSettingsCallback callback) {
+  HookChannel* channel = Channel();
+  if (!channel) {
+    std::move(callback).Run(false);
+    return;
+  }
+  channel->Get("/settings",
+                base::BindOnce(
+                    [](GetSettingsCallback done,
+                       std::optional<base::DictValue> body,
+                       const std::string& /*error*/) {
+                      // An older host does not have the route. That is the simple
+                      // view, not a failure: the page still draws the chat.
+                      std::move(done).Run(
+                          body && body->FindBool("advancedMode").value_or(false));
+                    },
+                    std::move(callback)));
 }
 
 void HookPageHandler::ListChats(ListChatsCallback callback) {

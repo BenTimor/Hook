@@ -30,6 +30,12 @@ function toMessage(message: ChatMessage): DockMessage {
     status: message.status,
     hidden: message.hidden,
     error: message.error || null,
+    // Advanced mode draws these; the simple view never asks the builder for
+    // them. A host that predates them sends empty strings and no calls.
+    reasoning: message.reasoning || undefined,
+    toolCalls: message.toolCalls?.length ? message.toolCalls : undefined,
+    toolCallId: message.toolCallId || undefined,
+    compaction: message.compaction ?? undefined,
   };
 }
 
@@ -167,6 +173,20 @@ export function channelTransport(handler: HookPageHandler): ChatTransport {
     async stop(chatId: string): Promise<void> {
       handler.stopMessage(chatId);
       watches.get(chatId)?.();
+    },
+
+    /**
+     * Advanced mode is the account's, and the account is the app's: the browser
+     * asks the host that is answering, every time the dock opens, so a switch
+     * flipped in Hook arrives with the next look at the panel. A host too old to
+     * know the route ("/settings") answers nothing, which is the simple view.
+     */
+    async advancedMode(): Promise<boolean> {
+      try {
+        return Boolean((await handler.getSettings()).advancedMode);
+      } catch {
+        return false;
+      }
     },
 
     subscribe(listener: (chatId: string, event: DockEvent) => void): () => void {

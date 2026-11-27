@@ -27,6 +27,19 @@ export interface ChatSummary {
   unsynced: boolean;
 }
 
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  /** Raw JSON arguments exactly as the model produced them. */
+  arguments: string;
+}
+
+export interface ChatCompaction {
+  messages: number;
+  tokensBefore: number;
+  tokensAfter: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: string;
@@ -34,6 +47,14 @@ export interface ChatMessage {
   status: string;
   hidden: boolean;
   error: string;
+  /** What the model thought before it answered; advanced mode draws it. */
+  reasoning: string;
+  /** Calls this message made; each result is a `tool` row keyed by `toolCallId`. */
+  toolCalls: ChatToolCall[];
+  /** Set on a `tool` result: the call it answers. */
+  toolCallId: string;
+  /** Set on a compaction: what the summary folded away. */
+  compaction?: ChatCompaction;
 }
 
 export interface ChatView {
@@ -60,6 +81,8 @@ export interface HookPageHandler {
   /** Asks the host to hide the side panel; a no-op in a tab. */
   closeUI(): void;
   getChannel(): Promise<{ available: boolean; reason: string }>;
+  /** Advanced mode, from the running host. False when the host is too old. */
+  getSettings(): Promise<{ advancedMode: boolean }>;
   listChats(): Promise<{ chats: ChatSummary[]; error: string }>;
   getChat(id: string): Promise<{ chat: ChatView | null; error: string }>;
   createChat(): Promise<{ id: string; error: string }>;
