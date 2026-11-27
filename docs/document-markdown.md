@@ -96,7 +96,10 @@ Run the build first.
 ## Math
 
 LaTeX, as everyone already writes it. `$x^2 + y^2 = r^2$` in a sentence, and
-`$$` on lines of its own for a formula that gets a line:
+`$$` on lines of its own for a formula that gets a line. The read view also
+accepts `$$...$$` with the formula on the same lines as the fences, because
+models write it that way; it moves both fences onto their own lines first so
+the whole formula is kept:
 
 ```markdown
 The area is $\pi r^2$, so the radius is $\sqrt{A/\pi}$.

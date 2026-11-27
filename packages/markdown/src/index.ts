@@ -37,6 +37,7 @@ export {
   latexFractions,
   mathFractions,
   mathProse,
+  normalizeDisplayMath,
   proseMath,
   remarkMath,
   renderMath,

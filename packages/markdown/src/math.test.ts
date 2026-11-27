@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { latexFractions } from "./math.ts";
+import { latexFractions, normalizeDisplayMath } from "./math.ts";
 
 /**
  * `1/2` is the fraction everybody writes the short way. These cases are the
@@ -37,7 +37,7 @@ const cases: [string, string][] = [
 ];
 
 for (const [input, expected] of cases) {
-  test(`${input} → ${expected}`, () => {
+  test(`${input} ג†’ ${expected}`, () => {
     assert.equal(latexFractions(input), expected);
   });
 }
@@ -47,4 +47,35 @@ test("a formula that cannot be read keeps its meaning", () => {
   assert.equal(latexFractions(String.raw`a//b`), String.raw`a//b`);
   assert.equal(latexFractions(String.raw`/2`), String.raw`/2`);
   assert.equal(latexFractions(String.raw`2/`), String.raw`2/`);
+});
+
+test("display math fences move to their own lines", () => {
+  assert.equal(
+    normalizeDisplayMath(String.raw`before $$\Phi = BA$$ after`),
+    ["before ", "", "$$", String.raw`\Phi = BA`, "$$", "", " after"].join("\n"),
+  );
+  assert.equal(
+    normalizeDisplayMath(String.raw`$$\Phi = BA
+\qquad\Rightarrow\qquad
+U = \frac12$$`),
+    ["", "", "$$", String.raw`\Phi = BA`, String.raw`\qquad\Rightarrow\qquad`, String.raw`U = \frac12`, "$$", "", ""].join(
+      "\n",
+    ),
+  );
+});
+
+test("an already fenced display formula is left alone", () => {
+  const source = "$$\n\\Phi = BA\n$$";
+  assert.equal(normalizeDisplayMath(source), source);
+});
+
+test("display delimiters inside code are not touched", () => {
+  const fence = "```";
+  const source = `${fence}\n$$x$$\n${fence}`;
+  assert.equal(normalizeDisplayMath(source), source);
+  assert.equal(normalizeDisplayMath("a `$$x$$` b"), "a `$$x$$` b");
+});
+
+test("an escaped dollar never opens display math", () => {
+  assert.equal(normalizeDisplayMath(String.raw`a \$\$x\$\$ b`), String.raw`a \$\$x\$\$ b`);
 });

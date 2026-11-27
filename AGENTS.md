@@ -671,7 +671,10 @@ Changing one side of a boundary is the most common way to break this repo.
      or Backspace deletes the whole formula you are typing into.
   5. Any shared helper that both halves call, so they cannot disagree: `math.ts`
      exports `proseMath`, and the page and the editor both use it to keep
-     "it costs $5 and $10" out of a formula.
+     "it costs $5 and $10" out of a formula. `normalizeDisplayMath` is the
+     other: both read surfaces run it before parsing, so `$$...$$` with the
+     formula on the same line as its fences is still a display block instead of
+     being swallowed by `remark-math`'s fenced-block rule.
   6. `apps/workspace/src/components/DocumentEditor.tsx` — supply the widget
      (`imageWidget`, `MathWidget`, `TableWidget`) and, only if a person needs to
      reach the construct, a toolbar button. Its page-side class goes in

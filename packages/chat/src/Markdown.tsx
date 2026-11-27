@@ -9,6 +9,7 @@ import {
   MATH_REHYPE,
   mathFractions,
   mathProse,
+  normalizeDisplayMath,
   remarkDirective,
   remarkMath,
 } from "@hook/markdown";
@@ -54,6 +55,7 @@ const rehypePlugins = MATH_REHYPE as never;
 
 function MarkdownImpl({ content, streaming = false }: Props) {
   const direction = useMemo(() => declaredDirection(content), [content]);
+  const source = useMemo(() => normalizeDisplayMath(content), [content]);
 
   const components = useMemo<Components>(() => {
     return {
@@ -104,7 +106,7 @@ function MarkdownImpl({ content, streaming = false }: Props) {
         rehypePlugins={rehypePlugins}
         components={components}
       >
-        {content}
+        {source}
       </ReactMarkdown>
     </div>
   );

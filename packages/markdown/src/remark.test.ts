@@ -8,7 +8,13 @@ import remarkDirective from "remark-directive";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 
-import { MATH_REHYPE, mathFractions, mathProse, remarkMath } from "./math.ts";
+import {
+  MATH_REHYPE,
+  mathFractions,
+  mathProse,
+  normalizeDisplayMath,
+  remarkMath,
+} from "./math.ts";
 import { documentBreaks, documentDirectives } from "./remark.ts";
 
 /**
@@ -32,7 +38,7 @@ async function render(markdown: string): Promise<string> {
   for (const [plugin, options] of MATH_REHYPE) {
     pipeline = pipeline.use(plugin, options);
   }
-  const file = await pipeline.use(rehypeStringify).process(markdown);
+  const file = await pipeline.use(rehypeStringify).process(normalizeDisplayMath(markdown));
   return String(file);
 }
 
@@ -165,6 +171,33 @@ test("a display formula gets a block of its own", async () => {
 \int_0^1 x^2 \, dx = \tfrac{1}{3}
 $$`);
   assert.match(html, /<math[^>]*display="block"/);
+});
+
+test("display math can start and end on the same line as its content", async () => {
+  const html = await render(String.raw`**ג. האנרגיה** — בשתי הדרכים:
+
+$$\Phi_B=\ell\int_a^b\frac{\mu_0I}{2\pi r}\,dr
+\qquad\Rightarrow\qquad
+L=\frac{\mu_0\ell}{2\pi}\ln\left(\frac{b}{a}\right)$$
+
+$$U=\frac12LI^2$$
+
+**אחרי:** המשיכה נמשכת.
+
+$$mg=\frac{B^2a^2v}{R}\qquad\Rightarrow\qquad v=\frac{mgR}{B^2a^2}$$`);
+
+  assert.doesNotMatch(html, /katex-error/);
+  assert.equal((html.match(/display="block"/g) ?? []).length, 3);
+  assert.match(html, /<strong>ג\. האנרגיה<\/strong>/);
+  assert.match(html, /המשיכה נמשכת/);
+  assert.doesNotMatch(html, /\$\$/);
+});
+
+test("display math in code stays code", async () => {
+  const fence = "```";
+  const html = await render(`${fence}\n$$\n\\Phi = B A\n$$\n${fence}`);
+  assert.match(html, /\$\$\n\\Phi = B A\n\$\$/);
+  assert.doesNotMatch(html, /display="block"/);
 });
 
 test("a price is not a formula", async () => {

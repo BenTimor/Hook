@@ -3,7 +3,13 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markd
 import remarkGfm from "remark-gfm";
 import remarkDirective from "remark-directive";
 
-import { MATH_REHYPE, mathFractions, mathProse, remarkMath } from "./math.ts";
+import {
+  MATH_REHYPE,
+  mathFractions,
+  mathProse,
+  normalizeDisplayMath,
+  remarkMath,
+} from "./math.ts";
 import { documentBreaks, documentDirectives } from "./remark.ts";
 import { documentImageSource } from "./images.ts";
 import { readDocumentMeta } from "./meta.ts";
@@ -59,6 +65,7 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({
   imageLoading = "lazy",
 }: DocumentMarkdownProps) {
   const direction = useMemo(() => readDocumentMeta(markdown).direction, [markdown]);
+  const source = useMemo(() => normalizeDisplayMath(markdown), [markdown]);
   const components = useMemo<Components>(
     () => ({
       a({ href, children }) {
@@ -110,7 +117,7 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({
             : defaultUrlTransform(url)
         }
       >
-        {markdown}
+        {source}
       </ReactMarkdown>
     </div>
   );

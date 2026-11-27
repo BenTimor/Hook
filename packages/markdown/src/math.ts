@@ -36,6 +36,143 @@ export const MATH_REHYPE = [
   ],
 ] as const;
 
+/** Mask the bytes that are code, so a `$$` in a fence is never math. */
+function maskCode(source: string): string {
+  const chars = source.split("");
+  const mask = (from: number, to: number) => {
+    for (let index = from; index < to; index += 1) {
+      if (chars[index] !== "\n" && chars[index] !== "\r") chars[index] = "\0";
+    }
+  };
+
+  let fence: { marker: string; length: number } | null = null;
+  for (let start = 0; start < source.length; ) {
+    const newline = source.indexOf("\n", start);
+    const end = newline < 0 ? source.length : newline;
+    const line = source.slice(start, end);
+    const closes = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
+    const opens = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+
+    if (fence) {
+      mask(start, end);
+      if (closes && closes[1][0] === fence.marker && closes[1].length >= fence.length) {
+        fence = null;
+      }
+    } else if (opens) {
+      fence = { marker: opens[1][0], length: opens[1].length };
+      mask(start, end);
+    } else {
+      // An inline code span is not math either: skip a matching backtick run.
+      for (let at = start; at < end; ) {
+        if (source[at] !== "`") {
+          at += 1;
+          continue;
+        }
+        let run = 1;
+        while (source[at + run] === "`") run += 1;
+        let close = at + run;
+        let found = -1;
+        while (close < end) {
+          if (source[close] !== "`") {
+            close += 1;
+            continue;
+          }
+          let length = 1;
+          while (source[close + length] === "`") length += 1;
+          if (length === run) {
+            found = close + length;
+            break;
+          }
+          close += length;
+        }
+        if (found < 0) {
+          at += run;
+          continue;
+        }
+        mask(at, found);
+        at = found;
+      }
+    }
+    start = newline < 0 ? source.length : newline + 1;
+  }
+  return chars.join("");
+}
+
+function escaped(source: string, at: number): boolean {
+  let slashes = 0;
+  for (let index = at - 1; index >= 0 && source[index] === "\\"; index -= 1) slashes += 1;
+  return slashes % 2 === 1;
+}
+
+function findDisplayClose(masked: string, source: string, from: number): number {
+  let at = from;
+  while ((at = masked.indexOf("$$", at)) !== -1) {
+    if (!escaped(source, at)) return at;
+    at += 2;
+  }
+  return -1;
+}
+
+/** `$$` alone on its line: what remark-math already reads as a fenced block. */
+function aloneOnLine(source: string, at: number): boolean {
+  const start = source.lastIndexOf("\n", at - 1) + 1;
+  const end = source.indexOf("\n", at);
+  const before = source.slice(start, at);
+  const after = source.slice(at + 2, end < 0 ? source.length : end);
+  return before.trim() === "" && after.trim() === "";
+}
+
+/**
+ * Make `$$...$$` a fenced block wherever it appears.
+ *
+ * `remark-math` reads display math as a fenced block: the opening `$$` must be
+ * alone on its line, and so must the closing one. Models (and people) write
+ * LaTeX the ordinary way instead - `$$\Phi = ...$$` with the first formula on
+ * the opening line and the last one ending before the closing dollars. The
+ * parser then treats the first line as the fence's info string (so it is
+ * silently lost) and, because the closing `$$` has text before it, swallows
+ * the rest of the message into one broken formula. That is the red block of
+ * raw TeX in a reply.
+ *
+ * This runs before the Markdown parser and puts both fences on their own
+ * lines, so the formula is exactly what was written. Code fences and inline
+ * code are masked and never touched, and an escaped `\$` is left to Markdown.
+ */
+export function normalizeDisplayMath(source: string): string {
+  const masked = maskCode(source);
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  let at = 0;
+  while ((at = masked.indexOf("$$", at)) !== -1) {
+    if (escaped(source, at)) {
+      at += 2;
+      continue;
+    }
+    const close = findDisplayClose(masked, source, at + 2);
+    if (close < 0) break;
+    if (aloneOnLine(source, at) && aloneOnLine(source, close)) {
+      at = close + 2;
+      continue;
+    }
+    const body = source.slice(at + 2, close).trim();
+    if (body) {
+      edits.push({
+        start: at,
+        end: close + 2,
+        text: `\n\n$$\n${body}\n$$\n\n`,
+      });
+    }
+    at = close + 2;
+  }
+  if (edits.length === 0) return source;
+  let out = "";
+  let cursor = 0;
+  for (const edit of edits) {
+    out += source.slice(cursor, edit.start) + edit.text;
+    cursor = edit.end;
+  }
+  return out + source.slice(cursor);
+}
+
 /** TeX punctuation: a formula has some, a sentence about a price has none. */
 const TEX = /[\\^_{}=+*/|<>~]/;
 
