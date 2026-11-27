@@ -53,6 +53,13 @@ export interface ComposerProps {
   onRemoveImage?: (id: string) => void;
   /** A host-owned attachment menu; replaces the built-in image picker button. */
   onAttach?: () => void;
+  /**
+   * Enter sends and Shift + Enter breaks the line — the desktop gesture. A
+   * phone turns it off: it has no Shift key, so Enter has to insert a line and
+   * the send button is the only way to send. Ctrl/⌘ + Enter sends either way,
+   * for a keyboard attached to a phone.
+   */
+  enterSends?: boolean;
   placeholder?: string;
   /** The line under the box. Products use it to explain what Enter will do.
       `null` hides it entirely. */
@@ -97,6 +104,7 @@ export function Composer({
   placeholder = "Ask anything…",
   hint,
   focusKey,
+  enterSends = true,
   autoFocus = false,
   onFocusChange,
   commands = [],
@@ -377,7 +385,11 @@ export function Composer({
                 pick(matches[Math.min(active, matches.length - 1)]);
                 return;
               }
-              if (event.key === "Enter" && !event.shiftKey && !composing) {
+              if (event.key === "Enter" && !composing) {
+                const go = event.ctrlKey || event.metaKey;
+                // A phone keeps the line: Enter is a new line there, and the
+                // send button is the only thing that sends.
+                if (enterSends ? event.shiftKey : !go) return;
                 event.preventDefault();
                 submit();
               }

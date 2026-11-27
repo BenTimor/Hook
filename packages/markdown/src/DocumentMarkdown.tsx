@@ -34,6 +34,12 @@ export interface DocumentMarkdownProps {
   markdown: string;
   /** Where a link should open, when the surface can open one. */
   onOpen?: (url: string) => void;
+  /**
+   * What opens a link. Reading a document never navigates on its own, so the
+   * desktop asks for Ctrl+click (⌘ on a Mac) — the gesture the formatted editor
+   * already uses. A phone has no such modifier, so its sheet opens on a tap.
+   */
+  linkMode?: "ctrl" | "tap";
   /** Extra class for a surface that sizes the page down, such as a tile. */
   className?: string;
   /**
@@ -61,6 +67,7 @@ const rehypePlugins = MATH_REHYPE as never;
 export const DocumentMarkdown = memo(function DocumentMarkdown({
   markdown,
   onOpen,
+  linkMode = "ctrl",
   className,
   imageLoading = "lazy",
 }: DocumentMarkdownProps) {
@@ -69,13 +76,27 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({
   const components = useMemo<Components>(
     () => ({
       a({ href, children }) {
-        if (!onOpen) return <span className="hook-doc-link">{children}</span>;
+        // A document is read, not navigated: a plain click must never take the
+        // window anywhere, so a link opens only while the reader holds Ctrl
+        // (⌘ on a Mac) — the same gesture the formatted editor uses. A
+        // surface with nowhere to open a link draws it as the text it is.
+        if (!onOpen || !href) return <span className="hook-doc-link">{children}</span>;
         return (
           <a
             href={href}
+            className="hook-doc-link"
+            data-openable="true"
+            title={linkMode === "ctrl" ? "Ctrl+click to open" : undefined}
             onClick={(event) => {
               event.preventDefault();
-              if (href) onOpen(href);
+              if (linkMode === "ctrl" && !event.ctrlKey && !event.metaKey) return;
+              onOpen(href);
+            }}
+            onAuxClick={(event) => {
+              // The middle button is the same gesture with one hand.
+              if (event.button !== 1) return;
+              event.preventDefault();
+              onOpen(href);
             }}
           >
             {children}
@@ -99,7 +120,7 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({
         return <span className="hook-doc-checkbox">{checked ? "☑" : "☐"}</span>;
       },
     }),
-    [onOpen, imageLoading],
+    [onOpen, imageLoading, linkMode],
   );
 
   return (

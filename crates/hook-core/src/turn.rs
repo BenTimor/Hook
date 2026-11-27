@@ -1452,9 +1452,64 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
         return raw;
     };
     let Some(preview) = value.get("preview") else {
+        // A write the panel is showing belongs on screen as it happens: the
+        // reader should not have to close the document and open it again.
+        workspace_changed(state, chat_id, args, &raw).await;
         return raw;
     };
-    let kind = preview.get("kind").and_then(Value::as_str).unwrap_or("");
+    let parts = preview_parts(preview);
+    let kind = parts.kind.as_str();
+
+    if !state.capabilities.preview_workspace {
+        return json!({
+            "shown": false,
+            "reason": "This window has no preview panel.",
+            "hint": "Answer with a short summary instead.",
+        })
+        .to_string();
+    }
+    state.preview.show_workspace(
+        chat_id,
+        kind,
+        &parts.title,
+        parts.document,
+        parts.task,
+        parts.comments,
+        parts.board,
+        parts.tasks,
+        parts.roadmap,
+        parts.milestones,
+        parts.brainstorm,
+        parts.ideas,
+    );
+    let hint = "The panel is already open. Do not say so in your reply. Make sure your final message contains the complete answer, with all the details the user needs.";
+    json!({
+        "shown": true,
+        "kind": kind,
+        "title": parts.title,
+        // The panel is the confirmation. The last message still has to carry
+        // the answer, because that is what every view reads.
+        "hint": hint,
+    })
+    .to_string()
+}
+
+/// One `workspace_preview` answer, taken apart.
+struct PreviewParts {
+    kind: String,
+    title: String,
+    document: Option<Value>,
+    task: Option<Value>,
+    comments: Option<Value>,
+    board: Option<Value>,
+    tasks: Option<Value>,
+    roadmap: Option<Value>,
+    milestones: Option<Value>,
+    brainstorm: Option<Value>,
+    ideas: Option<Value>,
+}
+
+fn preview_parts(preview: &Value) -> PreviewParts {
     let document = preview.get("document").cloned();
     let task = preview.get("task").cloned();
     let comments = preview.get("comments").cloned();
@@ -1474,19 +1529,13 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
         .and_then(Value::as_str)
         .unwrap_or("Preview")
         .to_string();
-
-    if !state.capabilities.preview_workspace {
-        return json!({
-            "shown": false,
-            "reason": "This window has no preview panel.",
-            "hint": "Answer with a short summary instead.",
-        })
-        .to_string();
-    }
-    state.preview.show_workspace(
-        chat_id,
-        kind,
-        &title,
+    PreviewParts {
+        kind: preview
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        title,
         document,
         task,
         comments,
@@ -1496,17 +1545,64 @@ async fn run_workspace_tool(state: &AppState, chat_id: &str, name: &str, args: &
         milestones,
         brainstorm,
         ideas,
+    }
+}
+
+/// An agent changed something in Hook Workspace. If the panel is showing that
+/// entity, it is read again — a document edited from the chat used to keep the
+/// revision it was opened with until someone closed and reopened it.
+pub async fn workspace_changed(state: &AppState, chat_id: &str, args: &Value, result: &str) {
+    if result.is_empty() {
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(result) else {
+        return;
+    };
+    // A failed call changed nothing, and a read never needs the panel re-read.
+    if value.get("error").is_some() {
+        return;
+    }
+    if matches!(
+        args.get("action").and_then(Value::as_str),
+        Some("list" | "get" | "outline" | "trash")
+    ) {
+        return;
+    }
+    let Some((owner, kind, id)) = state.preview.workspace_target() else {
+        return;
+    };
+    if owner != chat_id {
+        return;
+    }
+    let request = json!({ "kind": kind, "id": id });
+    let raw = crate::workspace::execute(
+        &state.workspace,
+        chat_id,
+        "workspace_preview",
+        &request,
+    )
+    .await;
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return;
+    };
+    let Some(preview) = value.get("preview") else {
+        return;
+    };
+    let parts = preview_parts(preview);
+    state.preview.refresh_workspace(
+        chat_id,
+        &parts.kind,
+        &parts.title,
+        parts.document,
+        parts.task,
+        parts.comments,
+        parts.board,
+        parts.tasks,
+        parts.roadmap,
+        parts.milestones,
+        parts.brainstorm,
+        parts.ideas,
     );
-    let hint = "The panel is already open. Do not say so in your reply. Make sure your final message contains the complete answer, with all the details the user needs.";
-    json!({
-        "shown": true,
-        "kind": kind,
-        "title": title,
-        // The panel is the confirmation. The last message still has to carry
-        // the answer, because that is what every view reads.
-        "hint": hint,
-    })
-    .to_string()
 }
 
 /// What the status line under a turn says while a tool runs.

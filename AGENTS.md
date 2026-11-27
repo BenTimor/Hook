@@ -320,7 +320,12 @@ bash.
   commands from opening a console in Windows desktop builds.
 - `crates/hook-core/src/{preview,runtime,guard}.rs` — loopback preview server,
   engine lookup, and the guard extension (`resources/hook-guard.mjs`, embedded
-  with `include_str!`; edit the `.mjs`).
+  with `include_str!`; edit the `.mjs`). A Workspace entity in the panel is
+  re-read (`PreviewManager::refresh_workspace`) after any `workspace_*` write,
+  from the chat agent's turn and from a direct agent's bridge alike, so an edit
+  is on screen without closing and reopening the document. A refresh never opens
+  a panel the reader hid (`open: false`); `show_workspace` is what opens it the
+  first time.
 - `crates/hook-core/src/{provider,import,update,reports}.rs` — SSE client
   (`ProviderTarget` resolves each turn to Hook's proxy or the user's own
   endpoint), the ChatGPT/Claude export readers, the release index and update
@@ -329,7 +334,10 @@ bash.
 - `packages/chat/src/{Thread,MessageItem,TurnActivity,Composer}.tsx` — the
   conversation and the input, prop-driven and store-free. `TurnActivity` is the
   line that says what a running turn is doing ("Thinking…", "Searching the web
-  for …"); the store hands it the labels and it owns the pacing. In advanced
+  for …"); the store hands it the labels and it owns the pacing. `Thread` also
+  owns the arrow back to the last message (`.thread-jump`): it is drawn only
+  while the reader is up in history, and `onScrollDown` — a scroll the reader
+  made, never one of our own pins — is how a phone knows to drop its keyboard. In advanced
   mode `Thread` keeps a turn in reading order (`turns.ts`): each message the
   model wrote, with one fold of thinking and tool calls between the messages,
   drawn by `WorkSteps.tsx`, so the conversation and the coding-agent inspector
@@ -425,6 +433,11 @@ bash.
   projects, boards and tasks through `ws_request` — the same command the
   Workspace window uses, so the server still owns permissions — and is
   read-only: there is no phone Workspace app and no invented task data.
+  Three gestures are the phone's own: `Composer enterSends={false}` (Enter is a
+  new line, only the send button sends, Ctrl/⌘+Enter sends for a keyboard); a
+  scroll down while the field is focused blurs it, so the keyboard gives the
+  screen back; and the preview sheet opens only on a tap (`handlePreview` never
+  sets `previewOpen`), unlike the desktop panel, which opens itself once.
   `src/lib/back.ts` routes the Android back gesture
   to the top layer (dialog, sheet, drawer, screen) and closes a sheet or dialog
   before leaving a screen.

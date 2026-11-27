@@ -328,7 +328,10 @@ async fn refuse(stream: &mut tokio::net::TcpStream, status: u16, message: &str) 
 /// else is blocking file work, kept off the reactor.
 async fn dispatch(state: Arc<AppState>, chat_id: String, name: String, args: Value) -> String {
     if crate::workspace::handles(&name) {
-        return crate::workspace::execute(&state.workspace, &chat_id, &name, &args).await;
+        let raw = crate::workspace::execute(&state.workspace, &chat_id, &name, &args).await;
+        // A coding agent's edit lands in the same panel the chat agent's does.
+        crate::turn::workspace_changed(&state, &chat_id, &args, &raw).await;
+        return raw;
     }
     // A picture is a request to an endpoint and then a message in this chat:
     // the agent made it, the user reads it here, and the next request carries it.

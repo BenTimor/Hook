@@ -72,6 +72,14 @@ export function Conversation() {
           />
         )}
         className="mobile-thread"
+        // Scrolling down with a finger gives the screen back to the
+        // conversation and drops the keyboard, the way every phone list does.
+        onScrollDown={() => {
+          const active = document.activeElement;
+          if (active instanceof HTMLElement && active.closest(".mobile-composer")) {
+            active.blur();
+          }
+        }}
       />
 
       <ChatComposer className="mobile-composer" />

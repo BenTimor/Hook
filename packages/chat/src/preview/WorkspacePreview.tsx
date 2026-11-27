@@ -23,13 +23,26 @@ import type {
  * sheet, so it owns no frame: no close button, no title bar, no resize handle.
  * The chrome belongs to whoever is presenting it.
  */
-export function WorkspacePreview({ body }: { body: WorkspacePreviewBody }) {
+export function WorkspacePreview({
+  body,
+  linkMode = "ctrl",
+}: {
+  body: WorkspacePreviewBody;
+  /** How a link in it opens: Ctrl+click at a desk, a tap on a phone. */
+  linkMode?: "ctrl" | "tap";
+}) {
   switch (body.kind) {
     case "document":
-      return body.document ? <DocumentPreview document={body.document} /> : null;
+      return body.document ? (
+        <DocumentPreview document={body.document} linkMode={linkMode} />
+      ) : null;
     case "task":
       return body.task ? (
-        <TaskPreview task={body.task} comments={body.comments ?? []} />
+        <TaskPreview
+          task={body.task}
+          comments={body.comments ?? []}
+          linkMode={linkMode}
+        />
       ) : null;
     case "board":
       return body.board ? (
@@ -60,7 +73,13 @@ export function previewDirection(document: WorkspaceDocument): "ltr" | "rtl" {
   return readDocumentMeta(document.markdown).direction;
 }
 
-export function DocumentPreview({ document }: { document: WorkspaceDocument }) {
+export function DocumentPreview({
+  document,
+  linkMode = "ctrl",
+}: {
+  document: WorkspaceDocument;
+  linkMode?: "ctrl" | "tap";
+}) {
   // A page, not a fragment: the same `hook-doc` numbers the Workspace window
   // draws, inside the frame a document gets there.
   return (
@@ -68,6 +87,7 @@ export function DocumentPreview({ document }: { document: WorkspaceDocument }) {
       <DocumentMarkdown
         markdown={document.markdown}
         className="preview-doc-page"
+        linkMode={linkMode}
         onOpen={(url) => void openExternal(url)}
       />
     </div>
@@ -77,9 +97,11 @@ export function DocumentPreview({ document }: { document: WorkspaceDocument }) {
 export function TaskPreview({
   task,
   comments,
+  linkMode = "ctrl",
 }: {
   task: WorkspaceTask;
   comments: WorkspaceComment[];
+  linkMode?: "ctrl" | "tap";
 }) {
   return (
     <div
@@ -88,7 +110,13 @@ export function TaskPreview({
       data-id={task.id}
     >
       <h2 className="preview-entity-title">{task.title}</h2>
-      {task.description ? <DocumentMarkdown markdown={task.description} onOpen={(url) => void openExternal(url)} /> : null}
+      {task.description ? (
+        <DocumentMarkdown
+          markdown={task.description}
+          linkMode={linkMode}
+          onOpen={(url) => void openExternal(url)}
+        />
+      ) : null}
       {comments.length > 0 && (
         <div className="preview-comments">
           <div className="preview-comments-title">Comments</div>
@@ -104,7 +132,11 @@ export function TaskPreview({
                   <span className="preview-agent-tag">via Hook agent</span>
                 )}
               </div>
-              <DocumentMarkdown markdown={comment.body} onOpen={(url) => void openExternal(url)} />
+              <DocumentMarkdown
+                markdown={comment.body}
+                linkMode={linkMode}
+                onOpen={(url) => void openExternal(url)}
+              />
             </div>
           ))}
         </div>

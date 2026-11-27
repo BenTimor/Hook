@@ -380,6 +380,71 @@ impl PreviewManager {
         view
     }
 
+    /// What the panel is showing, when it is a Hook Workspace entity: the
+    /// conversation it belongs to, its kind, and the entity's id. `None` for a
+    /// project page, which has no entity to read again.
+    pub fn workspace_target(&self) -> Option<(String, String, String)> {
+        let guard = lock(&self.active);
+        let active = guard.as_ref()?;
+        let entity = match active.kind.as_str() {
+            "document" => active.document.as_ref(),
+            "task" => active.task.as_ref(),
+            "board" => active.board.as_ref(),
+            "roadmap" => active.roadmap.as_ref(),
+            "brainstorm" => active.brainstorm.as_ref(),
+            _ => None,
+        }?;
+        let id = entity.get("id").and_then(serde_json::Value::as_str)?;
+        Some((active.chat_id.clone(), active.kind.clone(), id.to_string()))
+    }
+
+    /// The same entity, read again: an edit the agent just made has to appear in
+    /// the panel showing it, instead of waiting for the reader to close and
+    /// reopen the document. Unlike [`Self::show_workspace`] this never opens the
+    /// panel — a reader who hid it stays in charge of it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn refresh_workspace(
+        &self,
+        chat_id: &str,
+        kind: &str,
+        title: &str,
+        document: Option<serde_json::Value>,
+        task: Option<serde_json::Value>,
+        comments: Option<serde_json::Value>,
+        board: Option<serde_json::Value>,
+        tasks: Option<serde_json::Value>,
+        roadmap: Option<serde_json::Value>,
+        milestones: Option<serde_json::Value>,
+        brainstorm: Option<serde_json::Value>,
+        ideas: Option<serde_json::Value>,
+    ) {
+        let mut guard = lock(&self.active);
+        let Some(active) = guard.as_mut() else {
+            return;
+        };
+        // Another conversation's panel, or another kind entirely: this edit is
+        // not what the reader is looking at.
+        if active.chat_id != chat_id || active.kind != kind {
+            return;
+        }
+        active.document = document;
+        active.task = task;
+        active.comments = comments;
+        active.board = board;
+        active.tasks = tasks;
+        active.roadmap = roadmap;
+        active.milestones = milestones;
+        active.brainstorm = brainstorm;
+        active.ideas = ideas;
+        if !title.is_empty() {
+            active.title = title.to_string();
+        }
+        active.version.fetch_add(1, Ordering::SeqCst);
+        let view = active.view(false);
+        drop(guard);
+        (self.emit)(PreviewEvent::Open(view));
+    }
+
     /// One file from the active preview, for the remote tunnel. The path is
     /// the URL path under the preview root; `None`/empty means the page the
     /// panel is showing. This is the same containment rule as the loopback
@@ -951,6 +1016,67 @@ fn start_watch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_edit_reads_the_panel_again_without_opening_it() {
+        let events: Arc<Mutex<Vec<PreviewView>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected = events.clone();
+        let manager = PreviewManager::new(Arc::new(move |event| {
+            if let PreviewEvent::Open(view) = event {
+                lock(&collected).push(view);
+            }
+        }));
+
+        manager.show_workspace(
+            "c1",
+            "document",
+            "Release checklist",
+            Some(serde_json::json!({ "id": "doc_1", "markdown": "old" })),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            manager.workspace_target(),
+            Some(("c1".to_string(), "document".to_string(), "doc_1".to_string()))
+        );
+
+        manager.refresh_workspace(
+            "c1",
+            "document",
+            "Release checklist",
+            Some(serde_json::json!({ "id": "doc_1", "markdown": "new" })),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let seen = lock(&events);
+        assert_eq!(seen.len(), 2);
+        assert!(seen[0].open, "the first show is what opens the panel");
+        assert!(!seen[1].open, "a refresh never takes the panel back");
+        assert_eq!(seen[1].document.as_ref().unwrap()["markdown"], "new");
+        drop(seen);
+
+        // Another conversation's panel, or another kind, is left alone.
+        manager.refresh_workspace(
+            "c2", "document", "x", None, None, None, None, None, None, None, None, None,
+        );
+        manager.refresh_workspace(
+            "c1", "board", "x", None, None, None, None, None, None, None, None, None,
+        );
+        assert_eq!(lock(&events).len(), 2);
+    }
 
     #[test]
     fn accepts_normal_relative_html_paths() {

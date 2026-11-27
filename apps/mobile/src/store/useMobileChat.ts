@@ -686,10 +686,12 @@ export const useMobileChat = create<MobileState>((set, get) => ({
       set({ preview: null, previewOpen: false });
       return;
     }
-    // The panel opens itself the first time a run shows something, and keeps
-    // whatever the user did with it afterwards.
-    const first = get().preview?.chatId !== event.chatId;
-    set({ preview: event, previewOpen: get().previewOpen || (first && event.open) });
+    // The sheet belongs to the reader. An agent that shows something prepares
+    // it and leaves a mark beside the conversation; opening it is a tap and
+    // never a side effect, or a document nobody asked for eats the screen.
+    // A preview for another conversation closes what was open.
+    const same = get().preview?.chatId === event.chatId;
+    set(same ? { preview: event } : { preview: event, previewOpen: false });
   },
 }));
 

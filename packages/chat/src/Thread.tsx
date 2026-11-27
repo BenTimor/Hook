@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type UIEvent,
+} from "react";
+import { ArrowDown } from "lucide-react";
 
 import { CompactionItem } from "./CompactionItem";
 import { MessageItem } from "./MessageItem";
@@ -35,6 +44,12 @@ export interface ThreadProps<M extends ChatMessage> {
   onEdit?: (id: string, text: string) => void;
   onReport?: (message: M) => void;
   renderExtras?: (message: M) => ReactNode;
+  /**
+   * The reader scrolled the conversation down with their own finger. A phone
+   * uses it to give the screen back to the conversation and drop its keyboard;
+   * our own pinning to the bottom is not this, or a reply would close it.
+   */
+  onScrollDown?: () => void;
   /** Extra classes for the scroller, so a dock can restyle it. */
   className?: string;
 }
@@ -55,12 +70,30 @@ export function Thread<M extends ChatMessage>({
   onEdit,
   onReport,
   renderExtras,
+  onScrollDown,
   className,
 }: ThreadProps<M>) {
   const ref = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const prevCount = useRef(0);
+  // The last scroll position we wrote ourselves. A container clamps the value
+  // it is given, so it is read back rather than assumed.
+  const selfTop = useRef(-1);
+  const lastTop = useRef(0);
+  const jumping = useRef(false);
+  const knownUsers = useRef<Set<string>>(new Set());
+  const [atBottom, setAtBottom] = useState(true);
+
+  /** Stay at the last message. */
+  const pin = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    selfTop.current = el.scrollTop;
+    lastTop.current = el.scrollTop;
+    setAtBottom(true);
+  }, []);
 
   // A turn keeps the order it happened in: a message, the work it set off,
   // then the next message. Without advanced mode the builder drops everything
@@ -111,7 +144,7 @@ export function Thread<M extends ChatMessage>({
     // Async code highlighting changes the content height after render; keep the
     // viewport pinned when the user is at the bottom.
     const observer = new ResizeObserver(() => {
-      if (stick.current) el.scrollTop = el.scrollHeight;
+      if (stick.current) pin();
     });
     observer.observe(inner);
     // The container changes height when the window resizes or the phone's
@@ -119,28 +152,73 @@ export function Thread<M extends ChatMessage>({
     // who had scrolled up must not be dragged down.
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [pin]);
 
   useEffect(() => {
-    if (blocks.length > prevCount.current) {
-      const last = blocks[blocks.length - 1];
-      if (last?.type === "message" && last.message.role === "user") {
-        stick.current = true;
-      }
+    // A message the reader wrote is the one thing that always comes back into
+    // view: they sent it, so it is what they are looking at. Waiting for the
+    // last block to be that message is not enough — a reply's placeholder can
+    // land in the same breath, and then the view never moved at all.
+    const users = new Set<string>();
+    let sent = false;
+    for (const block of blocks) {
+      if (block.type !== "message") continue;
+      const role = block.message.role;
+      if (role !== "user" && role !== "picture") continue;
+      users.add(block.key);
+      if (!knownUsers.current.has(block.key)) sent = true;
     }
+    knownUsers.current = users;
+    if (blocks.length > prevCount.current && sent) stick.current = true;
     prevCount.current = blocks.length;
+    if (stick.current) pin();
+  }, [blocks, streamText, streamReasoning, pin]);
+
+  /**
+   * Back to the last message, from the arrow a reader uses instead of dragging
+   * the scrollbar. The jump is smooth, so the scroll events it produces are not
+   * read as the reader leaving the bottom: the arrow would otherwise blink out
+   * and back while it travels.
+   */
+  const jump = () => {
     const el = ref.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [blocks, streamText, streamReasoning]);
+    if (!el) return;
+    stick.current = true;
+    jumping.current = true;
+    setAtBottom(true);
+    const reduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: reduced ? "auto" : "smooth" });
+    // A fallback stop for a window that never fires the last scroll event.
+    window.setTimeout(() => {
+      jumping.current = false;
+      if (stick.current) pin();
+    }, 600);
+  };
+
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    const top = el.scrollTop;
+    const previous = lastTop.current;
+    lastTop.current = top;
+    const bottom = el.scrollHeight - top - el.clientHeight < 72;
+    // Our own pinning lands here too. Reading it as the reader scrolling down
+    // would close their keyboard every time a reply grew.
+    const ours = Math.abs(top - selfTop.current) < 4;
+    if (!jumping.current) {
+      stick.current = bottom;
+      setAtBottom(bottom);
+    }
+    if (jumping.current || ours || !onScrollDown) return;
+    if (top > previous + 12) onScrollDown();
+  };
 
   return (
     <div
       className={className ? `thread ${className}` : "thread"}
       ref={ref}
-      onScroll={(event) => {
-        const el = event.currentTarget;
-        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 72;
-      }}
+      onScroll={onScroll}
     >
       <div className="thread-inner" ref={innerRef}>
         {blocks.map((block) => {
@@ -229,6 +307,18 @@ export function Thread<M extends ChatMessage>({
           );
         })}
         {showActivity ? <TurnActivity labels={activity} /> : null}
+      </div>
+      <div className="thread-jump" data-hidden={atBottom || undefined}>
+        <button
+          type="button"
+          className="thread-jump-btn"
+          title="Scroll to the last message"
+          aria-label="Scroll to the last message"
+          tabIndex={atBottom ? -1 : 0}
+          onClick={jump}
+        >
+          <ArrowDown strokeWidth={2.2} />
+        </button>
       </div>
     </div>
   );

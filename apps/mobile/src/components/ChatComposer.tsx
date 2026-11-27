@@ -81,6 +81,9 @@ export function ChatComposer({
         onAttach={pictures ? () => setAttachOpen(true) : undefined}
         placeholder={coding ? "Message the coding agent…" : "Ask Hook anything..."}
         hint={null}
+        // A phone has no Shift key, so Enter is a new line and only the send
+        // button sends.
+        enterSends={false}
         focusKey={focusKey}
         commands={commands}
         className={className}

@@ -99,7 +99,7 @@ export function PreviewSheet() {
               </p>
             )
           ) : (
-            <WorkspacePreview body={body} />
+            <WorkspacePreview body={body} linkMode="tap" />
           )}
         </div>
 

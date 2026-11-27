@@ -23,6 +23,53 @@
   gap: 29px;
 }
 
+/* The arrow back to the last message. It rides at the bottom of the scroller,
+   above the composer, and only exists while the reader is reading history. The
+   dock is zero-height so it never adds a pixel of scrolling of its own, and the
+   button sits inside it, absolutely, so it cannot push the last message up. */
+.thread-jump {
+  position: sticky;
+  bottom: 10px;
+  height: 0;
+  z-index: 5;
+}
+
+.thread-jump-btn {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  translate: -50% 0;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--ivory);
+  color: var(--ink-2);
+  box-shadow: 0 6px 18px rgba(var(--ink-rgb), 0.14);
+  cursor: pointer;
+  transition: opacity 140ms ease, transform 140ms ease, color 120ms ease;
+}
+
+.thread-jump-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.thread-jump-btn:hover {
+  color: var(--ink);
+}
+
+/* Hidden, not removed: the fade is what makes it appear rather than pop.
+   `pointer-events` and `tabIndex` keep a button nobody can see out of reach. */
+.thread-jump[data-hidden] .thread-jump-btn {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.85);
+}
+
 /* One assistant turn in advanced mode: its messages and the folds between them,
    kept in the order they happened. The outer thread gap is what separates
    turns; the inner gap only separates a turn's own parts. */
