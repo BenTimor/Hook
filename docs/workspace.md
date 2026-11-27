@@ -10,7 +10,18 @@ The second product. A project holds boards of tasks, Markdown documents,
 roadmaps of milestones, brainstorms of ideas and the people they are shared with; folders organize
 them, and can nest. It is its own installer
 (`apps/workspace`, identifier `app.hook.workspace`) with the same window chrome,
-the same account and the same chat beside it.
+the same account and the same chat beside it — and, on macOS, it is also inside
+Hook's chat window.
+
+**Two doors, one Workspace.** The macOS Hook window switches between Chat and
+Workspace at the top of either rail. The Workspace view is this product's own
+UI: the same rail and tree, boards, documents, properties, templates, editor,
+roles and `/api/ws` calls, rendered by `apps/chat/src/WorkspaceView.tsx` from
+the `Workspace` component this app exports. It is not a Mac-only copy and there
+is no second backend. Switching to Chat hides the view but not the store, so
+the open project, board or document returns where it was. The standalone
+installer above remains the Windows product; a macOS window uses the system's
+traffic lights, so the chat window's chrome is the only one drawn.
 
 Home surfaces pending invitations before the getting-started actions, with the
 project name, inviter profile when available, and Accept/Decline buttons. Accept

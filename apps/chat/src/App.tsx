@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Toaster } from "sonner";
 import { useWindowState } from "@hook/ui";
 
@@ -16,6 +16,7 @@ import { SettingsSheet } from "./components/SettingsSheet";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { Sidebar } from "./components/Sidebar";
 import { Thread } from "./components/Thread";
+import { WorkspaceView } from "./WorkspaceView";
 
 export default function App() {
   const bootstrap = useChatStore((s) => s.bootstrap);
@@ -31,6 +32,9 @@ export default function App() {
 
   const maximized = useWindowState();
   const signedIn = Boolean(auth?.signedIn);
+  // The two halves of one product. Workspace is the Workspace app's own tree;
+  // this is only which one the window is showing.
+  const [view, setView] = useState<"chat" | "workspace">("chat");
   const checkUpdate = useUpdateStore((s) => s.check);
 
   useEffect(() => {
@@ -50,7 +54,9 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!signedIn) return;
+      // The chat shortcuts must not fire behind Workspace: Cmd+B belongs to the
+      // editor there, and Cmd+N and Cmd+K would act on a hidden list.
+      if (!signedIn || view === "workspace") return;
       const mod = event.metaKey || event.ctrlKey;
       if (!mod) {
         if (
@@ -77,10 +83,13 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [newChat, requestSearch, streaming, stop, toggleSidebar, signedIn]);
+  }, [newChat, requestSearch, streaming, stop, toggleSidebar, signedIn, view]);
 
   useEffect(() => {
-    if (!isTauri()) return;
+    // These guards are the chat surface's: they keep a drop from navigating the
+    // webview and a right-click from opening a browser menu. Workspace has its
+    // own menus and its own drop targets, so it is left alone.
+    if (!isTauri() || view !== "chat") return;
     const block = (event: Event) => {
       const target = event.target as HTMLElement | null;
       // Keep the native menu (cut/copy/paste) inside text fields.
@@ -95,7 +104,13 @@ export default function App() {
       window.removeEventListener("dragover", block);
       window.removeEventListener("drop", block);
     };
-  }, []);
+  }, [view]);
+
+  // Signing out from either half puts the window back to Chat, so signing in
+  // again does not land in a workspace that was open before.
+  useEffect(() => {
+    if (!signedIn) setView("chat");
+  }, [signedIn]);
 
   if (!signedIn) {
     return (
@@ -116,9 +131,20 @@ export default function App() {
     );
   }
 
+  if (view === "workspace" && auth) {
+    return (
+      <WorkspaceView
+        auth={auth}
+        maximized={maximized}
+        onChat={() => setView("chat")}
+        onAuth={(next) => useChatStore.setState({ auth: next })}
+      />
+    );
+  }
+
   return (
     <div className="shell" data-maximized={maximized}>
-      <Sidebar />
+      <Sidebar onWorkspace={() => setView("workspace")} />
       <main className="pane">
         <PaneHead />
         <UpdatePrompt />

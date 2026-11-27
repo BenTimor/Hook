@@ -60,6 +60,16 @@ export interface ComposerProps {
   /** Change it to move the caret here (a new chat, a new conversation). */
   focusKey?: string | number | null;
   /**
+   * Take focus when the composer mounts. The desktop window opens ready to
+   * type; a phone stays compact until the field is tapped.
+   */
+  autoFocus?: boolean;
+  /**
+   * The textarea gained or lost focus. A phone uses it to open the composer
+   * into a writing surface; the window and the dock have room either way.
+   */
+  onFocusChange?: (focused: boolean) => void;
+  /**
    * Commands the composer offers when the draft starts with `/`. Empty or
    * omitted means no menu — the backend only hands them to advanced mode, so a
    * product never has to decide which mode it is in.
@@ -87,12 +97,15 @@ export function Composer({
   placeholder = "Ask anything…",
   hint,
   focusKey,
+  autoFocus = false,
+  onFocusChange,
   commands = [],
   className,
 }: ComposerProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [composing, setComposing] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [dragging, setDragging] = useState(false);
   // The menu is open while the draft is a command name being typed. Escape
   // closes it for that exact text, so typing on opens it again.
@@ -149,13 +162,32 @@ export function Composer({
   const fit = useCallback(() => {
     const el = ref.current;
     if (!el || !el.clientWidth) return;
+    // Measure the text, not the box: a phone lifts the composer with a CSS
+    // `min-height` while it is focused, and `scrollHeight` would report that
+    // lifted height as the content, leaving an empty composer tall after blur.
+    const min = el.style.minHeight;
+    el.style.minHeight = "0";
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+    const height = Math.min(el.scrollHeight, 260);
+    el.style.minHeight = min;
+    el.style.height = `${height}px`;
   }, []);
 
   useEffect(() => {
     fit();
   }, [value, fit]);
+
+  // The phone changes the field's padding between the compact bar and the
+  // focused surface. Re-measure once the blur transition has settled, or a
+  // multi-line draft would keep the height its focused padding needed.
+  useEffect(() => {
+    if (focused) {
+      fit();
+      return;
+    }
+    const timer = window.setTimeout(fit, 240);
+    return () => window.clearTimeout(timer);
+  }, [focused, fit]);
 
   useEffect(() => {
     const el = ref.current;
@@ -173,7 +205,13 @@ export function Composer({
     return () => observer.disconnect();
   }, [fit]);
 
+  // The key the field was born with. StrictMode runs a mount effect twice, so
+  // a "first run" flag is not enough; comparing the key is.
+  const mountKey = useRef(focusKey);
   useEffect(() => {
+    // Mounting is not a reason to take focus on a phone: it would open the
+    // writing surface (and the keyboard's space) before anyone asked.
+    if (!autoFocus && focusKey === mountKey.current) return;
     const el = ref.current;
     if (!el) return;
     el.focus();
@@ -181,7 +219,7 @@ export function Composer({
     // to the start of the line where the pointer would put it.
     const end = el.value.length;
     el.setSelectionRange(end, end);
-  }, [focusKey]);
+  }, [focusKey, autoFocus]);
 
   const stage = async (files: FileList | File[] | null) => {
     if (!files || !onAddImages) return;
@@ -203,6 +241,7 @@ export function Composer({
   return (
     <div
       className={className ? `composer-wrap ${className}` : "composer-wrap"}
+      data-focused={focused || undefined}
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
@@ -297,6 +336,14 @@ export function Composer({
             spellCheck={false}
             placeholder={placeholder}
             onChange={(event) => onChange(event.target.value)}
+            onFocus={() => {
+              setFocused(true);
+              onFocusChange?.(true);
+            }}
+            onBlur={() => {
+              setFocused(false);
+              onFocusChange?.(false);
+            }}
             onCompositionStart={() => setComposing(true)}
             onCompositionEnd={() => setComposing(false)}
             onPaste={(event) => {

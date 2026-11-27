@@ -259,6 +259,7 @@ pub fn builder(
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::set_status_bar_style,
+            commands::haptic_feedback,
             commands::list_chats,
             commands::get_chat,
             commands::rename_chat,

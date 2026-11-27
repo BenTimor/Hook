@@ -6,6 +6,10 @@ import "@fontsource-variable/jetbrains-mono";
 import "./styles/tailwind.css";
 import "@hook/ui/tokens.css";
 import "./styles/index.css";
+// The Workspace half is the Workspace product's own tree, so it brings its own
+// stylesheet. Its classes are namespaced (`ws-…`), and the one shared root
+// (`.shell`) only repeats the same flex layout.
+import "../../workspace/src/styles/index.css";
 
 import App from "./App";
 import { isMac } from "./lib/utils";

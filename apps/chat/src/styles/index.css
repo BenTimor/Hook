@@ -29,6 +29,12 @@
   padding-left: 84px;
 }
 
+/* Workspace keeps its own 232px rail; the traffic lights sit over its top-left
+   corner, so the wordmark starts below them instead of under them. */
+[data-platform="mac"] .ws-rail {
+  padding-top: 38px;
+}
+
 /* ── Sidebar ───────────────────────────────────────────────────────────── */
 
 .sidebar {

@@ -117,11 +117,6 @@ export function App() {
     drawer.closeDrawer();
   };
 
-  const goChats = () => {
-    setView("chats");
-    drawer.closeDrawer();
-  };
-
   const goWorkspace = () => {
     setView("workspace");
     drawer.closeDrawer();
@@ -168,15 +163,13 @@ export function App() {
       <ChatDrawer
         open={drawer.open}
         dragging={drawer.dragging}
-        view={view}
         style={drawer.style}
         backdropStyle={drawer.backdropStyle}
         panelProps={drawer.panelProps}
+        backdropProps={drawer.backdropProps}
         onClose={drawer.closeDrawer}
         onNewChat={startNewChat}
         onSelectChat={selectChat}
-        onChats={goChats}
-        onWorkspace={goWorkspace}
         onSettings={openSettings}
       />
 

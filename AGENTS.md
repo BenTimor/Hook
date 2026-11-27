@@ -37,7 +37,11 @@ builds natively on macOS** (`pnpm app`; `pnpm app:build` produces an unsigned
 `Hook.app` and `.dmg` under `target/release/bundle/`), using the system git,
 native traffic lights and an overlay title bar. Publishing a signed/notarized
 macOS build is separate work; `pnpm release` still means the Windows index.
-Hook Workspace and the phone app are unchanged; their platform support is as before.
+The macOS chat window also carries Workspace: `apps/chat/src/WorkspaceView.tsx`
+renders the Workspace product's own tree (`apps/workspace/src/App.tsx` exports
+`Workspace`) inside the chat window, with a Chat/Workspace switch at the top of
+each rail. The standalone Workspace installer and the phone app are unchanged;
+their platform support is as before.
 
 Shared, and the reason the products look and behave alike:
 
@@ -405,7 +409,13 @@ bash.
   re-skin of the shared surface the way `dock.css` is the 380px one. The home
   screen is a new conversation, like the desktop's; history is the drawer,
   opened by the header button or a right-swipe from the edge and closed by a
-  left-swipe, the scrim or a chosen row. `WorkspaceTasks` reads the account's
+  left-swipe, the scrim or a chosen row; a row is a title and a stamp, and its
+  actions are a long-press popover anchored to that row (VoiceOver reaches it
+  through a clipped button). The composer opens into a writing surface on focus
+  (`Composer`'s `onFocusChange`, a `min-height` in `mobile.css`) and the home's
+  sync row hides while the keyboard is up; `fit()` measures with the
+  `min-height` released, or it would record the lifted box as the text.
+  `WorkspaceTasks` reads the account's
   projects, boards and tasks through `ws_request` — the same command the
   Workspace window uses, so the server still owns permissions — and is
   read-only: there is no phone Workspace app and no invented task data.
@@ -504,6 +514,14 @@ bash.
   `compositor_animations.cc:589`; "Aw, Snap! … STATUS_BREAKPOINT")
   (`browser/README.md`, "Assertions, and the two builds", "Traps"). Nothing in `scripts/products.mjs` or `pnpm release` knows about it: no
   Chromium build ever runs on a push.
+- `apps/chat/src/WorkspaceView.tsx` — Hook Workspace in the chat window. It
+  imports `Workspace` from `apps/workspace/src/App.tsx` (boards, documents,
+  properties, templates, the editor and its store), passes the chat window's
+  auth and `windowControls={!isMac}`, and hands it `onChat`. The chat app imports
+  the Workspace stylesheet in `main.tsx`; the classes are namespaced except the
+  shared `.shell`, which only repeats the same flex layout. The chat's product
+  source hash includes `apps/workspace/src`, because that source is now part of
+  the chat installer.
 - `apps/chat/src/lib/bridge.ts` — typed `invoke` wrappers and app-wide events
   (`hook://chat`, `hook://agents`, `hook://preview`, `hook://auth`,
   `hook://sync`, `hook://import`, `hook://update`).
@@ -515,6 +533,10 @@ bash.
   leaves the top-left to the system; `lib.rs` handles Dock reopen and the
   menu-bar tray. Workspace and the phone do not have these files.
 - `apps/chat/src/store/useChatStore.ts` — all chat state; coalesces stream deltas.
+- `apps/workspace/src/App.tsx` — `Workspace` is exported and takes `onChat`
+  (the Chat row at the top of the rail) and `windowControls` (false on macOS,
+  where the system traffic lights are the window's own). The standalone app
+  passes neither and is unchanged.
 - `apps/workspace/src/components/WorkspaceHome.tsx` — invitations, projects and
   getting-started actions. `InvitationCard.tsx` shares response states with the
   Invites inbox; sender profiles are optional fields from `GET /api/ws/invites`.

@@ -11,12 +11,12 @@ import { ChatComposer } from "./ChatComposer";
 
 const SUGGESTIONS = [
   {
-    icon: <Lightbulb strokeWidth={1.7} />,
+    Icon: Lightbulb,
     label: "Explain something to me",
     prompt: "Explain something to me: ",
   },
   {
-    icon: <Code2 strokeWidth={1.7} />,
+    Icon: Code2,
     label: "Help me with code",
     prompt: "Help me with code: ",
   },
@@ -45,6 +45,7 @@ export function Home({
   const advanced = useMobileChat((s) => Boolean(s.settings?.advancedMode));
   const newRemoteCodingChat = useMobileChat((s) => s.newRemoteCodingChat);
   const [remoteOpen, setRemoteOpen] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
 
   const hosts =
     devices?.devices.filter(
@@ -73,48 +74,51 @@ export function Home({
     : "Chats saved on this device";
 
   return (
-    <section className="screen home" aria-label="New chat">
+    <section
+      className="screen home"
+      data-focused={composerFocused || undefined}
+      aria-label="New chat"
+    >
       <div className="home-scroll">
         <div className="home-body">
           <div className="home-empty">
             <h1>{greeting(auth?.name)}</h1>
             <p>What can I help you with today?</p>
-
-            <div className="home-suggestions">
-              {SUGGESTIONS.map(({ icon, label, prompt }) => (
-                <button
-                  key={label}
-                  className="home-suggestion"
-                  onClick={() => stage(prompt)}
-                >
-                  <span className="home-suggestion-icon" aria-hidden="true">
-                    {icon}
-                  </span>
-                  <span>{label}</span>
-                </button>
-              ))}
-              <button className="home-suggestion" onClick={onWorkspace}>
-                <span
-                  className="home-suggestion-icon home-suggestion-workspace"
-                  aria-hidden="true"
-                >
-                  <HookMark />
-                </span>
-                <span>Show my tasks</span>
-              </button>
-              {advanced && hosts.length > 0 ? (
-                <button
-                  className="home-suggestion"
-                  onClick={() => setRemoteOpen(true)}
-                >
-                  <span className="home-suggestion-icon" aria-hidden="true">
-                    <SquareTerminal strokeWidth={1.7} />
-                  </span>
-                  <span>Code on {hosts[0].name}</span>
-                </button>
-              ) : null}
-            </div>
           </div>
+        </div>
+
+        <div className="home-suggestions">
+          {SUGGESTIONS.map(({ Icon, label, prompt }) => (
+            <button
+              key={label}
+              className="home-suggestion"
+              onClick={() => stage(prompt)}
+            >
+              <Icon
+                className="home-suggestion-icon"
+                strokeWidth={1.7}
+                aria-hidden="true"
+              />
+              <span>{label}</span>
+            </button>
+          ))}
+          <button className="home-suggestion" onClick={onWorkspace}>
+            <HookMark className="home-suggestion-icon home-suggestion-mark" />
+            <span>Show my tasks</span>
+          </button>
+          {advanced && hosts.length > 0 ? (
+            <button
+              className="home-suggestion"
+              onClick={() => setRemoteOpen(true)}
+            >
+              <SquareTerminal
+                className="home-suggestion-icon"
+                strokeWidth={1.7}
+                aria-hidden="true"
+              />
+              <span>Code on {hosts[0].name}</span>
+            </button>
+          ) : null}
         </div>
 
         <div className="home-sync">
@@ -129,7 +133,10 @@ export function Home({
       </div>
 
       <div className="home-composer">
-        <ChatComposer className="mobile-composer" />
+        <ChatComposer
+          className="mobile-composer"
+          onFocusChange={setComposerFocused}
+        />
       </div>
 
       {advanced && remoteOpen && (

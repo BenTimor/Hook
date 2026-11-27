@@ -43,6 +43,13 @@ export const mobile = {
       ? invoke<void>("set_status_bar_style", { style })
       : Promise.resolve(),
 
+  /**
+   * A native tap for a long press. iOS has no web haptics API; the command is
+   * a no-op on a platform without one, so the caller never branches.
+   */
+  haptic: (): Promise<void> =>
+    isTauri() ? invoke<void>("haptic_feedback") : Promise.resolve(),
+
   authStatus: (): Promise<AuthView> =>
     isTauri() ? invoke<AuthView>("auth_status") : demo.authStatus(),
 

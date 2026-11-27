@@ -372,6 +372,7 @@ export const useMobileChat = create<MobileState>((set, get) => ({
                     role: "user" as const,
                     content: text,
                     status: "complete" as const,
+                    pending: true,
                   },
                 ]
               : []),
@@ -598,7 +599,15 @@ export const useMobileChat = create<MobileState>((set, get) => ({
           ...(adopt
             ? {
                 activeId: chatId,
-                messages: mergeMessages(state.messages, event.messages),
+                // The event carries the saved copy of the message this send
+                // optimistically showed. Dropping the optimistic one here (by
+                // its flag, never by its text) is what keeps the first message
+                // of a new chat from appearing twice; identical messages a
+                // person sends on purpose are still each their own row.
+                messages: mergeMessages(
+                  state.messages.filter((message) => !message.pending),
+                  event.messages,
+                ),
               }
             : {}),
         });

@@ -5,6 +5,7 @@ import {
   LogOut,
   FileText,
   Folder as FolderIcon,
+  MessageSquare,
   FolderPlus,
   House,
   KanbanSquare,
@@ -68,6 +69,7 @@ export function Sidebar({
   onOpenInvites,
   onSettings,
   onLogout,
+  onChat,
 }: {
   email: string | null;
   name: string | null;
@@ -78,6 +80,8 @@ export function Sidebar({
   onOpenInvites: () => void;
   onSettings: () => void;
   onLogout: () => void;
+  /** Present only when Workspace lives inside the chat window. */
+  onChat?: () => void;
 }) {
   const projects = useWorkspaceStore((state) => state.projects);
   const invites = useWorkspaceStore((state) => state.invites);
@@ -855,6 +859,17 @@ export function Sidebar({
         </button>
 
         <nav className="ws-main-nav" aria-label="Workspace navigation">
+          {onChat ? (
+            <button
+              className="ws-nav-row"
+              onClick={onChat}
+              title="Chat"
+              aria-label="Chat"
+            >
+              <MessageSquare />
+              <span className="ws-nav-label">Chat</span>
+            </button>
+          ) : null}
           <button
             className="ws-nav-row"
             data-active={homeActive}

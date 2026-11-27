@@ -2,7 +2,8 @@
 
 A family of local-first desktop products around one account. **Hook** is an AI
 chat app with coding agents; **Hook Workspace** — projects, boards, tasks and
-documents — is the second; **Hook** also runs on a phone. Tauri 2
+documents — is the second; **Hook** also runs on a phone. On macOS, Hook's one
+window carries both Chat and Workspace, one switch apart. Tauri 2
 (Rust) + React 19 + TypeScript in one pnpm + Cargo workspace.
 
 ![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-283b31)
@@ -31,7 +32,9 @@ server.
   page it is building.
 - **Hook Workspace.** Boards, tasks, documents written in a Markdown dialect,
   roadmaps and roles — all on the account, so the chat agent can do the same work
-  on a machine where Workspace is not installed.
+  on a machine where Workspace is not installed. On macOS it is also a switch
+  inside Hook's window, not a separate download: the same Workspace UI and
+  backend, one click from the conversation.
 - **The same conversation on a phone.** Hook on a phone runs the same `hook-core` turn
   loop with the chat agent's hands in Workspace, and can start and steer work on
   your computers.

@@ -64,6 +64,7 @@ export function Composer() {
           ) : undefined
         }
         focusKey={`${activeId ?? "new"}:${focusToken}`}
+        autoFocus
         commands={commands}
       />
     </>

@@ -15,7 +15,14 @@ import { useMobileChat } from "../store/useMobileChat";
  * file input, which is the native photo sheet; the small menu in front of it
  * only chooses between the library, the camera and the file picker.
  */
-export function ChatComposer({ className }: { className?: string }) {
+export function ChatComposer({
+  className,
+  onFocusChange,
+}: {
+  className?: string;
+  /** The composer opened into its writing state (the keyboard is up). */
+  onFocusChange?: (focused: boolean) => void;
+}) {
   const activeId = useMobileChat((s) => s.activeId);
   const streams = useMobileChat((s) => s.streams);
   const activity = useMobileChat((s) => s.activity);
@@ -77,6 +84,7 @@ export function ChatComposer({ className }: { className?: string }) {
         focusKey={focusKey}
         commands={commands}
         className={className}
+        onFocusChange={onFocusChange}
       />
 
       <input

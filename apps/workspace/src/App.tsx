@@ -46,14 +46,23 @@ export default function App() {
 
 const EMPTY: never[] = [];
 
-function Workspace({
+export function Workspace({
   auth,
   setAuth,
   maximized,
+  onChat,
+  windowControls = true,
 }: {
   auth: AuthView;
   setAuth: (view: AuthView) => void;
   maximized: boolean;
+  /** The chat product's way back, offered at the top of the rail. */
+  onChat?: () => void;
+  /**
+   * The Windows buttons. The chat window is frameless and keeps them; a macOS
+   * window uses the system's traffic lights, so the chat product hides them.
+   */
+  windowControls?: boolean;
 }) {
   const bootstrap = useWorkspaceStore((state) => state.bootstrap);
   const projects = useWorkspaceStore((state) => state.projects);
@@ -170,6 +179,10 @@ function Workspace({
     brainstormMeta,
   ]);
 
+  // Leaving Workspace for Chat must not leave the chat agent reading a board it
+  // can no longer see. The workspace app never unmounts; the embedded one does.
+  useEffect(() => () => void setChatContext(""), []);
+
   const suggestions = board
     ? [
         "Plan the next tasks on this board",
@@ -249,6 +262,7 @@ function Workspace({
         onOpenInvites={showInvites}
         onSettings={() => setSettingsOpen(true)}
         onLogout={() => void api.authLogout().then(setAuth)}
+        onChat={onChat}
       />
 
       <main className="ws-pane" data-dock={dockOpen}>
@@ -292,7 +306,7 @@ function Workspace({
             >
               <MessageCircleMore />
             </button>
-            <WindowControls />
+            {windowControls ? <WindowControls /> : null}
           </div>
         </header>
 

@@ -1,9 +1,13 @@
-import { useMemo, useState, type CSSProperties, type HTMLAttributes } from "react";
 import {
-  ChevronRight,
-  CloudOff,
-  MessageSquare,
-  MoreHorizontal,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type HTMLAttributes,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import {
   Pencil,
   Pin,
   PinOff,
@@ -17,16 +21,28 @@ import {
 
 import { HookMark, TextFieldDialog } from "@hook/ui";
 
+import { mobile } from "../lib/api";
 import type { ChatMeta } from "../lib/types";
 import { BACK_LAYER, useBackHandler } from "../lib/back";
 import { useMobileChat } from "../store/useMobileChat";
 import { when } from "./when";
 
-type DrawerView = "chats" | "workspace";
-
 type Group = { label: string; chats: ChatMeta[] };
 
 const DAY = 86_400_000;
+
+/** How long a finger has to rest on a row before its actions are armed. */
+const LONG_PRESS = 450;
+
+/** The menu's exit, matched to `menu-out` in `mobile.css`. */
+const MENU_EXIT = 160;
+
+const MENU_WIDTH = 236;
+const MENU_MARGIN = 12;
+/** The status bar/header, and the home indicator: the menu stays inside both. */
+const MENU_SAFE_TOP = 56;
+const MENU_SAFE_BOTTOM = 24;
+const MENU_GAP = 10;
 
 /** The four buckets the drawer shows, newest first. */
 function historyGroups(chats: ChatMeta[]): Group[] {
@@ -56,43 +72,63 @@ function planName(plan: string | null | undefined): string {
   return "Preview";
 }
 
+type Press = {
+  timer: number;
+  x: number;
+  y: number;
+  chat: ChatMeta;
+  /** Where the row was when the press began: the menu emerges from there. */
+  rect: DOMRect;
+  fired: boolean;
+  moved: boolean;
+};
+
+type MenuState = {
+  chat: ChatMeta;
+  left: number;
+  width: number;
+  top?: number;
+  bottom?: number;
+  maxHeight: number;
+  /** The small entry/exit offset, toward or away from the row. */
+  shift: number;
+  origin: string;
+};
+
 /**
  * Chat history as a drawer, not a destination.
  *
- * The list is the same account data the desktop sidebar reads; the drawer only
- * changes where it is drawn. A conversation is opened through the store, and
- * the row menu keeps the pin/rename/delete actions the old archive had.
+ * The list is the account data the desktop sidebar reads; the drawer only
+ * changes where it is drawn. A row is a title and a stamp — the conversation
+ * itself is one tap away, so a preview would spend a line saying what the chat
+ * already says. The actions are a long press: the same sheet the old row menu
+ * opened, reached the way a phone reaches one.
  */
 export function ChatDrawer({
   open,
   dragging,
-  view,
   style,
   backdropStyle,
   panelProps,
+  backdropProps,
   onClose,
   onNewChat,
   onSelectChat,
-  onChats,
-  onWorkspace,
   onSettings,
 }: {
   open: boolean;
   dragging: boolean;
-  view: DrawerView;
   style?: CSSProperties;
   backdropStyle?: CSSProperties;
   panelProps?: HTMLAttributes<HTMLDivElement>;
+  backdropProps?: HTMLAttributes<HTMLDivElement>;
   onClose: () => void;
   onNewChat: () => void;
   onSelectChat: (chatId: string) => void;
-  onChats: () => void;
-  onWorkspace: () => void;
   onSettings: () => void;
 }) {
   const chats = useMobileChat((s) => s.chats);
   const devices = useMobileChat((s) => s.devices?.devices);
-  const sync = useMobileChat((s) => s.sync);
   const advanced = useMobileChat((s) => Boolean(s.settings?.advancedMode));
   const activeId = useMobileChat((s) => s.activeId);
   const auth = useMobileChat((s) => s.auth);
@@ -102,18 +138,43 @@ export function ChatDrawer({
   const removeChat = useMobileChat((s) => s.removeChat);
 
   const [query, setQuery] = useState("");
-  const [actionsFor, setActionsFor] = useState<ChatMeta | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState<ChatMeta | null>(null);
   const [name, setName] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [menuClosing, setMenuClosing] = useState(false);
+  /** The row held down now (or owning the open sheet), drawn a shade darker. */
+  const [pressedId, setPressedId] = useState<string | null>(null);
 
-  useBackHandler(BACK_LAYER.sheet, open && Boolean(actionsFor), () => {
-    setActionsFor(null);
-    setConfirmingDelete(false);
+  const press = useRef<Press | null>(null);
+  const menuTimer = useRef<number | null>(null);
+  const actionsTimer = useRef<number | null>(null);
+  // The row whose click belongs to the long press, not to opening a chat.
+  const suppressClick = useRef<string | null>(null);
+
+  useBackHandler(BACK_LAYER.sheet, open && Boolean(menu), () => {
+    closeMenu();
   });
   useBackHandler(BACK_LAYER.dialog, renaming !== null, () => setRenaming(null));
 
+  const clearPress = () => {
+    if (!press.current) return;
+    window.clearTimeout(press.current.timer);
+    press.current = null;
+  };
+
+  useEffect(
+    () => () => {
+      clearPress();
+      if (menuTimer.current) window.clearTimeout(menuTimer.current);
+      if (actionsTimer.current) window.clearTimeout(actionsTimer.current);
+    },
+    [],
+  );
+
   const listed = useMemo(() => {
+    // A conversation with a directly-driven agent is this switch's feature, the
+    // same rule the desktop sidebar applies.
     const visible = advanced ? chats : chats.filter((chat) => chat.kind !== "coding");
     const needle = query.trim().toLowerCase();
     if (!needle) return visible;
@@ -131,75 +192,177 @@ export function ChatDrawer({
     [listed],
   );
 
-  const closeActions = () => {
-    setActionsFor(null);
-    setConfirmingDelete(false);
+  /** Animate the popover out, then drop it; every close path comes through here. */
+  const closeMenu = () => {
+    if (!menu || menuClosing) return;
+    suppressClick.current = null;
+    setMenuClosing(true);
+    if (actionsTimer.current) window.clearTimeout(actionsTimer.current);
+    actionsTimer.current = window.setTimeout(() => {
+      actionsTimer.current = null;
+      setMenu(null);
+      setMenuClosing(false);
+      setConfirmingDelete(false);
+      setPressedId(null);
+    }, MENU_EXIT);
   };
 
-  // A chat that is not in the cloud is every chat while sync is off; the mark
-  // opens Settings, where the reason (a free plan, or the account's switch) is.
-  const unsynced = Boolean(sync && !sync.enabled);
+  const showActions = (chat: ChatMeta, rect: DOMRect) => {
+    if (actionsTimer.current) {
+      window.clearTimeout(actionsTimer.current);
+      actionsTimer.current = null;
+    }
+    // A context menu, not a sheet: it sits beside the row, above it near the
+    // bottom and below it near the top, clamped to the window.
+    const width = Math.min(MENU_WIDTH, window.innerWidth - MENU_MARGIN * 2);
+    const estimated = chat.remote ? 230 : 196;
+    const spaceBelow = window.innerHeight - rect.bottom - MENU_GAP - MENU_SAFE_BOTTOM;
+    const spaceAbove = rect.top - MENU_GAP - MENU_SAFE_TOP;
+    const below = spaceBelow >= estimated || spaceBelow >= spaceAbove;
+    const left = Math.max(
+      MENU_MARGIN,
+      Math.min(rect.left + 10, window.innerWidth - width - MENU_MARGIN),
+    );
+    const originX = Math.max(14, Math.min(width - 14, rect.left + 26 - left));
+    setMenu({
+      chat,
+      left,
+      width,
+      ...(below
+        ? {
+            top: rect.bottom + MENU_GAP,
+            maxHeight: Math.max(160, spaceBelow),
+          }
+        : {
+            bottom: window.innerHeight - rect.top + MENU_GAP,
+            maxHeight: Math.max(160, spaceAbove),
+          }),
+      shift: below ? 6 : -6,
+      origin: `${originX}px ${below ? "0%" : "100%"}`,
+    });
+    setMenuClosing(false);
+    setConfirmingDelete(false);
+    setPressedId(chat.id);
+  };
+
+  const startPress = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    chat: ChatMeta,
+  ) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    clearPress();
+    // A suppression belongs to the click that follows its own release.
+    suppressClick.current = null;
+    setPressedId(chat.id);
+    const timer = window.setTimeout(() => {
+      const current = press.current;
+      if (!current || current.chat.id !== chat.id) return;
+      current.fired = true;
+      // The menu waits for the finger to lift; this is the "it is armed" tap.
+      void mobile.haptic();
+    }, LONG_PRESS);
+    press.current = {
+      timer,
+      x: event.clientX,
+      y: event.clientY,
+      chat,
+      rect: event.currentTarget.getBoundingClientRect(),
+      fired: false,
+      moved: false,
+    };
+  };
+
+  const movePress = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const current = press.current;
+    if (!current) return;
+    // The drawer's own drag decides at 6px; anything past that is a gesture on
+    // the drawer, not a press on the row.
+    if (Math.abs(event.clientX - current.x) > 6 || Math.abs(event.clientY - current.y) > 6) {
+      current.moved = true;
+      setPressedId(null);
+      if (!current.fired) clearPress();
+    }
+  };
+
+  const endPress = () => {
+    const current = press.current;
+    clearPress();
+    if (!current || !current.fired || current.moved) {
+      setPressedId(null);
+      return;
+    }
+    const chat = current.chat;
+    suppressClick.current = chat.id;
+    const rect = current.rect;
+    // The menu opens a beat after the release, so the compatibility click the
+    // release produces lands on the row (and is suppressed) instead of on an
+    // item that appeared under the finger.
+    if (menuTimer.current) window.clearTimeout(menuTimer.current);
+    menuTimer.current = window.setTimeout(() => {
+      menuTimer.current = null;
+      showActions(chat, rect);
+    }, 60);
+  };
+
+  const openChat = (chat: ChatMeta) => {
+    const suppressed = suppressClick.current === chat.id;
+    suppressClick.current = null;
+    if (!suppressed) onSelectChat(chat.id);
+  };
+
+  const row = (chat: ChatMeta) => (
+    <div className="drawer-chat-row" key={chat.id}>
+      <button
+        className="drawer-chat"
+        data-active={chat.id === activeId || undefined}
+        data-pressed={
+          chat.id === pressedId || chat.id === menu?.chat.id || undefined
+        }
+        aria-label={`${chat.title}, ${when(chat.updatedAt)}`}
+        onClick={() => openChat(chat)}
+        onPointerDown={(event) => startPress(event, chat)}
+        onPointerMove={movePress}
+        onPointerUp={endPress}
+        onPointerCancel={() => {
+          clearPress();
+          setPressedId(null);
+        }}
+        onContextMenu={(event) => event.preventDefault()}
+      >
+        <span className="drawer-chat-title">{chat.title}</span>
+        <span className="drawer-chat-time">{when(chat.updatedAt)}</span>
+      </button>
+      {/* The long press is not reachable with VoiceOver, so the same actions
+          keep a labelled control in the tree without drawing a menu button. */}
+      <button
+        className="drawer-chat-actions"
+        aria-label={`Chat actions for ${chat.title}`}
+        onClick={(event) => {
+          const visible = event.currentTarget
+            .closest(".drawer-chat-row")
+            ?.querySelector(".drawer-chat");
+          showActions(
+            chat,
+            visible?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect(),
+          );
+        }}
+      />
+    </div>
+  );
+
   const accountName = auth?.name ?? auth?.email ?? "Hook account";
   const initial = accountName.trim().slice(0, 1).toUpperCase();
   const plan = planName(settings?.plan ?? auth?.plan);
-
-  const row = (chat: ChatMeta) => (
-    <div
-      className="drawer-chat"
-      data-active={chat.id === activeId || undefined}
-      key={chat.id}
-    >
-      <button
-        className="drawer-chat-main"
-        onClick={() => onSelectChat(chat.id)}
-      >
-        <span className="drawer-chat-title">
-          {chat.pinned ? <Pin className="drawer-chat-pin" strokeWidth={2} /> : null}
-          {chat.title}
-        </span>
-        <span className="drawer-chat-preview">
-          {chat.remote
-            ? `On ${
-                devices?.find((device) => device.id === chat.deviceId)?.name ??
-                chat.deviceName ??
-                "another machine"
-              }`
-            : chat.preview || "New conversation"}
-        </span>
-      </button>
-      {unsynced ? (
-        <button
-          className="drawer-chat-unsynced"
-          title={
-            sync?.reason === "free"
-              ? "Not in the cloud — the free plan keeps chats on this phone."
-              : "Not in the cloud — cloud sync is off."
-          }
-          aria-label="This chat is not synced to the cloud"
-          onClick={onSettings}
-        >
-          <CloudOff strokeWidth={2} />
-        </button>
-      ) : null}
-      <span className="drawer-chat-time">{when(chat.updatedAt)}</span>
-      <button
-        className="drawer-chat-more"
-        title="Chat actions"
-        aria-label={`Actions for ${chat.title}`}
-        onClick={() => setActionsFor(chat)}
-      >
-        <MoreHorizontal strokeWidth={2} />
-      </button>
-    </div>
-  );
 
   return (
     <>
       <div
         className="chat-drawer-backdrop"
         data-open={open || dragging || undefined}
+        data-dragging={dragging || undefined}
         style={backdropStyle}
-        onMouseDown={onClose}
+        aria-hidden="true"
+        {...backdropProps}
       />
       <aside
         className="chat-drawer"
@@ -207,7 +370,7 @@ export function ChatDrawer({
         data-dragging={dragging || undefined}
         style={style}
         aria-hidden={!open && !dragging}
-        aria-label="Chats and workspace"
+        aria-label="Chats"
         {...panelProps}
       >
         <header className="drawer-top">
@@ -240,27 +403,6 @@ export function ChatDrawer({
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-
-        <nav className="drawer-nav" aria-label="Hook">
-          <button
-            className="drawer-nav-row"
-            data-active={view === "chats" || undefined}
-            onClick={onChats}
-          >
-            <MessageSquare strokeWidth={1.8} />
-            Chats
-            {view === "chats" ? <ChevronRight className="drawer-nav-chevron" strokeWidth={2} /> : null}
-          </button>
-          <button
-            className="drawer-nav-row"
-            data-active={view === "workspace" || undefined}
-            onClick={onWorkspace}
-          >
-            <HookMark className="drawer-nav-mark" />
-            Workspace
-            {view === "workspace" ? <ChevronRight className="drawer-nav-chevron" strokeWidth={2} /> : null}
-          </button>
-        </nav>
 
         <div className="drawer-history">
           {listed.length === 0 ? (
@@ -297,88 +439,100 @@ export function ChatDrawer({
         </button>
       </aside>
 
-      {actionsFor ? (
+      {menu ? (
         <div
-          className="sheet-backdrop"
-          onMouseDown={closeActions}
+          className="chat-menu-backdrop"
+          data-closing={menuClosing || undefined}
+          aria-hidden="true"
+          onMouseDown={closeMenu}
         >
           <div
-            className="sheet sheet-actions"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Chat actions"
+            className="chat-menu"
+            data-closing={menuClosing || undefined}
+            role="menu"
+            aria-label={`Actions for ${menu.chat.title}`}
+            style={
+              {
+                left: menu.left,
+                width: menu.width,
+                top: menu.top,
+                bottom: menu.bottom,
+                maxHeight: menu.maxHeight,
+                transformOrigin: menu.origin,
+                "--menu-shift": `${menu.shift}px`,
+              } as CSSProperties
+            }
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <div className="sheet-grip" aria-hidden="true" />
-            <div className="sheet-head">
-              <div className="sheet-heading">
-                <div className="sheet-title">{actionsFor.title}</div>
-                <div className="sheet-note">{when(actionsFor.updatedAt)}</div>
-              </div>
+            <div className="chat-menu-head">
+              <div className="chat-menu-title">{menu.chat.title}</div>
+              <div className="chat-menu-note">{when(menu.chat.updatedAt)}</div>
             </div>
-            <div className="sheet-body actions">
-              <button
-                className="action"
-                onClick={() => {
-                  void togglePinned(actionsFor.id, !actionsFor.pinned);
-                  closeActions();
-                }}
-              >
-                {actionsFor.pinned ? (
-                  <PinOff strokeWidth={1.8} />
-                ) : (
-                  <Pin strokeWidth={1.8} />
-                )}
-                {actionsFor.pinned ? "Unpin from the top" : "Pin to the top"}
+            <div className="chat-menu-rule" />
+            <button
+              className="chat-menu-item"
+              role="menuitem"
+              onClick={() => {
+                void togglePinned(menu.chat.id, !menu.chat.pinned);
+                closeMenu();
+              }}
+            >
+              {menu.chat.pinned ? (
+                <PinOff strokeWidth={1.8} />
+              ) : (
+                <Pin strokeWidth={1.8} />
+              )}
+              {menu.chat.pinned ? "Unpin from the top" : "Pin to the top"}
+            </button>
+            <button
+              className="chat-menu-item"
+              role="menuitem"
+              onClick={() => {
+                setName(menu.chat.title);
+                setRenaming(menu.chat);
+                closeMenu();
+              }}
+            >
+              <Pencil strokeWidth={1.8} />
+              Rename
+            </button>
+            {menu.chat.remote ? (
+              <button className="chat-menu-item" role="menuitem" disabled>
+                <SquareTerminal strokeWidth={1.8} />
+                Lives on {menu.chat.deviceName ?? "another machine"}
               </button>
-              <button
-                className="action"
-                onClick={() => {
-                  setName(actionsFor.title);
-                  setRenaming(actionsFor);
-                  closeActions();
-                }}
-              >
-                <Pencil strokeWidth={1.8} />
-                Rename
-              </button>
-              {actionsFor.remote ? (
-                <button className="action" disabled>
-                  <SquareTerminal strokeWidth={1.8} />
-                  Lives on {actionsFor.deviceName ?? "another machine"}
-                </button>
-              ) : null}
-              <button
-                className="action action-danger"
-                disabled={
-                  actionsFor.remote &&
-                  devices?.find((device) => device.id === actionsFor.deviceId)
-                    ?.hostOnline === false
+            ) : null}
+            <div className="chat-menu-rule" />
+            <button
+              className="chat-menu-item"
+              data-danger="true"
+              role="menuitem"
+              disabled={
+                menu.chat.remote &&
+                devices?.find((device) => device.id === menu.chat.deviceId)?.hostOnline === false
+              }
+              onClick={() => {
+                if (!confirmingDelete) {
+                  // A phone deletes with a thumb, so the second tap is the
+                  // confirmation: there is nowhere for an undo toast.
+                  setConfirmingDelete(true);
+                  return;
                 }
-                onClick={() => {
-                  if (!confirmingDelete) {
-                    // A phone deletes with a thumb, so the second tap is the
-                    // confirmation: there is nowhere for an undo toast.
-                    setConfirmingDelete(true);
-                    return;
-                  }
-                  void removeChat(actionsFor.id);
-                  closeActions();
-                }}
-              >
-                <Trash2 strokeWidth={1.8} />
-                {confirmingDelete
-                  ? actionsFor.remote
-                    ? `Delete on ${
-                        devices?.find((device) => device.id === actionsFor.deviceId)
-                          ?.name ??
-                        actionsFor.deviceName ??
-                        "that machine"
-                      }`
-                    : "Delete permanently"
-                  : "Delete"}
-              </button>
-            </div>
+                void removeChat(menu.chat.id);
+                closeMenu();
+              }}
+            >
+              <Trash2 strokeWidth={1.8} />
+              {confirmingDelete
+                ? menu.chat.remote
+                  ? `Delete on ${
+                      devices?.find((device) => device.id === menu.chat.deviceId)?.name ??
+                      menu.chat.deviceName ??
+                      "that machine"
+                    }`
+                  : "Delete permanently"
+                : "Delete"}
+            </button>
           </div>
         </div>
       ) : null}

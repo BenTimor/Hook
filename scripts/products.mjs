@@ -107,7 +107,11 @@ export function appInputs(product) {
       : []),
     `${product.dir}/src-tauri/capabilities`,
     `${product.dir}/src-tauri/icons`,
-    `${product.dir}/src-tauri/src`,    "scripts/app-source-hash.mjs",
+    `${product.dir}/src-tauri/src`,
+    // The Mac chat window renders the Workspace product's own tree, so its
+    // source is part of the chat installer's bytes too (`WorkspaceView.tsx`).
+    ...(product.id === "chat" ? ["apps/workspace/src"] : []),
+    "scripts/app-source-hash.mjs",
     "scripts/fetch-git.mjs",
     "scripts/fetch-pi-runtime.mjs",
     "scripts/products.mjs",

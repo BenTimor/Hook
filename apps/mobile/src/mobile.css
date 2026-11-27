@@ -140,8 +140,15 @@ body {
 
 .mobile-composer {
   flex: 0 0 auto;
+  /* With the keyboard up the home-indicator inset is the keyboard's, not ours:
+     leaving it in is what held the composer ~34pt off the keys. */
   padding: 0 10px calc(env(safe-area-inset-bottom) + 10px);
   background: var(--canvas);
+  transition: padding-bottom 220ms var(--ease);
+}
+
+.mobile-composer[data-focused] {
+  padding-bottom: 4px;
 }
 
 .mobile-composer .composer-wrap {
@@ -157,27 +164,56 @@ body {
 }
 
 .mobile-composer .composer-row {
-  /* One line of the field, from the textarea rule just below: 16px type at the
-     shared 1.55 line-height, plus its 9px top and bottom padding. The row is
-     bottom-aligned, so this is the height a button has to centre in. */
-  --composer-line: calc(16px * 1.55 + 18px);
-  padding: 4px 4px 4px 10px;
+  position: relative;
+  display: block;
+  padding: 4px;
 }
 
 .mobile-composer .composer-row textarea {
+  display: block;
+  width: 100%;
   min-height: 38px;
-  padding: 9px 2px;
+  /* The compact bar keeps the text clear of the two buttons beside it. */
+  padding: 9px 44px;
   font-size: 16px; /* below 16 iOS zooms the whole page on focus */
-  max-height: 42dvh;
+  line-height: 1.55;
+  /* A real writing surface, not a line that grows until it owns the screen:
+     past this the textarea scrolls instead. */
+  max-height: min(38dvh, 220px);
+  transition: min-height 220ms var(--ease), padding 220ms var(--ease);
+}
+
+/* Focused, the field is the full width of the box and the controls move to a
+   row beneath it: the text starts at the inner edge above the Plus (LTR) or the
+   Send (RTL), not after a button that is no longer beside it. */
+.mobile-composer[data-focused] .composer-row textarea {
+  min-height: 94px;
+  padding: 10px 14px 48px;
+  max-height: min(32dvh, 190px);
 }
 
 .mobile-composer .composer-row .send-btn,
 .mobile-composer .attach-btn {
+  position: absolute;
+  bottom: 4px;
+  z-index: 1;
   width: 34px;
   height: 34px;
-  /* Bottom-aligned so a growing textarea never lifts the buttons; on one line
-     the leftover above and below a button is what centres it. */
-  margin-bottom: calc((var(--composer-line) - 34px) / 2);
+  margin: 0;
+  transition: bottom 220ms var(--ease);
+}
+
+.mobile-composer .attach-btn {
+  left: 10px;
+}
+
+.mobile-composer .send-btn {
+  right: 10px;
+}
+
+.mobile-composer[data-focused] .composer-row .send-btn,
+.mobile-composer[data-focused] .attach-btn {
+  bottom: 8px;
 }
 
 .mobile-composer .send-btn svg {
@@ -325,6 +361,129 @@ body {
 .sheet-actions {
   height: auto;
   max-height: 62dvh;
+}
+
+/* The long-press menu is a context popover at the row, not a sheet: it is
+   placed beside the pressed item, grows from that edge, and collapses back
+   toward it. */
+.chat-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
+  background: rgba(24, 28, 22, 0.18);
+  animation: menu-fade 160ms var(--ease);
+}
+
+.chat-menu-backdrop[data-closing="true"] {
+  animation: menu-fade-out 140ms var(--ease) forwards;
+}
+
+.chat-menu {
+  position: fixed;
+  z-index: 59;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 253, 249, 0.98);
+  box-shadow: 0 18px 42px -20px rgba(var(--ink-rgb), 0.45),
+    0 2px 8px -4px rgba(var(--ink-rgb), 0.18);
+  transform-origin: 50% 0;
+  animation: menu-in 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.chat-menu[data-closing="true"] {
+  animation: menu-out 150ms var(--ease) forwards;
+}
+
+.chat-menu-head {
+  padding: 8px 10px 7px;
+}
+
+.chat-menu-title {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 570;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-menu-note {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+
+.chat-menu-rule {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line-soft);
+}
+
+.chat-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+}
+
+.chat-menu-item:active {
+  background: rgba(var(--ink-rgb), 0.06);
+}
+
+.chat-menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--ink-3);
+}
+
+.chat-menu-item[data-danger="true"],
+.chat-menu-item[data-danger="true"] svg {
+  color: var(--danger);
+}
+
+.chat-menu-item:disabled {
+  opacity: 0.5;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(var(--menu-shift, 6px));
+  }
+}
+
+@keyframes menu-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(var(--menu-shift, 6px));
+  }
+}
+
+@keyframes menu-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes menu-fade-out {
+  to {
+    opacity: 0;
+  }
 }
 
 .actions {
@@ -1290,12 +1449,20 @@ body {
   background: rgba(24, 28, 22, 0.34);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 260ms var(--ease);
+  /* A drag started on the dim area is the drawer's gesture, not the page's. */
+  touch-action: none;
+  /* The same curve as the panel: the scrim is the drawer's shadow, so it
+     arrives and leaves with it rather than fading on its own clock. */
+  transition: opacity 320ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .chat-drawer-backdrop[data-open="true"] {
   opacity: 1;
   pointer-events: auto;
+}
+
+.chat-drawer-backdrop[data-dragging="true"] {
+  transition: none;
 }
 
 .chat-drawer {
@@ -1313,8 +1480,11 @@ body {
   background: var(--canvas);
   box-shadow: 22px 0 52px -34px rgba(var(--ink-rgb), 0.48);
   transform: translateX(-100%);
-  transition: transform 280ms var(--ease);
+  /* One transition for both directions: opening and closing are the same
+     surface moving, so a flick and the X are indistinguishable at the end. */
+  transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
   touch-action: pan-y;
+  will-change: transform;
 }
 
 .chat-drawer[data-open="true"] {
@@ -1418,54 +1588,6 @@ body {
   color: var(--ink-4);
 }
 
-.drawer-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 10px;
-}
-
-.drawer-nav-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 40px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--ink-2);
-  font-size: 14px;
-  text-align: left;
-}
-
-.drawer-nav-row:active,
-.drawer-nav-row[data-active="true"] {
-  background: rgba(var(--accent-rgb), 0.07);
-  color: var(--ink);
-}
-
-.drawer-nav-row svg {
-  width: 17px;
-  height: 17px;
-  flex: 0 0 17px;
-  color: var(--sage);
-}
-
-.drawer-nav-row .drawer-nav-mark {
-  width: 17px;
-  height: 17px;
-  border-radius: 5px;
-}
-
-.drawer-nav-row .drawer-nav-chevron {
-  width: 15px;
-  height: 15px;
-  margin-left: auto;
-  color: var(--ink-4);
-}
-
 .drawer-history {
   flex: 1;
   min-height: 0;
@@ -1489,91 +1611,72 @@ body {
   color: var(--ink-4);
 }
 
+.drawer-chat-row {
+  position: relative;
+}
+
 .drawer-chat {
   display: flex;
   align-items: center;
-  border-radius: 11px;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  /* A long press is ours: no iOS callout or text selection on the way. */
+  -webkit-touch-callout: none;
+  transition: background 120ms var(--ease), transform 140ms var(--ease);
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.drawer-chat:active {
+  background: rgba(var(--ink-rgb), 0.05);
 }
 
 .drawer-chat[data-active="true"] {
   background: rgba(var(--accent-rgb), 0.07);
 }
 
-.drawer-chat-main {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-  padding: 9px 4px 9px 9px;
-  border: 0;
-  background: transparent;
-  text-align: left;
+/* The row the menu belongs to, while the finger rests and while it is open. */
+.drawer-chat[data-pressed="true"] {
+  background: rgba(var(--accent-rgb), 0.09);
+  transform: scale(0.99);
 }
 
 .drawer-chat-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  font-size: 13.5px;
-  font-weight: 540;
+  font-size: 14px;
+  font-weight: 520;
   color: var(--ink);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.drawer-chat-pin {
-  width: 11px;
-  height: 11px;
-  margin-right: 5px;
-  vertical-align: -1px;
-  color: var(--ink-4);
-}
-
-.drawer-chat-preview {
-  overflow: hidden;
-  font-size: 11.5px;
-  color: var(--ink-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.drawer-chat-unsynced {
-  display: grid;
-  width: 26px;
-  height: 34px;
-  flex: 0 0 26px;
-  place-items: center;
-  border: 0;
-  background: transparent;
-  color: var(--ink-4);
-}
-
-.drawer-chat-unsynced svg {
-  width: 13px;
-  height: 13px;
-}
-
 .drawer-chat-time {
   flex: 0 0 auto;
-  padding: 0 2px;
-  font-size: 10px;
+  font-size: 10.5px;
   color: var(--ink-4);
   font-variant-numeric: tabular-nums;
 }
 
-.drawer-chat-more {
-  display: grid;
-  width: 32px;
-  height: 36px;
-  flex: 0 0 32px;
-  place-items: center;
+/* The long press is the visible menu, but VoiceOver cannot perform one; this
+   labelled button is the same actions, off screen and still in the tree. */
+.drawer-chat-actions {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   border: 0;
-  background: transparent;
-  color: var(--ink-4);
-}
-
-.drawer-chat-more svg {
-  width: 16px;
-  height: 16px;
+  white-space: nowrap;
 }
 
 .drawer-empty {
@@ -1694,9 +1797,23 @@ body {
 .home-suggestions {
   display: flex;
   width: 100%;
+  max-width: 520px;
   flex-direction: column;
-  text-align: left;
-  border-top: 1px solid var(--line-soft);
+  margin: 12px auto 8px;
+  max-height: 160px;
+  overflow: hidden;
+  /* The keyboard takes the room; the actions step aside rather than sit
+     squeezed between the greeting and the writing surface. */
+  transition: max-height 220ms var(--ease), margin 220ms var(--ease),
+    opacity 160ms var(--ease);
+}
+
+.home[data-focused] .home-suggestions {
+  max-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .home-suggestion {
@@ -1704,53 +1821,56 @@ body {
   align-items: center;
   gap: 12px;
   width: 100%;
-  min-height: 52px;
-  padding: 0 4px;
+  min-height: 36px;
+  padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--line-soft);
   background: transparent;
   color: var(--ink);
   font-size: 14.5px;
   text-align: left;
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
 }
 
 .home-suggestion:active {
-  background: rgba(var(--ink-rgb), 0.04);
+  opacity: 0.55;
+  transform: scale(0.995);
 }
 
+/* The icon is the row: no chip, no tile, no line. */
 .home-suggestion-icon {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  place-items: center;
-  border-radius: 9px;
-  background: rgba(82, 100, 87, 0.08);
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
   color: var(--sage);
 }
 
-.home-suggestion-icon svg {
-  width: 17px;
-  height: 17px;
-}
-
-.home-suggestion-workspace svg {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
+.home-suggestion-mark {
+  border-radius: 4px;
 }
 
 .home-sync {
   display: flex;
   flex: 0 0 auto;
+  max-height: 40px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 13px 2px 10px;
-  border-top: 1px solid var(--line-soft);
+  padding: 2px 2px 10px;
+  overflow: hidden;
   color: var(--ink-3);
   font-size: 11.5px;
   line-height: 1.4;
+  transition: max-height 220ms var(--ease), padding-top 220ms var(--ease),
+    padding-bottom 220ms var(--ease), opacity 160ms var(--ease);
+}
+
+/* With the keyboard up the row would sit between the composer and the last
+   suggestion for no reason; it comes back the moment the field is left. */
+.home[data-focused] .home-sync {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
 }
 
 .home-sync-line {
@@ -1990,6 +2110,20 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .chat-drawer,
   .chat-drawer-backdrop {
+    transition: none;
+  }
+
+  .chat-menu,
+  .chat-menu-backdrop,
+  .chat-menu[data-closing="true"],
+  .chat-menu-backdrop[data-closing="true"] {
+    animation: none;
+  }
+
+  .mobile-composer,
+  .mobile-composer .composer-row textarea,
+  .mobile-composer .composer-row .send-btn,
+  .mobile-composer .attach-btn {
     transition: none;
   }
 }

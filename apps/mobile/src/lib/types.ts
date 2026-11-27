@@ -15,6 +15,12 @@ export type Role = "user" | "assistant" | "system" | "tool" | "compaction";
 
 /** A message as the store writes it; `ChatMessage` is the part the surface needs. */
 export interface Message extends ChatMessage {
+  /**
+   * Client-only: the optimistic copy of a just-sent message. It is dropped the
+   * moment the turn's `started` event carries the saved message, so the first
+   * message of a new chat cannot appear twice. Never sent to the backend.
+   */
+  pending?: boolean;
   createdAt?: number;
   usage?: { promptTokens: number; completionTokens: number };
   attachments?: ChatAttachment[];

@@ -317,6 +317,34 @@ pub fn set_status_bar_style(app: AppHandle, style: String) -> Result<(), String>
     Ok(())
 }
 
+/// A tap from the Taptic Engine, for a long press with no menu yet.
+///
+/// iOS has no web haptics API, so the phone's drawer asks the window instead.
+/// A no-op on every product that has no such engine; the phone is the only one
+/// that calls it.
+#[tauri::command]
+pub fn haptic_feedback(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        app.run_on_main_thread(|| {
+            use objc2::MainThreadMarker;
+            use objc2_ui_kit::UIImpactFeedbackGenerator;
+
+            let Some(marker) = MainThreadMarker::new() else {
+                return;
+            };
+            // `new` is the medium impact, which is what a context menu uses.
+            UIImpactFeedbackGenerator::new(marker).impactOccurred();
+        })
+        .map_err(|error| format!("Could not play haptic feedback: {error}"))?;
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+    }
+    Ok(())
+}
+
 /// Switch the WKWebView's own top edge effect. The status bar's trait alone
 /// does not cover it; the webview has to be addressed directly.
 #[cfg(target_os = "ios")]

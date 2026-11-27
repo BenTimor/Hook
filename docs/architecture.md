@@ -38,13 +38,15 @@ crates/hook-core/src/          the backend every product links
   lib.rs        Product + Capabilities, the builder a window calls
 crates/hook-host/              Hook Browser's host (no Tauri, no window):
                                the same backend, `%APPDATA%\app.hook.browser`
-apps/chat/                     the chat product
+apps/chat/                     the chat product (and Workspace, on macOS)
+  src/WorkspaceView.tsx  the Workspace product's own tree, in the chat window
   src/lib/bridge.ts  typed invoke wrappers + app-wide event bus
   src/store/         zustand: chats, per-chat streams, agents, settings
   src/components/    Sidebar, Thread, Composer, AgentBoard, AgentTree,
                      AgentInspector, SettingsSheet…
   src/styles/        this product's layout (the foundation lives in packages/ui)
-apps/workspace/                Hook Workspace
+apps/workspace/                Hook Workspace; `App.tsx` exports the tree the
+                               chat window mounts (`onChat`, `windowControls`)
 apps/mobile/                   HookCode on a phone (no agents, no folder)
   src/components/    AppHeader, ChatDrawer, Home, Conversation,
                      WorkspaceTasks, PreviewSheet, SettingsSheet

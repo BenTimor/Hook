@@ -30,14 +30,25 @@ It is the same code, not a second implementation:
   composer's **+** opens the phone's own attachment menu (photo library, camera,
   a file picker that is not wired yet), and the shared `Composer` only needed an
   `onAttach` hook for it: the pickers themselves are the WebView's own
-  `<input type="file">`, so no plugin and no new dependency.
+  `<input type="file">`, so no plugin and no new dependency. Focusing the field
+  opens the composer into a few lines — the text takes the full width, the
+  controls move to a row beneath it, and past a cap the text scrolls inside —
+  and the Cloud Sync row steps aside while the keyboard is up. The
+  home-indicator inset is dropped while the keyboard owns that space, so the
+  box sits a few points above the keys. The shared `Composer` reports focus
+  (`onFocusChange`) and measures the text, not the lifted box, so an empty
+  composer is compact again when the field is left.
 - **The home screen is a new conversation, under one header.** The header is the
   drawer button, a centred Hook mark and New chat, on the welcome screen, a
   thread and Workspace alike. History lives in `ChatDrawer` — a left drawer
   opened by the button or a right-swipe from the edge, closed by a left-swipe, the
   scrim or a chosen row — with search, Today / Yesterday / Previous 7 Days /
-  Older, and the account at the bottom. Sending starts the chat and the same
-  screen becomes its thread, so a new chat is never a separate destination.
+  Older, and the account at the bottom. A row is a title and a stamp; its
+  pin/rename/delete actions are a long press with a native haptic that opens a
+  popover beside that row (above or below it, never a bottom sheet), because a
+  phone has nowhere to put a menu button and the row has no second line to spend
+  on a preview. Sending starts the chat and the same screen becomes its thread, so a
+  new chat is never a separate destination.
   The welcome screen's rows only stage their prompt in the composer; they do not
   send, because a suggestion is a starting point a person edits. Its greeting is
   the shared catalog (`packages/chat/src/greeting.ts`), drawn once per session
@@ -46,8 +57,7 @@ It is the same code, not a second implementation:
   so `WorkspaceTasks` reads the account's projects, boards and tasks through the
   same `ws_request` command the Workspace window uses and draws a plain list; a
   row opens the shared `TaskPreview` sheet. It is read-only, invents no data and
-  needs no new endpoint. **Show my tasks** and the drawer's Workspace row both
-  open it.
+  needs no new endpoint. **Show my tasks** opens it.
 - **Coding agents are an Advanced action, here as on the desktop.** The **Code on
   <machine>** chip on the home screen, the drawer's coding-agent rows and the
   conversation that would show one all follow the account's advanced mode. With
