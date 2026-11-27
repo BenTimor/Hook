@@ -10,18 +10,16 @@ import type { AuthView as ChatAuthView } from "./lib/types";
  * This is the Workspace product's own `Workspace` tree — its store, boards,
  * documents, properties, templates, editor and preferences — not a second
  * implementation of any of them. What the chat product adds is the window it
- * lives in: the Windows buttons stay on Windows, the native traffic lights are
- * left to macOS, and a Chat row tops the rail so the halves switch in place.
+ * lives in: the Windows buttons stay on Windows, and the native traffic lights
+ * are left to macOS.
  */
 export function WorkspaceView({
   auth,
   maximized,
-  onChat,
   onAuth,
 }: {
   auth: ChatAuthView;
   maximized: boolean;
-  onChat: () => void;
   onAuth: (view: ChatAuthView) => void;
 }) {
   return (
@@ -30,7 +28,6 @@ export function WorkspaceView({
       setAuth={(view: AuthView) => onAuth(view as ChatAuthView)}
       maximized={maximized}
       windowControls={!isMac}
-      onChat={onChat}
     />
   );
 }

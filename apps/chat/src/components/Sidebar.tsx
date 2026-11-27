@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronDown,
-  KanbanSquare,
   Laptop,
   Pin,
   Plus,
@@ -22,7 +21,7 @@ import { ChatRow } from "./ChatRow";
 import { HookMark } from "@hook/ui";
 import { RemoteChatDialog } from "@hook/chat";
 
-export function Sidebar({ onWorkspace }: { onWorkspace: () => void }) {
+export function Sidebar() {
   const chats = useChatStore((s) => s.chats);
   const activeId = useChatStore((s) => s.activeId);
   const streams = useChatStore((s) => s.streams);
@@ -125,10 +124,6 @@ export function Sidebar({ onWorkspace }: { onWorkspace: () => void }) {
       </div>
 
       <div className="sidebar-actions">
-        <button className="nav-btn" onClick={onWorkspace}>
-          <KanbanSquare strokeWidth={1.8} />
-          Workspace
-        </button>
         <div className="new-chat-row">
           <button className="nav-btn" onClick={newChat}>
             <Plus strokeWidth={2} />

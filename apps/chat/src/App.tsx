@@ -136,7 +136,6 @@ export default function App() {
       <WorkspaceView
         auth={auth}
         maximized={maximized}
-        onChat={() => setView("chat")}
         onAuth={(next) => useChatStore.setState({ auth: next })}
       />
     );
@@ -144,7 +143,7 @@ export default function App() {
 
   return (
     <div className="shell" data-maximized={maximized}>
-      <Sidebar onWorkspace={() => setView("workspace")} />
+      <Sidebar />
       <main className="pane">
         <PaneHead />
         <UpdatePrompt />
