@@ -175,6 +175,23 @@ export function MessageItem<M extends ChatMessage>({
     );
   }
 
+  // A picture Hook made or the user attached: the pictures are the message,
+  // and what the tool wrote above them is a caption, not something to copy,
+  // edit or report.
+  if (message.role === "picture") {
+    const caption = message.content.trim();
+    return (
+      <div className="msg" data-role="picture">
+        {renderExtras?.(message)}
+        {caption && (
+          <div className="msg-caption" dir="auto">
+            {caption}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       className="msg"

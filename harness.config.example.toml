@@ -149,3 +149,23 @@ max_text_chars = 400
 # Use "user" for an endpoint that rejects a system message that is not first;
 # "none" drops the live context entirely.
 context_role = "system"
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Picture generation
+#
+#  Hook can ask an endpoint for pictures and put them in a chat or on disk.
+#  The default is OpenRouter's Image API, which serves any image model it lists
+#  at GET {base_url}/images/models (`meta/muse-image` by default). Nothing else
+#  in Hook depends on it: with no key the agent is simply not offered the tools.
+#
+#  Like [provider] api_key, this is compiled into the binary. `HOOK_IMAGE_KEY` in
+#  the environment overrides it, which is how a dev build tries a key without a
+#  rebuild.
+
+[image]
+base_url = "https://openrouter.ai/api/v1"
+# Empty turns the picture tools off.
+api_key = "sk-or-v1-REPLACE-ME"
+model = "meta/muse-image"
+# Ceiling on how many pictures one call may ask for (1-10).
+max_per_call = 4

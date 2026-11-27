@@ -29,6 +29,90 @@ pub struct HarnessConfig {
     /// Update channel details. Optional section.
     #[serde(default)]
     pub update: UpdateConfig,
+    /// Making pictures. Optional section; without a key the image tools are
+    /// simply not offered, and nothing else changes.
+    #[serde(default)]
+    pub image: ImageConfig,
+}
+
+/// Where a picture comes from.
+///
+/// Hook does not generate images itself: one endpoint answers with the bytes and
+/// Hook stores them like any other picture in a chat. The default is OpenRouter's
+/// Image API, which needs an account key. Like `[provider]`, this is compiled into
+/// the build with `include_str!`, so treat the key as extractable by anyone
+/// holding the binary; `HOOK_IMAGE_KEY` overrides it at runtime for a dev build.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageConfig {
+    #[serde(default = "default_image_base")]
+    pub base_url: String,
+    /// The account key for `base_url`. Empty disables the tools.
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_image_model")]
+    pub model: String,
+    /// How many pictures one call may ask for. The model decides its own cap;
+    /// this is the ceiling Hook passes on.
+    #[serde(default = "default_image_count")]
+    pub max_per_call: u8,
+}
+
+fn default_image_base() -> String {
+    "https://openrouter.ai/api/v1".to_string()
+}
+
+fn default_image_model() -> String {
+    "meta/muse-image".to_string()
+}
+
+fn default_image_count() -> u8 {
+    4
+}
+
+impl Default for ImageConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_image_base(),
+            api_key: String::new(),
+            model: default_image_model(),
+            max_per_call: default_image_count(),
+        }
+    }
+}
+
+impl ImageConfig {
+    /// The key in force: the environment wins, so a dev build can try a key
+    /// without recompiling. `None` means image generation is not configured.
+    pub fn key(&self) -> Option<String> {
+        let from_env = std::env::var("HOOK_IMAGE_KEY").ok().unwrap_or_default();
+        let key = [from_env.as_str(), self.api_key.as_str()]
+            .iter()
+            .map(|value| value.trim())
+            .find(|value| !value.is_empty())?;
+        Some(key.to_string())
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.key().is_some()
+    }
+
+    /// `https://host/api/v1` with no trailing slash, and `/images` appended.
+    pub fn images_url(&self) -> String {
+        format!("{}/images", self.base_url.trim().trim_end_matches('/'))
+    }
+
+    pub fn model(&self) -> &str {
+        let model = self.model.trim();
+        if model.is_empty() {
+            "meta/muse-image"
+        } else {
+            model
+        }
+    }
+
+    pub fn max_per_call(&self) -> u8 {
+        self.max_per_call.clamp(1, 10)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

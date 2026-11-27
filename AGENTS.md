@@ -368,10 +368,13 @@ bash.
   (phone, bottom sheet) draw the same thing. A task's comments are other
   people's words: that is what `ReportContentDialog` is for, not the AI report.
 - `packages/chat/src/images/` — the picture strip and its lightbox. A product
-  supplies `load`, the only part that knows where the bytes are; `onOpen` and
-  `onSaveAs` are optional, so a phone draws neither button. The chat window
-  reads from the chat's image folder, the phone from the same folder inside its
-  own container.
+  supplies `load`, the only part that knows where the bytes are; `onOpen`,
+  `onSave` and `onSaveAs` are optional, so a phone draws none of those buttons.
+  The chat window reads from the chat's image folder, the phone from the same
+  folder inside its own container. The lightbox is a portal on `document.body`
+  on purpose: a `.msg` is `isolation: isolate`, so a fixed overlay opened
+  *inside* a message lost its z-index to the composer and the plan board and drew
+  under them.
 - `apps/mobile/` — HookCode on a phone. Three screens (a new chat, the chat
   list, a thread), two sheets (preview, settings) and `mobile.css`, which is
   the phone's re-skin of the shared surface the way `dock.css` is the 380px one.
@@ -903,6 +906,19 @@ Changing one side of a boundary is the most common way to break this repo.
   (`navigation_throttle_registry_impl.cc`). `pnpm browser:host` builds the
   release binary; `browser:smoke --host` is the check that both hold.
 
+- **New picture, or anything that draws one:** `crates/hook-core/src/imagegen.rs`
+  (the endpoint call, the naming, the copy on disk) → `[image]` in
+  `harness.config.toml` and `docs/configure.md` → the tool in `tools.rs`
+  (`definitions()`, `IMAGE_TOOLS`, and `activity_label` in `turn.rs`, which a test
+  enforces) → `turn.rs` (`run_tool`, and `run_picture_tool` for a chat Hook does
+  not drive itself) → `bridge.rs` (a direct coding agent's tools come from the
+  same `definitions()`) → `resources/hook-guard.mjs` for a relayed coding agent,
+  which gets its own copy that writes files only, gated on `HOOK_IMAGE_KEY` and
+  handed down by `agent.rs`. What all of them produce is a `role: "picture"`
+  message: the thread draws it (`turns.ts` → `MessageItem` → `renderExtras`) and
+  `build_history` replays it as a user frame where it sits. Never put pictures on
+  a `tool` message for the user to see: it is hidden, so nothing draws it, and
+  `build_history` would then attach the same picture twice.
 - **New guard behavior:** `crates/hook-core/resources/hook-guard.mjs`, plus
   `tools.rs` if it calls back into Rust; then `crates/hook-core/tests/guard_policy.rs`
   + `tests/fixtures/guard-harness.mjs`. The guard may only import `node:*`

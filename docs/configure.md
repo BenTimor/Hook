@@ -75,6 +75,12 @@ enabled = true   # false leaves /compact (advanced mode) as the only way
 at = 0.30        # compact once a request would spend 30% of the window
 keep_turns = 3   # recent user turns kept verbatim after the summary
 window = 0       # 0 = [coding] context_window; the share is measured against it
+
+[image]
+base_url = "https://openrouter.ai/api/v1"
+api_key = "sk-or-v1-..."   # empty = the picture tools are not offered at all
+model = "meta/muse-image"  # any model OpenRouter lists at GET /images/models
+max_per_call = 4           # ceiling on `count` in one call
 ```
 
 `[compact]` is the one place the request prefix is rewritten on purpose: a long
@@ -88,6 +94,32 @@ drawn.
 
 `harness.config.example.toml` remains a direct-provider template if you want to
 build a standalone copy without the account service.
+
+## Pictures
+
+`[image]` is where Hook gets a picture it did not have. It posts to OpenRouter's
+Image API (`POST {base_url}/images`, `response_format: "b64_json"`) and keeps the
+bytes like any other attachment: in the chat's own image folder, uploaded by the
+sync engine, drawn by the same strip and opened by the same lightbox as a
+screenshot. The key is compiled into the binary exactly like `[provider]
+api_key`, so treat it as extractable; `HOOK_IMAGE_KEY` in the environment
+overrides it, which is how a dev build tries a key without a rebuild. An empty
+key is a supported state: the two tools are never advertised, the prompt loses
+its "Pictures" section, and nothing else changes.
+
+One endpoint serves three callers, and they differ in what they can do with the
+result:
+
+| Caller | What it gets |
+| --- | --- |
+| the chat agent | `generate_image` (in the conversation, optionally saved to a folder or file) and `attach_image` (a file on this computer, put in front of the user) |
+| a direct coding agent | the same two, over the loopback bridge — its conversation *is* the chat |
+| a coding agent the chat agent relays | `generate_image` only, and only to a file: nothing relays its pictures into a conversation |
+
+A picture Hook made or one an agent attached is a message of role `picture`: the
+thread draws it with its caption, and `build_history` replays it as a user frame
+where it sits, so the model reads it on the next turn. `look_at_picture` is the
+other half — it opens a picture for the model without claiming anything about it.
 
 ---
 

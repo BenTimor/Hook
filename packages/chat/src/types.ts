@@ -8,7 +8,7 @@ export interface ChatToolCall {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "system" | "tool" | "compaction";
+  role: "user" | "assistant" | "system" | "tool" | "compaction" | "picture";
   content: string;
   status?: string;
   error?: string | null;
@@ -20,6 +20,19 @@ export interface ChatMessage {
   toolCallId?: string;
   /** Set on `role: "compaction"`: what the summary folded away. */
   compaction?: ChatCompaction;
+  /**
+   * Pictures attached to this message. On a `picture` message they are the
+   * message; the `content` above is the caption under them.
+   */
+  attachments?: ChatAttachmentLike[];
+}
+
+/** The bits of an attachment this surface reads; a product has the rest. */
+export interface ChatAttachmentLike {
+  id: string;
+  width: number;
+  height: number;
+  mime: string;
 }
 
 /**

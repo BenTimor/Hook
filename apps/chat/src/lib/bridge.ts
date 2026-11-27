@@ -325,6 +325,12 @@ export const api = {
       ? invoke<boolean>("save_image_as", { chatId, attachmentId, suggestedName })
       : Promise.resolve(false),
 
+  /** A copy in Pictures/Hook, with no dialog. Answers the path it wrote. */
+  saveImage: (chatId: string, attachmentId: string): Promise<string> =>
+    isTauri()
+      ? invoke<string>("save_image", { chatId, attachmentId })
+      : Promise.reject(new Error("Saving is not available in the browser preview.")),
+
   regenerate: (chatId: string): Promise<void> =>
     isTauri()
       ? invoke<void>("regenerate", { chatId })

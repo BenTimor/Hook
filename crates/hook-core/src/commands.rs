@@ -1439,6 +1439,43 @@ fn copy_image(source: &std::path::Path, target: &std::path::Path) -> Result<(), 
         .map_err(|e| format!("Couldn't save the picture: {e}"))
 }
 
+/// "Save": a copy in `Pictures/Hook`, with no dialog.
+///
+/// A picture attached to a chat already lives on this computer, in a folder the
+/// user never browses; this puts a copy where they will find it. It never
+/// overwrites: a second save of the same picture becomes `-2`. Returns the path,
+/// so the window can tell the reader where it went.
+#[tauri::command]
+pub fn save_image(
+    state: State<'_, Arc<AppState>>,
+    chat_id: String,
+    attachment_id: String,
+) -> Result<String, String> {
+    let source = state.store.image_file(&chat_id, &attachment_id)?;
+    let bytes = std::fs::read(&source)
+        .map_err(|e| format!("{0}: {e}", source.display()))?;
+    let extension = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| "png".to_string());
+    let name = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("hook-image")
+        .to_string();
+    let image = crate::imagegen::Generated {
+        bytes,
+        mime: format!("image/{}", if extension == "jpg" { "jpeg" } else { &extension }),
+        width: 0,
+        height: 0,
+    };
+    let folder = crate::imagegen::default_folder();
+    let path =
+        crate::imagegen::save_copy(&folder.join(format!("{name}.{extension}")), &image, &name, 0)?;
+    Ok(path.display().to_string())
+}
+
 /// "Export as PDF": a native save dialog, then the window draws the page it is
 /// showing into that file (`pdf.rs`).
 ///

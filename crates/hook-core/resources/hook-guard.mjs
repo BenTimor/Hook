@@ -38,13 +38,19 @@
  *                        (unset = disabled)
  *   HOOK_VISION          "1" when the model card says the engine may hand the
  *                        model a picture (`read shot.png`)
+ *   HOOK_IMAGE_KEY       the picture endpoint's key; unset means the agent is
+ *                        not offered `generate_image` at all
+ *   HOOK_IMAGE_BASE      that endpoint (default https://openrouter.ai/api/v1)
+ *   HOOK_IMAGE_MODEL     which model draws the picture (default
+ *                        meta/muse-image)
  *
  * Plain ESM on purpose: only Node built-ins, nothing that can fail to resolve.
  */
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 const MAX_TIMEOUT = Number(process.env.PI_BASH_MAX_TIMEOUT ?? 3600);
 const MIN_TIMEOUT = Number(process.env.PI_BASH_MIN_TIMEOUT ?? 1);
@@ -145,6 +151,16 @@ const MAX_PICTURES = 4;
 const MAX_PICTURE_BYTES = 8 * 1024 * 1024;
 const PICTURE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
 const PREVIEW_TITLE_MAX = 80;
+
+/**
+ * Making pictures. Hook hands the endpoint and the key down (they are not in
+ * this file), and an unset key simply means the tool is never registered.
+ */
+const IMAGE_KEY = String(process.env.HOOK_IMAGE_KEY ?? "").trim();
+const IMAGE_BASE = String(process.env.HOOK_IMAGE_BASE ?? "https://openrouter.ai/api/v1")
+  .trim()
+  .replace(/\/+$/, "");
+const IMAGE_MODEL = String(process.env.HOOK_IMAGE_MODEL ?? "meta/muse-image").trim() || "meta/muse-image";
 
 const PLAN_SEED_FILE = join(UPDATES_DIR || ".", "plan.json");
 const MAX_PLAN_STEPS = 12;
@@ -313,6 +329,20 @@ function pictureGuidance() {
   );
 }
 
+/** What a run can do about pictures it does not have yet. */
+function pictureMakingGuidance() {
+  if (!IMAGE_KEY) return "";
+  return (
+    "\n\n## Making pictures" +
+    "\n`generate_image` draws a picture from a description and writes it to a file on this computer (Pictures/Hook unless you pass `save_to`)." +
+    "\n- Use it when the work needs an image that does not exist: a diagram, an illustration, a mock-up, a visual asset, the picture the user asked for." +
+    "\n- Describe the frame, not the file: subject, style, light, composition, and any words that must appear in it in quotes." +
+    "\n- Every picture costs the user money. Make the one they asked for rather than a set of options, and never generate one as decoration." +
+    "\n- It saves a file and nothing more: your run has no chat to put it in. Tell the user the path, and pass that path to `report_progress` when the picture is worth showing them." +
+    "\n- You cannot edit a picture you made. Make a new one and say what changed."
+  );
+}
+
 /** What Hook already remembers about the user, from the same account store. */
 function memoryGuidance() {
   if (!DIRECT || !UPDATES_DIR) return "";
@@ -384,6 +414,7 @@ export default function (pi) {
         guideline +
         webSearchGuidance() +
         pictureGuidance() +
+        pictureMakingGuidance() +
         (UPDATES_DIR ? planGuidance() + previewGuidance() : "") +
         syncGuidance() +
         gitGuidance() +
@@ -1012,7 +1043,190 @@ Cite the URLs you use. Search results can be incomplete or disagree; say so when
     });
   }
 
+  // ── Making pictures ───────────────────────────────────────────────────────
+  if (IMAGE_KEY && !DIRECT) {
+    pi.registerTool({
+      name: "generate_image",
+      label: "Make a picture",
+      description:
+        "Draw a picture from a description and save it as a file on this computer. Use it when the work needs an image that does not exist yet: a diagram, an illustration, a mock-up, a visual asset, a picture the user asked for.",
+      promptGuidelines: [
+        "Use generate_image when the work needs a picture nothing else provides. Do not use it to decorate a report, and do not use it as a substitute for a screenshot of the real thing.",
+        "Describe the frame, not the file: subject, style, light, composition. Put any words that must appear in the picture in quotes.",
+        "Every picture costs the user money. Make the one they asked for instead of a set of options, and ask first when the request is vague.",
+        "It returns the paths it wrote. Tell the user where the picture is, and pass that path to report_progress when they should see it in the chat.",
+      ],
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "What the picture shows, in one or two sentences. Say the medium or style when it matters (a photo, a flat illustration, a watercolour).",
+          },
+          aspect_ratio: {
+            type: "string",
+            description: "Shape of the picture, e.g. '1:1', '16:9', '9:16', '4:3'. Omit for the model's own choice.",
+          },
+          count: {
+            type: "integer",
+            minimum: 1,
+            maximum: 4,
+            description: "How many pictures to make. Default 1; each one costs the user money.",
+          },
+          save_to: {
+            type: "string",
+            description:
+              "A folder or a file path on this computer, e.g. 'assets/cover.png'. Omit to write to Pictures/Hook.",
+          },
+        },
+        required: ["prompt"],
+        additionalProperties: false,
+      },
+      async execute(_callId, params) {
+        const prompt = String(params?.prompt ?? "").trim();
+        if (!prompt) {
+          return {
+            content: [{ type: "text", text: "generate_image needs a prompt describing the picture." }],
+            isError: true,
+            details: {},
+          };
+        }
+        const body = {
+          model: IMAGE_MODEL,
+          prompt,
+          n: Math.min(4, Math.max(1, Number(params?.count) || 1)),
+          response_format: "b64_json",
+        };
+        const ratio = String(params?.aspect_ratio ?? "").trim();
+        if (/^\d{1,4}(\.\d{1,3})?:\d{1,4}(\.\d{1,3})?$/.test(ratio)) body.aspect_ratio = ratio;
+        try {
+          const response = await fetch(`${IMAGE_BASE}/images`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${IMAGE_KEY}`,
+              "HTTP-Referer": "https://hookcode.io",
+              "X-Title": "Hook",
+            },
+            body: JSON.stringify(body),
+            // A picture is a minute of work on the other end, not a stream.
+            signal: AbortSignal.timeout(180_000),
+          });
+          const text = await response.text();
+          let payload;
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            payload = {};
+          }
+          if (!response.ok) {
+            const message =
+              String(payload?.error?.message ?? payload?.message ?? "").trim() ||
+              "the picture service refused the request";
+            return {
+              content: [{ type: "text", text: `generate_image failed (${response.status}): ${message}` }],
+              isError: true,
+              details: {},
+            };
+          }
+          const entries = Array.isArray(payload?.data) ? payload.data : [];
+          const paths = writePictures(entries, params?.save_to, prompt);
+          if (!paths.length) {
+            return {
+              content: [{ type: "text", text: "The picture service returned no picture." }],
+              isError: true,
+              details: {},
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: paths.length === 1 ? `Wrote ${paths[0]}` : `Wrote ${paths.join("\n")}`,
+              },
+            ],
+            details: { count: paths.length, paths },
+          };
+        } catch (error) {
+          return {
+            content: [{ type: "text", text: `generate_image failed: ${error?.message ?? error}` }],
+            isError: true,
+            details: {},
+          };
+        }
+      },
+    });
+  }
+
   registerBridgeTools(pi);
+}
+
+/**
+ * What the picture tool writes with: a file name from the prompt, the format the
+ * bytes actually are, and one picture per file with no overwrites.
+ */
+
+/** "A red panda, in space" → "a-red-panda-in-space"; short, for a file name. */
+function pictureSlug(prompt) {
+  const words = String(prompt)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  return words.slice(0, 42).replace(/-+$/g, "") || "picture";
+}
+
+/** The format is in the bytes; the label the service sends is only a hint. */
+function pictureExtension(buffer, declared) {
+  if (buffer.subarray(0, 4).toString("hex") === "89504e47") return "png";
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return "jpg";
+  if (buffer.subarray(0, 4).toString("ascii") === "RIFF") return "webp";
+  if (buffer.subarray(0, 3).toString("ascii") === "GIF") return "gif";
+  const named = String(declared ?? "").replace("image/", "").toLowerCase();
+  return ["png", "jpeg", "jpg", "webp", "gif"].includes(named)
+    ? named.replace("jpeg", "jpg")
+    : "png";
+}
+
+/** Write what the endpoint returned, and answer with the paths it used. */
+function writePictures(entries, saveTo, prompt) {
+  const target = String(saveTo ?? "").trim();
+  const expanded = target.replace(/^~(?=$|[\\/])/, homedir());
+  const looksLikeFile = PICTURE_EXTENSIONS.includes(extname(expanded).toLowerCase());
+  const folder = !expanded
+    ? join(homedir(), "Pictures", "Hook")
+    : looksLikeFile
+      ? dirname(resolve(expanded))
+      : resolve(expanded);
+  mkdirSync(folder, { recursive: true });
+
+  const paths = [];
+  entries.forEach((entry, index) => {
+    const encoded = String(entry?.b64_json ?? "").trim();
+    if (!encoded) return;
+    const buffer = Buffer.from(encoded, "base64");
+    if (!buffer.length) return;
+    const extension = pictureExtension(buffer, entry?.media_type);
+    let file;
+    if (looksLikeFile && index === 0) {
+      file = join(folder, basename(expanded));
+    } else {
+      const stem = looksLikeFile
+        ? `${basename(expanded, extname(expanded))}-${index + 1}`
+        : index === 0
+          ? pictureSlug(prompt)
+          : `${pictureSlug(prompt)}-${index + 1}`;
+      file = join(folder, `${stem}.${extension}`);
+      // Never overwrite an earlier picture: the second run of a prompt is
+      // usually the user asking again.
+      for (let attempt = 2; existsSync(file) && attempt < 1000; attempt += 1) {
+        file = join(folder, `${stem}-${attempt}.${extension}`);
+      }
+    }
+    writeFileSync(file, buffer);
+    paths.push(file);
+  });
+  return paths;
 }
 
 /**

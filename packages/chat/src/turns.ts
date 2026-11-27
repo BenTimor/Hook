@@ -105,7 +105,9 @@ export function buildBlocks<M extends ChatMessage>(
           message.role !== "compaction",
       )
       .map((message): ThreadBlock<M> => {
-        if (message.role === "user") {
+        // A picture stands on its own, like something the user said: it is the
+        // whole message, and the caption is the line under it.
+        if (message.role === "user" || message.role === "picture") {
           return { type: "message", key: message.id, message };
         }
         const text =
@@ -151,7 +153,7 @@ export function buildBlocks<M extends ChatMessage>(
       blocks.push({ type: "compaction", key: message.id, message });
       continue;
     }
-    if (message.role === "user") {
+    if (message.role === "user" || message.role === "picture") {
       flush(false);
       blocks.push({ type: "message", key: message.id, message });
       continue;

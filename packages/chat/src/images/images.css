@@ -177,6 +177,8 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 4px;
   padding: 5px;
   max-width: calc(100vw - 40px);
@@ -220,6 +222,12 @@
 
 .lightbox-note {
   color: var(--ok);
+  /* A saved path is a sentence, not a label: let it wrap instead of
+     stretching the bar past the window. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 42ch;
+  line-height: 1.35;
 }
 
 .lightbox-close {

@@ -13,6 +13,8 @@ export interface MessageImagesProps {
   /** Read one attachment as a data URL. The only bit a product must supply. */
   load: (chatId: string, attachmentId: string) => Promise<string>;
   onOpen?: (attachment: ChatAttachment) => Promise<void>;
+  /** A copy in a folder the user will find, with no dialog. Answers the path. */
+  onSave?: (attachment: ChatAttachment) => Promise<string>;
   onSaveAs?: (attachment: ChatAttachment, suggestedName: string) => Promise<string | null>;
 }
 
@@ -28,6 +30,7 @@ export function MessageImages({
   attachments,
   load,
   onOpen,
+  onSave,
   onSaveAs,
 }: MessageImagesProps) {
   const [urls, setUrls] = useState<Record<string, string>>({});
@@ -93,6 +96,7 @@ export function MessageImages({
           startIndex={open}
           onClose={() => setOpen(null)}
           onOpen={onOpen}
+          onSave={onSave}
           onSaveAs={onSaveAs}
         />
       )}

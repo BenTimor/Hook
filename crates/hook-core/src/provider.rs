@@ -769,6 +769,7 @@ mod tests {
             compact: Default::default(),
             memory: Default::default(),
             update: Default::default(),
+            image: Default::default(),
         }
     }
 

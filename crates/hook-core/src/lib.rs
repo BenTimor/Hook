@@ -42,6 +42,7 @@ mod devices;
 pub mod events;
 mod git;
 mod guard;
+mod imagegen;
 mod import;
 mod memory;
 #[cfg(feature = "desktop")]
@@ -280,6 +281,7 @@ pub fn builder(
             commands::read_image,
             commands::open_image,
             commands::save_image_as,
+            commands::save_image,
             commands::export_pdf,
             commands::open_path,
             commands::app_info,

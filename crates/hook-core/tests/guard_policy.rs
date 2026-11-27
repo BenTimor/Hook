@@ -217,3 +217,53 @@ fn guard_offers_the_checklist_to_a_directly_driven_agent() {
     // Progress notes have nobody to relay them, so that tool stays out.
     assert_eq!(value["relayOnly"]["reportProgress"], false);
 }
+
+#[test]
+fn guard_offers_picture_making_only_when_hook_handed_it_a_key() {
+    if !node_available() {
+        eprintln!("node not installed — skipping the guard policy test");
+        return;
+    }
+
+    let value = run_harness("");
+    let making = &value["pictureMaking"];
+    // A coding agent started by the chat agent has no conversation to put a
+    // picture into, so the tool it gets writes a file and nothing else - and it
+    // only exists when Hook set HOOK_IMAGE_KEY.
+    assert_eq!(
+        making["registeredWithKey"], true,
+        "generate_image should be offered when the endpoint is configured"
+    );
+    assert_eq!(
+        making["silentWithoutKey"], true,
+        "no key, no tool: a tool that can only fail is worse than none"
+    );
+    assert_eq!(
+        making["guidanceWithKey"], true,
+        "the prompt has to say how pictures are made"
+    );
+    assert_eq!(
+        making["guidanceWithoutKey"], true,
+        "the prompt must not describe a tool the agent does not have"
+    );
+
+    // A relayed run has no conversation to put a picture into, so the tool's
+    // whole job is the file: named from the prompt, never overwriting an
+    // earlier one, and reported as a path the agent can pass on.
+    assert_eq!(making["resultOk"], true, "the tool answers with paths");
+    assert_eq!(making["reportsThePath"], true);
+    let wrote: Vec<&str> = making["wrote"]
+        .as_array()
+        .map(|names| names.iter().filter_map(|name| name.as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(wrote, vec!["a-red-panda-in-space-2.png", "a-red-panda-in-space.png"]);
+    assert_eq!(making["secondCallDidNotOverwrite"], true);
+    assert_eq!(
+        making["emptyPromptRejected"], true,
+        "an empty prompt must not spend the user's money"
+    );
+
+    // The guidance for seeing a picture and the guidance for making one are
+    // separate sections: a text-only model may still make a picture.
+    assert_eq!(value["pictures"]["absentByDefault"], true);
+}

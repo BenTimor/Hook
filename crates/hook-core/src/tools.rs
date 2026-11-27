@@ -71,6 +71,12 @@ pub const PROJECT_TOOLS: [&str; 4] = [
     "look_at_picture",
 ];
 
+/// The tools that make a picture or put one into the conversation. They need an
+/// endpoint to ask (`[image]` in `harness.config.toml`); `attach_image` also
+/// needs a folder on this machine to read the picture from, which a phone has
+/// none of.
+pub const IMAGE_TOOLS: [&str; 2] = ["generate_image", "attach_image"];
+
 /// Tool surface offered to the chat model. The chat agent never touches files
 /// directly: it organises projects and delegates all code work to a coding
 /// agent, then reports back in prose.
@@ -319,6 +325,41 @@ pub fn definitions() -> Value {
         {
             "type": "function",
             "function": {
+                "name": "generate_image",
+                "description": "Make a picture from a description. The picture appears in this conversation for the user to look at, and `save_to` writes a copy to a folder or file on this computer as well (a picture without `save_to` and with attach=false goes to Pictures/Hook). Describe what should be in the frame - subject, style, light, composition - and put any words that must appear in the image in quotes. It cannot edit an existing picture.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": { "type": "string", "description": "What the picture shows, in one or two sentences. Say the medium or style when it matters (a photo, a flat illustration, a watercolour)." },
+                        "aspect_ratio": { "type": "string", "description": "Shape of the picture, e.g. '1:1', '16:9', '9:16', '4:3'. Omit for the model's own choice." },
+                        "count": { "type": "integer", "minimum": 1, "maximum": 4, "description": "How many pictures to make. Default 1; each one costs the user money." },
+                        "save_to": { "type": "string", "description": "A folder or a file path on this computer to also write the picture to, e.g. 'C:/Users/me/Desktop/cover.png'. Omit to leave it in the conversation only." },
+                        "attach": { "type": "boolean", "description": "Whether the picture belongs in this conversation. Default true. Use false when the user only asked for a file." }
+                    },
+                    "required": ["prompt"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "attach_image",
+                "description": "Put a picture that is already on this computer into this conversation, so the user sees it. Use it for a screenshot or a file a coding agent produced, a picture the user points at, or a picture you generated earlier and want to show again. The picture is copied into the chat; the original stays where it is.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Path to the image file on this computer, e.g. 'C:/Users/me/Pictures/shot.png'." },
+                        "caption": { "type": "string", "description": "One short line to show under the picture. Optional." }
+                    },
+                    "required": ["path"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "no_update",
                 "description": "Say nothing to the user for this progress batch. Use this when there is nothing worth interrupting them for: routine steps, 'still working', 'building now', 'I'll report back', a run that merely settled, no new picture, no milestone.",
                 "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
@@ -535,7 +576,11 @@ pub fn direct_bridge_definitions(
             {
                 continue;
             }
-            if !caps.projects && PROJECT_TOOLS.contains(&name) {
+            if !caps.projects && (PROJECT_TOOLS.contains(&name) || name == "attach_image") {
+                continue;
+            }
+            // No endpoint, no picture: a tool that can only fail is not offered.
+            if !cfg.image.enabled() && IMAGE_TOOLS.contains(&name) {
                 continue;
             }
             out.push(tool.clone());
@@ -1442,6 +1487,8 @@ mod tests {
             "list_coding_sessions",
             "web_search",
             "look_at_picture",
+            "generate_image",
+            "attach_image",
         ] {
             assert!(names.contains(&expected), "{expected} missing");
         }
@@ -1571,6 +1618,10 @@ mod tests {
         ] {
             assert!(!names.contains(&refused), "{refused} must not be offered");
         }
+        // This build has no picture endpoint, so the picture tools are absent
+        // rather than failing the first time the model tries one.
+        assert!(!names.contains(&"generate_image"));
+        assert!(!names.contains(&"attach_image"));
 
         // Without memory or Workspace, only the project tools remain.
         let bare = direct_bridge_definitions(
@@ -1593,6 +1644,31 @@ mod tests {
         assert!(!bare.contains(&"remember"));
         assert!(!bare.contains(&"workspace_projects"));
         assert!(bare.contains(&"list_projects"));
+    }
+
+    #[test]
+    fn picture_tools_follow_the_endpoint_and_the_folder() {
+        let mut cfg = crate::config::get().expect("config").clone();
+        assert!(!direct_bridge_definitions(&cfg, crate::Capabilities::chat(), false)
+            .iter()
+            .any(|tool| tool["function"]["name"] == "generate_image"));
+        cfg.image.api_key = "sk-or-test".into();
+        let names = |caps: crate::Capabilities| -> Vec<String> {
+            direct_bridge_definitions(&cfg, caps, false)
+                .iter()
+                .filter_map(|tool| tool["function"]["name"].as_str())
+                .map(str::to_string)
+                .collect()
+        };
+        // A coding agent that can reach a chat can make a picture and put one
+        // into the conversation.
+        let chat = names(crate::Capabilities::chat());
+        assert!(chat.contains(&"generate_image".to_string()));
+        assert!(chat.contains(&"attach_image".to_string()));
+        // No folder on this machine means nothing to attach from.
+        let phone = names(crate::Capabilities::mobile());
+        assert!(phone.contains(&"generate_image".to_string()));
+        assert!(!phone.contains(&"attach_image".to_string()));
     }
 
     #[test]

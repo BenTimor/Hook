@@ -101,6 +101,26 @@ async function promptFor(tag) {
   const started = await seen.before_agent_start[0]({ systemPrompt: "BASE" });
   return started?.systemPrompt ?? "";
 }
+
+/** The same, keeping the tools the guard registered. */
+async function toolsFor(tag) {
+  const text = readFileSync(guardPath, "utf8");
+  const mod = await import(
+    "data:text/javascript;base64," + Buffer.from(text).toString("base64") + `#${tag}`
+  );
+  const seen = {};
+  const registered = {};
+  mod.default({
+    on(name, fn) {
+      (seen[name] ||= []).push(fn);
+    },
+    registerTool(tool) {
+      registered[tool.name] = tool;
+    },
+  });
+  const started = await seen.before_agent_start[0]({ systemPrompt: "BASE" });
+  return { prompt: started?.systemPrompt ?? "", names: Object.keys(registered), tools: registered };
+}
 delete process.env.GIT_CONFIG_GLOBAL;
 process.env.HOOK_SYNC = "0";
 process.env.HOOK_USER_GIT = "1";
@@ -114,6 +134,40 @@ process.env.HOOK_VISION = "1";
 const visionPrompt = await promptFor("vision-on");
 delete process.env.HOOK_VISION;
 const noVisionPrompt = await promptFor("vision-off");
+
+// Making pictures: Hook hands the key down, and without one the tool is never
+// registered - a tool that can only fail is worse than no tool.
+// A direct conversation gets `generate_image` from the bridge instead (it can
+// put the picture in front of the user), so the local-only tool is loaded from
+// the relayed shape whatever mode this harness was started in.
+const wasDirect = process.env.HOOK_DIRECT;
+delete process.env.HOOK_DIRECT;
+process.env.HOOK_IMAGE_KEY = "sk-or-test";
+const picturesOn = await toolsFor("image-on");
+delete process.env.HOOK_IMAGE_KEY;
+const picturesOff = await toolsFor("image-off");
+if (wasDirect) process.env.HOOK_DIRECT = wasDirect;
+
+// The tool itself, with the endpoint stubbed: no key is spent and no network is
+// needed. What matters is what lands on disk, because this run has no chat to
+// show a picture in.
+const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+const imageDir = mkdtempSync(join(tmpdir(), "hook-image-"));
+globalThis.fetch = async () => ({
+  ok: true,
+  status: 200,
+  text: async () => JSON.stringify({ data: [{ b64_json: PNG.toString("base64"), media_type: "image/png" }] }),
+});
+const madeOnce = await picturesOn.tools.generate_image.execute("c_img", {
+  prompt: "A red panda, in space",
+  save_to: imageDir,
+});
+const madeTwice = await picturesOn.tools.generate_image.execute("c_img2", {
+  prompt: "A red panda, in space",
+  save_to: imageDir,
+});
+const madeNothing = await picturesOn.tools.generate_image.execute("c_img3", { prompt: " " });
+const imageFiles = readdirSync(imageDir).sort();
 
 const results = {
   hooks: Object.keys(handlers).sort(),
@@ -165,6 +219,19 @@ const results = {
       /## Pictures/.test(visionPrompt) && /returns the image itself/.test(visionPrompt),
     silentWithoutVision: !/## Pictures/.test(noVisionPrompt),
     absentByDefault: !/## Pictures/.test(before?.systemPrompt ?? ""),
+  },
+  pictureMaking: {
+    registeredWithKey: picturesOn.names.includes("generate_image"),
+    silentWithoutKey: !picturesOff.names.includes("generate_image"),
+    wrote: imageFiles,
+    resultOk: madeOnce?.isError !== true,
+    reportsThePath:
+      typeof madeOnce?.content?.[0]?.text === "string" &&
+      madeOnce.content[0].text.includes(imageDir),
+    emptyPromptRejected: madeNothing?.isError === true,
+    secondCallDidNotOverwrite: madeTwice?.isError !== true && imageFiles.length === 2,
+    guidanceWithKey: /## Making pictures/.test(picturesOn.prompt),
+    guidanceWithoutKey: !/## Making pictures/.test(picturesOff.prompt),
   },
   direct,
   // The one tool a relayed run has and a direct conversation does not.

@@ -21,7 +21,7 @@ export interface DockChat {
 }
 
 export interface DockMessage extends ChatMessage {
-  role: "user" | "assistant" | "system" | "tool" | "compaction";
+  role: "user" | "assistant" | "system" | "tool" | "compaction" | "picture";
 }
 
 export interface DockEvent {

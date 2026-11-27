@@ -20,6 +20,7 @@ export function MessageImages({ message }: { message: Message }) {
       attachments={attachments}
       load={api.readImage}
       onOpen={(attachment) => api.openImage(chatId ?? "", attachment.id)}
+      onSave={(attachment) => api.saveImage(chatId ?? "", attachment.id)}
       onSaveAs={async (attachment, suggestedName) => {
         const saved = await api.saveImageAs(chatId ?? "", attachment.id, suggestedName);
         return saved ? suggestedName : null;

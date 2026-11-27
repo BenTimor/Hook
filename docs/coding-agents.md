@@ -179,12 +179,28 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   `[older image omitted: 1280x800 png]` instead of pixels. A message can carry
   several pictures, so the budget is applied per attachment, not per message.
 - **Looking at a picture.** Click any attachment — yours or an agent's
-  screenshot — to open it large. From there: **Open** hands the file to your own
-  image viewer (staged in `%TEMP%\hook-images`), **Save as…** writes a copy
-  wherever you choose through the native dialog, **Full screen** (or a double
-  click) fills the window. Esc closes, ← → step through the pictures in a
-  message. Full-page captures scroll at readable width instead of shrinking to a
-  sliver.
+  screenshot — to open it large. From there: **Copy picture** puts the pixels on
+  the clipboard (anything that is not a PNG is drawn onto a canvas first, because
+  that is the one format the clipboard holds), **Save** writes a copy into
+  `Pictures/Hook` with no dialog, **Save as…** writes one wherever you choose
+  through the native dialog, **Open** hands the file to your own image viewer
+  (staged in `%TEMP%\hook-images`), and **Full screen** (or a double click) fills
+  the window. Esc closes, ← → step through the pictures in a message. Full-page
+  captures scroll at readable width instead of shrinking to a sliver. The
+  lightbox is drawn in a portal on `document.body`: inside a message it sat in
+  that message's own stacking context, which is how the composer and the
+  checklist above it used to paint over a picture opened full-screen.
+- **Making a picture.** `generate_image` asks the endpoint in `[image]`
+  (`docs/configure.md`) for a picture and puts it in the conversation; `save_to`
+  also writes a copy to a folder or file, which is what `attach: false` implies.
+  `attach_image` puts a picture that is already on this computer into the chat.
+  Both go through one place: a `role: "picture"` message that the thread draws
+  with its caption and that `build_history` replays as a user frame where it
+  sits — a `tool` message can carry no pictures. A direct coding agent reaches
+  the same two tools over the loopback bridge. A coding agent the chat agent
+  relays gets `generate_image` from the guard instead, and that one only writes
+  files: nothing relays its pictures into a conversation, so it reports the path
+  and `report_progress` carries it.
 - **The guard is the only policy they inherit.** Every `bash` call must carry a
   `timeout` in seconds (1–3600 by default). Missing, oversized or non-numeric
   timeouts are blocked with an explanation, and the model re-issues the call.

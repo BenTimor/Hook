@@ -149,12 +149,14 @@ export function Thread<M extends ChatMessage>({
           }
 
           if (block.type === "message") {
+            const standalone = block.message.role === "picture";
             return (
               <MessageItem
                 key={block.key}
                 message={block.message}
+                showActions={standalone ? false : undefined}
                 isLastAssistant={false}
-                onEdit={onEdit}
+                onEdit={block.message.role === "user" ? onEdit : undefined}
                 renderExtras={renderExtras}
               />
             );

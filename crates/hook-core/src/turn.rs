@@ -107,6 +107,14 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - A note that says new_since_last_update: none carries no new information: call no_update. Never restate or reword your last message - if it is already said, it is said. The only exception is a run you have never told the user about at all: then one sentence, once.
 - A failure, an error, or a question always gets an answer, even when nothing is new.
 
+## Pictures
+- A picture often says more than a paragraph: make one. `generate_image` draws what you describe - a diagram, an illustration, a mock-up, a visual explanation, the image they asked for - and it lands in the conversation. Describe the frame, not the file: subject, style, light, composition, and any words that must appear in the picture in quotes.
+- Every picture costs the user money. Make the one they asked for instead of a set of options to choose from, and ask one short question first when the request is vague. Never generate a picture as decoration.
+- `save_to` also writes it to this computer - a folder or a full file path such as C:/Users/me/Desktop/cover.png - when they want the file itself: on the Desktop, in a project, somewhere they will use it. Leave it out when the picture belongs in the conversation.
+- `attach_image` puts a picture that is already on this computer into the conversation: one a coding agent saved, a file they name, a picture inside a project. The original is left where it is.
+- You cannot edit a picture. Make a new one, and say in one line what changed.
+- Then describe what you made in one plain line - what it shows, and where it is if you saved it. Do not guess at details you cannot see: `look_at_picture` opens a picture, and it is the only way to know what is really in one.
+
 ## Style
 - Be concise and concrete. Markdown is fine.
 - Hook's directive syntax works in the answer itself: `:::warning[Title]` for a callout, `:red[word]` for a phrase, `:mark[…]` and `:kbd[Ctrl+S]`. Use it sparingly — a callout for something that will cost time if it is missed, colour for a word or two — never as decoration, and the reply must still read as plain prose with the styling stripped.
@@ -648,6 +656,16 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                         || (name == "list_projects" && state.capabilities.remote_agents)
                 });
             }
+            // Pictures need an endpoint to ask and, for a picture already on
+            // this computer, a folder to read it from.
+            if !state.cfg.image.enabled() {
+                list.retain(|tool| {
+                    let name = tool["function"]["name"].as_str().unwrap_or("");
+                    !tools::IMAGE_TOOLS.contains(&name)
+                });
+            } else if !state.capabilities.projects {
+                list.retain(|tool| tool["function"]["name"] != "attach_image");
+            }
         }
         set
     });
@@ -961,6 +979,15 @@ pub async fn run_turn(state: Arc<AppState>, chat_id: String) {
                         // what `build_history` replays as the frame after it.
                         message.attachments = result.images;
                         chat.messages.push(message);
+                        // A picture meant for the user gets a message of its
+                        // own: the thread draws it, and a tool result is never
+                        // visible. It is also what the next request carries, so
+                        // the picture is not attached twice.
+                        if let Some((caption, pictures)) = result.picture {
+                            if !pictures.is_empty() {
+                                chat.messages.push(picture_message(&caption, pictures));
+                            }
+                        }
                     }
                     chat.meta.updated_at = now_ms();
                     let _ = state.store.save(&mut chat);
@@ -1362,6 +1389,11 @@ fn system_prompt(cfg: &config::HarnessConfig, caps: crate::Capabilities, memory:
     if !memory {
         text = without_section(text, "## Memory");
     }
+    // No endpoint to ask means no picture tools, so the paragraphs about them
+    // would describe something that is not in the list.
+    if !cfg.image.enabled() {
+        text = without_section(text, "## Pictures");
+    }
     text
 }
 
@@ -1495,6 +1527,11 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
             None => "Searching the web…".into(),
         },
         "look_at_picture" => "Looking at a picture…".into(),
+        "attach_image" => "Showing a picture…".into(),
+        "generate_image" => match text("prompt") {
+            Some(prompt) => format!("Drawing “{}”…", short(prompt, 42)),
+            None => "Drawing a picture…".into(),
+        },
         "list_projects" => "Looking at your projects…".into(),
         "list_machines" => "Checking which computers are on…".into(),
         "list_tabs" => "Looking at the tabs…".into(),
@@ -1689,7 +1726,15 @@ fn title_tool(chat: &mut Chat, arguments: &str) -> String {
 #[derive(Default)]
 struct ToolOutcome {
     text: String,
+    /// Pictures that belong to the model's context, replayed by `build_history`
+    /// right after the tool result. A `tool` message cannot carry them, so they
+    /// live on their own message. Never set together with `picture`.
     images: Vec<Attachment>,
+    /// A picture that belongs in the conversation: the caption drawn with it (may
+    /// be empty) and the pictures themselves. The thread draws it, and
+    /// `build_history` replays it as a user frame where it sits, so its
+    /// attachments are never in `images` as well.
+    picture: Option<(String, Vec<Attachment>)>,
 }
 
 impl ToolOutcome {
@@ -1697,6 +1742,21 @@ impl ToolOutcome {
         Self {
             text: text.into(),
             images: Vec::new(),
+            picture: None,
+        }
+    }
+
+    /// Pictures for both the model and the user: they go into the chat as a
+    /// `picture` message, which is also what carries them into the next request.
+    fn pictures(
+        text: impl Into<String>,
+        caption: impl Into<String>,
+        images: Vec<Attachment>,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            images: Vec::new(),
+            picture: Some((caption.into(), images)),
         }
     }
 }
@@ -1714,6 +1774,12 @@ async fn run_tool(
     }
     if call.name == "look_at_picture" {
         return look_at_picture(state, chat_id, &args);
+    }
+    if call.name == "generate_image" {
+        return generate_image(state, chat_id, &args).await;
+    }
+    if call.name == "attach_image" {
+        return attach_image(state, chat_id, &args);
     }
     if call.name == "search_past_chats" {
         return ToolOutcome::text(search_past_chats(state, &args));
@@ -1820,17 +1886,184 @@ fn look_at_picture(state: &AppState, chat_id: &str, args: &serde_json::Value) ->
             })
             .to_string(),
             images: Vec::new(),
+            picture: Some((String::new(), vec![attachment])),
         };
     }
-    ToolOutcome {
-        text: json!({
+    ToolOutcome::pictures(
+        json!({
             "opened": path,
             "size": size,
             "note": "The picture is attached right after this result. Answer from what you actually see in it."
         })
         .to_string(),
-        images: vec![attachment],
+        // A picture the agent looked at is worth the user seeing too: it lands
+        // in the conversation with no caption of its own.
+        String::new(),
+        vec![attachment],
+    )
+}
+
+/// A picture Hook made, or one the user can see.
+///
+/// The endpoint answers with bytes (see `imagegen`), and the picture then goes
+/// wherever the call asked for: into the conversation, onto this computer, or
+/// both. A picture nobody can see is worth nothing, so `attach: false` without
+/// a `save_to` writes it to `Pictures/Hook` rather than dropping it.
+async fn generate_image(state: &AppState, chat_id: &str, args: &serde_json::Value) -> ToolOutcome {
+    let prompt = args
+        .get("prompt")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if prompt.is_empty() {
+        return ToolOutcome::text(
+            json!({ "error": "generate_image needs a prompt describing the picture." }).to_string(),
+        );
     }
+    if !state.cfg.image.enabled() {
+        return ToolOutcome::text(
+            json!({ "error": "Making pictures is not set up in this build." }).to_string(),
+        );
+    }
+    let attach = args
+        .get("attach")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    let save_to = args
+        .get("save_to")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let count = args
+        .get("count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1)
+        .clamp(1, state.cfg.image.max_per_call() as u64) as u8;
+    let request = crate::imagegen::Request {
+        prompt,
+        aspect_ratio: args.get("aspect_ratio").and_then(serde_json::Value::as_str),
+        count,
+    };
+
+    let made = match crate::imagegen::generate(&state.cfg.image, &request).await {
+        Ok(made) => made,
+        Err(error) => return ToolOutcome::text(json!({ "error": error }).to_string()),
+    };
+    let described = made.first().map(|image| image.describe()).unwrap_or_default();
+
+    let target = save_to
+        .map(std::path::PathBuf::from)
+        .or_else(|| (!attach).then(crate::imagegen::default_folder));
+    let mut saved: Vec<String> = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
+    if let Some(target) = target.as_deref() {
+        for (index, image) in made.iter().enumerate() {
+            match crate::imagegen::save_copy(target, image, prompt, index) {
+                Ok(path) => saved.push(path.display().to_string()),
+                Err(error) => problems.push(error),
+            }
+        }
+    }
+
+    let mut attached: Vec<Attachment> = Vec::new();
+    if attach {
+        // The chat's own copy: this is what the thread draws and what sync
+        // carries to the account. A picture over the store's cap is still on
+        // disk if the call also saved it, so say so instead of failing outright.
+        for image in &made {
+            match state.store.save_image(
+                chat_id,
+                &image.mime,
+                &image.bytes,
+                image.width,
+                image.height,
+                Some("generated"),
+            ) {
+                Ok(attachment) => attached.push(attachment),
+                Err(error) => problems.push(error),
+            }
+        }
+    }
+
+    let mut text = json!({
+        "made": made.len(),
+        "size": described,
+        "in_chat": !attached.is_empty(),
+        "saved": saved,
+        "note": if attached.is_empty() {
+            "The picture is on this computer at the paths above."
+        } else {
+            "The picture is in the conversation now, above this reply. Say what you made in one line."
+        },
+    });
+    if !problems.is_empty() {
+        text["problems"] = json!(problems);
+    }
+    if attached.is_empty() && saved.is_empty() && !problems.is_empty() {
+        return ToolOutcome::text(json!({ "error": problems.join(" ") }).to_string());
+    }
+    ToolOutcome::pictures(text.to_string(), image_caption(prompt), attached)
+}
+
+/// `attach_image`: a picture already on this computer, put in front of the user.
+///
+/// The file is copied into the chat's image folder, so deleting the original
+/// does not empty the conversation. The model is not promised a look at it: this
+/// tool is for showing, and `look_at_picture` is for reading.
+fn attach_image(state: &AppState, chat_id: &str, args: &serde_json::Value) -> ToolOutcome {
+    let path = args
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if path.is_empty() {
+        return ToolOutcome::text(
+            json!({ "error": "attach_image needs the path of an image file on this computer." })
+                .to_string(),
+        );
+    }
+    let attachment = match state
+        .store
+        .adopt_image(chat_id, std::path::Path::new(path), Some("attached"))
+    {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            return ToolOutcome::text(
+                json!({ "error": format!("{error} It has to be the full path of an image file on this computer.") })
+                    .to_string(),
+            )
+        }
+    };
+    let caption = args
+        .get("caption")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .chars()
+        .take(160)
+        .collect::<String>();
+    let size = if attachment.width > 0 {
+        format!("{}x{} {}", attachment.width, attachment.height, attachment.mime.trim_start_matches("image/"))
+    } else {
+        attachment.mime.trim_start_matches("image/").to_string()
+    };
+    ToolOutcome::pictures(
+        json!({
+            "attached": path,
+            "size": size,
+            "note": "The picture is in the conversation now, under this result. Do not describe what is in it unless you have opened it with look_at_picture."
+        })
+        .to_string(),
+        caption,
+        vec![attachment],
+    )
+}
+
+/// The line under a picture Hook made: the prompt, shortened to something a
+/// reader can scan. Empty prompts are already refused.
+fn image_caption(prompt: &str) -> String {
+    let flat = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate(&flat, 160)
 }
 
 /// Earlier conversations on this machine. The search is the one the chat list
@@ -1849,6 +2082,49 @@ fn search_past_chats(state: &AppState, args: &serde_json::Value) -> String {
         Ok(hits) => crate::memory::past_chats(&hits, query),
         Err(error) => json!({ "error": format!("Could not search your chats: {error}") }).to_string(),
     }
+}
+
+/// A `picture` message: what the thread draws and what the next request carries.
+fn picture_message(caption: &str, attachments: Vec<Attachment>) -> Message {
+    let mut message = Message::new("picture", caption, "complete");
+    message.attachments = attachments;
+    message
+}
+
+/// The picture tools, for a chat Hook does not drive itself.
+///
+/// A direct coding agent reaches Hook over the loopback bridge (`bridge.rs`), so
+/// nobody is there to put its picture into the conversation: it is written here
+/// and announced like any other change to the chat.
+pub(crate) async fn run_picture_tool(
+    state: &Arc<AppState>,
+    chat_id: &str,
+    name: &str,
+    args: &Value,
+) -> String {
+    let outcome = match name {
+        "generate_image" => generate_image(state, chat_id, args).await,
+        _ => attach_image(state, chat_id, args),
+    };
+    let Some((caption, pictures)) = outcome.picture.filter(|(_, pictures)| !pictures.is_empty())
+    else {
+        return outcome.text;
+    };
+    let Ok(mut chat) = state.store.load(chat_id) else {
+        return outcome.text;
+    };
+    chat.messages.push(picture_message(&caption, pictures));
+    chat.meta.updated_at = now_ms();
+    let _ = state.store.save(&mut chat);
+    emit(
+        state,
+        chat_id,
+        StreamEvent::Done {
+            messages: chat.messages.clone(),
+            meta: chat.meta.clone(),
+        },
+    );
+    outcome.text
 }
 
 /// The chat agent's web search. The model calls this as an ordinary function
@@ -2045,6 +2321,14 @@ fn build_history(
             "compaction" => {}
             // Emitted with the assistant message that called them, below.
             "tool" => {}
+            // A picture the agent made or attached. It sits where it happened,
+            // and the model reads it there: the tool result above says what was
+            // asked for, this says what it looks like.
+            "picture" => {
+                if let Some(entry) = picture_history_entry(message, images) {
+                    history.push(entry);
+                }
+            }
             "user" => {
                 if let Some(entry) = user_history_entry(message, images) {
                     history.push(entry);
@@ -2150,6 +2434,57 @@ fn tool_picture_entry(
         }
     }
     (parts.len() > 1).then(|| json!({ "role": "user", "content": parts }))
+}
+
+/// A picture in the conversation as the provider sees it: a user frame carrying
+/// the bytes, and the caption the tool wrote above it.
+///
+/// A model that cannot take an image gets one plain string instead of a parts
+/// array - the same shape `user_history_entry` answers with - so the picture is
+/// still described to it rather than silently dropped.
+fn picture_history_entry(
+    message: &Message,
+    images: Option<&dyn Fn(&Attachment) -> Option<String>>,
+) -> Option<serde_json::Value> {
+    if message.attachments.is_empty() {
+        return None;
+    }
+    let caption = message.content.trim();
+    let text = if caption.is_empty() { "[picture]" } else { caption };
+    let mut parts = vec![json!({ "type": "text", "text": text })];
+    let mut notes = Vec::new();
+    match images {
+        Some(read) => {
+            for attachment in &message.attachments {
+                match read(attachment) {
+                    Some(url) => {
+                        parts.push(json!({ "type": "image_url", "image_url": { "url": url } }))
+                    }
+                    None => notes.push(omitted_note(attachment)),
+                }
+            }
+        }
+        None => notes.extend(
+            message
+                .attachments
+                .iter()
+                .map(|attachment| format!("[picture: {}]", size_note(attachment))),
+        ),
+    }
+    if notes.is_empty() && parts.len() == 1 {
+        return None;
+    }
+    if parts.len() == 1 {
+        return Some(json!({ "role": "user", "content": format!("{text}
+{}", notes.join("
+")) }));
+    }
+    parts.extend(
+        notes
+            .into_iter()
+            .map(|note| json!({ "type": "text", "text": note })),
+    );
+    Some(json!({ "role": "user", "content": parts }))
 }
 
 /// A user turn: plain text, or text plus the pictures they attached.
@@ -2875,6 +3210,55 @@ mod tests {
         message.tool_call_id = Some(id.into());
         message.hidden = true;
         message
+    }
+
+    fn a_picture_message(caption: &str) -> Message {
+        let mut message = Message::new("picture", caption, "complete");
+        message.attachments.push(picture());
+        message
+    }
+
+    #[test]
+    fn a_picture_in_the_chat_is_replayed_as_a_user_frame() {
+        // A generated picture is its own message: the thread draws it, and the
+        // model reads it in the place it happened - right after the tool result
+        // that made it, never as the tool result itself. A `tool` message can
+        // carry no pictures.
+        let mut assistant = Message::new("assistant", "", "complete");
+        assistant.tool_calls = Some(vec![call("call_1")]);
+        let chat = chat_with(vec![
+            Message::new("user", "make me a red panda in space", "complete"),
+            assistant,
+            result("call_1", "{\"made\":1}"),
+            a_picture_message("a red panda in space"),
+            Message::new("assistant", "Here it is.", "complete"),
+        ]);
+        let read = |_attachment: &Attachment| Some("data:image/png;base64,AAAA".to_string());
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, Some(&read));
+        let roles: Vec<&str> = history
+            .iter()
+            .map(|entry| entry["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, vec!["user", "assistant", "tool", "user", "assistant"]);
+        let frame = &history[3];
+        assert_eq!(frame["content"][0]["text"], "a red panda in space");
+        assert_eq!(frame["content"][1]["type"], "image_url");
+    }
+
+    #[test]
+    fn a_picture_a_blind_model_cannot_see_is_still_in_the_conversation() {
+        // The model that cannot take an image still has to know one is there,
+        // and the message stays in the chat for the reader.
+        let chat = chat_with(vec![
+            Message::new("user", "look", "complete"),
+            a_picture_message("a red panda in space"),
+        ]);
+        let history = build_history(&chat, "x", &ReasoningEcho::Auto, true, None);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1]["role"], "user");
+        let text = history[1]["content"].as_str().unwrap_or_default();
+        assert!(text.contains("a red panda in space"), "caption is kept: {text}");
+        assert!(text.contains("1200x800"), "the size is all it gets: {text}");
     }
 
     #[test]

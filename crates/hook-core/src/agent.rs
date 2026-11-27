@@ -1228,6 +1228,14 @@ impl AgentManager {
             // Whether this folder is one of the account's projects, so the
             // guard only advertises the git tools where they can work.
             .env("HOOK_SYNC", if project_id.is_empty() { "0" } else { "1" })
+            // Making pictures: the endpoint and the key are Hook's, not the
+            // engine's, and the guard only registers the tool when it has them.
+            .env("HOOK_IMAGE_BASE", self.cfg.image.base_url.trim())
+            .env("HOOK_IMAGE_MODEL", self.cfg.image.model())
+            .env(
+                "HOOK_IMAGE_KEY",
+                self.cfg.image.key().unwrap_or_default(),
+            )
             // Whether the run reads the user's own git config: their repository,
             // not one of the account's projects.
             .env("HOOK_USER_GIT", if user_git { "1" } else { "0" })

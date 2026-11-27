@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import type { ChatAttachment } from "./types";
 
@@ -12,6 +13,8 @@ export interface LightboxProps {
    * to "open in your image viewer", so those buttons simply are not drawn.
    */
   onOpen?: (attachment: ChatAttachment) => Promise<void>;
+  /** A copy in a folder the user will find, with no dialog. Answers the path. */
+  onSave?: (attachment: ChatAttachment) => Promise<string>;
   /** Save a copy and report the chosen name, or null if the dialog was closed. */
   onSaveAs?: (attachment: ChatAttachment, suggestedName: string) => Promise<string | null>;
 }
@@ -29,12 +32,39 @@ function suggestedName(attachment: ChatAttachment, index: number) {
 }
 
 /**
- * Big view of a picture. Shows one attachment at a time, lets the reader ask
- * their machine to open or save it, or blow it up to the whole window.
+ * The picture as a PNG blob, for the clipboard.
+ *
+ * The clipboard takes PNG (a JPEG or a WebP is not a picture it will hold), so
+ * anything else is drawn onto a canvas first. The size does not change: the
+ * browser keeps the bytes the reader can see.
+ */
+async function toPngBlob(source: string): Promise<Blob> {
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("no canvas");
+  context.drawImage(image, 0, 0);
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("no blob"))), "image/png");
+  });
+}
+
+/**
+ * Big view of a picture. Shows one attachment at a time, lets the reader copy
+ * the picture, save it, save a copy somewhere else, or blow it up to the whole
+ * window.
  *
  * It is the same component in the chat window and on a phone; the only thing a
  * product supplies is what "open" and "save" mean, and on a phone they mean
  * nothing at all.
+ *
+ * It is drawn in a portal on `document.body`, because the conversation owns
+ * stacking contexts of its own: a fixed overlay inside a message was painted
+ * under the composer and the checklist at the bottom of the chat.
  */
 export function Lightbox({
   attachments,
@@ -42,6 +72,7 @@ export function Lightbox({
   startIndex,
   onClose,
   onOpen,
+  onSave,
   onSaveAs,
 }: LightboxProps) {
   const [index, setIndex] = useState(startIndex);
@@ -62,7 +93,9 @@ export function Lightbox({
   const flash = useCallback((text: string) => {
     setNote(text);
     if (noteTimer.current) window.clearTimeout(noteTimer.current);
-    noteTimer.current = window.setTimeout(() => setNote(null), 2600);
+    // A path is a sentence, not a status: leave it up long enough to read.
+    const shown = text.length > 24 ? 6000 : 2600;
+    noteTimer.current = window.setTimeout(() => setNote(null), shown);
   }, []);
 
   useEffect(() => () => {
@@ -111,12 +144,29 @@ export function Lightbox({
     }
   };
 
-  const save = async () => {
-    if (!current || !onSaveAs || saving) return;
+  const copy = async () => {
+    if (!current || !url) return;
+    try {
+      const blob = await toPngBlob(url);
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      flash("Copied");
+    } catch {
+      flash("Couldn't copy it");
+    }
+  };
+
+  const save = async (ask: boolean) => {
+    if (!current || saving) return;
+    if (ask ? !onSaveAs : !onSave) return;
     setSaving(true);
     try {
-      const saved = await onSaveAs(current, suggestedName(current, index));
-      if (saved) flash("Saved");
+      if (ask) {
+        const saved = await onSaveAs!(current, suggestedName(current, index));
+        if (saved) flash("Saved");
+      } else {
+        const path = await onSave!(current);
+        flash(`Saved to ${path}`);
+      }
     } catch {
       flash("Couldn't save it");
     } finally {
@@ -134,7 +184,7 @@ export function Lightbox({
     .filter(Boolean)
     .join(" · ");
 
-  return (
+  return createPortal(
     <div
       className="lightbox"
       data-full={full || undefined}
@@ -158,7 +208,9 @@ export function Lightbox({
               alt={
                 current.kind === "screenshot"
                   ? "Screenshot from the coding agent"
-                  : "Attached picture"
+                  : current.kind === "generated"
+                    ? "Picture Hook made"
+                    : "Attached picture"
               }
               draggable={false}
             />
@@ -194,19 +246,37 @@ export function Lightbox({
       )}
 
       <div className="lightbox-bar">
-        {onOpen ? (
-          <button type="button" className="lightbox-action" onClick={open}>
-            Open
+        <button
+          type="button"
+          className="lightbox-action"
+          onClick={() => void copy()}
+          disabled={!url}
+        >
+          Copy picture
+        </button>
+        {onSave ? (
+          <button
+            type="button"
+            className="lightbox-action"
+            onClick={() => void save(false)}
+            disabled={saving}
+          >
+            {saving ? "Saving…" : "Save"}
           </button>
         ) : null}
         {onSaveAs ? (
           <button
             type="button"
             className="lightbox-action"
-            onClick={save}
+            onClick={() => void save(true)}
             disabled={saving}
           >
-            {saving ? "Saving…" : "Save as…"}
+            Save as…
+          </button>
+        ) : null}
+        {onOpen ? (
+          <button type="button" className="lightbox-action" onClick={open}>
+            Open
           </button>
         ) : null}
         <button
@@ -234,6 +304,7 @@ export function Lightbox({
       >
         ✕
       </button>
-    </div>
+    </div>,
+    document.body,
   );
 }

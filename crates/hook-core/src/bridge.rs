@@ -330,6 +330,11 @@ async fn dispatch(state: Arc<AppState>, chat_id: String, name: String, args: Val
     if crate::workspace::handles(&name) {
         return crate::workspace::execute(&state.workspace, &chat_id, &name, &args).await;
     }
+    // A picture is a request to an endpoint and then a message in this chat:
+    // the agent made it, the user reads it here, and the next request carries it.
+    if crate::tools::IMAGE_TOOLS.contains(&name.as_str()) {
+        return crate::turn::run_picture_tool(&state, &chat_id, &name, &args).await;
+    }
     // A browser call and an agent call answer from somewhere else: the browser
     // process on this machine, or a host across the relay. They need the live
     // state, so they are awaited here instead of being handed to the blocking

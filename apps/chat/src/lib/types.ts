@@ -1,4 +1,4 @@
-export type Role = "user" | "assistant" | "system" | "tool" | "compaction";
+export type Role = "user" | "assistant" | "system" | "tool" | "compaction" | "picture";
 export type MessageStatus = "complete" | "streaming" | "error" | "aborted";
 
 export interface Usage {
