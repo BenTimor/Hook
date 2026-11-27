@@ -24,20 +24,21 @@ A packaged Microsoft Store build uses its own pair (`store.latest` /
 ```json
 {
   "minimumVersion": "0.6.1",
-  "store": { "latest": "0.6.1", "minimumVersion": "0.6.1" }
+  "store": { "latest": "0.6.2", "minimumVersion": "0.6.1" }
 }
 ```
 
-`store.latest` names the version Microsoft has certified (0.6.1) and moves again
-only after the next submission is certified; an empty value means Store builds
-are never told an update exists. The floors are `0.6.1` too, but the server
-clamps a floor to the newest build its channel actually has — 0.6.1 in the
-Store, 0.3.9 on the direct channel while no newer installer is published — so
-today every Store install below 0.6.1 is required to update to it, and the
-direct floor forces anything below 0.3.9. A direct build reaches 0.6.1 only
-when a direct installer is published (`pnpm release`), which is why the direct
-floor stays clamped until then. The Store's own install has a constraint the
-direct channel does not: see
+`store.latest` names the version Microsoft has certified (0.6.2) and moves
+again only after the next submission is certified; an empty value means Store
+builds are never told an update exists. Its floor is `0.6.1`, so a Store
+install on 0.6.1 is offered 0.6.2 as a banner and anything below 0.6.1 is
+required to update; the server never forces a version its channel does not
+have, so a floor above `store.latest` falls back to it. The direct floor is
+`0.6.1` as well, but that channel's newest build is still 0.3.9 while no newer
+installer is published, so the server clamps the floor to it: the direct
+channel forces anything below 0.3.9 and offers nothing newer. A direct build
+reaches 0.6.2 only when a direct installer is published (`pnpm release`). The
+Store's own install has a constraint the direct channel does not: see
 [Updating a Store install](microsoft-store.md#updating-a-store-install).
 
 "Update now" downloads the installer with the signed-in token, checks it against
