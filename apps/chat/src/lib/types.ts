@@ -389,6 +389,8 @@ export interface AgentSummary {
   state: string;
   steps: number;
   plan: PlanStep[];
+  /** What the checklist is for, in the agent's own words. It heads the card. */
+  planTitle?: string;
   createdAt: number;
   updatedAt: number;
   finishedAt?: number;

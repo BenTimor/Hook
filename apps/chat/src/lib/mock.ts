@@ -1248,6 +1248,9 @@ export const mock = {
           id: "ag_demo",
           chatId: "c8",
           title: "Build the launch page",
+          // The checklist's own heading, which the card draws instead of the
+          // conversation's name.
+          planTitle: "Building the launch page",
           project: "site",
           state: finished ? "idle" : waiting ? "needs_input" : "running",
           steps: 18,

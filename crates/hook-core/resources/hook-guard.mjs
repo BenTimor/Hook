@@ -14,10 +14,10 @@
  * 3. Progress reporting: the `report_progress` tool drops notes (and optional
  *    pictures) into a mailbox Hook owns. Hook batches them and hands them to the
  *    chat agent, which turns them into the updates the user actually reads.
- * 4. The checklist: the user watches a short, plain-language plan in the chat.
- *    Hook seeds it (the chat agent writes it) and the `update_plan` tool lets the
- *    coding agent move steps between pending, active and done. Plain files only:
- *    nothing here talks to a network or a model.
+ * 4. The checklist: the user watches a short, plain-language plan in the chat,
+ *    headed by the name the agent gives it (`update_plan`'s `title`), and the
+ *    `update_plan` tool lets the coding agent move steps between pending, active
+ *    and done. Plain files only: nothing here talks to a network or a model.
  * 5. Checklist upkeep: a model deep in a task will happily make forty tool calls
  *    with the first step still marked active, then mark everything done at the
  *    end - the user watches a stuck checklist for the whole run. The guard keeps
@@ -165,6 +165,7 @@ const ACCOUNT_API = Boolean(API_BASE && API_TOKEN);
 const PLAN_SEED_FILE = join(UPDATES_DIR || ".", "plan.json");
 const MAX_PLAN_STEPS = 12;
 const MAX_STEP_TITLE = 90;
+const MAX_PLAN_TITLE = 60;
 const STEP_STATUSES = ["pending", "active", "done"];
 
 // How many tool calls may pass before the checklist is put back in front of the
@@ -194,6 +195,15 @@ function cleanPlan(input) {
   return steps;
 }
 
+/** The checklist's own heading: one card title, never a sentence. */
+function cleanPlanTitle(input) {
+  const title = String(input ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_PLAN_TITLE);
+  return title || null;
+}
+
 /** The plan Hook seeded from the chat agent's brief, if any. */
 function readSeedPlan() {
   if (!UPDATES_DIR) return [];
@@ -201,6 +211,16 @@ function readSeedPlan() {
     return cleanPlan(JSON.parse(readFileSync(PLAN_SEED_FILE, "utf8"))?.steps);
   } catch {
     return [];
+  }
+}
+
+/** The name already on the user's card, so a later call need not repeat it. */
+function readSeedTitle() {
+  if (!UPDATES_DIR) return null;
+  try {
+    return cleanPlanTitle(JSON.parse(readFileSync(PLAN_SEED_FILE, "utf8"))?.title);
+  } catch {
+    return null;
   }
 }
 
@@ -217,7 +237,9 @@ function planReminder() {
   }
   const index = steps.findIndex((step) => step.status === "active");
   const position = index < 0 ? 0 : index;
-  return `The user still sees step ${position + 1}/${steps.length} active: "${steps[position].title}". Call \`update_plan\` as soon as that changes.`;
+  const name = readSeedTitle();
+  const heading = name ? `"${name}" - ` : "";
+  return `The user still sees ${heading}step ${position + 1}/${steps.length} active: "${steps[position].title}". Call \`update_plan\` as soon as that changes.`;
 }
 
 /** Tell the coding agent which checklist the user is watching, and how to keep it. */
@@ -226,6 +248,7 @@ function planGuidance() {
   const rules =
     "\n\n## The user's checklist (Hook)\n" +
     "The user watches this checklist at the bottom of the chat while you work. Keeping it current is part of the job, not a report you write at the end. `update_plan` is how you move it:\n" +
+    "- Give the checklist a `title` the first time you write it: three to six words, plain language, what the work is for - 'Closing four board tasks', 'Adding a dark mode'. It is the heading on the user's card, so it has to read like something they would say. A later call may leave the title out; the card keeps the last one.\n" +
     "- Call `update_plan` the moment a step is finished: mark that step `done` and the step you are now on `active` in the same call. Do not wait for the end of the work, and never mark several finished steps only when you are done.\n" +
     "- A step that is finished but still shown `active` is a lie to the user. If you have moved past a step, update the checklist before you carry on.\n" +
     "- If one step is taking a lot of tool calls because it really holds several jobs, split it into smaller plain-language steps instead of leaving it as one. The user should see the checklist move.\n" +
@@ -686,6 +709,7 @@ export default function (pi) {
         "Replace the checklist the user is watching under the chat. Call it the moment a step is finished - before you move on to the next piece of work - not at the end. Keep the existing plain-language wording; never add technical detail.",
       promptGuidelines: [
         "`update_plan` is the user's checklist: call it when you start or finish a step, and before you pick up the next piece of work.",
+        "Name the checklist in `title` the first time you write it: three to six words of plain language saying what the work is for. It heads the card the user watches. A later call may leave it out and the last name stays.",
         "Mark the finished step `done` and the next one `active` in the same `update_plan` call. Never leave a finished step marked active, and never batch the whole plan to the end.",
         "When a step turns out to hide several separate jobs, split it into smaller plain-language steps rather than keeping one step active for many tool calls.",
         "Keep the step names short, friendly and non-technical - the user reads them directly. No file names, tool names, commands, package names or jargon.",
@@ -697,6 +721,11 @@ export default function (pi) {
       parameters: {
         type: "object",
         properties: {
+          title: {
+            type: "string",
+            description:
+              "What this checklist is for, in three to six plain words - the heading on the user's card, e.g. 'Closing four board tasks'. Send it when you first write the plan; leave it out later to keep the name already shown.",
+          },
           steps: {
             type: "array",
             minItems: 1,
@@ -732,7 +761,10 @@ export default function (pi) {
           };
         }
         mkdirSync(UPDATES_DIR, { recursive: true });
-        const record = { steps, at: Date.now() };
+        // A later call that carries no title keeps the one on the card: the
+        // heading is what the user follows, not a field to re-send.
+        const title = cleanPlanTitle(params?.title) ?? readSeedTitle();
+        const record = { steps, at: Date.now(), ...(title ? { title } : {}) };
         writeFileSync(join(UPDATES_DIR, `p-${Date.now()}-${process.pid}.json`), JSON.stringify(record));
         // Keep the seed current so a later turn (after a steer) starts from the
         // plan as it stands, not from the original brief.
@@ -742,10 +774,10 @@ export default function (pi) {
           content: [
             {
               type: "text",
-              text: `Plan updated (${done}/${steps.length} done). The user sees the checklist in the chat.`,
+              text: `Plan${title ? ` "${title}"` : ""} updated (${done}/${steps.length} done). The user sees the checklist in the chat.`,
             },
           ],
-          details: { steps: steps.length, done },
+          details: { steps: steps.length, done, title },
         };
       },
     });

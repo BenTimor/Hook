@@ -110,7 +110,14 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   a `plan`: three to six short steps in plain language (`Setting things up`,
   `Designing the front page`, `Hooking up the real service`), written by the
   chat agent, never file names or jargon. That checklist sits directly above
-  the composer with the run's title: the active step shows a spinner, finished
+  the composer, headed by its **own title**: the agent names it in
+  `update_plan`'s `title` (`Closing four board tasks`), three to six plain
+  words, and the card keeps that name when a later call leaves it out. The
+  heading is the checklist's, not the conversation's, because a new chat is
+  still `Untitled` when its run starts — the agent names the chat in its first
+  reply, after the run began, so a card headed by the chat would keep that
+  placeholder for the whole run. The chat's current title is the fallback, and
+  the project's name after that. The active step shows a spinner, finished
   steps are struck through and settle to the bottom of the list, and only the
   step in progress carries a clock: it ticks while the agent works on it, and
   the time disappears once the step is crossed off. The coding agent

@@ -1,7 +1,7 @@
 // Exercises Hook's guard extension without pi: loads it, wires a fake
 // ExtensionAPI, and calls the hooks and tools the way pi would.
 import { pathToFileURL } from "node:url";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -53,6 +53,7 @@ const before = await handlers.before_agent_start[0]({ systemPrompt: "BASE" });
 const bash = (input) => handlers.tool_call[0]({ toolName: "bash", input }, {});
 
 const planResult = await tools.update_plan?.execute("call_plan", {
+  title: "Closing four board tasks",
   steps: [
     { title: "Setting things up", status: "done" },
     { title: "Designing the front page", status: "active" },
@@ -60,6 +61,15 @@ const planResult = await tools.update_plan?.execute("call_plan", {
   ],
 });
 const emptyPlan = await tools.update_plan?.execute("call_empty", { steps: [] });
+// A later call that leaves the title out keeps the name already on the card.
+// Its file is written a moment later, so the two records do not share a name.
+await new Promise((resolve) => setTimeout(resolve, 5));
+await tools.update_plan?.execute("call_again", {
+  steps: [
+    { title: "Setting things up", status: "done" },
+    { title: "Designing the front page", status: "done" },
+  ],
+});
 const previewOk = await tools.show_preview?.execute("call_preview", {
   file: "preview.html",
   title: "Insights",
@@ -72,13 +82,17 @@ const previewNotHtml = await tools.show_preview?.execute("call_preview_tsx", {
   file: "app.tsx",
   title: "Nope",
 });
-const planFiles = readdirSync(updatesDir).filter((name) => name.startsWith("p-"));
+const planFiles = readdirSync(updatesDir).filter((name) => name.startsWith("p-")).sort();
 const previewFiles = readdirSync(updatesDir).filter((name) => name.startsWith("v-"));
 const previewWritten = previewFiles.length
   ? JSON.parse(readFileSync(join(updatesDir, previewFiles[0]), "utf8"))
   : null;
 const written = planFiles.length
   ? JSON.parse(readFileSync(join(updatesDir, planFiles[0]), "utf8"))
+  : null;
+// The seed is what the next turn reads: the second call wrote it last.
+const seedRecord = existsSync(join(updatesDir, "plan.json"))
+  ? JSON.parse(readFileSync(join(updatesDir, "plan.json"), "utf8"))
   : null;
 
 // The other half of the git rule: a folder that is not one of Hook's projects.
@@ -234,6 +248,10 @@ const results = {
     resultOk: planResult?.isError !== true,
     emptyPlanRejected: emptyPlan?.isError === true,
     written: written?.steps ?? null,
+    writtenTitle: written?.title ?? null,
+    keptTitle: seedRecord?.title ?? null,
+    schemaHasTitle: Boolean(tools.update_plan?.parameters?.properties?.title),
+    guidanceAsksForTitle: /title/i.test(before?.systemPrompt ?? ""),
   },
   pictures: {
     promisedWithVision:

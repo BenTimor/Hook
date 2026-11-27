@@ -218,7 +218,13 @@ bash.
   is what makes a read local; every other product reaches it over the relay
   (`browser.*`).
 - `crates/hook-core/src/agent.rs` — supervisor for `pi` subprocesses over RPC:
-  spawn, states, plans, progress batching, wakes, stop. It points agents at the
+  spawn, states, plans, progress batching, wakes, stop. A run's checklist is a
+  list of `PlanStep`s plus **one heading of its own** (`plan_title`, harvested
+  from the guard's `update_plan`): the card in the chat is headed by what the
+  checklist is for, never by the chat's title, because a new conversation is
+  still `Untitled` while its run starts — the agent names the chat in its first
+  reply, after the run began. A call without a title keeps the last one, so a
+  step change does not blank the card. It points agents at the
   bundled git and the managed `agent-home/gitconfig` only when the account may
   sync; otherwise `HOOK_SYNC=0` and the guard leaves the git tools out. `transcript()` reads a
   run's pi session file (plus an in-memory tail from `message_update`) for the

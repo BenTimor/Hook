@@ -124,6 +124,15 @@ function AgentTask({
     wasLive.current = live;
   }, [live, allDone]);
 
+  // The card is headed by what the checklist is for, in the agent's own words.
+  // A brand-new conversation is `Untitled` while its run starts — the agent
+  // names it in its first reply, after the run began — so the chat's live title
+  // and then the project are the fallbacks, never a name captured at start.
+  const chatTitle = useChatStore(
+    (state) => state.chats.find((chat) => chat.id === agent.chatId)?.title,
+  );
+  const heading = agent.planTitle || chatTitle || agent.title || agent.project;
+
   const meta = [
     stateLabel(agent),
     total ? `${done}/${total}` : "",
@@ -143,7 +152,7 @@ function AgentTask({
         >
           <span className="agent-card-dot" aria-hidden="true" />
           <span className="agent-card-heading">
-            <span className="agent-card-title">{agent.title || agent.project}</span>
+            <span className="agent-card-title">{heading}</span>
             <span className="agent-card-meta">{meta}</span>
           </span>
           {total > 0 && <ChevronDown className="agent-card-chevron" strokeWidth={2} />}

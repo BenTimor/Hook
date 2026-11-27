@@ -118,6 +118,15 @@ fn guard_blocks_bash_calls_without_a_sane_timeout() {
     );
     assert_eq!(plan["written"][0]["status"], "done");
     assert_eq!(plan["written"][1]["status"], "active");
+    // The checklist's own heading: offered as a field, named by the agent, and
+    // kept when a later call leaves it out.
+    assert_eq!(plan["schemaHasTitle"], true, "update_plan must take a title");
+    assert_eq!(plan["guidanceAsksForTitle"], true, "the prompt must ask for it");
+    assert_eq!(plan["writtenTitle"], "Closing four board tasks");
+    assert_eq!(
+        plan["keptTitle"], "Closing four board tasks",
+        "a call without a title keeps the one on the card"
+    );
 
     // The agent knows it is a coding agent running inside Hook, not a terminal
     // session the user is watching.

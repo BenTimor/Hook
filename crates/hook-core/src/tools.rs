@@ -1560,6 +1560,7 @@ mod tests {
             error: None,
             question: None,
             plan: Vec::new(),
+            plan_title: None,
             direct: false,
             device_id: String::new(),
             device_name: String::new(),

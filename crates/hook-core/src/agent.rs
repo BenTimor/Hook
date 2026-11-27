@@ -42,6 +42,8 @@ pub const STEP_DONE: &str = "done";
 /// A run may grow its checklist, but not without bound.
 pub const MAX_PLAN_STEPS: usize = 12;
 const MAX_STEP_TITLE: usize = 90;
+/// A checklist's own heading is a card title, not a sentence.
+const MAX_PLAN_TITLE: usize = 60;
 
 /// One item of the plan the user watches while the coding agent works. The
 /// chat agent writes the wording (plain, non-technical); the coding agent only
@@ -105,6 +107,12 @@ pub struct AgentInfo {
     /// The user-facing checklist for this run, in display order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plan: Vec<PlanStep>,
+    /// What the checklist is about, in the agent's own words. It heads the card
+    /// instead of the conversation's title, which a new chat does not have yet
+    /// (it is `Untitled` until the agent names it, and the name arrives after
+    /// the run started).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_title: Option<String>,
     /// The run is driven by the user's own conversation rather than by the
     /// chat agent. Nobody has to be woken for it, and it never appears in the
     /// sidebar's coding-agent tree (it is already a chat).
@@ -161,6 +169,9 @@ pub struct AgentSummary {
     pub state: String,
     pub steps: u32,
     pub plan: Vec<PlanStep>,
+    /// The checklist's own heading, when the agent gave it one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_title: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -569,8 +580,9 @@ impl AgentManager {
             files.sort();
 
             let mut harvested: Vec<Update> = Vec::new();
-            // The plan the guard wrote last, with the moment it wrote it.
-            let mut newest_plan: Option<(Vec<PlanStep>, i64)> = None;
+            // The plan the guard wrote last, with the moment it wrote it and
+            // the name it gave it.
+            let mut newest_plan: Option<(Option<String>, Vec<PlanStep>, i64)> = None;
             // The page the guard pointed the preview panel at, newest wins.
             let mut newest_preview: Option<PreviewReport> = None;
             for file in files {
@@ -618,8 +630,13 @@ impl AgentManager {
                             .get("at")
                             .and_then(|v| v.as_i64())
                             .unwrap_or_else(now_ms);
+                        let title = value
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .map(|t| truncate(t.trim(), MAX_PLAN_TITLE))
+                            .filter(|t| !t.is_empty());
                         if let Some(plan) = plan_from_value(&value) {
-                            newest_plan = Some((plan, at));
+                            newest_plan = Some((title, plan, at));
                         }
                     }
                     let _ = std::fs::remove_file(&file);
@@ -661,14 +678,25 @@ impl AgentManager {
                 let mut changed = false;
                 if let Some(entry) = inner.agents.get_mut(&id) {
                     entry.pending.extend(harvested);
-                    if let Some((plan, at)) = newest_plan {
+                    if let Some((title, plan, at)) = newest_plan {
                         // Every update rewrites the whole checklist, so the
                         // clocks have to be carried over by hand.
                         let plan = merge_plan_times(&entry.info.plan, plan, at);
                         if entry.info.plan != plan {
                             entry.info.plan = plan;
-                            entry.info.updated_at = now_ms();
                             changed = true;
+                        }
+                        // A later call that carries no name keeps the one
+                        // already on the card: re-sending it on every step
+                        // would be tokens spent on nothing.
+                        if let Some(title) = title {
+                            if entry.info.plan_title.as_deref() != Some(title.as_str()) {
+                                entry.info.plan_title = Some(title);
+                                changed = true;
+                            }
+                        }
+                        if changed {
+                            entry.info.updated_at = now_ms();
                         }
                     }
                 }
@@ -805,6 +833,7 @@ impl AgentManager {
                     state: info.state.clone(),
                     steps: info.steps,
                     plan: info.plan.clone(),
+                    plan_title: info.plan_title.clone(),
                     created_at: info.created_at,
                     updated_at: info.updated_at,
                     finished_at: info.finished_at,
@@ -1277,6 +1306,7 @@ impl AgentManager {
             error: None,
             question: None,
             plan,
+            plan_title: None,
             direct,
             device_id: self.device_id.clone(),
             device_name: self.device_name(),
@@ -2921,6 +2951,7 @@ name = "test-model"
             error: None,
             question: None,
             plan: Vec::new(),
+            plan_title: None,
             direct: false,
             device_id: String::new(),
             device_name: String::new(),
@@ -3043,6 +3074,7 @@ name = "test-model"
                         error: None,
                         question: None,
                         plan: Vec::new(),
+                        plan_title: None,
                         direct: false,
                         device_id: String::new(),
                         device_name: String::new(),
@@ -3430,6 +3462,7 @@ name = "test-model"
                 error: None,
                 question: None,
                 plan,
+                plan_title: None,
                 direct: false,
                 device_id: String::new(),
                 device_name: String::new(),
@@ -3550,6 +3583,58 @@ name = "test-model"
             second.is_err(),
             "a plan change is for the eye only; it must never wake the chat agent"
         );
+    }
+
+    #[tokio::test]
+    async fn the_checklist_keeps_its_own_heading() {
+        // The card is headed by what the run is about, not by the chat's title:
+        // a new conversation is `Untitled` when its run starts, and the agent
+        // names it only in the first reply. A later call that carries no title
+        // keeps the one already on the card.
+        let (mgr, _rx) = manager_channel();
+        let mut entry = plan_entry(Vec::new());
+        // Harvest only looks at runs that can still write: a live process, or
+        // progress Hook has not delivered yet.
+        let (agent_tx, _agent_rx) = mpsc::unbounded_channel();
+        entry.tx = Some(agent_tx);
+        lock(&mgr.inner).agents.insert("ag_1".into(), entry);
+
+        let dir = mgr.updates_dir("ag_1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("p-1.json"),
+            serde_json::json!({
+                "title": "Closing four board tasks",
+                "steps": [{"title": "Setting things up", "status": "active"}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        mgr.harvest();
+        let info = mgr.get("ag_1").unwrap();
+        assert_eq!(info.plan_title.as_deref(), Some("Closing four board tasks"));
+        assert_eq!(
+            mgr.overview().agents[0].plan_title.as_deref(),
+            Some("Closing four board tasks"),
+            "the heading travels to the card"
+        );
+
+        std::fs::write(
+            dir.join("p-2.json"),
+            serde_json::json!({
+                "steps": [{"title": "Setting things up", "status": "done"}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        mgr.harvest();
+        let info = mgr.get("ag_1").unwrap();
+        assert_eq!(
+            info.plan_title.as_deref(),
+            Some("Closing four board tasks"),
+            "a step change does not take the name away"
+        );
+        assert_eq!(info.plan[0].status, STEP_DONE);
     }
 
     #[tokio::test]
