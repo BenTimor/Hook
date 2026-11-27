@@ -274,6 +274,7 @@ pub fn builder(
             commands::slash_commands,
             commands::set_projects_dir,
             commands::delete_project,
+            commands::restore_project,
             commands::set_advanced_mode,
             commands::set_custom_provider,
             commands::clear_custom_provider,

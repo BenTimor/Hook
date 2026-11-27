@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 
 import { api, openExternal } from "../lib/bridge";
-import type { Project } from "../lib/types";
+import type { Project, TrashedProject } from "../lib/types";
 import { useChatStore } from "../store/useChatStore";
 import { useUpdateStore } from "../store/useUpdateStore";
 import { ImportSection } from "./ImportSection";
@@ -37,6 +37,14 @@ function planName(plan: string | null | undefined): string {
   return "Preview";
 }
 
+/** "goes for good in 6 days", rounded up so it never says a day it has already left. */
+function daysLeft(expiresAt: number): string {
+  const days = Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000));
+  if (days <= 0) return "Goes for good today";
+  if (days === 1) return "Goes for good tomorrow";
+  return `Goes for good in ${days} days`;
+}
+
 /** "in 3h" / "in 12m" for the free message window. */
 function untilReset(iso: string | null | undefined): string {
   if (!iso) return "soon";
@@ -49,22 +57,29 @@ function untilReset(iso: string | null | undefined): string {
 }
 
 /**
- * The projects folder's contents, with a way to remove one.
+ * The projects folder's contents, with a way to remove one, and what was
+ * removed in the last week with a way to bring it back.
  *
  * Removing is how a project leaves the account: deleting the folder in Explorer
  * only reset this device, because the account's row stayed and the next pull
- * created the folder again. The folder itself goes only when it holds nothing
- * but Hook's own `.git` (the empty clone a project from another computer makes
- * here). A folder with work in it is the user's, and the backend refuses rather
- * than guess — that refusal is what the message under the list says.
+ * created the folder again. The folder moves into this product's trash and stays
+ * there for seven days — the project's code is in its git history on the account
+ * either way — so a mistake is a Restore rather than a lost afternoon.
  */
-function ProjectList({ projects }: { projects: Project[] }) {
+function ProjectList({
+  projects,
+  trashed,
+}: {
+  projects: Project[];
+  trashed: TrashedProject[];
+}) {
   const deleteProject = useChatStore((s) => s.deleteProject);
+  const restoreProject = useChatStore((s) => s.restoreProject);
   const [removing, setRemoving] = useState<Project | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  if (!projects.length) {
+  if (!projects.length && !trashed.length) {
     return (
       <p className="sheet-help muted">
         No projects yet. Ask for something and the chat agent will create one.
@@ -87,49 +102,86 @@ function ProjectList({ projects }: { projects: Project[] }) {
 
   return (
     <>
-      <ul className="project-list">
-        {projects.map((project) => (
-          <li key={project.id}>
-            <div className="project-head">
-              <div className="project-copy">
-                <div className="project-name">
-                  {project.name}
-                  {project.isGit && (
-                    <span className="badge">
-                      <GitBranch strokeWidth={2} />
-                      git
-                    </span>
-                  )}
+      {projects.length > 0 && (
+        <ul className="project-list">
+          {projects.map((project) => (
+            <li key={project.id}>
+              <div className="project-head">
+                <div className="project-copy">
+                  <div className="project-name">
+                    {project.name}
+                    {project.isGit && (
+                      <span className="badge">
+                        <GitBranch strokeWidth={2} />
+                        git
+                      </span>
+                    )}
+                  </div>
+                  <div className="project-desc">
+                    {project.description || (
+                      <span className="muted">No description yet</span>
+                    )}
+                  </div>
                 </div>
-                <div className="project-desc">
-                  {project.description || (
-                    <span className="muted">No description yet</span>
-                  )}
-                </div>
+                <button
+                  className="project-remove"
+                  title={`Remove ${project.name}`}
+                  aria-label={`Remove ${project.name}`}
+                  onClick={() => {
+                    setError("");
+                    setRemoving(project);
+                  }}
+                >
+                  <Trash2 strokeWidth={1.9} />
+                </button>
               </div>
-              <button
-                className="project-remove"
-                title={`Remove ${project.name}`}
-                aria-label={`Remove ${project.name}`}
-                onClick={() => {
-                  setError("");
-                  setRemoving(project);
-                }}
-              >
-                <Trash2 strokeWidth={1.9} />
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {trashed.length > 0 && (
+        <div className="project-trash">
+          <p className="sheet-help">
+            Deleted in the last week. A project's folder goes back exactly as it
+            was; after seven days its copy is gone and only the code saved to
+            your account is left.
+          </p>
+          <ul className="project-list">
+            {trashed.map((project) => (
+              <li key={project.id} className="project-trashed">
+                <div className="project-copy">
+                  <div className="project-name">{project.name}</div>
+                  <div className="project-desc muted">
+                    {daysLeft(project.expiresAt)}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-ghost project-restore"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    void restoreProject(project.id).finally(() =>
+                      setBusy(false),
+                    );
+                  }}
+                >
+                  Restore
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {removing && (
         <div className="project-confirm">
           <p>
             Remove <strong>{removing.name}</strong> from Hook? It leaves this list
-            and your account. The folder itself is deleted only when it holds
-            nothing but Hook's <code>.git</code>; a folder with files in it stays
-            on disk, and Hook says so instead.
+            and your account. Its folder moves to the trash for seven days, so
+            you can restore it here — or ask the agent to. After that its copy is
+            gone; the code you saved to your account stays in the project's git
+            history.
           </p>
           {error && <p className="project-error">{error}</p>}
           <div className="project-confirm-actions">
@@ -145,7 +197,7 @@ function ProjectList({ projects }: { projects: Project[] }) {
               disabled={busy}
               onClick={() => void remove(removing)}
             >
-              {busy ? "Removing…" : "Remove"}
+              {busy ? "Removing…" : "Move to trash"}
             </button>
           </div>
         </div>
@@ -701,8 +753,11 @@ export function SettingsSheet() {
               </button>
             </div>
 
-            {settings?.projects.length ? (
-              <ProjectList projects={settings.projects} />
+            {settings?.projects.length || settings?.trashed.length ? (
+              <ProjectList
+                projects={settings.projects}
+                trashed={settings.trashed}
+              />
             ) : (
               <p className="sheet-help muted">
                 No projects yet. Ask for something and the chat agent will create one.

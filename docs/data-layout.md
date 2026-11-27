@@ -23,7 +23,11 @@ same crate without a window, uses `$XDG_DATA_HOME` (or
   chats\<id>.json          one readable JSON file per conversation; a
                            `"kind": "coding"` file is a coding-agent chat and
                            stays on this machine
-  trash\                   undoable deletions
+  trash\                   undoable deletions: a chat is <chat id>.json, and
+                           projects\<project id>\ is a removed project's folder,
+                           listed in projects.json and deleted after seven days
+                           (the project's git repository on the account is what
+                           holds its code after that)
   images\<chat id>\        pictures attached to messages (bytes on disk)
   settings.json            projects folder, memory switch, the advanced-mode
                            fallback, and a personal model endpoint and key if

@@ -983,14 +983,20 @@ Changing one side of a boundary is the most common way to break this repo.
   project of its own and pushed it as a new one). One project
   the account refuses (a >64-character or reserved name) is skipped locally and
   logged — never allowed to 400 the batch. A project is deleted by removing its
-  folder, through `delete_project` (the sidebar) or through the agent's
-  `delete_project` tool (local, or `projects.delete` on the machine that holds
-  it): `list` drops a note whose folder is gone, `take_dropped` hands it to the
-  sync engine, and `push_projects` sends `{deleted: true}` — without that
-  tombstone the account's row survives and the next pull creates the folder
-  again. The folder itself is deleted only when it holds nothing but `.git`
-  (`is_reusable`), so Hook never removes the user's work; a deletion on one
-  computer keeps another computer's copy, which pushes the project back.
+  folder, through `delete_project` (the sidebar, or the agent's tool over IPC or
+  `projects.delete` on the machine that holds it): the folder moves into that
+  product's trash (`trash/projects/<id>` plus `trash/projects.json`, seven days
+  — `TRASH_DAYS`), the note goes, and the sync engine sends `{deleted: true}` —
+  without that tombstone the account's row survives and the next pull creates
+  the folder again. `restore_project` (`projects.restore`, and `projects.trash`
+  for the list) moves the folder back and cancels the tombstone while it is
+  queued, or re-sends the project so the row and its repository come back with
+  the same id; a copy already purged leaves an empty folder for
+  `prepare_projects` to pull the commits into, which is why a delete is never a
+  loss of the pushed history. `list` still drops a note whose folder is gone and
+  hands it to `take_dropped`, the way a folder removed in Explorer is deleted. A
+  deletion on one computer keeps another computer's copy, which pushes the
+  project back.
 - **A turn that seems to never answer:** run the app with `HOOK_DEBUG_TURN=1`
   and watch stderr — every step (placeholder saved, calling the model, model
   returned) is logged. `%APPDATA%\app.hook.chat\panic.log` catches panics (a

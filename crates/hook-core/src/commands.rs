@@ -1219,6 +1219,9 @@ pub struct CustomProviderView {
 pub struct SettingsView {
     pub projects_dir: String,
     pub projects: Vec<Project>,
+    /// Projects removed in the last seven days, with the day each copy goes for
+    /// good. The Settings sheet lists them under the projects with a Restore.
+    pub trashed: Vec<crate::projects::TrashedProject>,
     /// The conversation shows thinking and tool calls, and the sidebar shows
     /// every coding-agent transcript. See `SettingsStore::advanced_mode`.
     pub advanced_mode: bool,
@@ -1237,6 +1240,7 @@ fn settings_view(state: &AppState) -> SettingsView {
     SettingsView {
         projects_dir: projects_dir.to_string_lossy().to_string(),
         projects,
+        trashed: state.projects.trashed(),
         advanced_mode: state
             .auth
             .advanced_mode()
@@ -1275,11 +1279,12 @@ pub async fn set_projects_dir(
 
 /// Remove a project from this computer and from the account.
 ///
-/// The folder itself goes only when it holds nothing but Hook's own `.git` — the
-/// empty clone that stands in for a project which arrived from another computer.
-/// A folder with work in it is the user's, so `ProjectsStore::delete` refuses
-/// rather than guess. Either way the account's row is removed, through the
-/// tombstone the sync engine sends, so the next pull cannot put it back.
+/// The folder moves into this product's trash, where it stays for seven days
+/// ([`crate::projects::TRASH_DAYS`]) — nothing of the user's is destroyed on the
+/// spot, and `restore_project` puts it back. The account's row is removed through
+/// the tombstone the sync engine sends, so the next pull cannot put it back; a
+/// restore re-sends the project, and the row and its repository come back with
+/// the same id.
 #[tauri::command]
 pub fn delete_project(
     state: State<'_, Arc<AppState>>,
@@ -1287,6 +1292,32 @@ pub fn delete_project(
 ) -> Result<SettingsView, String> {
     let project = state.projects.delete(&id)?;
     state.sync.project_deleted(&project.id);
+    state.sync.wake();
+    state.events.emit(
+        "hook://sync",
+        serde_json::json!({
+            "chats": false,
+            "projects": true,
+            "memory": false,
+            "at": now_ms(),
+        }),
+    );
+    Ok(settings_view(&state))
+}
+
+/// Bring a project back out of the trash, with the files it had.
+///
+/// The sync engine cancels the tombstone if it has not gone out and re-sends the
+/// project otherwise, so the account's row returns with the same id. When the
+/// copy is already gone the folder comes back empty and the repository's commits
+/// are pulled into it on the next cycle.
+#[tauri::command]
+pub fn restore_project(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<SettingsView, String> {
+    let restored = state.projects.restore(&state.settings.projects_dir(), &id)?;
+    state.sync.project_restored(&restored.project.id);
     state.sync.wake();
     state.events.emit(
         "hook://sync",

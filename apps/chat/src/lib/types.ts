@@ -304,6 +304,18 @@ export interface Project {
   isGit: boolean;
 }
 
+/** A project removed in the last seven days, with the day its copy goes. */
+export interface TrashedProject {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  deletedAt: number;
+  expiresAt: number;
+  /** False when only the project's git history on the account is left. */
+  hasFolder: boolean;
+}
+
 /** A model endpoint the user brought themselves, for this product only. */
 export interface CustomProvider {
   /** Base URL or full endpoint, as entered. */
@@ -316,6 +328,8 @@ export interface CustomProvider {
 export interface SettingsView {
   projectsDir: string;
   projects: Project[];
+  /** Projects removed in the last seven days, recoverable until `expiresAt`. */
+  trashed: TrashedProject[];
   /** Thinking, tool calls and the coding-agent inspector are shown. */
   advancedMode: boolean;
   /** `free`, `plus` or `pro`. Null on a local preview build. */

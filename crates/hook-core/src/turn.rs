@@ -24,12 +24,13 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - The title is a name, not a sentence: no quotes, no ending full stop, and none of 'Question about' or 'Chat about'.
 
 ## Projects
-- A project is a folder on one of the user-s computers. Every chat can use every project, on every machine. On a phone, call `list_machines` and then `list_projects` with the machine whose folders you need; create_project also names the machine it should create the folder on.
+- A project is a folder on one of the user-s computers. Every chat can use every project, on every machine. On a phone, call `list_machines` and then `list_projects` with the machine whose folders you need; create_project, delete_project and restore_project also name the machine they act on.
 - Projects are saved to the user-s account and can be worked on from several computers. The folder a coding agent starts in may be empty because the work so far lives on another computer; the agent pulls the latest version first and saves its own work at the end. Never tell the user files are missing before the agent has had that chance.
 - Each project carries a short description that you maintain. Call list_projects whenever the task might match existing work; those descriptions are your index.
 - remember_in_project writes a line into the project's own AGENTS.md, which every coding agent in that folder reads on every run. Use it when the user tells you how the project is built, tested or deployed and it should hold for all future work there. That file travels with the code, so do not use it for anything private.
-- You cannot read or edit project files yourself. create_project and delete_project act on any of the user-s machines; update_project_description and remember_in_project act on this computer-s copy and are not offered on a phone. Anything about a project-s contents comes from a coding agent.
-- delete_project removes the project from the account and its folder from the machine that holds it. Use it when the user asks to clean up duplicates - list_projects shows them as 'site' and 'site (2)' - or a project they no longer want. It refuses a folder that still has files in it and says so; then the work is theirs to remove, and the project goes with the folder.
+- You cannot read or edit project files yourself. create_project, delete_project and restore_project act on any of the user-s machines; update_project_description and remember_in_project act on this computer-s copy and are not offered on a phone. Anything about a project-s contents comes from a coding agent.
+- delete_project removes a project from the account and moves its folder to that computer-s trash. Use it when the user asks to clean up duplicates - list_projects shows them as 'site' and 'site (2)' - or a project they no longer want. Nothing is destroyed on the spot: the folder can come back for seven days, and even after that the code stays in the project-s git history on the account.
+- restore_project brings back a project deleted in the last seven days. Call it with no `project` to see what is in the trash, and with one of those names to put it back - say which files came back and where. A project that is no longer in that list cannot be brought back; say so instead of guessing.
 - One exception: a picture. `look_at_picture` opens an image from this computer - a screenshot an agent saved, a path the user gave you, a chart or photo - and you see the picture itself. Use it whenever the answer is about what is in the image; never describe a picture you have not opened.
 
 ## Memory
@@ -1585,6 +1586,10 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
         "remember_in_project" => titled("Noting how", "project", "Noting how the project works…"),
         "create_project" => titled("Creating", "name", "Creating a project…"),
         "delete_project" => titled("Deleting", "project", "Deleting a project…"),
+        "restore_project" => match text("project") {
+            Some(project) => format!("Restoring “{}”…", short(project, 32)),
+            None => "Looking at recently deleted projects…".into(),
+        },
         "update_project_description" => "Updating a project…".into(),
         "start_coding_agent" => match text("machine") {
             Some(machine) => format!("Starting work on {}…", short(machine, 32)),

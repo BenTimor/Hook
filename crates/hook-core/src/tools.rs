@@ -23,11 +23,12 @@ pub const AGENT_TOOLS: [&str; 8] = [
 
 /// Tools that may have to travel to another machine. They are the only ones
 /// the async dispatcher intercepts; everything else stays a local call.
-pub const MACHINE_TOOLS: [&str; 11] = [
+pub const MACHINE_TOOLS: [&str; 12] = [
     "list_machines",
     "list_projects",
     "create_project",
     "delete_project",
+    "restore_project",
     "start_coding_agent",
     "list_agents",
     "agent_status",
@@ -133,7 +134,7 @@ pub fn definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "delete_project",
-                "description": "Delete a project: remove its entry from the account and its folder from the machine that holds it, so no other computer brings it back. Use it when the user asks to clean up duplicates ('site (2)') or a project they no longer want. Hook refuses a folder that still holds work, and says so; never promise the files are gone. Name the machine, even on a desktop; call list_machines first.",
+                "description": "Delete a project: take it out of the projects list and off the account, and move its folder to that computer's trash. Use it when the user asks to clean up duplicates ('site (2)') or a project they no longer want. Nothing is destroyed: the folder can be restored for seven days with restore_project, and the code saved to the account stays in the project's git history after that. Name the machine, even on a desktop; call list_machines first.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -141,6 +142,22 @@ pub fn definitions() -> Value {
                         "machine": { "type": "string", "description": "The exact machine name from list_machines. Use 'this computer' on the desktop that holds the folder." }
                     },
                     "required": ["project", "machine"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "restore_project",
+                "description": "Bring back a project that was deleted in the last seven days, or answer with what is in the trash. A deleted project's folder moves to a trash for seven days; after that its copy is gone and only the code in its git history on the account is left. Call it with no `project` to see what can still come back, and with one to restore it.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "The name of a deleted project, as the list this tool answers without a project shows it." },
+                        "machine": { "type": "string", "description": "The exact machine name from list_machines. Use 'this computer' on the desktop whose trash it is." }
+                    },
+                    "required": ["machine"],
                     "additionalProperties": false
                 }
             }
@@ -592,9 +609,11 @@ pub fn direct_bridge_definitions(
             if (AGENT_TOOLS.contains(&name) && name != "list_machines")
                 || name == "web_search"
                 || name == "no_update"
-                // A direct agent works inside one folder; removing projects is
-                // the chat agent's job, and this one could delete its own.
+                // A direct agent works inside one folder; removing or
+                // restoring projects is the chat agent's job, and this one
+                // could delete its own.
                 || name == "delete_project"
+                || name == "restore_project"
                 // The engine can already open a picture with its own `read`,
                 // and the pictures it opens belong to its own turn: a bridge
                 // call would only hand it text.
@@ -994,6 +1013,24 @@ async fn run_machine(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Valu
             json!({ "project": arg_str(args, "project")? }),
             std::time::Duration::from_secs(30),
         ),
+        "restore_project" => {
+            // No project is a question, not a request: what is in the trash.
+            let project = args
+                .get("project")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if project.is_empty() {
+                ("projects.trash", json!({}), std::time::Duration::from_secs(20))
+            } else {
+                (
+                    "projects.restore",
+                    json!({ "project": project }),
+                    std::time::Duration::from_secs(30),
+                )
+            }
+        }
         "list_agents" => (
             "agent.list",
             json!({ "chatId": env.chat_id }),
@@ -1167,7 +1204,65 @@ fn run(env: &ToolEnv<'_>, name: &str, args: &Value) -> Result<Value, String> {
             }
             Ok(json!({
                 "deleted": project.name,
-                "hint": "It is gone from this computer and from the account.",
+                "hint": format!(
+                    "It is out of the projects list and off the account. Its folder is in this computer's trash for {} days; restore_project brings it back.",
+                    crate::projects::TRASH_DAYS
+                ),
+            }))
+        }
+        "restore_project" => {
+            let reference = args
+                .get("project")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if reference.is_empty() {
+                let now = crate::store::now_ms();
+                const DAY: i64 = 24 * 60 * 60 * 1000;
+                let items: Vec<Value> = env
+                    .projects
+                    .trashed()
+                    .iter()
+                    .map(|entry| {
+                        json!({
+                            "project": entry.name,
+                            "days_left": ((entry.expires_at - now).max(0) + DAY - 1) / DAY,
+                            "has_files": entry.has_folder,
+                        })
+                    })
+                    .collect();
+                return Ok(json!({
+                    "trashed": items,
+                    "hint": if items.is_empty() {
+                        "Nothing has been deleted in the last seven days."
+                    } else {
+                        "Pass one of these to restore_project to bring it back."
+                    },
+                }));
+            }
+            let restored = env.projects.restore(&root, &reference)?;
+            if let Some(state) = env.state {
+                state.sync.project_restored(&restored.project.id);
+                state.sync.wake();
+                state.events.emit_value(
+                    "hook://sync",
+                    json!({
+                        "chats": false,
+                        "projects": true,
+                        "memory": false,
+                        "at": crate::store::now_ms(),
+                    }),
+                );
+            }
+            Ok(json!({
+                "restored": restored.project.name,
+                "fromTrash": restored.from_trash,
+                "hint": if restored.from_trash {
+                    "Its folder is back where it was, with the files it had."
+                } else {
+                    "The folder is empty for now; the work saved to the account comes back on the next sync."
+                },
             }))
         }
         "update_project_description" => {
@@ -1533,6 +1628,7 @@ mod tests {
             "list_projects",
             "create_project",
             "delete_project",
+            "restore_project",
             "update_project_description",
             "start_coding_agent",
             "list_agents",
@@ -1574,6 +1670,7 @@ mod tests {
         for name in [
             "create_project",
             "delete_project",
+            "restore_project",
             "start_coding_agent",
             "list_agents",
             "agent_status",
@@ -1672,9 +1769,10 @@ mod tests {
             // The engine opens pictures with its own `read`; the bridge would
             // answer this one with text and no picture.
             "look_at_picture",
-            // It works inside one project; removing projects is the chat
-            // agent's job, and this one could delete its own folder.
+            // It works inside one project; removing or restoring projects is
+            // the chat agent's job, and this one could delete its own folder.
             "delete_project",
+            "restore_project",
         ] {
             assert!(!names.contains(&refused), "{refused} must not be offered");
         }
@@ -1844,11 +1942,20 @@ mod tests {
         let again = execute(&env, "delete_project", &json!({ "project": "site (2)" }));
         assert!(again.contains("does not exist"), "{again}");
 
-        // Work in the folder is the user's: the tool refuses and nothing goes.
+        // Work in the folder is the user's, so it goes to the trash whole — and
+        // says where it went, because an agent has to be able to tell them.
         let real = projects.create(&projects_dir, "real", "").unwrap();
         std::fs::write(std::path::Path::new(&real.path).join("index.html"), "hi").unwrap();
-        let refused = execute(&env, "delete_project", &json!({ "project": "real" }));
-        assert!(refused.contains("never deletes your work"), "{refused}");
+        let trashed = execute(&env, "delete_project", &json!({ "project": "real" }));
+        assert!(trashed.contains("\"deleted\":\"real\""), "{trashed}");
+        assert!(trashed.contains("trash"), "{trashed}");
+        assert!(!std::path::Path::new(&real.path).exists());
+
+        // And the listing an agent asks for next tells it what can come back.
+        let listed = execute(&env, "restore_project", &json!({}));
+        assert!(listed.contains("\"real\""), "{listed}");
+        let back = execute(&env, "restore_project", &json!({ "project": "real" }));
+        assert!(back.contains("\"restored\":\"real\""), "{back}");
         assert!(std::path::Path::new(&real.path).join("index.html").exists());
     }
 

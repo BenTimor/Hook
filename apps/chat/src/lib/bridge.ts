@@ -359,14 +359,20 @@ export const api = {
       : mock.setProjectsDir(path),
 
   /**
-   * Remove a project from this computer and from the account. The folder itself
-   * only goes when it holds nothing but Hook's `.git`; a folder with work in it
-   * is refused, so Hook never deletes someone's files.
+   * Remove a project from this computer and from the account. The folder moves
+   * into this product's trash for seven days, so a mistake can be undone;
+   * `restoreProject` brings it back.
    */
   deleteProject: (id: string): Promise<SettingsView> =>
     isTauri()
       ? invoke<SettingsView>("delete_project", { id })
       : mock.deleteProject(id),
+
+  /** Put a project from the trash back, with the files it had. */
+  restoreProject: (id: string): Promise<SettingsView> =>
+    isTauri()
+      ? invoke<SettingsView>("restore_project", { id })
+      : mock.restoreProject(id),
 
   setAdvancedMode: (enabled: boolean): Promise<SettingsView> =>
     isTauri()

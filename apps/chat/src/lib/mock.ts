@@ -27,6 +27,7 @@ import type {
   RemoteTarget,
   SearchHit,
   SettingsView,
+  TrashedProject,
   SlashCommand,
   StreamEvent,
   SyncView,
@@ -419,8 +420,8 @@ const demoLogin = () =>
 let MOCK_ADVANCED =
   new URLSearchParams(window.location.search).get("advanced") === "1";
 
-/** Coding projects, in the tab only. Removing one drops it from this list, so
- * the settings screen can be clicked through without the desktop shell. */
+/** Coding projects, in the tab only. Removing one moves it to the tab's trash,
+ * so the settings screen can be clicked through without the desktop shell. */
 let MOCK_PROJECTS: Project[] = [
   {
     id: "pj_mock_invoice",
@@ -442,6 +443,11 @@ let MOCK_PROJECTS: Project[] = [
     isGit: true,
   },
 ];
+
+/** Projects removed in this tab, newest first, with the day each copy goes. */
+let MOCK_TRASH: TrashedProject[] = [];
+
+const TRASH_DAYS = 7;
 
 /**
  * Browser preview only. The desktop keeps memories in the shared account folder
@@ -941,6 +947,7 @@ export const mock = {
       cloudSync: MOCK_CLOUD_SYNC,
       customProvider: MOCK_PROVIDER,
       projects: MOCK_PROJECTS,
+      trashed: MOCK_TRASH,
     };
   },
 
@@ -950,7 +957,42 @@ export const mock = {
   },
 
   async deleteProject(id: string): Promise<SettingsView> {
-    MOCK_PROJECTS = MOCK_PROJECTS.filter((project) => project.id !== id);
+    const project = MOCK_PROJECTS.find((entry) => entry.id === id);
+    MOCK_PROJECTS = MOCK_PROJECTS.filter((entry) => entry.id !== id);
+    if (project) {
+      const now = Date.now();
+      MOCK_TRASH = [
+        {
+          id: project.id,
+          name: project.name,
+          description: project.description,
+          path: project.path,
+          deletedAt: now,
+          expiresAt: now + TRASH_DAYS * DAY,
+          hasFolder: true,
+        },
+        ...MOCK_TRASH.filter((entry) => entry.id !== id),
+      ];
+    }
+    return mock.getSettings();
+  },
+
+  async restoreProject(id: string): Promise<SettingsView> {
+    const entry = MOCK_TRASH.find((project) => project.id === id);
+    if (!entry) throw new Error("That project is not in the trash.");
+    MOCK_TRASH = MOCK_TRASH.filter((project) => project.id !== id);
+    MOCK_PROJECTS = [
+      ...MOCK_PROJECTS,
+      {
+        id: entry.id,
+        name: entry.name,
+        path: entry.path,
+        description: entry.description,
+        createdAt: entry.deletedAt,
+        updatedAt: Date.now(),
+        isGit: entry.hasFolder,
+      },
+    ];
     return mock.getSettings();
   },
 

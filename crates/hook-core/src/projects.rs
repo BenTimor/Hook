@@ -49,6 +49,69 @@ struct NotesFile {
     projects: Vec<ProjectNote>,
 }
 
+/// A project that was removed, kept in the product's trash until it expires.
+///
+/// The folder moves under `trash/projects/<id>`, so nothing of the user's is
+/// destroyed at the moment they ask for it, and [`TRASH_DAYS`] later the copy
+/// goes for good. The project's own git repository on the account keeps the
+/// code either way, which is why a restore can also rebuild a folder that is no
+/// longer here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrashNote {
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    created_at: i64,
+    #[serde(default)]
+    updated_at: i64,
+    #[serde(default)]
+    deleted_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct TrashFile<'a> {
+    projects: &'a [TrashNote],
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TrashFileRead {
+    #[serde(default)]
+    projects: Vec<TrashNote>,
+}
+
+/// What the Settings sheet and an agent show for a removed project.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashedProject {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub deleted_at: i64,
+    /// When the copy in the trash is removed for good.
+    pub expires_at: i64,
+    /// True while the folder itself is here. False means only the project's git
+    /// history on the account is left to restore from, which still works.
+    pub has_folder: bool,
+}
+
+/// What a restore brought back.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoredProject {
+    pub project: Project,
+    /// True when the folder came back from the trash; false when it was already
+    /// gone and the project returns as an empty folder for the sync engine to
+    /// fill from the account's git copy.
+    pub from_trash: bool,
+}
+
 pub struct ProjectsStore {
     path: PathBuf,
     notes: Mutex<Vec<ProjectNote>>,
@@ -56,7 +119,21 @@ pub struct ProjectsStore {
     /// hears about the deletion. Without that tombstone the next pull would
     /// create the folder again.
     dropped: Mutex<Vec<Project>>,
+    /// `trash/projects/<id>` holds a removed project's folder, and
+    /// `trash/projects.json` the list of what is recoverable.
+    trash: PathBuf,
+    trash_index: PathBuf,
+    /// When the trash was last swept, so a listing does not sweep every time.
+    swept: Mutex<i64>,
 }
+
+/// How long a removed project stays recoverable. Long enough to notice a
+/// mistake, short enough that the disk is not held forever; the project's git
+/// repository on the account outlives the copy either way.
+pub const TRASH_DAYS: i64 = 7;
+const TRASH_MS: i64 = TRASH_DAYS * 24 * 60 * 60 * 1000;
+/// A sweep looks at the trash at most this often, however many listings happen.
+const SWEEP_EVERY_MS: i64 = 60 * 60 * 1000;
 
 /// How many dropped notes are remembered for the sync engine. A bulk delete is
 /// one listing; anything larger means the projects folder itself went away and
@@ -229,10 +306,16 @@ impl ProjectsStore {
             .and_then(|raw| serde_json::from_str::<NotesFile>(&raw).ok())
             .map(|f| f.projects)
             .unwrap_or_default();
+        // The chat trash lives in the same folder (`trash/<chat id>.json`), so
+        // removed project folders get a subfolder of their own.
+        let trash = app_data_dir.join("trash");
         Self {
             path,
             notes: Mutex::new(notes),
             dropped: Mutex::new(Vec::new()),
+            trash_index: trash.join("projects.json"),
+            trash: trash.join("projects"),
+            swept: Mutex::new(0),
         }
     }
 
@@ -270,6 +353,9 @@ impl ProjectsStore {
         if !root.is_dir() {
             return Ok(Vec::new());
         }
+        // A listing is the one thing that happens on every sync cycle, so it is
+        // also where the trash notices that a copy has outlived its week.
+        self.sweep(now_ms());
         let entries = fs::read_dir(root)
             .map_err(|e| format!("Could not read {}: {e}", root.display()))?;
         let mut folders: Vec<(PathBuf, String)> = Vec::new();
@@ -389,6 +475,24 @@ impl ProjectsStore {
                 self.save_locked(&notes)?;
             }
             if !gone.is_empty() {
+                // The folder is gone, but the work may still be in the project's
+                // git history on the account: an entry with nothing to move lets
+                // `restore` rebuild the folder and pull the commits into it.
+                let now = now_ms();
+                let mut trash = self.trash_notes();
+                for project in &gone {
+                    trash.retain(|entry| entry.id != project.id);
+                    trash.push(TrashNote {
+                        id: project.id.clone(),
+                        name: project.name.clone(),
+                        path: project.path.clone(),
+                        description: project.description.clone(),
+                        created_at: project.created_at,
+                        updated_at: project.updated_at,
+                        deleted_at: now,
+                    });
+                }
+                let _ = self.save_trash(&trash);
                 let mut queue = lock(&self.dropped);
                 queue.extend(gone);
                 if queue.len() > MAX_DROPPED {
@@ -497,8 +601,9 @@ impl ProjectsStore {
 
     /// Remove the project the user or an agent knows by `reference`: a folder
     /// name, an account id or an absolute path, resolved the way [`resolve`]
-    /// resolves it. This is what a tool or a controller deletes one by, so the
-    /// folder rules in [`delete`] still decide whether anything is removed.
+    /// resolves it. This is what a tool or a controller deletes one by; the
+    /// folder moves into the trash, so the rules in [`delete`] are the ones that
+    /// say what a delete means.
     ///
     /// [`resolve`]: Self::resolve
     /// [`delete`]: Self::delete
@@ -534,14 +639,16 @@ impl ProjectsStore {
         std::mem::take(&mut *lock(&self.dropped))
     }
 
-    /// Remove a project from this computer.
+    /// Remove a project from this computer, keeping it recoverable for
+    /// [`TRASH_DAYS`].
     ///
-    /// The note goes, so the project leaves Hook and, through the tombstone the
-    /// caller queues, the account. The folder itself is removed only when it
-    /// holds nothing but Hook's own `.git` — the empty clone `bind` makes for a
-    /// project that arrived from another computer. Work in a folder belongs to
-    /// the user, so Hook refuses rather than guess; delete the folder and `list`
-    /// drops the note (and the account's row) on its own.
+    /// The folder moves into this product's trash — nothing of the user's is
+    /// destroyed when they ask — and the note goes, so the project leaves Hook
+    /// and, through the tombstone the caller queues, the account. [`restore`]
+    /// brings it back while the copy is there, and rebuilds it from the
+    /// project's git history on the account when it is not.
+    ///
+    /// [`restore`]: Self::restore
     pub fn delete(&self, id: &str) -> Result<Project, String> {
         if id.is_empty() {
             return Err("No project specified.".into());
@@ -555,18 +662,35 @@ impl ProjectsStore {
         };
         let project = Self::project_from(&note);
         let path = PathBuf::from(&note.path);
-        if path.is_dir() && !is_reusable(&path) {
-            return Err(format!(
-                "\"{}\" has files in it, and Hook never deletes your work. Delete the folder yourself and the project goes with it.",
-                project.name
-            ));
-        }
-        // The folder first: a failed delete then leaves the note (and the
+        // The folder first: a failed move then leaves the note (and the
         // project) exactly as it was, instead of orphaning a folder that the
         // next listing would bring back as a new project.
         if path.is_dir() {
-            fs::remove_dir_all(&path)
-                .map_err(|e| format!("Could not delete {}: {e}", project.name))?;
+            let into = self.trash.join(&project.id);
+            if into.exists() {
+                fs::remove_dir_all(&into).map_err(|e| {
+                    format!("Could not clear an older copy of {}: {e}", project.name)
+                })?;
+            }
+            move_dir(&path, &into)
+                .map_err(|e| format!("Could not move {} to the trash: {e}", project.name))?;
+            let mut trash = self.trash_notes();
+            trash.retain(|entry| entry.id != project.id);
+            trash.push(TrashNote {
+                id: project.id.clone(),
+                name: project.name.clone(),
+                path: note.path.clone(),
+                description: project.description.clone(),
+                created_at: project.created_at,
+                updated_at: project.updated_at,
+                deleted_at: now_ms(),
+            });
+            // A trash nobody can list is worse than no trash: put the folder
+            // back where it was rather than leave it unlisted.
+            if let Err(error) = self.save_trash(&trash) {
+                let _ = move_dir(&into, &path);
+                return Err(error);
+            }
         }
         {
             let mut notes = lock(&self.notes);
@@ -574,6 +698,207 @@ impl ProjectsStore {
             self.save_locked(&notes)?;
         }
         Ok(project)
+    }
+
+    /// The projects removed in the last [`TRASH_DAYS`], newest first. Expired
+    /// copies are deleted on the way past, which is the whole of the retainer.
+    pub fn trashed(&self) -> Vec<TrashedProject> {
+        let now = now_ms();
+        let mut notes = self.notes_in_trash(now);
+        if self.expire(&mut notes, now) {
+            let _ = self.save_trash(&notes);
+        }
+        let mut out: Vec<TrashedProject> = notes
+            .iter()
+            .map(|note| TrashedProject {
+                id: note.id.clone(),
+                name: if note.name.is_empty() {
+                    name_of(Path::new(&note.path))
+                } else {
+                    note.name.clone()
+                },
+                description: note.description.clone(),
+                path: note.path.clone(),
+                deleted_at: note.deleted_at,
+                expires_at: note.deleted_at.saturating_add(TRASH_MS),
+                has_folder: self.trash.join(&note.id).is_dir(),
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            b.deleted_at
+                .cmp(&a.deleted_at)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        out
+    }
+
+    /// Bring a removed project back: by account id, or by the name it had.
+    ///
+    /// A folder still in the trash goes back to the path it came from (or a
+    /// free name under `root`, if the projects folder has moved since). After
+    /// the copy is gone the project returns as an empty folder instead, and the
+    /// sync engine pulls the code back from the account's git repository — the
+    /// repository outlives the account row, so a delete is never a loss of the
+    /// pushed history.
+    pub fn restore(&self, root: &Path, reference: &str) -> Result<RestoredProject, String> {
+        let raw = reference.trim();
+        if raw.is_empty() {
+            return Err("Name the project to restore.".into());
+        }
+        let now = now_ms();
+        let mut notes = self.notes_in_trash(now);
+        let found = notes
+            .iter()
+            .position(|entry| entry.id == raw || entry.name.eq_ignore_ascii_case(raw));
+        let Some(index) = found else {
+            return Err(format!(
+                "\"{raw}\" is not in the trash. A removed project is kept for {TRASH_DAYS} days."
+            ));
+        };
+        if now.saturating_sub(notes[index].deleted_at) >= TRASH_MS {
+            self.expire(&mut notes, now);
+            let _ = self.save_trash(&notes);
+            return Err(format!(
+                "\"{raw}\" was removed more than {TRASH_DAYS} days ago, so its copy is gone."
+            ));
+        }
+        let entry = notes.remove(index);
+        if lock(&self.notes).iter().any(|note| note.id == entry.id) {
+            let _ = self.save_trash(&notes);
+            return Err(format!(
+                "\"{}\" is already one of your projects.",
+                if entry.name.is_empty() { entry.id.as_str() } else { entry.name.as_str() }
+            ));
+        }
+        let name = if entry.name.is_empty() {
+            name_of(Path::new(&entry.path))
+        } else {
+            entry.name.clone()
+        };
+        let root = &canonical(root);
+        let root_key = key_of(root);
+        let came_from = PathBuf::from(&entry.path);
+        let inside = came_from
+            .parent()
+            .map(|parent| parent.to_string_lossy().eq_ignore_ascii_case(&root_key))
+            .unwrap_or(false);
+        let mut target = if inside {
+            came_from
+        } else {
+            // The projects folder moved while this was in the trash: put the
+            // project back under the name it has, not at yesterday's path.
+            root.join(folder_name(&name, &entry.id))
+        };
+        if target.exists() {
+            let base = target
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| name.clone());
+            let mut suffix = 2;
+            loop {
+                if suffix > 50 {
+                    return Err(format!(
+                        "There are too many folders named \"{base}\"; rename one of them."
+                    ));
+                }
+                let next = root.join(numbered_folder(&base, suffix));
+                if !next.exists() {
+                    target = next;
+                    break;
+                }
+                suffix += 1;
+            }
+        }
+        let folder = self.trash.join(&entry.id);
+        let from_trash = folder.is_dir();
+        if from_trash {
+            move_dir(&folder, &target)
+                .map_err(|e| format!("Could not put {name} back: {e}"))?;
+        } else {
+            // Nothing local to move: leave an empty folder for the sync engine,
+            // which pulls the project's commits into it.
+            fs::create_dir_all(&target)
+                .map_err(|e| format!("Could not create {name}: {e}"))?;
+        }
+        let path = canonical(&target);
+        let key = key_of(&path);
+        let restored = ProjectNote {
+            id: entry.id,
+            name,
+            path: key,
+            description: entry.description,
+            created_at: if entry.created_at > 0 { entry.created_at } else { now },
+            updated_at: now,
+        };
+        let project = Self::project_from(&restored);
+        {
+            let mut live = lock(&self.notes);
+            live.retain(|note| !note.path.eq_ignore_ascii_case(&project.path));
+            live.push(restored);
+            self.save_locked(&live)?;
+        }
+        self.save_trash(&notes)?;
+        Ok(RestoredProject { project, from_trash })
+    }
+
+    /// What the trash holds, with the expired copies already gone.
+    fn notes_in_trash(&self, now: i64) -> Vec<TrashNote> {
+        self.sweep(now);
+        let mut notes = self.trash_notes();
+        if self.expire(&mut notes, now) {
+            let _ = self.save_trash(&notes);
+        }
+        notes
+    }
+
+    fn trash_notes(&self) -> Vec<TrashNote> {
+        fs::read_to_string(&self.trash_index)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<TrashFileRead>(&raw).ok())
+            .map(|file| file.projects)
+            .unwrap_or_default()
+    }
+
+    fn save_trash(&self, notes: &[TrashNote]) -> Result<(), String> {
+        let raw = serde_json::to_string_pretty(&TrashFile { projects: notes })
+            .map_err(|e| e.to_string())?;
+        if let Some(parent) = self.trash_index.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Could not create the trash: {e}"))?;
+        }
+        let tmp = self.trash_index.with_extension("json.tmp");
+        fs::write(&tmp, raw).map_err(|e| format!("Could not save the trash: {e}"))?;
+        fs::rename(&tmp, &self.trash_index)
+            .map_err(|e| format!("Could not save the trash: {e}"))
+    }
+
+    /// Drop the entries that are past [`TRASH_DAYS`], with their folders.
+    /// Answers true when something went, so the caller writes the index back.
+    fn expire(&self, notes: &mut Vec<TrashNote>, now: i64) -> bool {
+        let before = notes.len();
+        notes.retain(|note| {
+            if now.saturating_sub(note.deleted_at) < TRASH_MS {
+                return true;
+            }
+            let _ = fs::remove_dir_all(self.trash.join(&note.id));
+            false
+        });
+        notes.len() != before
+    }
+
+    /// Sweep at most once an hour: `list` runs on every sync cycle.
+    fn sweep(&self, now: i64) {
+        {
+            let mut last = lock(&self.swept);
+            if now.saturating_sub(*last) < SWEEP_EVERY_MS {
+                return;
+            }
+            *last = now;
+        }
+        let mut notes = self.trash_notes();
+        if self.expire(&mut notes, now) {
+            let _ = self.save_trash(&notes);
+        }
     }
 
     /// Forget a project whose folder is already gone, because the account says
@@ -819,11 +1144,11 @@ fn suffixed_folder(folder: &str, base: &str) -> bool {
             .all(|c| c.is_ascii_digit())
 }
 
-/// A folder with nothing but a `.git` directory (created by a previous bind or
-/// by hand) is safe to reuse under a *suffixed* name — `name (2)` and its kind.
-/// A folder with files in it is somebody's work, so it is never shared with
-/// another project's copy; the folder at a project's own name is adopted
-/// instead, whatever it holds (see `bind`).
+/// A folder with nothing but a `.git` directory (an empty clone from a previous
+/// bind, or one made by hand) is safe to reuse under a *suffixed* name —
+/// `name (2)` and its kind. A folder with files in it is somebody's work, so the
+/// folder at a project's own name is adopted instead of a copy being placed
+/// beside it (see `bind`).
 fn is_reusable(path: &Path) -> bool {
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
@@ -835,6 +1160,42 @@ fn is_reusable(path: &Path) -> bool {
         }
     }
     true
+}
+
+/// Move a folder, falling back to a copy when the two paths are on different
+/// volumes — the projects folder can live on `D:` while the trash is on `C:`.
+fn move_dir(from: &Path, to: &Path) -> Result<(), String> {
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create {}: {e}", parent.display()))?;
+    }
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    copy_dir_all(from, to).map_err(|e| {
+        format!(
+            "Could not copy {} to {}: {e}",
+            from.display(),
+            to.display()
+        )
+    })?;
+    fs::remove_dir_all(from)
+        .map_err(|e| format!("Could not remove {}: {e}", from.display()))
+}
+
+fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = to.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &target)?;
+        } else if path.is_file() {
+            fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1010,12 +1371,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             [project.id.as_str()]
         );
+        // The folder is gone, but the week still runs: the project can come
+        // back, as a folder the repository fills in.
+        let trashed = store.trashed();
+        assert_eq!(trashed.len(), 1);
+        assert!(!trashed[0].has_folder);
+        let restored = store.restore(&root, "gone").unwrap();
+        assert!(!restored.from_trash);
+        assert_eq!(restored.project.id, project.id);
+        assert_eq!(restored.project.description, "notes");
+
         // Taken once, and the note really is gone: a restart must not turn the
         // folder into a new project.
         assert!(store.take_dropped().is_empty());
         drop(store);
         let reopened = ProjectsStore::new(&base);
-        assert!(reopened.list(&root).unwrap().is_empty());
+        assert_eq!(reopened.list(&root).unwrap().len(), 1);
     }
 
     #[test]
@@ -1047,14 +1418,79 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_folder_with_work_refuses_and_keeps_the_note() {
+    fn deleting_a_folder_with_work_keeps_it_in_the_trash() {
+        // Nothing of the user's is destroyed on the spot: the folder moves into
+        // the trash, listed with the day it goes for good.
         let (_base, root, store) = temp_store();
-        let project = store.create(&root, "real", "").unwrap();
+        let project = store.create(&root, "real", "notes").unwrap();
         fs::write(Path::new(&project.path).join("index.html"), "<h1>hi</h1>").unwrap();
 
-        assert!(store.delete(&project.id).is_err());
-        assert!(Path::new(&project.path).join("index.html").exists());
-        assert_eq!(store.list(&root).unwrap()[0].id, project.id);
+        let removed = store.delete(&project.id).unwrap();
+        assert_eq!(removed.id, project.id);
+        assert!(!Path::new(&project.path).exists());
+        assert!(store.list(&root).unwrap().is_empty());
+
+        let trash = store.trashed();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].name, "real");
+        assert!(trash[0].has_folder);
+        assert_eq!(
+            trash[0].expires_at - trash[0].deleted_at,
+            TRASH_DAYS * 24 * 60 * 60 * 1000
+        );
+
+        // And it comes back with the file the user left in it.
+        let restored = store.restore(&root, "real").unwrap();
+        assert!(restored.from_trash);
+        assert_eq!(restored.project.id, project.id);
+        assert!(
+            Path::new(&restored.project.path).join("index.html").exists(),
+            "the file came back"
+        );
+        assert!(store.trashed().is_empty());
+        assert_eq!(store.list(&root).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_trashed_project_expires_after_a_week() {
+        let (base, root, store) = temp_store();
+        let project = store.create(&root, "old", "").unwrap();
+        fs::write(Path::new(&project.path).join("notes.txt"), "mine").unwrap();
+        store.delete(&project.id).unwrap();
+
+        // Backdate the entry: the folder and its entry are both gone once the
+        // week is up, and a restore says so instead of bringing back half.
+        let index = base.join("trash").join("projects.json");
+        let mut file: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&index).unwrap()).unwrap();
+        file["projects"][0]["deletedAt"] =
+            serde_json::json!(now_ms() - (TRASH_DAYS + 1) * 24 * 60 * 60 * 1000);
+        fs::write(&index, file.to_string()).unwrap();
+
+        assert!(store.trashed().is_empty());
+        assert!(!base.join("trash").join("projects").join(&project.id).exists());
+        assert!(store.restore(&root, "old").is_err());
+    }
+
+    #[test]
+    fn a_restore_after_the_copy_is_gone_leaves_the_folder_for_git() {
+        // The trash copy is discarded (or was never made): the project still
+        // comes back, as an empty folder the sync engine fills from the
+        // account's repository.
+        let (base, root, store) = temp_store();
+        let project = store.create(&root, "from-git", "what it was").unwrap();
+        store.delete(&project.id).unwrap();
+        fs::remove_dir_all(base.join("trash").join("projects").join(&project.id)).unwrap();
+
+        let trashed = store.trashed();
+        assert_eq!(trashed.len(), 1);
+        assert!(!trashed[0].has_folder);
+
+        let restored = store.restore(&root, &project.id).unwrap();
+        assert!(!restored.from_trash);
+        assert_eq!(restored.project.description, "what it was");
+        assert!(Path::new(&restored.project.path).is_dir());
+        assert!(store.list(&root).unwrap().iter().any(|p| p.id == project.id));
     }
 
     #[test]

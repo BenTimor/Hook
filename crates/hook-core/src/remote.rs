@@ -96,6 +96,12 @@ struct ProjectDeleteParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectRestoreParams {
+    project: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CodingCreateParams {
     #[serde(default)]
     project: String,
@@ -180,6 +186,8 @@ pub async fn handle(
         "projects.list" => projects(state),
         "projects.create" => projects_create(state, decode(params)?),
         "projects.delete" => projects_delete(state, decode(params)?),
+        "projects.restore" => projects_restore(state, decode(params)?),
+        "projects.trash" => projects_trash(state),
         "folders.browse" => folders_browse(state, decode(params)?),
         "folders.pin" => folders_pin(state, decode(params)?),
         "sessions.list" => sessions(state, decode(params)?),
@@ -412,7 +420,46 @@ fn projects_delete(
     state.sync.wake();
     Ok(json!({
         "deleted": project.name,
-        "hint": "It is gone from that machine and from the account.",
+        "hint": format!(
+            "It is out of the projects list and off the account. Its folder is in that computer's trash for {} days.",
+            crate::projects::TRASH_DAYS
+        ),
+    }))
+}
+
+/// What the host's trash holds, for a controller that may want something back.
+fn projects_trash(state: &Arc<AppState>) -> Result<Value, RpcFailure> {
+    const DAY: i64 = 24 * 60 * 60 * 1000;
+    let now = crate::store::now_ms();
+    let items: Vec<Value> = state
+        .projects
+        .trashed()
+        .iter()
+        .map(|entry| {
+            json!({
+                "project": entry.name,
+                "expiresAt": entry.expires_at,
+                "hasFolder": entry.has_folder,
+                "daysLeft": ((entry.expires_at - now).max(0) + DAY - 1) / DAY,
+            })
+        })
+        .collect();
+    Ok(json!({ "trashed": items }))
+}
+
+fn projects_restore(
+    state: &Arc<AppState>,
+    params: ProjectRestoreParams,
+) -> Result<Value, RpcFailure> {
+    let restored = state
+        .projects
+        .restore(&state.settings.projects_dir(), params.project.trim())
+        .map_err(|error| fail("project_restore_failed", error))?;
+    state.sync.project_restored(&restored.project.id);
+    state.sync.wake();
+    Ok(json!({
+        "restored": restored.project.name,
+        "fromTrash": restored.from_trash,
     }))
 }
 

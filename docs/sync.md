@@ -64,16 +64,23 @@ pushed it as a new one. `dev/cleanup-duplicates.py` repairs that: it keeps the
 folder at the project's own name, deletes the empty copies and their account
 rows (a dry run first, `--apply` to do it), and rewrites the products' notes to
 the account's ids. **Remove** in Settings and the agent's `delete_project` do
-the same one project at a time.
+the same one project at a time, and leave its folder in the trash for a week.
 
-A project is deleted by deleting its folder or with **Remove** in Settings. The
-note goes with it and the account gets a tombstone, so the next pull cannot
-create the folder again — the two together are what make a deletion stick. The
-folder itself is removed only when it holds nothing but Hook's `.git`, an empty
-clone made for a project that arrived from another computer; a folder with work
-in it is the user's, and Hook refuses rather than guess. A deletion on one
-computer never deletes another computer's copy: that folder is still there, and
-its next push puts the project back on the account.
+A project is deleted by deleting its folder or with **Remove** in Settings. Its
+note goes and the account gets a tombstone, so the next pull cannot create the
+folder again — the two together are what make a deletion stick. The folder is
+not destroyed: it moves into that product's trash and stays there for seven
+days, where **Restore** in Settings and the agent's `restore_project` bring it
+back with its files. After the week the copy and its entry are deleted on the
+next listing (the sweep runs at most hourly): the code is still in the
+project's git repository on the account, but Hook no longer offers the project
+back. While the entry is listed, a restore whose copy is already gone (emptied
+by hand, or never made) brings the project back as an empty folder and pulls
+the commits into it. The trash belongs to the product that did the
+deleting — the folder is on this machine either way, so another product sees the
+project as deleted and asks no further questions. A deletion on one computer
+never deletes another computer's copy: that folder is still there, and its next
+push puts the project back on the account.
 
 On Windows, Hook runs the Git commands for startup and background project sync
 without opening terminal windows.

@@ -1122,6 +1122,26 @@ impl SyncEngine {
         let _ = self.save_state();
     }
 
+    /// Put back a project that came out of this machine's trash.
+    ///
+    /// The tombstone is cancelled while it is still queued, and the fingerprint
+    /// is dropped so the next cycle sends the project again: a row the account
+    /// already tombstoned comes back with the same id and the same repository,
+    /// which is what lets a restore rebuild the folder from git. Re-preparing
+    /// the repository is how the empty folder gets its commits pulled into it.
+    pub fn project_restored(&self, id: &str) {
+        if !project_id_ok(id) {
+            return;
+        }
+        {
+            let mut state = lock(&self.state);
+            state.pending_project_deletes.retain(|entry| entry != id);
+            state.project_versions.remove(id);
+            state.prepared.retain(|entry| entry != id);
+        }
+        let _ = self.save_state();
+    }
+
     /// Tell the account which projects this device removed. Ten per request,
     /// like every other push, and an id is forgotten once the account agrees.
     async fn push_project_deletes(&self, token: &str) -> Result<(), String> {
@@ -2128,13 +2148,14 @@ mod tests {
         let fixture = fixture(&url);
         let root = fixture.settings.projects_dir();
         let project = fixture.projects.create(&root, "doomed", "").unwrap();
-        // Work in the folder makes it the user's: Hook refuses and keeps the note.
         fs::write(root.join("doomed").join("index.html"), "<h1>hi</h1>").unwrap();
-        assert!(fixture.projects.delete(&project.id).is_err());
-        // Deleting it outside Hook is the way that works, and the note follows.
-        fs::remove_dir_all(root.join("doomed")).unwrap();
 
         let engine = engine(&fixture, Arc::new(|_, _| {}));
+        // Removing the folder outside Hook is one way; `delete_project` moves it
+        // to the trash and queues the same tombstone. Either way the account
+        // hears about it exactly once.
+        fixture.projects.delete(&project.id).unwrap();
+        engine.project_deleted(&project.id);
         engine.cycle().await.expect("one cycle");
 
         let posts: Vec<Value> = seen
@@ -2158,6 +2179,87 @@ mod tests {
                 .iter()
                 .all(|(_, path, _)| path != "/api/sync/projects"),
             "a deletion is sent once"
+        );
+        fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
+    }
+
+    #[tokio::test]
+    async fn a_project_restored_from_the_trash_is_pushed_back() {
+        // The tombstone goes out only if a cycle ran in between. A restore
+        // cancels it while it is queued; if the account already deleted the row,
+        // the project is sent again instead, which resurrects the same id and
+        // repository rather than making a second project.
+        let (url, seen) = mock_server(|method, path, body| {
+            match (method, path.split('?').next()) {
+                ("POST", Some("/api/sync/projects")) => {
+                    let projects = body["projects"].as_array().cloned().unwrap_or_default();
+                    serde_json::json!({
+                        "results": projects
+                            .iter()
+                            .map(|project| serde_json::json!({
+                                "id": project["id"].clone(),
+                                "ok": true,
+                                "deleted": project["deleted"].as_bool().unwrap_or(false),
+                            }))
+                            .collect::<Vec<_>>()
+                    })
+                }
+                ("POST", Some("/api/sync/chats")) => serde_json::json!({ "results": [], "cursor": 0 }),
+                ("GET", Some("/api/sync/changes")) => {
+                    serde_json::json!({ "cursor": 0, "hasMore": false, "changes": [] })
+                }
+                _ => serde_json::json!({ "error": { "message": "unexpected request" } }),
+            }
+        })
+        .await;
+
+        let fixture = fixture(&url);
+        let root = fixture.settings.projects_dir();
+        let project = fixture.projects.create(&root, "keep-me", "the notes").unwrap();
+        fs::write(root.join("keep-me").join("index.html"), "<h1>hi</h1>").unwrap();
+        let engine = engine(&fixture, Arc::new(|_, _| {}));
+
+        fixture.projects.delete(&project.id).unwrap();
+        engine.project_deleted(&project.id);
+        assert!(
+            !lock(&engine.state).pending_project_deletes.is_empty(),
+            "a delete is queued"
+        );
+        fixture.projects.restore(&root, "keep-me").unwrap();
+        engine.project_restored(&project.id);
+        assert!(
+            lock(&engine.state).pending_project_deletes.is_empty(),
+            "the restore cancels it"
+        );
+        assert!(root.join("keep-me").join("index.html").exists());
+
+        engine.cycle().await.expect("one cycle");
+        let posts: Vec<Value> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, path, _)| method == "POST" && path == "/api/sync/projects")
+            .map(|(_, _, body)| body.clone())
+            .collect();
+        assert_eq!(posts.len(), 1, "the project goes back, once");
+        assert_eq!(posts[0]["projects"][0]["id"], project.id);
+        assert_ne!(
+            posts[0]["projects"][0]["deleted"],
+            true,
+            "a restore sends the project, not its tombstone"
+        );
+        assert_eq!(posts[0]["projects"][0]["name"], "keep-me");
+
+        // And the restored project is still the one on this machine.
+        assert_eq!(fixture.projects.list(&root).unwrap()[0].id, project.id);
+        seen.lock().unwrap().clear();
+        engine.cycle().await.expect("second cycle");
+        assert!(
+            seen.lock()
+                .unwrap()
+                .iter()
+                .all(|(_, path, _)| path != "/api/sync/projects"),
+            "a restore is sent once"
         );
         fs::remove_dir_all(fixture.base.parent().unwrap()).ok();
     }
