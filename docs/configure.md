@@ -23,7 +23,7 @@ reasoning_echo = "auto"
 
 [model]
 name = "hook"                # must match HOOK_MODEL_ID on the server
-thinking = "high"
+thinking = "low"
 
 [auth]
 base_url = "https://hookcode.io"
@@ -31,9 +31,15 @@ required = true              # false only for the local mock provider
 ```
 
 `thinking` is sent using `reasoning_param` (mapped to `reasoning_effort` for
-OpenAI-style APIs). It is never shown in the UI. Thinking-mode APIs (DeepSeek
-among them) reject the follow-up request unless the assistant's
-`reasoning_content` is replayed on tool-calling turns — an empty string counts.
+OpenAI-style APIs) and is never shown in the UI. Hook passes the level through
+verbatim; what a level *means* is the provider's decision. DeepSeek, the
+provider the proxy forwards to, has three: `minimal`/`low` are its `low`,
+`medium`/`high`/`xhigh` are its `high`, and `max`/`ultra` are its `max` — so
+`high` and `medium` buy the same reasoning, and only `low` or `max` changes
+anything (see its [thinking mode guide](https://api-docs.deepseek.com/guides/thinking_mode/)).
+Thinking-mode APIs (DeepSeek among them) reject the follow-up request unless
+the assistant's `reasoning_content` is replayed on tool-calling turns — an
+empty string counts.
 Hook records the field each answer was streamed in and sends it back
 automatically (`reasoning_echo = "auto"`).
 
@@ -47,7 +53,7 @@ sections:
 ```toml
 [coding]
 model = ""            # passed to pi as --model; empty = the chat model
-thinking = ""         # passed to pi as --thinking; empty = pi's default (medium)
+thinking = "high"       # passed to pi as --thinking; own level, not [model] thinking
 max_concurrent = 3    # how many coding agents may run at once
 bash_max_timeout = 3600   # seconds, enforced on every bash call
 bash_min_timeout = 1

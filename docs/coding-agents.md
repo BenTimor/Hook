@@ -93,9 +93,11 @@ engine is pointed at that endpoint and model instead of Hook's proxy.
   against the right conversation; a personal endpoint gets none of them. An agent uses exactly the chat agent's endpoint and model and
   never touches your own `~/.pi` — different extensions, skills, MCP servers and
   logins on your machine cannot change what it does. Its thinking level is its
-  own: with `[coding] thinking` empty the engine uses its default (medium)
-  rather than the chat model's level, because a run is dozens of small turns and
-  a high level on each one leaves the checklist frozen for minutes at a time.
+  own: `[coding] thinking` is set explicitly (`high`) rather than inherited from
+  the chat model, and it is what pi receives as `--thinking`. Leaving it empty
+  would mean pi's own default, which is not a number Hook controls. The trade-off
+  is real — a run is dozens of small turns and a higher level slows each one —
+  so the level is written down instead of left implicit.
 - **The plan is visible, and so is the Stop button.** `start_coding_agent` takes
   a `plan`: three to six short steps in plain language (`Setting things up`,
   `Designing the front page`, `Hooking up the real service`), written by the

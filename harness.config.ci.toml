@@ -69,8 +69,10 @@ store_id = "9NX9J93HP25M"
 # the name and forwards to the model configured on the server.
 name = "hook"
 
-# off | minimal | low | medium | high
-thinking = "high"
+# off | minimal | low | medium | high | max
+# On deepseek-flash, `minimal` and `low` are both its `low`; `medium`, `high`
+# and `xhigh` are all its `high`; `max` is its `max`.
+thinking = "low"
 
 # Optional sampling controls. Omit to leave the provider defaults alone.
 # temperature = 0.7
@@ -132,10 +134,12 @@ update_interval_seconds = 60
 # Passed to pi as --model. Empty = pi's own default model.
 model = ""
 # Passed to pi as --thinking: off | minimal | low | medium | high | xhigh | max
-# Empty = pi's own default (medium). This is the coding agent's own level: it
-# does not inherit [model] thinking. A run is dozens of small turns, and a high
-# level on every one of them makes each step take minutes before anything moves.
-thinking = ""
+# Set explicitly so the level is a number in this file rather than whatever pi's
+# default happens to be. This is the coding agent's own level: it does not
+# inherit [model] thinking. On deepseek-flash (what the proxy serves) `medium`,
+# `high` and `xhigh` are all its `high`, so this is pi's default tier spelled
+# out. A run is dozens of small turns, so a higher level slows every step.
+thinking = "high"
 # How many coding agents may run at the same time.
 max_concurrent = 3
 # Deadline limits (seconds) enforced on every bash call inside a coding agent.
