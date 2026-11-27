@@ -44,6 +44,7 @@ mod git;
 mod guard;
 mod imagegen;
 mod import;
+mod markdown_edit;
 mod memory;
 #[cfg(feature = "desktop")]
 mod pdf;

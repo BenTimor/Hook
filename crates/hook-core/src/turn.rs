@@ -85,7 +85,8 @@ const DEFAULT_SYSTEM_PROMPT: &str = "You are Hook's chat agent, running inside H
 - A task has a title, a Markdown description, one status from the board's status column, optional assignees and values for the board's other columns. Read the board before creating tasks so the ids are real.
 - Assign a task to one or more members by their account subjects. Someone who was invited but has not accepted yet has no subject on the project: workspace_members lists them under `pending` with only their email, and assigning that address is how work reaches them. It becomes their name, here and on every existing task, the moment they accept.
 - Comments you write are in the user's name, marked as written by their Hook agent. Write the comment itself, as it should read to the team; do not narrate that you wrote it.
-- A document *is* its Markdown. To change one, read it, then send the revision you read (baseRev) with the new Markdown. If the write comes back refused, the document changed while you were working: read it again.
+- A document *is* its Markdown, so change it by the piece. `workspace_documents` with action `edit` names a heading (`Pricing`, or a path `Pricing > Cards`) or an exact run of text and rewrites only that: `replace_section` keeps the heading, `insert_after_section` adds a block beside it, `delete_section` removes one. Read when you need the current wording — `outline` lists the headings and `get` with a `section` returns one of them, so a long document never has to pass through the conversation. Sending a whole new Markdown (`update`) is for a rewrite, not for a paragraph.
+- When an edit names something that is not there, the answer lists the headings that are: correct the name and call again instead of retyping the document. When it comes back refused, someone wrote in between — the current headings come with the refusal, so re-read the section and re-apply the change.
 - Beyond plain Markdown, formatting is Hook's own directive syntax: colours, highlight, underline, keys and callout boxes. Read `document_markdown` before you style a document, a task description or a comment — it is the exact syntax, and it is short. Never write `<span>`, `<u>` or `<mark>`: raw HTML is shown as text.
 - You may invite people as viewer or editor, change roles, remove people, and accept an invitation the user asked you to accept. Never transfer ownership — tell the user to do that in Workspace.
 - Deleting a project, board, document, roadmap or milestone is permanent for everyone in it. Say what will disappear and ask first unless the user was unambiguous.
@@ -1640,6 +1641,23 @@ pub(crate) fn activity_label(name: &str, arguments: &str) -> Option<String> {
             "update" => "Updating a document…".into(),
             "delete" => "Deleting a document…".into(),
             "get" => "Opening a document…".into(),
+            "outline" => "Reading the headings of a document…".into(),
+            "edit" => {
+                // The section is inside the first op, not beside it: the line
+                // says what is being edited, not that a document is.
+                let section = args
+                    .get("edits")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|edits| edits.first())
+                    .and_then(|op| op.get("section"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                match section {
+                    Some(section) => format!("Editing “{}”…", short(section, 42)),
+                    None => "Editing a document…".into(),
+                }
+            }
             _ => "Reading the documents…".into(),
         },
         "workspace_roadmaps" => match action {

@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 
 use crate::auth::AuthStore;
 use crate::config::HarnessConfig;
+use crate::markdown_edit;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -189,7 +190,8 @@ pub fn definitions() -> Vec<Value> {
                     "assignee": { "type": "string", "description": "One account subject of a project member. Prefer `assignees` when a task should have several people. For someone invited who has not accepted yet, the email address: workspace_members lists those under pending, and the assignment becomes their name when they accept." },
                     "assignees": { "type": "array", "items": { "type": "string" }, "description": "One or more account subjects (or pending invitation email addresses). Each is resolved to the person's account when they accept." },
                     "fields": { "type": "object", "description": "Values keyed by column id." },
-                    "position": { "type": "integer" }
+                    "position": { "type": "integer" },
+                    "edits": { "type": "array", "items": { "type": "object" }, "description": "For update: change the description by the piece instead of sending it again. The same operations as `workspace_documents` (`replace`, `replace_section`, `insert_after_section`, `insert_before_section`, `delete_section`, `append`), applied to the stored description. Do not send `description` as well." }
                 },
                 "required": ["action"]
             }),
@@ -210,17 +212,20 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_documents",
-            "Markdown documents in a project. The Markdown is the document: pass it exactly as it should be stored. An update carries the revision you read; a stale one is refused with the current copy so you can re-apply the change. Hook's own formatting — colour, highlight, underline, keys and the callout boxes — is a directive syntax on top of Markdown and never inline HTML: read `document_markdown` before you style anything.",
+            "Markdown documents in a project. The Markdown is the document. To change part of one, use `edit`: it names a section or an exact run of text and rewrites only that, so a long document never has to be retyped. `outline` lists the headings, and `get` with a `section` returns just that part. `update` replaces the whole body and carries the revision you read; a stale one is refused with the current copy so you can re-apply the change. Hook's own formatting — colour, highlight, underline, keys and the callout boxes — is a directive syntax on top of Markdown and never inline HTML: read `document_markdown` before you style anything.",
             json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["list", "get", "create", "update", "delete"] },
+                    "action": { "type": "string", "enum": ["list", "outline", "get", "create", "update", "edit", "delete"] },
                     "project": { "type": "string" },
                     "document": { "type": "string", "description": "Document id (dc_…)." },
                     "title": { "type": "string" },
-                    "markdown": { "type": "string" },
+                    "markdown": { "type": "string", "description": "A body in full, for create and update. For one section, use `edit` instead." },
                     "folder": { "type": "string" },
-                    "baseRev": { "type": "integer", "description": "The revision you read, for update." }
+                    "baseRev": { "type": "integer", "description": "For update: the revision you read. `edit` reads and writes in one call, so it does not need one." },
+                    "section": { "type": "string", "description": "For get: one section instead of the whole document. A heading (`Pricing`) or a path (`Pricing > Cards`), case-insensitive." },
+                    "occurrence": { "type": "integer", "minimum": 1, "description": "Which heading, when several share the name. 1 by default, for get." },
+                    "edits": { "type": "array", "items": { "type": "object" }, "description": "For edit: operations applied in order, written back as one revision. Each names an `op` — `{op:\"replace\", find:\"exact text\", replace:\"new\", all?:false}` rewrites text that appears exactly once (or every time, with all); `{op:\"replace_section\", section:\"Pricing > Cards\", markdown:\"…\"}` replaces the lines under that heading and keeps the heading, so the Markdown may carry its own subheadings; `{op:\"insert_after_section\"|\"insert_before_section\", section:\"…\", markdown:\"…\"}` adds a block beside it; `{op:\"delete_section\", section:\"…\"}` removes the heading and its body; `{op:\"append\", markdown:\"…\"}` adds at the end. `occurrence` in an op (1 by default) picks between headings that share a name. A refusal says what is there instead, so the next call is a correction." }
                 },
                 "required": ["action"]
             }),
@@ -323,6 +328,16 @@ fn string(args: &Value, key: &str) -> Option<String> {
 
 fn required(args: &Value, key: &str) -> Result<String, String> {
     string(args, key).ok_or_else(|| format!("Missing \"{key}\"."))
+}
+
+/// Which of several headings that share a name. 1 by default, so an absent
+/// `occurrence` means "the first one" rather than "guess".
+fn occurrence(args: &Value) -> usize {
+    args.get("occurrence")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .map(|value| value as usize)
+        .unwrap_or(1)
 }
 
 /// True for the tool names [`execute`] answers. The turn and the tool bridge use
@@ -505,7 +520,24 @@ async fn tasks(client: &WorkspaceClient, args: &Value) -> ToolResult {
             if let Some(position) = args.get("position").and_then(Value::as_i64) {
                 body["position"] = json!(position);
             }
-            client.patch(&format!("/tasks/{task}"), body).await
+            // A description is Markdown, so the surgery that changes one
+            // document changes one task without retyping the rest of it.
+            let mut applied = None;
+            if let Some(edits) = args.get("edits").and_then(Value::as_array) {
+                if body.get("description").is_some() {
+                    return Err("Send either \"description\" or \"edits\", not both: edits change the description that is already stored.".into());
+                }
+                let current = client.get(&format!("/tasks/{task}")).await?;
+                let description = current["task"]["description"].as_str().unwrap_or_default();
+                let (updated, summaries) = markdown_edit::apply_all(description, edits)?;
+                body["description"] = json!(updated);
+                applied = Some(summaries);
+            }
+            let mut value = client.patch(&format!("/tasks/{task}"), body).await?;
+            if let Some(applied) = applied {
+                value["applied"] = json!(applied);
+            }
+            Ok(value)
         }
         "delete" => client.delete(&format!("/tasks/{}", required(args, "task")?)).await,
         other => Err(format!("Unknown action: {other}")),
@@ -535,7 +567,42 @@ async fn comments(client: &WorkspaceClient, chat_id: &str, args: &Value) -> Tool
 async fn documents(client: &WorkspaceClient, args: &Value) -> ToolResult {
     match action(args)?.as_str() {
         "list" => client.get(&format!("/projects/{}/documents", required(args, "project")?)).await,
-        "get" => client.get(&format!("/documents/{}", required(args, "document")?)).await,
+        "outline" => {
+            let (id, document) = read_document(client, args).await?;
+            let markdown = document["markdown"].as_str().unwrap_or_default();
+            let found = markdown_edit::sections(markdown);
+            let mut out = json!({
+                "document": id,
+                "title": document["title"],
+                "rev": document["rev"],
+                "lines": markdown.lines().count(),
+                "sections": outline(&found, markdown),
+            });
+            // The outline is the map, not the document: a heading per row, and
+            // a bound so a generated document cannot flood the conversation.
+            if found.len() > OUTLINE_CAP {
+                out["omittedSections"] = json!(found.len() - OUTLINE_CAP);
+            }
+            Ok(out)
+        }
+        "get" => {
+            let (id, document) = read_document(client, args).await?;
+            let Some(spec) = string(args, "section") else {
+                return Ok(json!({ "document": document }));
+            };
+            let markdown = document["markdown"].as_str().unwrap_or_default();
+            let found = markdown_edit::sections(markdown);
+            let index = markdown_edit::resolve(&found, &spec, occurrence(args))?;
+            let section = &found[index];
+            Ok(json!({
+                "document": id,
+                "title": document["title"],
+                "rev": document["rev"],
+                "section": section.path,
+                "line": section.line,
+                "markdown": section.whole(markdown),
+            }))
+        }
         "create" => {
             let project = required(args, "project")?;
             let mut body = document_fields(args);
@@ -552,9 +619,114 @@ async fn documents(client: &WorkspaceClient, args: &Value) -> ToolResult {
             }
             client.patch(&format!("/documents/{document}"), body).await
         }
+        "edit" => edit_document(client, args).await,
         "delete" => client.delete(&format!("/documents/{}", required(args, "document")?)).await,
         other => Err(format!("Unknown action: {other}")),
     }
+}
+
+/// How many headings `outline` returns. Reached only by a generated document;
+/// the count of what was left out is always reported.
+const OUTLINE_CAP: usize = 200;
+
+/// The document behind an id, and the id itself. `get` hands back the shape the
+/// server sent; every other reader wants the row.
+async fn read_document(client: &WorkspaceClient, args: &Value) -> Result<(String, Value), String> {
+    let id = required(args, "document")?;
+    let value = client.get(&format!("/documents/{id}")).await?;
+    let document = value.get("document").cloned().unwrap_or(value);
+    Ok((id, document))
+}
+
+/// One row per heading, addressed the way an edit addresses it.
+fn outline(found: &[markdown_edit::Section], markdown: &str) -> Value {
+    Value::Array(
+        found
+            .iter()
+            .take(OUTLINE_CAP)
+            .map(|section| {
+                json!({
+                    "path": section.path,
+                    "level": section.level,
+                    "line": section.line,
+                    "lines": section.whole(markdown).lines().count(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The heading names, flat. What a refused write hands back: enough to re-aim
+/// the edit without sending the document.
+fn section_titles(markdown: &str) -> Vec<String> {
+    markdown_edit::sections(markdown)
+        .iter()
+        .take(OUTLINE_CAP)
+        .map(|section| section.path.clone())
+        .collect()
+}
+
+/// Change a document by the piece.
+///
+/// The read and the write are one call: the revision the edit is based on is
+/// the one this request just read, so there is no window for the model to lose
+/// the document between the two. A model that names `baseRev` explicitly is
+/// saying "apply this on the version I read earlier", and the server refuses it
+/// if that is no longer the current one.
+async fn edit_document(client: &WorkspaceClient, args: &Value) -> ToolResult {
+    let id = required(args, "document")?;
+    let edits = args
+        .get("edits")
+        .and_then(Value::as_array)
+        .filter(|edits| !edits.is_empty())
+        .ok_or_else(|| "Send \"edits\": the operations to apply, in order.".to_string())?;
+    let (_, document) = read_document(client, args).await?;
+    let markdown = document["markdown"].as_str().unwrap_or_default();
+    let (updated, applied) = markdown_edit::apply_all(markdown, edits)?;
+    let rev = args
+        .get("baseRev")
+        .and_then(Value::as_i64)
+        .unwrap_or_else(|| document["rev"].as_i64().unwrap_or(0));
+
+    let (status, value) = client
+        .raw(
+            reqwest::Method::PATCH,
+            &format!("/documents/{id}"),
+            Some(json!({ "markdown": updated, "baseRev": rev })),
+        )
+        .await?;
+    if status == 409 {
+        // Someone wrote between this call's read and its write. Nothing was
+        // saved, and the headings of the current copy are what the model needs
+        // to re-aim the same change — not the whole document again.
+        let current = value.get("document").cloned().unwrap_or_else(|| json!({}));
+        let current_markdown = current["markdown"].as_str().unwrap_or_default();
+        return Ok(json!({
+            "error": "The document changed while this edit was being written, so nothing was saved. Its headings are below: re-read the section you are changing and apply the edit again to the current revision.",
+            "document": id,
+            "rev": current["rev"],
+            "sections": section_titles(current_markdown),
+            "droppedEdits": applied,
+        }));
+    }
+    if !(200..300).contains(&status) {
+        return Err(value
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("The workspace service refused that request.")
+            .to_string());
+    }
+    Ok(json!({
+        "document": id,
+        "title": value["document"]["title"],
+        "rev": value["document"]["rev"],
+        "applied": applied,
+        "lines": {
+            "before": markdown.lines().count(),
+            "after": updated.lines().count(),
+        },
+    }))
 }
 
 /// The fields one document write carries. Only what the call named: to the
@@ -743,9 +915,9 @@ fn action(args: &Value) -> Result<String, String> {
         .get("action")
         .and_then(Value::as_str)
         .ok_or_else(|| "Missing \"action\".".to_string())?;
-    const KNOWN: [&str; 11] = [
-        "list", "get", "create", "update", "delete", "invite", "set_role", "remove", "accept",
-        "decline", "revoke",
+    const KNOWN: [&str; 13] = [
+        "list", "outline", "get", "create", "update", "edit", "delete", "invite",
+        "set_role", "remove", "accept", "decline", "revoke",
     ];
     if KNOWN.contains(&value) {
         Ok(value.to_string())
@@ -831,6 +1003,67 @@ mod tests {
         assert!(action(&json!({})).is_err());
         assert_eq!(action(&json!({ "action": "list" })).unwrap(), "list");
         assert_eq!(action(&json!({ "action": "set_role" })).unwrap(), "set_role");
+        // The surgical edit and its map of the document.
+        assert_eq!(action(&json!({ "action": "edit" })).unwrap(), "edit");
+        assert_eq!(action(&json!({ "action": "outline" })).unwrap(), "outline");
+    }
+
+    #[test]
+    fn the_edit_tools_are_advertised_where_the_model_looks() {
+        // The schema is the only documentation a model gets for the ops, so a
+        // missing action or a missing `edits` is a tool that cannot be used.
+        let documents = definitions()
+            .into_iter()
+            .find(|tool| tool["function"]["name"] == "workspace_documents")
+            .expect("workspace_documents is advertised");
+        let properties = &documents["function"]["parameters"]["properties"];
+        let actions = properties["action"]["enum"].to_string();
+        for expected in ["\"edit\"", "\"outline\""] {
+            assert!(actions.contains(expected), "{expected} is not an action");
+        }
+        assert!(properties["edits"].is_object());
+        assert!(properties["section"].is_object());
+        let description = properties["edits"]["description"].as_str().unwrap_or_default();
+        for op in [
+            "replace",
+            "replace_section",
+            "insert_after_section",
+            "insert_before_section",
+            "delete_section",
+            "append",
+        ] {
+            assert!(description.contains(op), "{op} is not described");
+        }
+        // A task description is Markdown too, and takes the same operations.
+        let tasks = definitions()
+            .into_iter()
+            .find(|tool| tool["function"]["name"] == "workspace_tasks")
+            .expect("workspace_tasks is advertised");
+        assert!(tasks["function"]["parameters"]["properties"]["edits"].is_object());
+    }
+
+    #[test]
+    fn an_occurrence_is_one_unless_it_is_asked_for() {
+        assert_eq!(occurrence(&json!({})), 1);
+        assert_eq!(occurrence(&json!({ "occurrence": 0 })), 1);
+        assert_eq!(occurrence(&json!({ "occurrence": 3 })), 3);
+    }
+
+    #[test]
+    fn the_outline_addresses_a_section_the_way_an_edit_does() {
+        let markdown = "# Release\n\n## Pricing\n\nk\n\n### Cards\n\nv\n";
+        let found = markdown_edit::sections(markdown);
+        let outline = outline(&found, markdown);
+        let paths: Vec<&str> = outline
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, vec!["Release", "Release > Pricing", "Release > Pricing > Cards"]);
+        assert_eq!(outline[2]["level"], 3);
+        assert_eq!(outline[2]["line"], 7);
+        assert_eq!(section_titles(markdown), paths);
     }
 
     #[test]

@@ -163,6 +163,24 @@ rows written before this rule are adopted when the service starts.
   A write carries the revision it was based
   on; a stale one is refused with the current copy rather than silently overwriting
   someone else's paragraph.
+- **The agent changes a document by the piece, never by the whole.**
+  `workspace_documents` with action `edit` carries a list of operations and
+  writes them back as one revision: `replace` (an exact run of text, refused if
+  it is not unique unless `all` is true), `replace_section` (the lines under a
+  heading, the heading kept), `insert_after_section` and
+  `insert_before_section`, `delete_section` and `append`. A section is addressed
+  by its heading (`Pricing`) or a path (`Pricing > Cards`), and `occurrence`
+  picks between headings that share a name. `outline` returns the heading tree
+  and `get` with a `section` returns just that part, so a 512 KB document can be
+  changed without being retyped — which is what made whole-document writes
+  expensive and, when a model restated a paragraph it did not mean to touch,
+  lossy. A task's description takes the same `edits`, because it is Markdown too.
+  The surgery is `crates/hook-core/src/markdown_edit.rs`: a heading inside a
+  fenced code block is code, `>` in a heading is matched whole before the string
+  is read as a path, line endings are normalised to LF, and an edit that would
+  leave a `:::note[…]` callout unclosed is refused rather than written. A refused
+  write hands back the current headings, so re-aiming the change is a correction
+  instead of a re-read.
 - **A roadmap is a project item; milestones live inside it.** A roadmap sits in
   the tree and the project overview like a board or document. It opens as a
   horizontal timeline where each milestone is a large circle carrying its date,
