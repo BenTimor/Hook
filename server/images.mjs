@@ -132,6 +132,10 @@ export function createImageRouter({ env, db }) {
   const limiter = createLimiter();
   const apiKey = (env.OPENROUTER_API_KEY || "").trim();
   const model = (env.OPENROUTER_IMAGE_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  // One format for every model: the app stores, thumbnails and hands the picture
+  // to the OS, and an extended WebP is the one the platform is least sure of.
+  // Empty leaves the choice to the model, for one that has no `output_format`.
+  const format = (env.OPENROUTER_IMAGE_FORMAT ?? "png").trim();
   const url = `${upstreamBase(env)}/images`;
 
   /**
@@ -227,6 +231,7 @@ export function createImageRouter({ env, db }) {
         image_url: { url },
       }));
     }
+    if (format) upstream.output_format = format;
     const ratio = cleanRatio(body.aspect_ratio);
     if (ratio) upstream.aspect_ratio = ratio;
 

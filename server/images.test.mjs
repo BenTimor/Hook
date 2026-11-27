@@ -146,6 +146,8 @@ test("a picture is made for the account that asked, with the server's key", asyn
     prompt: "a red panda astronaut, studio lighting",
     n: 2,
     response_format: "b64_json",
+    // The app stores, thumbnails and opens the picture: one format, named here.
+    output_format: "png",
     aspect_ratio: "16:9",
   });
   assert.equal(seen.authorization, `Bearer ${UPSTREAM_KEY}`);

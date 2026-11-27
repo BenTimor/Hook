@@ -141,6 +141,7 @@ DEEPSEEK_API_KEY=
 HOOK_MODEL_ID=hook
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_IMAGE_MODEL=meta/muse-image
+OPENROUTER_IMAGE_FORMAT=png
 OPENROUTER_API_KEY=
 DOWNLOAD_DIR=/data/releases
 PORT=5173
@@ -165,6 +166,7 @@ else
   # a build; empty means the tools answer "not set up" instead of failing later.
   ensure_env OPENROUTER_BASE_URL https://openrouter.ai/api/v1
   ensure_env OPENROUTER_IMAGE_MODEL meta/muse-image
+  ensure_env OPENROUTER_IMAGE_FORMAT png
   ensure_env OPENROUTER_API_KEY ""
   ensure_env DOWNLOAD_DIR /data/releases
   # Encrypts the personal model keys a paid account syncs (server/provider.mjs).
