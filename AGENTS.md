@@ -480,13 +480,14 @@ bash.
 - `apps/workspace/src/lib/documentImages.ts` — validates image sources and
   sizes images added by the toolbar, clipboard or file drop in the Markdown
   editor shared by documents and tasks.
-- `apps/workspace/src/lib/pdf.ts` — the three steps of "Export as PDF", in the
-  window's half: draw the document once outside CodeMirror (which only holds the
-  lines it is showing), wait for that copy to be laid out and its pictures
-  decoded, then let the window write the file. `crates/hook-core/src/pdf.rs` is
-  the other half: WebView2's `PrintToPdf` and the suggested file name; the print
-  stylesheet in `apps/workspace/src/styles/index.css` decides what is on the
-  sheet.
+- `apps/workspace/src/lib/pdf.ts` — "Export as PDF", in the window's half: draw
+  the document once outside CodeMirror (which only holds the lines it is
+  showing), wait for that copy to be laid out and its pictures decoded, lay it
+  out again at the page's own width to learn how tall one page has to be, then
+  let the window write the file. `crates/hook-core/src/pdf.rs` is the other
+  half: WebView2's `PrintToPdf` at that height, the white page, and the
+  suggested file name; the print stylesheet in
+  `apps/workspace/src/styles/index.css` decides what is on the sheet.
 - `packages/ui/src/tokens.css` — the design foundation (tokens, base elements,
   window chrome, prose, buttons/inputs). Both products import it first.
 - `waitlist/content.json` — all landing-page copy and interest definitions.
@@ -529,11 +530,12 @@ Changing one side of a boundary is the most common way to break this repo.
   A command that only the phone has still goes in `hook-core` (it is the same
   account code) and its `Capabilities` decide whether the prompt mentions it.
 - **Saving a page as a PDF (or printing one):** `crates/hook-core/src/pdf.rs`
-  (the file name, and WebView2's `PrintToPdf` on Windows; elsewhere `DIRECT` is
-  false and the window falls back to the system print dialog, which is where
-  "Save as PDF" lives) → `commands::export_pdf` in the handler → `bridge.ts`
-  (`exportPdf`) → `apps/workspace/src/lib/pdf.ts` (the print copy, the frame and
-  picture waits) → the product's print stylesheet
+  (the file name, the white page and the one-page height, and WebView2's
+  `PrintToPdf` on Windows; elsewhere `DIRECT` is false and the window falls back
+  to the system print dialog, which is where "Save as PDF" lives) →
+  `commands::export_pdf` in the handler → `bridge.ts` (`exportPdf`) →
+  `apps/workspace/src/lib/pdf.ts` (the print copy, the frame and picture waits,
+  and the sheet's measured height) → the product's print stylesheet
   (`apps/workspace/src/styles/index.css`, `@media print`) → the menu item.
   What prints is never the editor: CodeMirror only holds the lines it is
   showing, so a document is drawn once by `DocumentMarkdown` into `.ws-print`
@@ -541,6 +543,26 @@ Changing one side of a boundary is the most common way to break this repo.
   of `body`, because `@media print` hides everything else by that rule; keep
   that shape, and keep `html`/`body`'s `height: 100%; overflow: hidden` released
   in print, or the sheet ends at the fold.
+  The sheet is **one page as tall as the document**, not a stack cut at the fold:
+  the window lays the print copy out off screen at the page's own width
+  (`.ws-print[data-measure]`) and hands that height to the writer, which sets it
+  as the page's height. The height crosses that boundary in **inches** — the
+  unit the print settings speak, because the measurement is the only part that
+  knows about pixels — and the writer refuses anything outside 1–200 inches.
+  That floor is not decoration: a page a fraction of an inch tall used to be
+  what a unit mistake looked like, and Chromium answers a sheet cut into
+  thousands of slices by killing its renderer (`STATUS_BREAKPOINT`, "This page
+  is having a problem"). A wrong height must leave as ordinary pages instead.
+  The sheet's own rules sit outside the print media on
+  purpose — the measurement has to be the layout that prints. `SHEET` in
+  `pdf.ts`, `@page`'s margins in `index.css` and the page width in `pdf.rs` are
+  one page's geometry in three files: change them together, because a page one
+  rounding error too short becomes a second sheet holding nothing.
+  The page is white: a window paints its background *onto the paper* through
+  WebView2 (the `@page` margins came out in Hook's warm canvas), so `pdf.rs`
+  paints the window's default background white for the print and puts the
+  original back in the completion handler — including on the path where the
+  print never starts.
 - **Native sign-in:** `plugins/google-signin` (Kotlin Credential Manager +
   `register_android_plugin` in its `lib.rs`) → `apps/mobile/src/lib/api.ts` →
   `POST /api/auth/config` and `POST /api/auth/google` in `server/auth.mjs` → the

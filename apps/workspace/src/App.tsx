@@ -12,7 +12,7 @@ import { DocumentMarkdown } from "@hook/markdown";
 
 import { api, exportPdf, onAuthEvent, openExternal, type AuthView } from "./lib/bridge";
 import { chatTransport, setChatContext } from "./lib/chatTransport";
-import { laidOut, picturesReady, printDialog } from "./lib/pdf";
+import { laidOut, pageHeightIn, picturesReady, printDialog } from "./lib/pdf";
 import { rememberOpened } from "./lib/projectShortcuts";
 import type { DocumentMeta } from "./lib/types";
 import { useWorkspaceStore } from "./store/useWorkspaceStore";
@@ -410,6 +410,9 @@ function DocumentPage({
   const [printCopy, setPrintCopy] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const editor = useRef<DocumentEditorHandle>(null);
+  // The sheet on its way to a PDF, so the export can measure how tall one page
+  // has to be before the window draws it (`pdf.ts::pageHeightIn`).
+  const sheet = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
   const optionsButton = useRef<HTMLButtonElement>(null);
   // A rename from the tree is a save like any other; follow it here too, unless
@@ -475,7 +478,8 @@ function DocumentPage({
    * The window prints; the editor does not. CodeMirror holds only the lines it
    * is showing, so a sheet printed from the editor would end where the screen
    * does — the copy mounted below is the whole document, drawn by the read
-   * view's own renderer (`pdf.ts` has the three steps and why each one counts).
+   * view's own renderer (`pdf.ts` has the steps and why each one counts). It
+   * leaves as one page as tall as the document, measured from that same copy.
    */
   const exportDocument = async () => {
     if (exporting) return;
@@ -485,7 +489,10 @@ function DocumentPage({
     try {
       await laidOut();
       await picturesReady();
-      const result = await exportPdf(title.trim() || "Document");
+      // One page as tall as the document, in inches — `null` when there is
+      // nothing to measure and the writer should keep its sheets.
+      const pageHeight = sheet.current ? await pageHeightIn(sheet.current) : null;
+      const result = await exportPdf(title.trim() || "Document", pageHeight);
       // A platform with a silent writer has written the file, or the person
       // cancelled the dialog. Without one, the system's print dialog is where
       // "Save as PDF" lives.
@@ -620,7 +627,7 @@ function DocumentPage({
           export, so nothing is drawn twice while a person is writing. */}
       {printCopy !== null &&
         createPortal(
-          <div className="ws-print">
+          <div className="ws-print" ref={sheet}>
             <DocumentMarkdown markdown={printCopy} imageLoading="eager" />
           </div>,
           document.body,

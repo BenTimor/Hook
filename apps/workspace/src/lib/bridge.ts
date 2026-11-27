@@ -1062,10 +1062,15 @@ export interface PdfExport {
  * Write the page the window is showing to a PDF the person names.
  *
  * The page is what prints, not what is being edited: the caller puts the
- * document on the sheet first (`pdf.ts`), and the print stylesheet decides the
- * rest.
+ * document on the sheet first (`pdf.ts`), the print stylesheet decides the
+ * rest, and `pageHeight` — one page's height in inches, margins included — is
+ * what makes it one page instead of a stack. `null` leaves the sheets to the
+ * writer.
  */
-export async function exportPdf(suggestedName: string): Promise<PdfExport> {
+export async function exportPdf(
+  suggestedName: string,
+  pageHeight: number | null,
+): Promise<PdfExport> {
   if (!isTauri()) return { path: null, direct: false };
-  return invoke<PdfExport>("export_pdf", { suggestedName });
+  return invoke<PdfExport>("export_pdf", { suggestedName, pageHeight });
 }

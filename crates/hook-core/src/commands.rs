@@ -1442,6 +1442,10 @@ fn copy_image(source: &std::path::Path, target: &std::path::Path) -> Result<(), 
 /// "Export as PDF": a native save dialog, then the window draws the page it is
 /// showing into that file (`pdf.rs`).
 ///
+/// `page_height` is the window's measurement of the printed copy in inches,
+/// margins included: the writer draws one page that tall. `None` leaves the
+/// writer's own sheets, which is what a caller with nothing to measure sends.
+///
 /// `direct` is the platform's answer, not the person's: when it is false there
 /// is no silent writer here, and the window prints through the system dialog
 /// instead of asking for a path nothing could fill.
@@ -1450,6 +1454,7 @@ pub async fn export_pdf(
     app: AppHandle,
     webview: tauri::Webview,
     suggested_name: String,
+    page_height: Option<f64>,
 ) -> Result<crate::pdf::PdfExport, String> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -1474,7 +1479,7 @@ pub async fn export_pdf(
         return Ok(dismissed);
     };
     let target = chosen.into_path().map_err(|e| e.to_string())?;
-    crate::pdf::write(webview, target.clone()).await?;
+    crate::pdf::write(webview, target.clone(), page_height).await?;
     Ok(crate::pdf::PdfExport {
         path: Some(target.to_string_lossy().to_string()),
         direct: true,

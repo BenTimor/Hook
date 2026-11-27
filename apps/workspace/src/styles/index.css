@@ -2827,10 +2827,53 @@
   display: none;
 }
 
+/* The sheet's own rules, in both media on purpose: the print media draws them
+   on paper, and `[data-measure]` lays the same element out off screen so the
+   export can read its height (`pdf.ts::pageHeightIn`). A rule that only existed
+   on paper would make the measurement a different layout from the one that
+   prints — a picture's cap is the difference between one page and two. */
+.ws-print .hook-doc pre,
+.ws-print .hook-doc table {
+  overflow: visible;
+  break-inside: avoid;
+}
+
+.ws-print .hook-doc img {
+  break-inside: avoid;
+  max-height: 200mm;
+}
+
+/* A heading at the foot of a page belongs with what it introduces. */
+.ws-print .hook-doc h1,
+.ws-print .hook-doc h2,
+.ws-print .hook-doc h3,
+.ws-print .hook-doc h4 {
+  break-after: avoid;
+}
+
+/* The sheet, laid out off screen at the width the page will give it — set from
+   `pdf.ts`, because the page's width is the writer's. It is what `display: none`
+   cannot be: something with a height. Never painted, never in the way, and
+   screen-only: `pdf.ts` takes the attribute off before anything prints, and a
+   print that saw it would draw nothing at all. */
+@media screen {
+  .ws-print[data-measure] {
+    display: block;
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: -20000px;
+    max-width: none;
+    margin: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
 @media print {
   /* The shell is a window: exactly one viewport tall, never scrolled. Paper is
      as long as the document, so both of those have to let go, or the sheet ends
-     at the fold. */
+     at the fold. White is paper: the window's own background is painted onto
+     the sheet by WebView2, which `pdf.rs` paints white as well. */
   html,
   body,
   #root {
@@ -2847,32 +2890,15 @@
     display: block;
     max-width: 760px;
     margin: 0 auto;
+    background: #fff;
     color: var(--ink);
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
 
-  /* A sheet has no scrollbar: a wide table or a long code sample keeps its own
-     width instead of being clipped to the screen's. */
-  .ws-print .hook-doc pre,
-  .ws-print .hook-doc table {
-    overflow: visible;
-    break-inside: avoid;
-  }
-
-  .ws-print .hook-doc img {
-    break-inside: avoid;
-    max-height: 200mm;
-  }
-
-  /* A heading at the foot of a page belongs with what it introduces. */
-  .ws-print .hook-doc h1,
-  .ws-print .hook-doc h2,
-  .ws-print .hook-doc h3,
-  .ws-print .hook-doc h4 {
-    break-after: avoid;
-  }
-
+  /* The margins, in the one place both writers read them: the system print
+     dialog through this rule, and WebView2 through the page height the export
+     measured — `SHEET` in `pdf.ts` carries the same numbers. */
   @page {
     margin: 18mm 16mm;
   }

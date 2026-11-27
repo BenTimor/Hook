@@ -137,7 +137,12 @@ rows written before this rule are adopted when the service starts.
   drawn once outside the editor (CodeMirror only holds the lines it is showing),
   the print stylesheet hides the app around it, and the platform's print engine
   draws the sheet — WebView2's `PrintToPdf` straight into a file the person
-  names, the system print dialog everywhere else. The toolbar's direction button
+  names, the system print dialog everywhere else. The file is **one page as tall
+  as the document**, so it reads the way the document scrolls in Workspace, on a
+  plain white sheet with no Hook canvas behind it. Only the silent writer can be
+  told how tall a page is: the system print dialog — the export on a platform
+  without one — keeps its own sheets, and so does a document longer than a PDF
+  page can be (200 inches). The toolbar's direction button
   asks the document itself: with nothing selected it
   writes `::meta{direction=rtl}` as the first line (or takes it off), and with a
   selection it fences those lines in `:::rtl` … `:::` (or `:::ltr`), a second
