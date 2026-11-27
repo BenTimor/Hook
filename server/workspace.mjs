@@ -1678,6 +1678,32 @@ export function createWorkspaceRouter({ db, env = {} }) {
     res.status(201).json({ idea: shapeBrainstormIdea(row) });
   });
 
+  router.patch("/ideas/:id", (req, res) => {
+    const projectId = projectIdOf(req, res, "ws_brainstorm_ideas", req.params.id);
+    if (!projectId) return;
+    if (!actor(req, res, projectId, "write")) return;
+    const idea = db
+      .prepare("SELECT * FROM ws_brainstorm_ideas WHERE id = ? AND deleted_at IS NULL")
+      .get(req.params.id);
+    if (!idea) return notFound(res);
+    const fields = {};
+    if (req.body?.text !== undefined) {
+      const value = text(req.body.text, 500);
+      if (!value) return badRequest(res, "Write an idea first.");
+      fields.text = value;
+    }
+    if (req.body?.position !== undefined) {
+      if (!Number.isSafeInteger(req.body.position)) {
+        return badRequest(res, "That position is not a whole number.");
+      }
+      fields.position = req.body.position;
+    }
+    if (Object.keys(fields).length === 0) {
+      return res.json({ idea: shapeBrainstormIdea(idea) });
+    }
+    res.json({ idea: shapeBrainstormIdea(update(db, "brainstorm_ideas", idea.id, fields)) });
+  });
+
   router.delete("/ideas/:id", (req, res) => {
     const projectId = projectIdOf(req, res, "ws_brainstorm_ideas", req.params.id);
     if (!projectId) return;

@@ -147,6 +147,11 @@ interface WorkspaceState {
   renameBrainstorm: (id: string, name: string) => Promise<void>;
   deleteBrainstorm: (id: string) => Promise<void>;
   createBrainstormIdea: (brainstormId: string, text: string) => Promise<BrainstormIdea | null>;
+  updateBrainstormIdea: (
+    id: string,
+    patch: { text?: string; position?: number },
+  ) => Promise<BrainstormIdea | null>;
+  reorderBrainstormIdeas: (brainstormId: string, orderedIds: string[]) => Promise<void>;
   deleteBrainstormIdea: (id: string) => Promise<void>;
 
   createFolder: (
@@ -991,6 +996,63 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       set({ error: message(error) });
       return null;
+    }
+  },
+
+  async updateBrainstormIdea(id, patch) {
+    try {
+      const updated = await api.updateBrainstormIdea(id, patch);
+      set((state) => ({
+        brainstormIdeas: {
+          ...state.brainstormIdeas,
+          [updated.idea.projectId]: sortByPosition(
+            upsert(state.brainstormIdeas[updated.idea.projectId] ?? [], updated.idea),
+          ),
+        },
+      }));
+      return updated.idea;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async reorderBrainstormIdeas(brainstormId, orderedIds) {
+    const entry = Object.entries(get().brainstormIdeas).find(([, ideas]) =>
+      ideas.some((idea) => idea.brainstormId === brainstormId),
+    );
+    if (!entry) return;
+    const [projectId, projectIdeas] = entry;
+    const byId = new Map(projectIdeas.map((idea) => [idea.id, idea]));
+    const next = orderedIds
+      .map((id, position) => {
+        const idea = byId.get(id);
+        return idea ? { ...idea, position } : null;
+      })
+      .filter((idea): idea is BrainstormIdea => idea !== null);
+    const rest = projectIdeas.filter((idea) => idea.brainstormId !== brainstormId);
+    // Optimistic: the rows move under the pointer before the round-trip.
+    set((state) => ({
+      brainstormIdeas: { ...state.brainstormIdeas, [projectId]: [...rest, ...next] },
+    }));
+    const moved = next.filter((idea) => byId.get(idea.id)?.position !== idea.position);
+    if (moved.length === 0) return;
+    try {
+      await Promise.all(
+        moved.map((idea) => api.updateBrainstormIdea(idea.id, { position: idea.position })),
+      );
+      const fresh = await api.brainstormIdeas(projectId);
+      set((state) => ({
+        brainstormIdeas: {
+          ...state.brainstormIdeas,
+          [projectId]: sortByPosition(fresh.ideas),
+        },
+      }));
+    } catch (error) {
+      set((state) => ({
+        error: message(error),
+        brainstormIdeas: { ...state.brainstormIdeas, [projectId]: projectIdeas },
+      }));
     }
   },
 

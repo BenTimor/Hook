@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
+  List,
   Minus,
   Plus,
   Trash2,
@@ -26,6 +27,17 @@ const STATUS: Array<{ id: MilestoneStatus; label: string; Icon: typeof Circle }>
 ];
 const MIN_ZOOM = 0.55;
 const MAX_ZOOM = 1.6;
+const VIEW_KEY = "hook.workspace.roadmap.view";
+
+type RoadmapView = "timeline" | "list";
+
+function readView(): RoadmapView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "timeline";
+  } catch {
+    return "timeline";
+  }
+}
 
 function dateBits(value: string | null) {
   if (!value) return { day: "", month: "" };
@@ -90,6 +102,7 @@ export function RoadmapPage({
   const maxDragRef = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [view, setView] = useState<RoadmapView>(readView);
   const suppressClick = useRef(false);
   const activeNode = useRef<HTMLButtonElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -154,11 +167,19 @@ export function RoadmapPage({
       node.removeEventListener("wheel", onWheel);
       stopWheel();
     };
-  }, [maxDrag, x]);
+  }, [maxDrag, view, x]);
 
   useEffect(() => {
     if (!roadmap) void loadRoadmap(id);
   }, [id, roadmap, loadRoadmap]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // Remembering the view is a convenience, not a requirement.
+    }
+  }, [view]);
 
   useEffect(() => {
     if (!editorOpen) return;
@@ -201,7 +222,7 @@ export function RoadmapPage({
     if (viewport.current) observer.observe(viewport.current);
     if (track.current) observer.observe(track.current);
     return () => observer.disconnect();
-  }, [editorOpen, timeline.length, x, zoom]);
+  }, [editorOpen, timeline.length, view, x, zoom]);
 
   useEffect(() => {
     if (editorOpen) return;
@@ -223,7 +244,7 @@ export function RoadmapPage({
       animate(x, target, { type: "spring", stiffness: 300, damping: 34, mass: 0.7 });
     });
     return () => cancelAnimationFrame(frame);
-  }, [selected?.id, editorOpen, timeline.length, x]);
+  }, [selected?.id, editorOpen, timeline.length, view, x]);
 
   const save = async (patch: Partial<Milestone>) => {
     if (!selected) return;
@@ -305,11 +326,35 @@ export function RoadmapPage({
           <p>
             {timeline.length === 0
               ? "Add the first milestone to start this roadmap"
-              : `${timeline.length === 1 ? "1 milestone" : `${timeline.length} milestones`} · Drag sideways or use Ctrl + wheel to zoom`}
+              : `${timeline.length === 1 ? "1 milestone" : `${timeline.length} milestones`} · ${view === "timeline" ? "Drag sideways or use Ctrl + wheel to zoom" : "The same milestones as a list"}`}
           </p>
         </div>
         <div className="ws-page-actions">
-          {timeline.length > 0 ? (
+          <div className="ws-segment" role="tablist" aria-label="Roadmap view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "timeline"}
+              data-active={view === "timeline"}
+              onClick={() => setView("timeline")}
+              title="Timeline view"
+            >
+              <CalendarDays strokeWidth={1.8} />
+              Timeline
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "list"}
+              data-active={view === "list"}
+              onClick={() => setView("list")}
+              title="List view"
+            >
+              <List strokeWidth={1.8} />
+              List
+            </button>
+          </div>
+          {timeline.length > 0 && view === "timeline" ? (
             <div className="ws-roadmap-zoom" role="group" aria-label="Zoom">
               <button
                 type="button"
@@ -349,6 +394,7 @@ export function RoadmapPage({
         </div>
       </header>
 
+      {view === "timeline" ? (
       <div
         ref={viewport}
         className="ws-timeline-scroll"
@@ -479,6 +525,61 @@ export function RoadmapPage({
           </motion.div>
         </div>
       </div>
+      ) : (
+        <div className="ws-roadmap-list" role="list" aria-label="Milestones">
+          {timeline.map((milestone) => {
+            const active = milestone.id === selectedId;
+            const date = dateBits(milestone.dueDate);
+            return (
+              <button
+                key={milestone.id}
+                ref={active ? activeNode : undefined}
+                type="button"
+                role="listitem"
+                className="ws-roadmap-list-row"
+                data-status={milestone.status}
+                data-active={active}
+                aria-pressed={active}
+                aria-label={
+                  milestone.dueDate
+                    ? `${milestone.title || "Untitled"}, ${fullDate(milestone.dueDate)}`
+                    : milestone.title || "Untitled"
+                }
+                onClick={(event) => choose(milestone, event.currentTarget)}
+              >
+                <span className="ws-roadmap-list-date">
+                  {milestone.dueDate ? (
+                    <>
+                      <strong>{date.day}</strong>
+                      <small>{date.month}</small>
+                    </>
+                  ) : (
+                    <small>No date</small>
+                  )}
+                </span>
+                <span className="ws-roadmap-list-main">
+                  <span className="ws-roadmap-list-heading">
+                    <strong dir="auto">{milestone.title || "Untitled"}</strong>
+                    <span className="ws-roadmap-list-status" data-status={milestone.status}>
+                      {STATUS.find((entry) => entry.id === milestone.status)?.label}
+                    </span>
+                  </span>
+                  {milestone.description.trim() ? (
+                    <span className="ws-roadmap-list-preview" dir="auto">
+                      {milestone.description}
+                    </span>
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
+          {timeline.length === 0 ? (
+            <p className="ws-roadmap-list-empty">
+              Add the first milestone to start this roadmap.
+            </p>
+          ) : null}
+        </div>
+      )}
 
       <AnimatePresence>
         {editorOpen && selected ? (

@@ -350,7 +350,9 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
           };
         case "brainstorm-ideas":
           return {
-            ideas: demo.brainstormIdeas.filter((idea) => idea.projectId === id),
+            ideas: demo.brainstormIdeas
+              .filter((idea) => idea.projectId === id)
+              .sort((left, right) => left.position - right.position || left.createdAt - right.createdAt),
           };
         case "folders":
           return { folders: demo.folders.filter((folder) => folder.projectId === id) };
@@ -624,7 +626,9 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
     if (resource === "ideas") {
       if (method === "GET") {
         return {
-          ideas: demo.brainstormIdeas.filter((idea) => idea.brainstormId === id),
+          ideas: demo.brainstormIdeas
+            .filter((idea) => idea.brainstormId === id)
+            .sort((left, right) => left.position - right.position || left.createdAt - right.createdAt),
         };
       }
       if (method === "POST") {
@@ -657,6 +661,20 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
   }
 
   if (root === "ideas") {
+    if (method === "PATCH") {
+      demo.brainstormIdeas = demo.brainstormIdeas.map((idea) =>
+        idea.id === id
+          ? {
+              ...idea,
+              text: payload.text === undefined ? idea.text : String(payload.text),
+              position:
+                typeof payload.position === "number" ? payload.position : idea.position,
+              updatedAt: demoNow(),
+            }
+          : idea,
+      );
+      return { idea: demo.brainstormIdeas.find((idea) => idea.id === id) };
+    }
     if (method === "DELETE") {
       demo.brainstormIdeas = demo.brainstormIdeas.filter((idea) => idea.id !== id);
       return { ok: true };
@@ -988,6 +1006,8 @@ export const api = {
   deleteBrainstorm: (id: string) => call<{ ok: true }>("DELETE", `/brainstorms/${id}`),
   createBrainstormIdea: (brainstormId: string, text: string) =>
     call<{ idea: BrainstormIdea }>("POST", `/brainstorms/${brainstormId}/ideas`, { text }),
+  updateBrainstormIdea: (id: string, patch: { text?: string; position?: number }) =>
+    call<{ idea: BrainstormIdea }>("PATCH", `/ideas/${id}`, patch),
   deleteBrainstormIdea: (id: string) =>
     call<{ ok: true }>("DELETE", `/ideas/${id}`),
   milestones: (projectId: string) =>

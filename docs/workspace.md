@@ -191,13 +191,20 @@ rows written before this rule are adopted when the service starts.
   (title, status, date and description) instead of opening a side drawer.
   Hovering a gap or using the always-visible right-edge button adds another
   milestone there, dated one day after the milestone before it. Milestones
-  themselves are not tree items.
+  themselves are not tree items. A Timeline/List switch at the top keeps the
+  same roadmap readable as rows (date, status, title and description), and the
+  choice is remembered on the device.
 - **A brainstorm is a word with ideas around it.** It sits in the tree and the
   project overview like a roadmap. The page draws the brainstorm's name in the
-  middle and places every idea around it, connected by a line. Ideas are text
-  only and carry a position; the map is laid out from that order, so two people
-  see the same shape. Adding and removing an idea is immediate for everyone in
-  the project.
+  middle and places every idea around it, connected by a line. The name wraps
+  to two lines in a wider center so a real title is not cut to an ellipsis.
+  Ideas are text only and carry a position; the map is laid out from that order,
+  so two people see the same shape. Adding and removing an idea is immediate for
+  everyone in the project. A Map/List switch at the top shows the same ideas as
+  numbered rows, with the choice remembered on the device. Right-click an idea
+  in either view for Edit and Delete; in the list a row (or its grip) drags to
+  change the stored order. Both lists follow the text's own direction, so Hebrew
+  and Arabic ideas align from the right.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,
   and an agent comment carries the conversation it came from, so a teammate sees
   "via Hook agent" instead of mistaking it for something the user typed. The

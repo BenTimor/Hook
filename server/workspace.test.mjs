@@ -940,6 +940,31 @@ test("brainstorms hold ideas and travel through the changes feed", async (t) => 
   const ideas = await request(`/brainstorms/${brainstorm.id}/ideas`);
   assert.equal(ideas.body.ideas.length, 2);
 
+  // An idea's text and its stored order are both editable: the panel's rename
+  // dialog and a drag in the list are the same PATCH.
+  const edited = await request(`/ideas/${first.body.idea.id}`, {
+    method: "PATCH",
+    body: { text: "Something short, edited", position: 1 },
+  });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.body.idea.text, "Something short, edited");
+  assert.equal(edited.body.idea.position, 1);
+  const moved = await request(`/ideas/${second.body.idea.id}`, {
+    method: "PATCH",
+    body: { position: 0 },
+  });
+  assert.equal(moved.body.idea.position, 0);
+  const reordered = await request(`/brainstorms/${brainstorm.id}/ideas`);
+  assert.deepEqual(
+    reordered.body.ideas.map((idea) => idea.text),
+    ["Something plain", "Something short, edited"],
+  );
+  const empty = await request(`/ideas/${first.body.idea.id}`, {
+    method: "PATCH",
+    body: { text: "   " },
+  });
+  assert.equal(empty.status, 400);
+
   const renamed = await request(`/brainstorms/${brainstorm.id}`, {
     method: "PATCH",
     body: { name: "The name" },
@@ -991,6 +1016,14 @@ test("an id from another kind names both kinds, and only a missing id is gone", 
   assert.equal(asTask.status, 409);
   assert.match(asTask.body.error.message, /board/);
   assert.match(asTask.body.error.message, /task/);
+
+  const asIdea = await request(`/ideas/${document.body.document.id}`, {
+    method: "PATCH",
+    body: { text: "Not an idea" },
+  });
+  assert.equal(asIdea.status, 409);
+  assert.match(asIdea.body.error.message, /document/);
+  assert.match(asIdea.body.error.message, /idea/);
 
   const missing = await request("/documents/dc_missing");
   assert.equal(missing.status, 404);

@@ -2529,6 +2529,27 @@
 .ws-timeline-date small { margin-top: 3px; color: var(--ink-4); font-size: calc(10.5px * var(--roadmap-zoom, 1)); font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; }
 .ws-timeline-title { display: -webkit-box; max-width: calc(270px * var(--roadmap-zoom, 1)); overflow: hidden; color: var(--ink); font-size: calc(18px * var(--roadmap-zoom, 1)); font-weight: 620; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ws-timeline-preview { display: -webkit-box; max-width: calc(270px * var(--roadmap-zoom, 1)); overflow: hidden; color: var(--ink-3); font-size: calc(13.5px * var(--roadmap-zoom, 1)); line-height: 1.38; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.ws-roadmap-list { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 8px; padding: 4px 32px 26px; overflow: auto; }
+.ws-roadmap-list-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: start; gap: 16px; width: 100%; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--ivory); color: var(--ink); font: inherit; text-align: start; cursor: pointer; box-shadow: 0 4px 14px rgba(36, 36, 30, 0.045); transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease; }
+.ws-roadmap-list-row:hover { border-color: var(--line-strong); box-shadow: 0 10px 26px rgba(36, 36, 30, 0.085); }
+.ws-roadmap-list-row[data-active="true"] { border-color: rgba(var(--accent-rgb), 0.46); background: var(--panel); box-shadow: 0 12px 30px rgba(36, 36, 30, 0.1); }
+.ws-roadmap-list-date { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-inline-end: 14px; border-inline-end: 1px solid var(--line); line-height: 1; }
+.ws-roadmap-list-date strong { color: var(--ink); font-size: 28px; font-weight: 620; letter-spacing: -0.04em; }
+.ws-roadmap-list-date small { color: var(--ink-4); font-size: 9.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; }
+.ws-roadmap-list-main { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.ws-roadmap-list-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ws-roadmap-list-heading strong { min-width: 0; color: var(--ink); font-size: 14.5px; font-weight: 620; line-height: 1.3; text-align: start; }
+.ws-roadmap-list-status { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: rgba(var(--ink-rgb), 0.05); color: var(--ink-3); font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.ws-roadmap-list-row[data-status="planned"] .ws-roadmap-list-status { background: rgba(182, 146, 78, 0.13); color: #7a5d28; }
+.ws-roadmap-list-row[data-status="active"] .ws-roadmap-list-status { background: rgba(54, 95, 136, 0.11); color: #365f88; }
+.ws-roadmap-list-row[data-status="done"] .ws-roadmap-list-status { background: rgba(56, 124, 84, 0.12); color: #2f6a48; }
+.ws-roadmap-list-preview { display: -webkit-box; overflow: hidden; color: var(--ink-3); font-size: 12.5px; line-height: 1.42; text-align: start; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ws-roadmap-list-empty { padding: 40px 0; color: var(--ink-4); font-size: 12.5px; text-align: center; }
+@media (max-width: 700px) {
+  .ws-roadmap-list { padding-inline: 14px; }
+  .ws-roadmap-list-row { grid-template-columns: 52px minmax(0, 1fr); gap: 12px; padding: 12px; }
+  .ws-roadmap-list-date strong { font-size: 23px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .ws-timeline-node::before, .ws-milestone-focus::before { animation: none; }
 }
@@ -3339,10 +3360,10 @@
 .ws-brainstorm-links { position: absolute; inset: 0; width: 100%; height: 100%; }
 .ws-brainstorm-links line { stroke: var(--line-strong); stroke-width: 1.2; vector-effect: non-scaling-stroke; stroke-dasharray: 3 5; opacity: 0.8; animation: ws-brainstorm-dash 26s linear infinite; }
 .ws-brainstorm-center, .ws-brainstorm-node { position: absolute; transform: translate(-50%, -50%); }
-.ws-brainstorm-center { z-index: 2; display: flex; max-width: 190px; align-items: center; gap: 8px; padding: 12px 18px; border: 1px solid rgba(var(--accent-rgb), 0.34); border-radius: 999px; background: var(--ivory); box-shadow: 0 18px 44px rgba(36, 36, 30, 0.12); color: var(--ink); font-size: 14px; font-weight: 650; letter-spacing: -0.01em; animation: ws-brainstorm-glow 5s ease-in-out infinite; }
+.ws-brainstorm-center { z-index: 2; display: flex; max-width: min(320px, calc(100vw - 96px)); align-items: center; gap: 8px; padding: 12px 18px; border: 1px solid rgba(var(--accent-rgb), 0.34); border-radius: 999px; background: var(--ivory); box-shadow: 0 18px 44px rgba(36, 36, 30, 0.12); color: var(--ink); font-size: 14px; font-weight: 650; letter-spacing: -0.01em; animation: ws-brainstorm-glow 5s ease-in-out infinite; }
 .ws-brainstorm-center svg { width: 17px; height: 17px; color: var(--accent); flex: 0 0 auto; }
-.ws-brainstorm-center span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-brainstorm-node { z-index: 1; display: flex; width: 156px; align-items: flex-start; gap: 6px; padding: 9px 10px 9px 12px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); box-shadow: 0 8px 22px rgba(36, 36, 30, 0.07); color: var(--ink-2); font-size: 12px; line-height: 1.35; cursor: grab; touch-action: none; user-select: none; will-change: left, top; transition: left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), top 220ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; animation: ws-brainstorm-pop 280ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.ws-brainstorm-center span { display: -webkit-box; min-width: 0; overflow: hidden; text-align: center; line-height: 1.25; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ws-brainstorm-node { z-index: 1; display: flex; width: 156px; align-items: flex-start; gap: 6px; padding: 9px 10px 9px 12px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); box-shadow: 0 8px 22px rgba(36, 36, 30, 0.07); color: var(--ink-2); font-size: 12px; line-height: 1.35; text-align: start; cursor: grab; touch-action: none; user-select: none; will-change: left, top; transition: left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), top 220ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; animation: ws-brainstorm-pop 280ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
 .ws-brainstorm-node:hover { z-index: 3; border-color: var(--line-strong); transform: translate(-50%, -50%) translateY(-1px); box-shadow: 0 12px 28px rgba(36, 36, 30, 0.1); }
 .ws-brainstorm-node[data-dragging="true"] { z-index: 5; cursor: grabbing; transition: none; transform: translate(-50%, -50%) scale(1.035); border-color: rgba(var(--accent-rgb), 0.38); box-shadow: 0 20px 48px rgba(36, 36, 30, 0.18); }
 .ws-brainstorm-node > span { flex: 1; min-width: 0; overflow-wrap: anywhere; pointer-events: none; }
@@ -3350,6 +3371,23 @@
 .ws-brainstorm-node:hover .ws-brainstorm-node-remove, .ws-brainstorm-node-remove:focus-visible { opacity: 1; }
 .ws-brainstorm-node-remove:hover { background: var(--line-soft); color: var(--ink); }
 .ws-brainstorm-node-remove svg { width: 12px; height: 12px; }
+.ws-brainstorm-list { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 8px; padding: 6px 2px 2px; overflow: auto; }
+.ws-brainstorm-list-row { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); box-shadow: 0 6px 18px rgba(36, 36, 30, 0.055); text-align: start; }
+.ws-brainstorm-list-row[draggable="true"] { cursor: grab; }
+.ws-brainstorm-list[data-dragging="true"] .ws-brainstorm-list-row { cursor: grabbing; }
+.ws-brainstorm-list-row:hover { border-color: var(--line-strong); box-shadow: 0 10px 24px rgba(36, 36, 30, 0.085); }
+.ws-brainstorm-list-row[data-dragging="true"] { opacity: 0.35; border-style: dashed; }
+.ws-brainstorm-list-row[data-over="before"]::before, .ws-brainstorm-list-row[data-over="after"]::after { content: ""; position: absolute; z-index: 1; inset-inline: 12px; height: 2px; border-radius: 2px; background: var(--accent); pointer-events: none; }
+.ws-brainstorm-list-row[data-over="before"]::before { top: -5px; }
+.ws-brainstorm-list-row[data-over="after"]::after { bottom: -5px; }
+.ws-brainstorm-list-grip { display: grid; width: 14px; flex: 0 0 14px; place-items: center; margin-top: 4px; color: var(--ink-4); opacity: 0.45; cursor: grab; }
+.ws-brainstorm-list-grip svg { width: 13px; height: 13px; }
+.ws-brainstorm-list-row:hover .ws-brainstorm-list-grip { opacity: 0.9; }
+.ws-brainstorm-list-index { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(var(--accent-rgb), 0.28); border-radius: 50%; background: rgba(var(--accent-rgb), 0.07); color: var(--accent); font-size: 10.5px; font-weight: 700; }
+.ws-brainstorm-list-text { flex: 1; min-width: 0; color: var(--ink-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ws-brainstorm-list-row .ws-brainstorm-node-remove { margin-top: 2px; }
+.ws-brainstorm-list-row:hover .ws-brainstorm-node-remove, .ws-brainstorm-list-row .ws-brainstorm-node-remove:focus-visible { opacity: 1; }
+.ws-brainstorm-list-empty { padding: 28px 0; color: var(--ink-4); font-size: 12.5px; text-align: center; }
 .ws-brainstorm-empty { position: absolute; top: calc(50% + 52px); left: 0; right: 0; color: var(--ink-4); font-size: 12.5px; text-align: center; animation: ws-brainstorm-fade 420ms ease both; }
 .ws-brainstorm-composer { display: flex; align-items: center; gap: 8px; padding-top: 12px; }
 .ws-brainstorm-composer input { flex: 1; min-width: 0; height: 38px; padding: 0 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--ivory); color: var(--ink); font: inherit; font-size: 13px; outline: none; }
@@ -3373,7 +3411,8 @@
 }
 @media (max-width: 700px) {
   .ws-brainstorm-node { font-size: 11px; }
-  .ws-brainstorm-center { max-width: 150px; padding: 10px 14px; font-size: 12.5px; }
+  .ws-brainstorm-center { max-width: min(280px, calc(100vw - 64px)); padding: 10px 14px; font-size: 12.5px; }
+  .ws-brainstorm-list-text { font-size: 12.5px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ws-brainstorm-node, .ws-brainstorm-center, .ws-brainstorm-links line, .ws-brainstorm-empty { animation: none; transition: none; }

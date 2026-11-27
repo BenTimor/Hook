@@ -3,13 +3,27 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type FormEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { ArrowLeft, Lightbulb, Plus, X } from "lucide-react";
+import { TextFieldDialog } from "@hook/ui";
+import {
+  ArrowLeft,
+  GripVertical,
+  Lightbulb,
+  List,
+  Network,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import type { BrainstormIdea, Project } from "../lib/types";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
+import { PopupMenu, type MenuEntry } from "./PopupMenu";
 
 const EMPTY: never[] = [];
 
@@ -18,8 +32,11 @@ const NODE_GAP = 14;
 const MAP_PADDING = 12;
 const NODE_LINE_HEIGHT = 16.2;
 const NODE_PADDING = 20;
-const CENTER_HEIGHT = 50;
+const CENTER_HEIGHT = 64;
+const CENTER_MAX_WIDTH = 320;
+const VIEW_KEY = "hook.workspace.brainstorm.view";
 
+type BrainstormView = "map" | "list";
 type Point = { x: number; y: number };
 type Size = { width: number; height: number };
 type Rect = { x: number; y: number; width: number; height: number };
@@ -125,8 +142,20 @@ function findFree(
 }
 
 function centerRectFor(size: Size, name: string): Rect {
-  const width = Math.min(220, Math.max(104, name.trim().length * 8.4 + 64));
+  const width = Math.min(
+    CENTER_MAX_WIDTH,
+    Math.max(132, name.trim().length * 8.8 + 64),
+    Math.max(132, size.width - MAP_PADDING * 2),
+  );
   return rectAt({ x: size.width / 2, y: size.height / 2 }, width, CENTER_HEIGHT);
+}
+
+function readView(): BrainstormView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "map";
+  } catch {
+    return "map";
+  }
 }
 
 function layoutKey(id: string) {
@@ -180,18 +209,29 @@ export function BrainstormPage({
   const ideas = useWorkspaceStore((state) => state.brainstormIdeas[project.id] ?? EMPTY);
   const loadBrainstorm = useWorkspaceStore((state) => state.loadBrainstorm);
   const createBrainstormIdea = useWorkspaceStore((state) => state.createBrainstormIdea);
+  const updateBrainstormIdea = useWorkspaceStore((state) => state.updateBrainstormIdea);
+  const reorderBrainstormIdeas = useWorkspaceStore((state) => state.reorderBrainstormIdeas);
   const deleteBrainstormIdea = useWorkspaceStore((state) => state.deleteBrainstormIdea);
   const canWrite = ["owner", "manager", "editor"].includes(project.role);
 
   const mapRef = useRef<HTMLDivElement>(null);
+  const centerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; pointerId: number; offsetX: number; offsetY: number } | null>(
     null,
   );
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
+  const [centerSize, setCenterSize] = useState<Size>({ width: 0, height: 0 });
   const [manual, setManual] = useState<Record<string, Point>>(() => readLayout(id));
   const [dragging, setDragging] = useState<{ id: string; point: Point } | null>(null);
+  const [view, setView] = useState<BrainstormView>(readView);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number; idea: BrainstormIdea } | null>(null);
+  const [editing, setEditing] = useState<BrainstormIdea | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<{ id: string; after: boolean } | null>(null);
 
   useEffect(() => {
     if (!brainstorm) void loadBrainstorm(id);
@@ -206,7 +246,18 @@ export function BrainstormPage({
     const observer = new ResizeObserver(measure);
     observer.observe(map);
     return () => observer.disconnect();
-  }, []);
+  }, [view]);
+
+  useEffect(() => {
+    const node = centerRef.current;
+    if (!node) return;
+    const measure = () =>
+      setCenterSize({ width: node.offsetWidth, height: node.offsetHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [brainstorm?.name, view]);
 
   useEffect(() => {
     try {
@@ -216,27 +267,45 @@ export function BrainstormPage({
     }
   }, [id, manual]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // Remembering the view is a convenience, not a requirement.
+    }
+  }, [view]);
+
+  const items = useMemo(
+    () => ideas.filter((idea) => idea.brainstormId === id),
+    [ideas, id],
+  );
+
   const center = useMemo(() => {
     if (!size.width || !size.height) return null;
+    const fallback = centerRectFor(size, brainstorm?.name ?? "");
+    const maxWidth = Math.max(132, size.width - MAP_PADDING * 2);
+    const width = Math.min(centerSize.width || fallback.width, maxWidth);
+    const height = Math.min(
+      centerSize.height || fallback.height,
+      Math.max(CENTER_HEIGHT, size.height - MAP_PADDING * 2),
+    );
     return {
       point: { x: size.width / 2, y: size.height / 2 },
-      rect: centerRectFor(size, brainstorm?.name ?? ""),
+      rect: rectAt({ x: size.width / 2, y: size.height / 2 }, width, height),
     };
-  }, [size, brainstorm?.name]);
+  }, [size, centerSize, brainstorm?.name]);
 
   const positioned = useMemo<Positioned[]>(() => {
     if (!size.width || !size.height || !center) return [];
     const placed: Rect[] = [center.rect];
-    return ideas
-      .filter((idea) => idea.brainstormId === id)
-      .map((idea, index) => {
-        const height = nodeHeight(idea.text);
-        const ideal = manual[idea.id] ?? idealPoint(index, size);
-        const point = findFree(ideal, placed, size, NODE_WIDTH, height);
-        placed.push(rectAt(point, NODE_WIDTH, height));
-        return { idea, index, x: point.x, y: point.y, height };
-      });
-  }, [ideas, id, size, manual, center]);
+    return items.map((idea, index) => {
+      const height = nodeHeight(idea.text);
+      const ideal = manual[idea.id] ?? idealPoint(index, size);
+      const point = findFree(ideal, placed, size, NODE_WIDTH, height);
+      placed.push(rectAt(point, NODE_WIDTH, height));
+      return { idea, index, x: point.x, y: point.y, height };
+    });
+  }, [items, size, manual, center]);
 
   const visible = positioned.map((node) =>
     dragging && dragging.id === node.idea.id
@@ -255,8 +324,70 @@ export function BrainstormPage({
   };
 
   const removeIdea = (idea: BrainstormIdea) => {
+    if (editing?.id === idea.id) setEditing(null);
     void deleteBrainstormIdea(idea.id);
   };
+
+  const openEdit = (idea: BrainstormIdea) => {
+    setEditing(idea);
+    setEditText(idea.text);
+  };
+
+  const saveEdit = async () => {
+    if (!editing || editSaving) return;
+    const value = editText.trim();
+    if (!value) return;
+    setEditSaving(true);
+    const saved = await updateBrainstormIdea(editing.id, { text: value });
+    setEditSaving(false);
+    if (saved) setEditing(null);
+  };
+
+  const openMenu = (event: ReactMouseEvent, idea: BrainstormIdea) => {
+    if (!canWrite) return;
+    event.preventDefault();
+    setMenu({ x: event.clientX, y: event.clientY, idea });
+  };
+
+  const dropIdea = (targetId: string | null, after: boolean) => {
+    const source = dragId;
+    setDragId(null);
+    setDragOver(null);
+    if (!source || source === targetId) return;
+    const ids = items.map((idea) => idea.id).filter((id) => id !== source);
+    let index = targetId ? ids.indexOf(targetId) : -1;
+    if (index < 0) index = ids.length;
+    else if (after) index += 1;
+    ids.splice(index, 0, source);
+    void reorderBrainstormIdeas(id, ids);
+  };
+
+  const startRowDrag = (event: ReactDragEvent<HTMLDivElement>, idea: BrainstormIdea) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", idea.id);
+    event.dataTransfer.setDragImage(event.currentTarget, 24, 24);
+    setDragId(idea.id);
+    setDragOver(null);
+  };
+
+  const menuEntries: MenuEntry[] = menu
+    ? [
+        {
+          kind: "action",
+          label: "Edit idea",
+          icon: <Pencil />,
+          onSelect: () => openEdit(menu.idea),
+        },
+        { kind: "separator" },
+        {
+          kind: "action",
+          label: "Delete idea",
+          icon: <Trash2 />,
+          danger: true,
+          onSelect: () => removeIdea(menu.idea),
+        },
+      ]
+    : [];
 
   const occupied = (excludeId?: string) => {
     const rects = center ? [center.rect] : [];
@@ -329,12 +460,39 @@ export function BrainstormPage({
         <div className="ws-page-title">
           <h1>{brainstorm?.name || "Brainstorm"}</h1>
           <span>
-            {positioned.length} {positioned.length === 1 ? "idea" : "ideas"}
+            {items.length} {items.length === 1 ? "idea" : "ideas"}
           </span>
+        </div>
+        <div className="ws-page-actions">
+          <div className="ws-segment" role="tablist" aria-label="Brainstorm view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "map"}
+              data-active={view === "map"}
+              onClick={() => setView("map")}
+              title="Map view"
+            >
+              <Network strokeWidth={1.8} />
+              Map
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "list"}
+              data-active={view === "list"}
+              onClick={() => setView("list")}
+              title="List view"
+            >
+              <List strokeWidth={1.8} />
+              List
+            </button>
+          </div>
         </div>
       </header>
 
-      <div className="ws-brainstorm-body">
+      <div className="ws-brainstorm-body" data-view={view}>
+        {view === "map" ? (
         <div className="ws-brainstorm-map" ref={mapRef}>
           {center && (
             <svg
@@ -358,7 +516,9 @@ export function BrainstormPage({
 
           {center && (
             <div
+              ref={centerRef}
               className="ws-brainstorm-center"
+              dir="auto"
               style={{ left: `${center.point.x}px`, top: `${center.point.y}px` }}
             >
               <Lightbulb aria-hidden="true" />
@@ -370,6 +530,7 @@ export function BrainstormPage({
             <div
               className="ws-brainstorm-node"
               key={node.idea.id}
+              dir="auto"
               data-dragging={dragging?.id === node.idea.id}
               style={{
                 left: `${node.x}px`,
@@ -380,6 +541,7 @@ export function BrainstormPage({
               onPointerMove={(event) => moveDrag(event, node)}
               onPointerUp={(event) => endDrag(event, node)}
               onPointerCancel={(event) => endDrag(event, node)}
+              onContextMenu={(event) => openMenu(event, node.idea)}
             >
               <span>{node.idea.text}</span>
               {canWrite && (
@@ -396,12 +558,105 @@ export function BrainstormPage({
             </div>
           ))}
 
-          {positioned.length === 0 && (
+          {items.length === 0 && (
             <p className="ws-brainstorm-empty">
               Add the first idea and watch the map grow.
             </p>
           )}
         </div>
+        ) : (
+          <div
+            className="ws-brainstorm-list"
+            role="list"
+            aria-label="Ideas"
+            data-dragging={Boolean(dragId)}
+            onDragOver={(event) => {
+              if (!dragId) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              const target = event.target instanceof Element ? event.target : null;
+              const row = target?.closest<HTMLElement>(".ws-brainstorm-list-row[data-idea-id]");
+              const targetId = row?.dataset.ideaId;
+              if (!row || !targetId) {
+                setDragOver(null);
+                return;
+              }
+              const rect = row.getBoundingClientRect();
+              const after = event.clientY > rect.top + rect.height / 2;
+              if (dragOver?.id !== targetId || dragOver.after !== after) {
+                setDragOver({ id: targetId, after });
+              }
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+              setDragOver(null);
+            }}
+            onDrop={(event) => {
+              if (!dragId) return;
+              event.preventDefault();
+              const target = event.target instanceof Element ? event.target : null;
+              const row = target?.closest<HTMLElement>(".ws-brainstorm-list-row[data-idea-id]");
+              const targetId = row?.dataset.ideaId;
+              if (!row || !targetId) {
+                dropIdea(null, true);
+                return;
+              }
+              const rect = row.getBoundingClientRect();
+              dropIdea(targetId, event.clientY > rect.top + rect.height / 2);
+            }}
+          >
+            {items.map((idea, index) => (
+              <div
+                className="ws-brainstorm-list-row"
+                key={idea.id}
+                role="listitem"
+                dir="auto"
+                data-idea-id={idea.id}
+                data-dragging={dragId === idea.id}
+                data-over={
+                  dragId && dragId !== idea.id && dragOver?.id === idea.id
+                    ? dragOver.after
+                      ? "after"
+                      : "before"
+                    : undefined
+                }
+                draggable={canWrite}
+                onDragStart={canWrite ? (event) => startRowDrag(event, idea) : undefined}
+                onDragEnd={() => {
+                  setDragId(null);
+                  setDragOver(null);
+                }}
+                onContextMenu={(event) => openMenu(event, idea)}
+              >
+                {canWrite && (
+                  <span className="ws-brainstorm-list-grip" aria-hidden="true">
+                    <GripVertical />
+                  </span>
+                )}
+                <span className="ws-brainstorm-list-index" aria-hidden="true">
+                  {index + 1}
+                </span>
+                <span className="ws-brainstorm-list-text">{idea.text}</span>
+                {canWrite && (
+                  <button
+                    className="ws-brainstorm-node-remove"
+                    aria-label="Remove idea"
+                    title="Remove idea"
+                    draggable={false}
+                    onClick={() => removeIdea(idea)}
+                  >
+                    <X />
+                  </button>
+                )}
+              </div>
+            ))}
+            {items.length === 0 && (
+              <p className="ws-brainstorm-list-empty">
+                Add the first idea and it will appear here.
+              </p>
+            )}
+          </div>
+        )}
 
         {canWrite && (
           <form className="ws-brainstorm-composer" onSubmit={addIdea}>
@@ -422,6 +677,28 @@ export function BrainstormPage({
           </form>
         )}
       </div>
+
+      {menu ? (
+        <PopupMenu
+          x={menu.x}
+          y={menu.y}
+          entries={menuEntries}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
+
+      <TextFieldDialog
+        open={editing !== null}
+        title="Edit idea"
+        description="Change the text of this idea for everyone in the project."
+        label="Idea"
+        placeholder="The idea"
+        value={editText}
+        onChange={setEditText}
+        confirm={editSaving ? "Saving…" : "Save idea"}
+        onClose={() => setEditing(null)}
+        onConfirm={() => void saveEdit()}
+      />
     </div>
   );
 }
