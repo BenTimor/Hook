@@ -1,8 +1,24 @@
 diff --git a/media/filters/win/media_foundation_audio_decoder.cc b/media/filters/win/media_foundation_audio_decoder.cc
-index ed9529f3d6..8b4d55ec26 100644
+index ed9529f3d6..d9468a85e2 100644
 --- a/media/filters/win/media_foundation_audio_decoder.cc
 +++ b/media/filters/win/media_foundation_audio_decoder.cc
-@@ -98,14 +98,15 @@ std::optional<MFT_REGISTER_TYPE_INFO> GetTypeInfo(
+@@ -37,11 +37,13 @@ bool CodecSupportsFloatOutput(AudioCodec codec) {
+     return true;
+   }
+ #endif
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++  // Hook: the in-box AAC decoder outputs 32-bit float, and saying so is not
++  // decoding. Without this the output-type loop accepts nothing and the
++  // decoder fails with MF_E_INVALIDMEDIATYPE even though Windows' own decoder
++  // was found and took the input type.
+   if (codec == AudioCodec::kAAC) {
+     return true;
+   }
+-#endif
+ #if BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
+   if (codec == AudioCodec::kAC4) {
+     return true;
+@@ -98,14 +100,15 @@ std::optional<MFT_REGISTER_TYPE_INFO> GetTypeInfo(
        return MFT_REGISTER_TYPE_INFO{MFMediaType_Audio,
                                      MFAudioFormat_Dolby_DDPlus};
  #endif
@@ -23,6 +39,18 @@ index ed9529f3d6..8b4d55ec26 100644
  #if BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
      case AudioCodec::kAC4:
        return MFT_REGISTER_TYPE_INFO{MFMediaType_Audio, MFAudioFormat_Dolby_AC4};
+@@ -379,11 +382,7 @@ HRESULT MediaFoundationAudioDecoder::CreateDecoder() {
+ 
+   Microsoft::WRL::ComPtr<IMFMediaType> input_type;
+   if (config_.codec() == AudioCodec::kAAC) {
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     RETURN_IF_FAILED(GetAacAudioType(config_, &input_type));
+-#else
+-    return E_NOTIMPL;
+-#endif
+   } else {
+     RETURN_IF_FAILED(GetDefaultAudioType(config_, &input_type));
+   }
 diff --git a/media/mojo/services/gpu_mojo_media_client_win.cc b/media/mojo/services/gpu_mojo_media_client_win.cc
 index 9716800e49..efc1a1fd09 100644
 --- a/media/mojo/services/gpu_mojo_media_client_win.cc
@@ -46,3 +74,67 @@ index 9716800e49..efc1a1fd09 100644
      }
  
      return audio_configs;
+diff --git a/media/base/win/mf_helpers.cc b/media/base/win/mf_helpers.cc
+index e121ba1f9c..8560ff2765 100644
+--- a/media/base/win/mf_helpers.cc
++++ b/media/base/win/mf_helpers.cc
+@@ -513,7 +513,6 @@ HRESULT GetDefaultAudioType(const AudioDecoderConfig decoder_config,
+   return S_OK;
+ }
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ HRESULT GetAacAudioType(const AudioDecoderConfig& decoder_config,
+                         IMFMediaType** media_type_out) {
+   DVLOG(1) << __func__;
+@@ -559,7 +558,6 @@ HRESULT GetAacAudioType(const AudioDecoderConfig& decoder_config,
+   *media_type_out = media_type.Detach();
+   return S_OK;
+ }
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+ #if BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
+ // An attribute defined to indicate if the input audio is already
+diff --git a/media/base/win/mf_helpers.h b/media/base/win/mf_helpers.h
+index 8572e20f27..96f0adbe3e 100644
+--- a/media/base/win/mf_helpers.h
++++ b/media/base/win/mf_helpers.h
+@@ -147,14 +147,16 @@ MEDIA_EXPORT HRESULT
+ GetDefaultAudioType(const AudioDecoderConfig decoder_config,
+                     IMFMediaType** media_type_out);
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ // Given an AudioDecoderConfig which represents AAC audio, get its
+ // corresponding IMFMediaType format (by calling GetDefaultAudioType)
+ // and copy the extra_data from the decoder_config into the
+ // returned IMFMediaType.
++//
++// Hook: built in every configuration. Describing an AAC stream to the in-box
++// Windows decoder is parsing, not decoding -- the same rule as the MP4 parsers
++// and the Annex-B converter (browser/patches/0025-parsing-is-not-decoding).
+ MEDIA_EXPORT HRESULT GetAacAudioType(const AudioDecoderConfig& decoder_config,
+                                      IMFMediaType** media_type_out);
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+ #if BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
+ // Given an AudioDecoderConfig which represents AC4 audio, get its
+diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
+index e4c443001d..08dfc6d110 100644
+--- a/media/ffmpeg/ffmpeg_common.cc
++++ b/media/ffmpeg/ffmpeg_common.cc
+@@ -391,6 +391,16 @@ bool AVCodecContextToAudioDecoderConfig(const AVCodecContext* codec_context,
+   }
+ 
+   switch (codec) {
++    // Hook: with no FFmpeg AAC decoder in the image nothing fills in
++    // |sample_fmt|, and an unknown sample format makes the whole config
++    // invalid -- FFmpegDemuxerStream::Create then drops the track and the file
++    // reads as "no supported streams" before Windows' in-box decoder is ever
++    // asked. Same reasoning as AC3/EAC3 below. AAC is planar float.
++    case AudioCodec::kAAC:
++      if (sample_format == kUnknownSampleFormat) {
++        sample_format = kSampleFormatPlanarF32;
++      }
++      break;
+     // For AC3/EAC3 we enable only demuxing, but not decoding, so FFmpeg does
+     // not fill |sample_fmt|.
+     case AudioCodec::kAC3:

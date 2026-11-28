@@ -10,14 +10,17 @@
  * conversation, so the surface can still be looked at and demonstrated. It never
  * pretends to be a model — it says so in its own reply.
  *
- * Streaming is polling here on purpose: the channel returns `busy` on the chat
- * while a turn runs, and one poll per ~350 ms is enough for the typing to read as
- * live without inventing a second streaming protocol. The sidecar in
- * `docs/browser-poc-plan.md` can stream over mojom when it exists; the dock does
- * not care, because the events it receives are the same.
+ * Streaming is a stream: the browser process holds one response open on the host
+ * (`/chats/<id>/events`, `stream_chat` in `hook-core`) and pushes every frame to
+ * this page over mojom, so a reply arrives as it is written instead of being
+ * asked for again three times a second. `poll` stays behind it as the fallback
+ * for a host too old to know the route, and for a page whose bindings predate
+ * the observer: the events it emits are the same either way, so the dock never
+ * learns which one it is on.
  */
 import type { ChatTransport, DockChat, DockEvent, DockMessage } from "@hook/chat";
 
+import { streamChat } from "./mojom";
 import type { ChatMessage, ChatSummary, HookPageHandler } from "./mojom";
 
 const POLL_MS = 350;
@@ -60,7 +63,7 @@ export function channelTransport(handler: HookPageHandler): ChatTransport {
     [...messages].reverse().find((message) => message.role === "assistant");
 
   /**
-   * Poll one chat while its turn runs, and emit the text as it grows.
+   * Ask one chat while its turn runs, and emit the text as it grows.
    *
    * `alreadyDrawn` is how much of the reply the dock has: the `started` snapshot,
    * or the transcript it just opened. A delta therefore only ever carries text
@@ -71,8 +74,11 @@ export function channelTransport(handler: HookPageHandler): ChatTransport {
    * the same tick as `done` flushes *after* the authoritative list replaced the
    * screen and re-appends text that is already there — the reply drawn twice,
    * which is exactly the bug this replaced.
+   *
+   * This is the fallback now rather than the path: `watch` streams the same
+   * events when the browser can, and comes back to this when it cannot.
    */
-  const watch = (chatId: string, drawnId: string | null, alreadyDrawn: number) => {
+  const poll = (chatId: string, drawnId: string | null, alreadyDrawn: number) => {
     if (watches.has(chatId)) return;
     let answerId = drawnId;
     let shown = alreadyDrawn;
@@ -121,6 +127,66 @@ export function channelTransport(handler: HookPageHandler): ChatTransport {
       }
     }, POLL_MS);
     watches.set(chatId, stopWatch);
+  };
+
+  /**
+   * Follow a running turn: pushed frames, with `poll` behind them.
+   *
+   * The stream ends when the turn does, and the page drops it otherwise — so a
+   * chat left open on an idle turn holds nothing at all.
+   */
+  const watch = (chatId: string, drawnId: string | null, alreadyDrawn: number) => {
+    if (watches.has(chatId)) return;
+    let closed = false;
+    let release: (() => void) | null = null;
+    const stop = () => {
+      closed = true;
+      release?.();
+      release = null;
+      watches.delete(chatId);
+    };
+    watches.set(chatId, stop);
+
+    let answerId = drawnId;
+    let streamed = false;
+
+    void streamChat(
+      chatId,
+      (frame) => {
+        if (closed) return;
+        streamed = true;
+        if (frame.kind === "started" || frame.kind === "done") {
+          if (!frame.messages) return;
+          const messages = frame.messages.map(toMessage);
+          emit(chatId, { kind: frame.kind, messages });
+          answerId = lastAnswer(messages)?.id ?? null;
+          if (frame.kind === "done") stop();
+          return;
+        }
+        if (frame.kind === "delta") {
+          // A delta grows one reply; anything else is a frame for a turn that is
+          // no longer on screen.
+          if (frame.id && answerId && frame.id !== answerId) return;
+          emit(chatId, { kind: "delta", text: frame.text });
+          return;
+        }
+        emit(chatId, { kind: "error", message: frame.error });
+        stop();
+      },
+      (error) => {
+        if (closed) return;
+        stop();
+        if (streamed) {
+          emit(chatId, { kind: "error", message: error || "The turn stopped." });
+          return;
+        }
+        // Not one frame: this host, or this build, does not stream. Ask instead.
+        poll(chatId, drawnId, alreadyDrawn);
+      },
+    ).then((teardown) => {
+      if (closed) teardown();
+      else release = teardown;
+    });
   };
 
   return {

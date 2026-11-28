@@ -13,6 +13,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/tabs/public/tab_interface.h"
@@ -24,6 +25,14 @@
 #include "hook/common/hook.mojom.h"
 
 namespace hook {
+
+// One page's view of one running turn.
+struct HookPageHandler::Observation {
+  int id = 0;
+  mojo::Remote<mojom::ChatObserver> observer;
+  std::unique_ptr<HookStream> stream;
+};
+
 namespace {
 
 mojom::ChatSummaryPtr ToSummary(const base::DictValue& row) {
@@ -439,6 +448,73 @@ void HookPageHandler::StopMessage(const std::string& id) {
                 base::DictValue(),
                 base::BindOnce([](std::optional<base::DictValue>,
                                   const std::string&) {}));
+}
+
+void HookPageHandler::ObserveChat(
+    const std::string& id,
+    mojo::PendingRemote<mojom::ChatObserver> observer) {
+  HookChannel* channel = Channel();
+  if (!channel) {
+    mojo::Remote<mojom::ChatObserver> refused(std::move(observer));
+    refused->OnChatEnd("No Hook is running on this computer.");
+    return;
+  }
+
+  auto observation = std::make_unique<Observation>();
+  observation->id = next_observation_++;
+  observation->observer.Bind(std::move(observer));
+  observation->observer.set_disconnect_handler(base::BindOnce(
+      // Posted, never run inside the disconnect: the handler drops the observer
+      // that is being told it is gone.
+      [](base::WeakPtr<HookPageHandler> self, int id) {
+        if (!self) {
+          return;
+        }
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&HookPageHandler::OnStreamEnd, self, id,
+                                      std::string()));
+      },
+      weak_factory_.GetWeakPtr(), observation->id));
+
+  const int id_of_stream = observation->id;
+  observation->stream = channel->Open(
+      base::StringPrintf("/chats/%s/events", id.c_str()),
+      base::BindRepeating(&HookPageHandler::OnStreamFrame,
+                          weak_factory_.GetWeakPtr(), id_of_stream),
+      base::BindOnce(&HookPageHandler::OnStreamEnd,
+                     weak_factory_.GetWeakPtr(), id_of_stream));
+  observations_.push_back(std::move(observation));
+}
+
+HookPageHandler::Observation* HookPageHandler::FindObservation(int id) {
+  for (const auto& observation : observations_) {
+    if (observation->id == id) {
+      return observation.get();
+    }
+  }
+  return nullptr;
+}
+
+void HookPageHandler::OnStreamFrame(int id, const std::string& frame) {
+  if (Observation* observation = FindObservation(id)) {
+    observation->observer->OnChatEvent(frame);
+  }
+}
+
+void HookPageHandler::OnStreamEnd(int id, const std::string& error) {
+  Observation* observation = FindObservation(id);
+  if (!observation) {
+    return;
+  }
+  if (observation->observer.is_connected()) {
+    observation->observer->OnChatEnd(error);
+  }
+  // Dropping it cancels the request, which is also what the host reads as "the
+  // page is no longer watching this turn".
+  std::erase_if(observations_,
+                [id](const std::unique_ptr<Observation>& entry) {
+                  return entry->id == id;
+                });
 }
 
 void HookPageHandler::GetSignIn(GetSignInCallback callback) {

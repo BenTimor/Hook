@@ -67,7 +67,8 @@ pub trait ChannelBackend: Send + Sync {
     /// message into a chat it has not created yet.
     fn create(&self) -> Result<String, String>;
     /// Append the user's message and start the turn. Returns immediately: the
-    /// browser polls `chat` while it runs, so there is no stream to keep alive.
+    /// browser watches the turn through `GET /chats/<id>/events` while it runs
+    /// (`stream_chat`), so this call has nothing to keep alive.
     fn send(&self, id: &str, text: &str, context: &str) -> Result<(), String>;
     fn stop(&self, id: &str) -> Result<(), String>;
     /// The next page task for this machine's browser, held open until there is
@@ -506,6 +507,193 @@ async fn respond(
     stream.flush().await
 }
 
+/// One server-sent event: `event:` names it, `data:` is the JSON the page reads.
+/// The three fields in it (`kind`, `text`, `messages`) are the same ones the
+/// dock's `DockEvent` already has, so the stream is not a second protocol.
+async fn sse(
+    stream: &mut tokio::net::TcpStream,
+    event: &str,
+    data: &Value,
+) -> std::io::Result<()> {
+    let payload = serde_json::to_string(data).unwrap_or_else(|_| "{}".into());
+    // A JSON body cannot contain a raw newline, so one `data:` line is enough.
+    let frame = format!("event: {event}\ndata: {payload}\n\n");
+    stream.write_all(frame.as_bytes()).await?;
+    stream.flush().await
+}
+
+/// How often the host looks at its own store while a turn runs. This is the only
+/// clock in the loop: the browser no longer asks, so nothing here is a request.
+const STREAM_TICK: std::time::Duration = std::time::Duration::from_millis(80);
+/// A stream is not a lease on the host: a browser that was killed without
+/// closing its socket must not pin a turn forever.
+const STREAM_MAX: std::time::Duration = std::time::Duration::from_secs(900);
+/// `send` answers after the turn is kicked, so a stream opened right behind it can
+/// look at the chat a hair early. This is how long it waits before deciding the
+/// turn it was opened for has already finished.
+const STREAM_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+/// A comment line keeps a quiet turn (a long tool call) from looking like a dead
+/// connection to anything between here and the page.
+const STREAM_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(15);
+
+fn view_parts(view: &Value) -> (bool, Vec<Value>, Value) {
+    let busy = view
+        .get("chat")
+        .and_then(|chat| chat.get("busy"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let messages = view
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let chat = view.get("chat").cloned().unwrap_or(Value::Null);
+    (busy, messages, chat)
+}
+
+/// One turn, written as it happens: `started` with the whole conversation the
+/// first time a reply appears, `delta` with only the text that grew, `done` with
+/// the authoritative list at the end.
+///
+/// The page used to ask for all of this every third of a second, which sent the
+/// whole conversation back per tick. The answer is the same one; only the asking
+/// is gone — the browser process keeps this response open and pushes each frame
+/// to the page over mojom (`hook_channel.cc`, `ChatObserver`).
+async fn stream_chat(
+    stream: &mut tokio::net::TcpStream,
+    backend: Arc<dyn ChannelBackend>,
+    id: &str,
+) -> std::io::Result<()> {
+    // A chat this channel does not serve is a plain answer, not an open stream
+    // that says nothing.
+    let mut view = match backend.chat(id) {
+        Ok(Some(view)) => view,
+        Ok(None) => {
+            return respond(
+                stream,
+                404,
+                &json!({ "ok": false, "error": "That conversation is not served here." }),
+            )
+            .await
+        }
+        Err(error) => {
+            return respond(stream, 500, &json!({ "ok": false, "error": error })).await
+        }
+    };
+
+    stream
+        .write_all(
+            b"HTTP/1.1 200 OK\r\n\
+              Content-Type: text/event-stream\r\n\
+              Cache-Control: no-store\r\n\
+              X-Accel-Buffering: no\r\n\
+              Access-Control-Allow-Origin: *\r\n\
+              Connection: close\r\n\r\n",
+        )
+        .await?;
+    stream.flush().await?;
+
+    let opened = std::time::Instant::now();
+    let mut written = std::time::Instant::now();
+    let mut seen_busy = false;
+    let mut answer_id: Option<String> = None;
+    let mut answer_text = String::new();
+
+    loop {
+        if opened.elapsed() > STREAM_MAX {
+            let _ = sse(
+                stream,
+                "error",
+                &json!({ "kind": "error", "error": "This turn is still running; open the chat again to follow it." }),
+            )
+            .await;
+            return Ok(());
+        }
+
+        let (busy, messages, chat) = view_parts(&view);
+        if busy {
+            seen_busy = true;
+        }
+
+        if let Some(reply) = messages
+            .iter()
+            .rev()
+            .find(|message| message["role"] == "assistant")
+        {
+            let reply_id = reply["id"].as_str().unwrap_or_default().to_string();
+            let text = reply["content"].as_str().unwrap_or_default();
+            if answer_id.as_deref() != Some(reply_id.as_str()) {
+                // A reply the page has not seen: it needs the list, not a suffix.
+                sse(
+                    stream,
+                    "started",
+                    &json!({ "kind": "started", "chat": &chat, "messages": &messages }),
+                )
+                .await?;
+                answer_id = Some(reply_id);
+                answer_text = text.to_string();
+                written = std::time::Instant::now();
+            } else if text.len() > answer_text.len() && text.starts_with(&answer_text) {
+                let delta = text[answer_text.len()..].to_string();
+                sse(
+                    stream,
+                    "delta",
+                    &json!({ "kind": "delta", "id": reply_id, "text": delta }),
+                )
+                .await?;
+                answer_text = text.to_string();
+                written = std::time::Instant::now();
+            } else if text != answer_text {
+                // Not append-only (an edited or rewritten reply): send it whole.
+                sse(
+                    stream,
+                    "started",
+                    &json!({ "kind": "started", "chat": &chat, "messages": &messages }),
+                )
+                .await?;
+                answer_text = text.to_string();
+                written = std::time::Instant::now();
+            }
+        }
+
+        // The end carries the authoritative list, so whatever a delta missed is
+        // drawn once more and only once.
+        if !busy && (seen_busy || answer_id.is_some() || opened.elapsed() >= STREAM_GRACE) {
+            sse(
+                stream,
+                "done",
+                &json!({ "kind": "done", "chat": &chat, "messages": &messages }),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        if written.elapsed() >= STREAM_KEEPALIVE {
+            stream.write_all(b": keep-alive\n\n").await?;
+            stream.flush().await?;
+            written = std::time::Instant::now();
+        }
+
+        tokio::time::sleep(STREAM_TICK).await;
+        view = match backend.chat(id) {
+            Ok(Some(view)) => view,
+            Ok(None) => {
+                sse(
+                    stream,
+                    "error",
+                    &json!({ "kind": "error", "error": "That conversation is not served here." }),
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(error) => {
+                sse(stream, "error", &json!({ "kind": "error", "error": error })).await?;
+                return Ok(());
+            }
+        };
+    }
+}
+
 fn reason_for(status: u16) -> &'static str {
     match status {
         200 => "OK",
@@ -666,6 +854,10 @@ async fn handle(
             backend.browser_answer(id, &body);
             respond(&mut stream, 200, &json!({ "ok": true })).await
         }
+        // One turn, as it is written: the dock holds this response open and is
+        // pushed each change, instead of asking for the whole conversation every
+        // third of a second (`stream_chat`).
+        ("GET", ["chats", id, "events"]) => stream_chat(&mut stream, backend, id).await,
         ("POST", ["chats", id, "stop"]) => match backend.stop(id) {
             Ok(()) => respond(&mut stream, 200, &json!({ "ok": true })).await,
             Err(error) => respond(&mut stream, 400, &json!({ "ok": false, "error": error })).await,
@@ -684,17 +876,29 @@ async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     struct Fake {
         signed_in: AtomicBool,
+        /// A turn that grows while something watches it: `chat` hands out one
+        /// more letter of it per read, and stays busy until the last.
+        growing: AtomicBool,
+        turns: AtomicUsize,
     }
 
     impl Fake {
         fn new() -> Arc<Self> {
             Arc::new(Self {
                 signed_in: AtomicBool::new(true),
+                growing: AtomicBool::new(false),
+                turns: AtomicUsize::new(0),
             })
+        }
+
+        fn growing() -> Arc<Self> {
+            let fake = Self::new();
+            fake.growing.store(true, Ordering::SeqCst);
+            fake
         }
     }
 
@@ -721,6 +925,20 @@ mod tests {
         fn chat(&self, id: &str) -> Result<Option<Value>, String> {
             if id != "c1" {
                 return Ok(None);
+            }
+            if self.growing.load(Ordering::SeqCst) {
+                // "abcdef" a letter at a time, busy until the last one: what a
+                // stream is supposed to turn into one `delta` per tick.
+                let letters = self.turns.fetch_add(1, Ordering::SeqCst).min(6);
+                let busy = letters < 6;
+                let text = "abcdef".get(..letters).unwrap_or_default();
+                return Ok(Some(json!({
+                    "chat": { "id": "c1", "title": "First", "updatedAt": 1, "busy": busy, "unsynced": false },
+                    "messages": [
+                        { "id": "m1", "role": "user", "content": "hello", "status": "complete", "hidden": false, "error": null },
+                        { "id": "m2", "role": "assistant", "content": text, "status": "streaming", "hidden": false, "error": null },
+                    ],
+                })));
             }
             Ok(Some(json!({
                 "chat": { "id": "c1", "title": "First", "updatedAt": 1, "busy": false, "unsynced": false },
@@ -822,6 +1040,58 @@ mod tests {
         use tokio::io::AsyncReadExt as _;
         reader.read_exact(&mut payload).await.expect("body");
         (status, serde_json::from_slice(&payload).unwrap_or(Value::Null))
+    }
+
+    /// Read a response that declares no body length: until the server closes.
+    async fn stream(port: u16, path: &str, token: Option<&str>) -> (u16, String) {
+        use tokio::io::AsyncReadExt as _;
+        let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        let mut request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+        if let Some(token) = token {
+            request.push_str(&format!("Authorization: Bearer {token}\r\n"));
+        }
+        request.push_str("Content-Length: 0\r\n\r\n");
+        socket.write_all(request.as_bytes()).await.expect("write");
+        let mut raw = String::new();
+        socket.read_to_string(&mut raw).await.expect("read");
+        let status = raw
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(0);
+        (status, raw)
+    }
+
+    #[tokio::test]
+    async fn a_turn_streams_its_text_instead_of_being_asked_for() {
+        let (port, token) = serve(Fake::growing());
+        let (status, raw) = stream(port, "/chats/c1/events", Some(&token)).await;
+        assert_eq!(status, 200, "{raw}");
+        assert!(raw.contains("Content-Type: text/event-stream"), "{raw}");
+        // The first frame is the reply the page has not seen, then only what grew.
+        assert!(raw.contains("event: started"), "{raw}");
+        assert!(raw.contains("\"kind\":\"delta\""), "{raw}");
+        assert!(raw.contains("\"text\":\"f\""), "{raw}");
+        // And the end carries the finished transcript, once.
+        assert_eq!(raw.matches("event: done").count(), 1, "{raw}");
+        assert!(raw.contains("\"content\":\"abcdef\""), "{raw}");
+    }
+
+    #[tokio::test]
+    async fn a_stream_for_a_chat_it_does_not_serve_is_a_404() {
+        let (port, token) = serve(Fake::new());
+        let (status, _) = stream(port, "/chats/nope/events", Some(&token)).await;
+        assert_eq!(status, 404);
+    }
+
+    #[tokio::test]
+    async fn a_stream_needs_the_token_like_every_other_route() {
+        let (port, _) = serve(Fake::growing());
+        let (status, _) = stream(port, "/chats/c1/events", None).await;
+        assert_eq!(status, 403);
     }
 
     #[tokio::test]

@@ -8,7 +8,10 @@
  *   node browser/tools/smoke.mjs --signin-state out    # the gate refuses, and the
  *                                                    # page draws the shared card
  *   node browser/tools/smoke.mjs --channel             # needs Hook running
- *   node browser/tools/smoke.mjs --codecs              # H.264 and AAC decode
+ *   node browser/tools/smoke.mjs --codecs              # H.264 and AAC decode,
+ *                                                    # claimed and decoded
+ *   node browser/tools/smoke.mjs --codecs --media a.mp4  # also that a frame
+ *                                                    # came out of a real file
  *   node browser/tools/smoke.mjs --newtab              # the new tab page, and that
  *                                                    # a new tab is ours at all
  *   node browser/tools/smoke.mjs --host                # the browser starts its own
@@ -380,6 +383,12 @@ export async function main(argv) {
   const componentsCheck = flags.get("components") === true;
   const hostCheck = flags.get("host") === true;
   const noGoogle = flags.get("no-google") === true;
+  const media = typeof flags.get("media") === "string" ? flags.get("media") : null;
+  // `--mse` appends the same file to a MediaSource instead of playing it. It needs
+  // `--media`: an append is the only thing that proves the stream-parser list,
+  // and a fragmented file (`-movflags frag_keyframe+empty_moov`) is what a site
+  // hands a MediaSource.
+  const mseCheck = flags.get("mse") === true;
   const signin = flags.get("signin-state");
   if (signin !== undefined && signin !== "in" && signin !== "out") {
     console.error(fail("--signin-state takes in or out"));
@@ -704,10 +713,13 @@ export async function main(argv) {
 
     // ---- the codecs the build has to carry -----------------------------------
     //
-    // `args.gn` turns on `proprietary_codecs` and `ffmpeg_branding = "Chrome"`.
-    // Both are easy to lose in a merge and invisible until a page shows a black
-    // box, so the build says so out loud here: with them off, every MP4 on the
-    // web is undecodable and only VP9/AV1 content plays.
+    // The capability report: what the build claims it can play. Two builds are
+    // worth checking and they get it from opposite places. `out/Dev` carries
+    // FFmpeg's own decoders (`proprietary_codecs`, `ffmpeg_branding = "Chrome"`),
+    // so it answers for free; a shipped build carries none and answers from the
+    // platform (Windows' Media Foundation, via patches 0022-0025). Run this on
+    // both -- a claim that only holds with FFmpeg compiled in is a browser that
+    // cannot play an MP4 in the build anyone installs.
     if (codecCheck) {
       const codecs = await client.evaluate(`(() => {
         const video = document.createElement("video");
@@ -722,6 +734,146 @@ export async function main(argv) {
       if (!codecs?.h264) failures.push('H.264 does not decode: the dev build gets it from args.gn (proprietary_codecs), a shipped build from Media Foundation');
       if (!codecs?.aac) failures.push('AAC does not decode: the dev build gets it from args.gn (ffmpeg_branding = "Chrome"), a shipped build from Media Foundation');
       if (!codecs?.vp9) failures.push("VP9 does not decode, which is wider than the codec flags");
+
+      // `canPlayType` is what the build *claims* (the codec tables, the platform
+      // report, the parsers). Every site that streams rather than serves a file
+      // asks a second question — MediaSource — and it is answered from a
+      // different list, which is how a build can play a local MP4 and still tell
+      // YouTube "not supported".
+      const mse = await client.evaluate(`(() => ({
+        h264: MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"'),
+        aac: MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"'),
+      }))()`);
+      console.log(`    mse: ${JSON.stringify(mse)}`);
+      if (!mse?.h264) {
+        failures.push(
+          "MediaSource refuses H.264: stream_parser_factory's list is not in " +
+            "0025 (browser/patches), so a MSE site says \"not supported\"",
+        );
+      }
+
+      // And the frame itself, when a file is handed over: a claim is not a
+      // decode, which is exactly the difference the OS-decoder work turned on.
+      //
+      // It runs on a served page, not on chrome://hook: a chrome:// page has every
+      // cross-scheme subresource refused by the URL safety check, so a video
+      // element there can only ever report that, never anything about a decoder.
+      if (media) {
+        const bytes = readFileSync(resolve(media));
+        const probe = `<!doctype html><meta charset="utf-8"><title>media probe</title>
+<video id="v" muted playsinline></video>
+<script>
+window.__frames = 0;
+const v = document.getElementById("v");
+v.src = "/media.mp4";
+if (v.requestVideoFrameCallback) {
+  const tick = () => { window.__frames += 1; v.requestVideoFrameCallback(tick); };
+  v.requestVideoFrameCallback(tick);
+}
+window.__mse = async (ms) => {
+  const result = { playable: false, frames: 0, error: null, readyState: 0, currentTime: 0 };
+  const kind = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+  if (!window.MediaSource || !MediaSource.isTypeSupported(kind)) {
+    result.error = "isTypeSupported said no";
+    return result;
+  }
+  const element = document.createElement("video");
+  element.muted = true;
+  element.playsInline = true;
+  document.body.appendChild(element);
+  if (element.requestVideoFrameCallback) {
+    const tick = () => { result.frames += 1; element.requestVideoFrameCallback(tick); };
+    element.requestVideoFrameCallback(tick);
+  }
+  const source = new MediaSource();
+  element.src = URL.createObjectURL(source);
+  await new Promise((done) => source.addEventListener("sourceopen", done, { once: true }));
+  const buffer = source.addSourceBuffer(kind);
+  const bytes = new Uint8Array(await (await fetch("/media.mp4")).arrayBuffer());
+  try {
+    await new Promise((done, fail) => {
+      buffer.addEventListener("updateend", done, { once: true });
+      buffer.addEventListener("error", fail, { once: true });
+      buffer.appendBuffer(bytes);
+    });
+  } catch (error) {
+    result.error = "append failed: " + String(error);
+    return result;
+  }
+  try { source.endOfStream(); } catch (error) { result.error = "endOfStream: " + String(error); }
+  try { await element.play(); } catch (error) { result.playError = String(error); }
+  await new Promise((done) => setTimeout(done, ms));
+  result.readyState = element.readyState;
+  result.currentTime = Number(element.currentTime.toFixed(3));
+  if (!result.error && element.error) result.error = element.error.message;
+  result.playable = result.frames > 0;
+  return result;
+};
+window.__play = async (ms) => {
+  try { await v.play(); } catch (error) { /* counted below */ }
+  await new Promise((done) => setTimeout(done, ms));
+  return {
+    frames: window.__frames,
+    audioBytes: v.webkitAudioDecodedByteCount || 0,
+    currentTime: Number(v.currentTime.toFixed(3)),
+    readyState: v.readyState,
+    videoWidth: v.videoWidth,
+    error: v.error ? v.error.message : null,
+  };
+};
+</script>`;
+        const mediaServer = createServer((request, response) => {
+          if (request.url === "/media.mp4") {
+            response.writeHead(200, {
+              "Content-Type": "video/mp4",
+              "Content-Length": String(bytes.length),
+            });
+            response.end(bytes);
+            return;
+          }
+          response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          response.end(probe);
+        });
+        await new Promise((done) => mediaServer.listen(0, "127.0.0.1", done));
+        const mediaPort = mediaServer.address().port;
+        let playable = null;
+        try {
+          await client.send("Page.navigate", {
+            url: `http://127.0.0.1:${mediaPort}/probe.html`,
+          });
+          await sleep(1200);
+          playable = await client.evaluate("window.__play(2500)");
+        } finally {
+          mediaServer.close();
+          // Back to the page the checks after this one are about.
+          await client.send("Page.navigate", { url: PAGE });
+          await sleep(1500);
+        }
+        console.log(`    media: ${JSON.stringify(playable)}`);
+        // A frame is the proof for a picture; decoded bytes are the proof for
+        // sound, and an audio-only file (.m4a) has no frame to count. Either one
+        // is a decode; a claim alone is neither.
+        if (!(playable?.frames > 0) && !(playable?.audioBytes > 0)) {
+          failures.push(
+            `a local file produced neither a decoded frame nor decoded audio (${JSON.stringify(playable)}): ` +
+              "the capability is advertised, the decoder is not producing anything",
+          );
+        }
+        if (mseCheck) {
+          // The claim in `mse` above is a list; this is the append. A site that
+          // streams asks both, and they are answered from different tables.
+          await client.send("Page.navigate", { url: `http://127.0.0.1:${mediaPort}/probe.html` });
+          await sleep(800);
+          const appended = await client.evaluate("window.__mse(3000)");
+          console.log(`    mse append: ${JSON.stringify(appended)}`);
+          if (!(appended?.frames > 0)) {
+            failures.push(
+              `a fragmented MP4 appended to a MediaSource produced no frame (${JSON.stringify(appended)}): ` +
+                "isTypeSupported may be claiming a stream the parser cannot take",
+            );
+          }
+        }
+      }
     }
 
     // ---- the real backend, when a Hook app is running ------------------------
@@ -731,9 +883,10 @@ export async function main(argv) {
         const handler = module.PageHandler.getRemote();
         const status = await handler.getChannel();
         const list = await handler.listChats();
-        // How the dock is told to draw a turn. `/settings` is append-only, so a
+        // How the dock is told to draw a turn. /settings is append-only, so a
         // host too old to know it answers an error here and the panel falls back
-        // to the simple view; this check is where that gets noticed.
+        // to the simple view; this check is where that gets noticed. (No backticks
+        // in this block: it is the body of a template literal.)
         let settings = null;
         let settingsError = null;
         try {
@@ -744,6 +897,7 @@ export async function main(argv) {
         const first = list.chats[0];
         let view = null;
         let refused = null;
+        let stream = null;
         if (first) {
           const got = await handler.getChat(first.id);
           view = got.chat
@@ -752,6 +906,24 @@ export async function main(argv) {
           // A whitespace-only message is refused by hook-core before any turn:
           // this proves the write path without spending a model call.
           refused = await handler.sendMessage(first.id, "   ");
+
+          // The turn as it is written, over the observer the dock's transport
+          // uses. A chat that is idle answers started and done at once, so this
+          // proves the route, the SSE parser in the browser process and the mojom
+          // push without spending a model call. (No backticks in here: this whole
+          // block is the body of a template literal.)
+          const seen = [];
+          const receiver = new module.ChatObserverReceiver({
+            onChatEvent: (frame) => seen.push(frame),
+            onChatEnd: (error) =>
+              seen.push(JSON.stringify({ kind: "end", error: String(error ?? "") })),
+          });
+          handler.observeChat(first.id, receiver.$.bindNewPipeAndPassRemote());
+          for (let i = 0; i < 100 && seen.length < 2; i++) {
+            await new Promise((done) => setTimeout(done, 100));
+          }
+          if (receiver.$.close) receiver.$.close();
+          stream = seen.slice(0, 4);
         }
         return {
           available: status.available,
@@ -760,6 +932,7 @@ export async function main(argv) {
           listError: list.error,
           view,
           refused,
+          stream,
           settings,
           settingsError,
         };
@@ -781,6 +954,44 @@ export async function main(argv) {
         } else {
           if (!state.view || state.view.messages < 1) failures.push("the first conversation came back empty");
           if (!state.refused || state.refused.ok) failures.push("an empty message was accepted");
+
+          // The stream, not the poll: the dock's transport holds this open while a
+          // turn runs, so a build that lost the observer would show a reply only
+          // at the end (or not at all).
+          const frames = (state.stream ?? []).map((frame) => {
+            try {
+              return JSON.parse(frame);
+            } catch {
+              return { kind: "unparsed" };
+            }
+          });
+          const kinds = frames.map((frame) => frame.kind ?? frame.error);
+          if (!frames.length) {
+            failures.push("observeChat delivered no frame: the turn stream is not wired");
+          } else if (!kinds.includes("started") && !kinds.includes("done")) {
+            // An installed Hook from before the route exists answers 404 to
+            // /chats/<id>/events, and the browser process ends the observer with
+            // that error. That is the documented fallback -- the dock polls such
+            // a host -- so it is a thing to say, not a thing to fail on. Anything
+            // else is this build's fault.
+            const last = frames[frames.length - 1] ?? {};
+            const why = String(last.error ?? last.message ?? "").trim();
+            // A live host sends `started` at once, even for an idle conversation,
+            // so an observer that ends before a single frame cannot be anything
+            // but a host that predates the route (it answers 404) -- or one that
+            // refused the connection. Both mean "the dock polls it instead".
+            if (kinds.length === 1 && kinds[0] === "end") {
+              console.log(
+                warn(
+                  "the running Hook cannot stream: the observer ended before any frame" +
+                    `${why ? ` (${why.slice(0, 80)})` : ""}, so this host predates ` +
+                    "/chats/<id>/events and the dock falls back to asking",
+                ),
+              );
+            } else {
+              failures.push(`the turn stream sent ${JSON.stringify(kinds)}, not a started or done frame`);
+            }
+          }
         }
       }
     }

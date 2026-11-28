@@ -43,6 +43,22 @@ using ChannelReply =
     base::OnceCallback<void(std::optional<base::DictValue> body,
                             const std::string& error)>;
 
+// What a stream is, from the outside: an open request the browser moves around
+// and destroys. Everything that knows about it being an HTTP response lives in
+// the .cc.
+class HookStream {
+ public:
+  HookStream() = default;
+  HookStream(const HookStream&) = delete;
+  HookStream& operator=(const HookStream&) = delete;
+  virtual ~HookStream() = default;
+};
+
+// One `data:` line of the host's stream, as JSON.
+using StreamFrame = base::RepeatingCallback<void(const std::string& frame)>;
+// `` when the stream ended by itself, a sentence when it was cut off.
+using StreamEnd = base::OnceCallback<void(const std::string& error)>;
+
 class HookChannel {
  public:
   explicit HookChannel(Profile* profile);
@@ -64,6 +80,22 @@ class HookChannel {
   void Get(const std::string& path, ChannelReply done);
   void Post(const std::string& path, const base::DictValue& body,
             ChannelReply done);
+
+  // A long-lived GET: one response the host keeps open and writes frames into.
+  //
+  // What the page needs from a turn is a sentence at a time, and asking for the
+  // whole conversation three times a second was the old way to get it
+  // (`/chats/<id>/events`, `stream_chat` in `crates/hook-core/src/channel.rs`).
+  // The browser process holds the response and the page handler pushes each
+  // frame over mojom, so the page never polls.
+  //
+  // `frame` gets the payload of every `data:` line; `end` runs once, with an
+  // empty string when the stream finished and a sentence when it was cut off.
+  // Destroying the returned object cancels the request, which is how a page
+  // that has finished with the turn stops it.
+  std::unique_ptr<HookStream> Open(const std::string& path,
+                                   StreamFrame frame,
+                                   StreamEnd end);
 
  private:
   // Loads the descriptors (cached for a few seconds) and then runs `ready`.

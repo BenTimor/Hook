@@ -253,9 +253,9 @@ Four patches, each one small and independently revertable, all applied by
 | patch | what it changes |
 | --- | --- |
 | `0022-ask-the-machine-for-h264` | the video capability report is compiled whenever the Mojo video decoder is (`ENABLE_MOJO_VIDEO_DECODER`, not the HEVC flag); the `!USE_PROPRIETARY_CODECS` vetoes in `supported_types.cc` let a proprietary codec through when the platform reports it; the mp4/mkv tables in `mime_util_internal.cc` carry H.264 and AAC in every build |
-| `0023-windows-decodes-aac` | `MediaFoundationAudioDecoder` maps `AudioCodec::kAAC` to `MFAudioFormat_AAC` for every profile (xHE-AAC still needs Windows 11 22H2), and `GetPlatformSupportedAudioDecoderConfigs` publishes AAC-LC/HE-AAC whenever Media Foundation starts |
+| `0023-windows-decodes-aac` | `MediaFoundationAudioDecoder` maps `AudioCodec::kAAC` to `MFAudioFormat_AAC` for every profile (xHE-AAC still needs Windows 11 22H2), publishes AAC-LC/HE-AAC whenever Media Foundation starts, admits float output for AAC, builds the `HEAACWAVEINFO` input type (`GetAacAudioType`, `mf_helpers`) and fills `sample_fmt` for a stream no FFmpeg decoder described |
 | `0024-describe-an-h264-stream` | `ffmpeg_common.cc` builds an H.264 decoder config in every build — describing a stream is not decoding it |
-| `0025-parsing-is-not-decoding` | the MP4 sample-entry parsers, the AVC record, and the Annex-B/ADTS converters compile in every build, and the demuxer converts unconditionally |
+| `0025-parsing-is-not-decoding` | the MP4 sample-entry parsers, the AVC record, and the Annex-B/ADTS converters compile in every build, and the demuxer converts unconditionally (the *call*, which is the half that was missing); the MSE stream-parser codec list and the Dolby Vision boxes are un-gated with them, because the un-gated H.264 path parses DoVi and the stream parser's list is what `MediaSource.isTypeSupported` reads |
 
 Verified on a non-component, `dcheck_always_on=false`, `proprietary_codecs=false`
 build (`out/NoComp`, 2026-11-26):
@@ -266,10 +266,12 @@ build (`out/NoComp`, 2026-11-26):
 - A local H.264+AAC MP4 is **demuxed**: `duration 3`, `videoWidth 320`,
   `videoHeight 180` reach the page. That is `0024` + `0025` working; before them the
   element stalled at `readyState 0` with no metadata.
-- `MediaSource.isTypeSupported` still answers false for mp4: the MSE stream-parser
-  codec list (`stream_parser_factory.cc`) is not in `0025` yet. Sites that require
-  MSE for H.264 (rather than progressive playback) therefore see "not supported".
-- Decoding itself is **not** working yet. The GPU process picks
+- `MediaSource.isTypeSupported` still answered false for mp4 on that date: the MSE
+  stream-parser codec list (`stream_parser_factory.cc`) was not in `0025` yet, so a
+  site that requires MSE for H.264 (rather than progressive playback) saw "not
+  supported". It answers true since 2026-11-28 and an append is checked — see
+  "It decodes" below.
+- Decoding itself was **not** working on that date. The GPU process picks
   `D3D11VideoDecoder` (`chrome://gpu` reports "Video Decode: Hardware accelerated"),
   and it fails on the first frame: `D3DStatus::6` = `kDecoderFailedDecode`. The next
   step is decoder-side (the sample/sequence-header form a Media Foundation or D3D11
@@ -279,6 +281,82 @@ So: stage 1's *advertising* half is done and verified; its *decode* half stops a
 the decoder, and stage 2's AAC half is wired but has never been exercised, because
 the pipeline fails on video first. Testing the audio path alone (an `.m4a`) is the
 first thing to do next.
+
+### 2026-11-28 — it decodes
+
+The same `out/NoComp` build (`proprietary_codecs = false`, no FFmpeg H.264 or
+AAC in the image) now plays everything the patches describe, and the check says
+so per artefact rather than per claim:
+
+| file, same build | result |
+| --- | --- |
+| H.264 + AAC, 320×180, 3 s | **25 frames**, first at 339 ms, 33,615 decoded audio bytes |
+| AAC alone (`.m4a`) | 33,615 decoded audio bytes, 2.46 s, no error |
+| H.264 + AAC, fragmented, through `MediaSource` | **29 frames**, `readyState 4`, 2.9 s buffered |
+| VP9 + Opus (control) | 26 frames |
+
+Two instruments came out of it, both in `browser/tools/smoke.mjs`:
+`--codecs` asks the build what it *claims* (`canPlayType`, `MediaSource`) and
+`--codecs --media <file>` plays a file and counts `requestVideoFrameCallback`
+frames (or decoded audio bytes, for an `.m4a`). A build can pass the first and
+fail the second — that was exactly the state for a day — so they are separate
+checks and `--media` is the one that means anything.
+
+**The bug was four `#if` blocks, not a decoder.** Patch `0025` is "parsing is
+not decoding" and it un-gated the *creation* of the H.264 Annex-B converter, the
+MP4 sample-entry parsers and the AVC record — but each of those has a second half
+that un-gated later or not at all, and every one of them fails in a way that
+looks like a broken decoder:
+
+- `ffmpeg_demuxer.cc` still wrapped the `ConvertPacket` **call** in
+  `USE_PROPRIETARY_CODECS`, so the converter existed and was never used. The
+  accelerator got AVCC where it expects Annex B, with `extra_data` deliberately
+  cleared by the un-gated code, and returned `kRanOutOfStreamData` forever: no
+  error, no frame, `currentTime` running to the end. That is the whole of the
+  "H.264 does not decode" problem.
+- `ffmpeg_common.cc` never filled `sample_fmt` for AAC with no FFmpeg decoder to
+  fill it, so the audio config was invalid and the track was dropped at demux
+  time (`DEMUXER_ERROR_NO_SUPPORTED_STREAMS`), before Windows was ever asked.
+- `GetAacAudioType` (`mf_helpers.{h,cc}`) and its call site in
+  `media_foundation_audio_decoder.cc` were codec-flag gated, so the in-box AAC
+  decoder was found by `MFTEnumEx` and then never given an input type
+  (`E_NOTIMPL`).
+- `CodecSupportsFloatOutput` did not admit AAC, so `ConfigureOutput`'s loop
+  accepted no output type and the decoder failed with `MF_E_INVALIDMEDIATYPE`
+  after `SetInputType` had already returned `S_OK`.
+
+MSE needed its own un-gate (`stream_parser_factory.cc`, `box_definitions.cc`,
+`mp4_stream_parser.cc`, and `mp4/dolby_vision.cc` in `media/formats/BUILD.gn`,
+which the un-gated H.264 path calls into): `isTypeSupported` answered false while
+the progressive path worked, because the stream parser's codec list is a
+different list. Advertising it before the append worked is the trap this
+document warned about; the append is what was checked —
+`pnpm browser:smoke --codecs --media <fragmented.mp4> --mse` appends it to a
+`MediaSource` on the served page and counts frames, so the claim and the append are
+asserted by the same tool that runs in CI's matrix.
+
+Four things worth keeping:
+
+- **A `D3DStatus::6` in the notes on the old build was a mis-read.** A temporary
+  `LOG(ERROR)` at the only `kDecoderFailedDecode` site in the tree never ran.
+  What the decoder selector actually reported (`--vmodule=*decoder_selector*=2`)
+  was `D3D11VideoDecoder initialize success=0 (kOk)` and then
+  `kRanOutOfStreamData` on every buffer. Reading `chrome://media-internals`
+  cannot answer this, because it lists a *live* player and the interesting case
+  is the one that failed.
+- **A control is worth more than a theory.** VP9 decoding in the same build is
+  what turned "hardware decoding in a codec-off build is broken" into
+  "H.264-specific", which is a completely different search.
+- **`kRanOutOfStreamData` over and over, with no picture, is a bitstream form
+  problem** — the decoder is not lost, it is eating what it was given.
+- Every one of these looked like a decoder bug and was a flag boundary. When the
+  next codec needs enabling, grep the codec flag in the file that *uses* the
+  thing, not only in the file that builds it.
+
+The patches that carry it: `0023` (the AAC type, the sample format, the float
+output), `0025` (the packet conversion, the MP4 parsers, the MSE codec list and
+the Dolby Vision boxes). `docs/browser-os-decoders.md`'s licensing position is
+unchanged — none of this ships FFmpeg's decoders.
 
 ## What this does not solve
 

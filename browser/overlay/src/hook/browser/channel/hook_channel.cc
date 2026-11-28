@@ -10,7 +10,9 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
@@ -24,6 +26,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/cpp/simple_url_loader_stream_consumer.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "url/gurl.h"
 
@@ -277,6 +280,125 @@ void HookChannel::SendRequest(const std::string& method,
           },
           weak_factory_.GetWeakPtr(), std::move(done), std::move(loader)),
       kMaxReplyBytes);
+}
+
+namespace {
+
+// The stream as the browser holds it: a SimpleURLLoader that is never allowed to
+// finish buffering, and the parser in front of it.
+//
+// Two rules keep this alive. `resume` is called synchronously — the page takes a
+// frame as fast as the host writes one, and withholding it would turn the host's
+// own flow control into a stalled turn. And the end callback is *posted*, never
+// run inside `OnComplete`: it destroys this object (the page handler's last owner
+// of a stream is the stream it was called for), and a consumer may not be deleted
+// before `OnComplete` returns.
+class ChannelStream final : public HookStream,
+                            public network::SimpleURLLoaderStreamConsumer {
+ public:
+  ChannelStream(StreamFrame frame, StreamEnd end)
+      : frame_(std::move(frame)), end_(std::move(end)) {}
+
+  base::WeakPtr<ChannelStream> AsWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
+
+  void Start(scoped_refptr<network::SharedURLLoaderFactory> factory,
+             const std::string& url,
+             const std::string& token) {
+    auto request = std::make_unique<network::ResourceRequest>();
+    request->url = GURL(url);
+    request->method = "GET";
+    request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+    request->headers.SetHeader("Authorization", "Bearer " + token);
+    request->headers.SetHeader("Accept", "text/event-stream");
+
+    loader_ =
+        network::SimpleURLLoader::Create(std::move(request), kTrafficAnnotation);
+    // A turn can sit on a question for minutes. This is the page's connection to
+    // it, not a request that should time out underneath it.
+    loader_->SetTimeoutDuration(base::Minutes(20));
+    loader_->SetAllowHttpErrorResults(true);
+    loader_->DownloadAsStream(factory.get(), this);
+  }
+
+  // Ends the stream with a sentence. Safe to call once.
+  void Fail(std::string error) {
+    if (!end_) {
+      return;
+    }
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(end_), std::move(error)));
+  }
+
+  // network::SimpleURLLoaderStreamConsumer:
+  void OnDataReceived(std::string_view chunk,
+                      base::OnceClosure resume) override {
+    buffered_.append(chunk);
+    size_t at = 0;
+    // A blank line ends a frame; a partial one stays in the buffer until the
+    // rest of it arrives.
+    while ((at = buffered_.find("\n\n")) != std::string::npos) {
+      const std::string block = buffered_.substr(0, at);
+      buffered_.erase(0, at + 2);
+      for (const auto& line :
+           base::SplitStringPiece(block, "\n", base::TRIM_WHITESPACE,
+                                  base::SPLIT_WANT_NONEMPTY)) {
+        // `event:` names the frame and a line starting with ':' is a keep-alive;
+        // the payload is the JSON, and the page reads its own `kind` from that.
+        constexpr std::string_view kData = "data:";
+        if (line.rfind(kData, 0) == 0) {
+          frame_.Run(std::string(line.substr(kData.size())));
+        }
+      }
+    }
+    std::move(resume).Run();
+  }
+
+  void OnComplete(bool success) override {
+    Fail(success ? std::string() : std::string("Hook stopped sending."));
+  }
+
+  // Retries are not enabled on this loader, so this never runs; it is pure
+  // virtual in the interface and must still exist.
+  void OnRetry(base::OnceClosure start_retry) override {
+    std::move(start_retry).Run();
+  }
+
+ private:
+  std::unique_ptr<network::SimpleURLLoader> loader_;
+  std::string buffered_;
+  StreamFrame frame_;
+  StreamEnd end_;
+  base::WeakPtrFactory<ChannelStream> weak_factory_{this};
+};
+
+}  // namespace
+
+std::unique_ptr<HookStream> HookChannel::Open(const std::string& path,
+                                              StreamFrame frame,
+                                              StreamEnd end) {
+  auto stream =
+      std::make_unique<ChannelStream>(std::move(frame), std::move(end));
+  base::WeakPtr<ChannelStream> weak = stream->AsWeakPtr();
+  WithDescriptor(base::BindOnce(
+      [](base::WeakPtr<HookChannel> self, base::WeakPtr<ChannelStream> weak,
+         const std::string& path) {
+        // The page dropped the observer while the descriptor was being read.
+        if (!weak) {
+          return;
+        }
+        if (!self || self->port_.empty()) {
+          weak->Fail(self ? self->error_ : std::string("No Hook is running."));
+          return;
+        }
+        weak->Start(self->profile_->GetURLLoaderFactory(),
+                    base::StringPrintf("http://127.0.0.1:%s%s",
+                                       self->port_.c_str(), path.c_str()),
+                    self->token_);
+      },
+      weak_factory_.GetWeakPtr(), weak, path));
+  return stream;
 }
 
 }  // namespace hook

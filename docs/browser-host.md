@@ -213,6 +213,7 @@ The routes are on the same channel and the same token:
 
 | route | what it is |
 | --- | --- |
+| `GET /chats/<id>/events` | one turn, as it is written: server-sent events, `started` with the conversation the first time a reply appears, `delta` with only the text that grew, `done` with the authoritative list. The browser process holds this open and pushes each frame to the page over mojom (`ChatObserver`), so the dock neither polls nor redraws a transcript it already has. A host that does not know the route answers 404, and the transport falls back to asking for the chat the old way — an older Hook, never a silent panel |
 | `GET /browser/tasks` | the browser asking for work; held open for a few seconds when there is none, so an idle browser is one request per hold. Every poll is also the heartbeat a tool reads to say "Hook Browser is running" instead of "that machine is offline" |
 | `POST /browser/tasks/<id>` | the answer: the tab list, a page's text and headings, or one protocol command's `result` |
 | `GET /settings` | the dock asking how to draw a turn (`{ advancedMode }`). Append-only: a host that does not know the route is an older Hook, and the panel keeps the simple view instead of failing to draw |

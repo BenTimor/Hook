@@ -25,6 +25,10 @@ build_webui("build") {
   # no React, so the shared surface travels as a prebuilt bundle. `.mjs` rather
   # than `.js` on purpose: build_webui refuses `.js` in static_files, and
   # text/javascript is what Chromium serves for `.mjs`.
+  # Every file in both lists costs a resource id: this .grd's range is reserved
+  # in 0003-reserve-hook-resource-ids.patch, and adding a file without widening
+  # it fails the build with `IdRangeOverflow` ("used more IDs (11) than were
+  # allocated for it (10)") rather than with a message about this list.
   static_files = [
     "hook.css",
     "hook.html",

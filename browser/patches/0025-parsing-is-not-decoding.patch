@@ -57,10 +57,31 @@ index de971055f9..9636758380 100644
  
      if (enable_ffmpeg_video_decoders) {
 diff --git a/media/filters/ffmpeg_demuxer.cc b/media/filters/ffmpeg_demuxer.cc
-index 5db07aa59b..b9f52acea3 100644
+index 5db07aa59b..c06189a3b7 100644
 --- a/media/filters/ffmpeg_demuxer.cc
 +++ b/media/filters/ffmpeg_demuxer.cc
-@@ -727,23 +727,19 @@ void FFmpegDemuxerStream::Read(uint32_t count, ReadCB read_cb) {
+@@ -429,15 +429,17 @@ void FFmpegDemuxerStream::EnqueuePacket(ScopedAVPacket packet) {
+     }
+   }
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+-  // Convert the packet if there is a bitstream filter.
++  // Convert the packet if there is a bitstream filter. Converting is not
++  // decoding, so this is not behind the codec flag either: the converter is
++  // created unconditionally (InitBitstreamConverter), and a packet that skipped
++  // conversion reaches a platform decoder in the wrong form -- AVCC where it
++  // expects Annex B -- which decodes to nothing instead of failing loudly.
+   if (bitstream_converter_ &&
+       !bitstream_converter_->ConvertPacket(packet.get())) {
+     DVLOG(1) << "Dropped packet that can't be converted to AnnexB"
+              << " pts=" << packet->pts;
+     return;
+   }
+-#endif
+ 
+   scoped_refptr<DecoderBuffer> buffer;
+ 
+@@ -727,23 +729,19 @@ void FFmpegDemuxerStream::Read(uint32_t count, ReadCB read_cb) {
  void FFmpegDemuxerStream::EnableBitstreamConverter() {
    DCHECK(task_runner_->RunsTasksInCurrentSequence());
  
@@ -88,7 +109,7 @@ index 5db07aa59b..b9f52acea3 100644
    switch (stream_->codecpar->codec_id) {
      case AV_CODEC_ID_H264:
        // Clear |extra_data| so that future (fallback) decoders will know that
-@@ -778,7 +774,6 @@ void FFmpegDemuxerStream::InitBitstreamConverter() {
+@@ -778,7 +776,6 @@ void FFmpegDemuxerStream::InitBitstreamConverter() {
      default:
        break;
    }
@@ -113,13 +134,31 @@ index f4a2a28489..37aa470f35 100644
    std::string encryption_key_id_;
    bool fixup_chained_ogg_ = false;
 diff --git a/media/formats/BUILD.gn b/media/formats/BUILD.gn
-index 3afcf2a6b2..631adff8b8 100644
+index 3afcf2a6b2..d2ad4e56fb 100644
 --- a/media/formats/BUILD.gn
 +++ b/media/formats/BUILD.gn
-@@ -120,32 +120,39 @@ source_set("formats") {
+@@ -120,33 +120,42 @@ source_set("formats") {
  
    configs += [ "//media:subcomponent_config" ]
  
+-  if (proprietary_codecs) {
+-    deps += [ "//media/video" ]
+-    sources += [
+-      "mp4/aac.cc",
+-      "mp4/aac.h",
+-      "mp4/avc.cc",
+-      "mp4/avc.h",
+-      "mp4/dolby_vision.cc",
+-      "mp4/dolby_vision.h",
+-      "mp4/h264_annex_b_to_avc_bitstream_converter.cc",
+-      "mp4/h264_annex_b_to_avc_bitstream_converter.h",
+-      "mp4/h26x_annex_b_to_bitstream_converter.cc",
+-      "mp4/h26x_annex_b_to_bitstream_converter.h",
+-      "mp4/mp4_status.h",
+-      "mpeg/adts_constants.h",
+-      "mpeg/adts_stream_parser.cc",
+-      "mpeg/adts_stream_parser.h",
+-    ]
 +  # The sample-entry parsers and the two Annex-B/AVC converters are not
 +  # decoders: without them a build that decodes through the platform cannot read
 +  # an avc1/mp4a track at all, and cannot hand the platform a bitstream it
@@ -139,7 +178,15 @@ index 3afcf2a6b2..631adff8b8 100644
 +    "mpeg/adts_stream_parser.cc",
 +    "mpeg/adts_stream_parser.h",
 +  ]
-+
+ 
+-    # We need this to make h264_annex_b_to_avc_bitstream_converter.h accessible
+-    # from video_encode_accelerator_adapter.cc, unfortunately we can't move
+-    # h264_annex_b_to_avc_bitstream_converter.h since it depends on
+-    # box_definitions.h
+-    # TODO(eugene): consider moving media/video/h264_parser.(h|cc) to
+-    # media/formats. It might help to break this dependency cycle.
+-    allow_circular_includes_from = [ "//media/video" ]
+-  }
 +  # We need this to make h264_annex_b_to_avc_bitstream_converter.h accessible
 +  # from video_encode_accelerator_adapter.cc, unfortunately we can't move
 +  # h264_annex_b_to_avc_bitstream_converter.h since it depends on
@@ -148,47 +195,29 @@ index 3afcf2a6b2..631adff8b8 100644
 +  # media/formats. It might help to break this dependency cycle.
 +  allow_circular_includes_from = [ "//media/video" ]
 +
-   if (proprietary_codecs) {
--    deps += [ "//media/video" ]
-     sources += [
--      "mp4/aac.cc",
--      "mp4/aac.h",
--      "mp4/avc.cc",
--      "mp4/avc.h",
-       "mp4/dolby_vision.cc",
-       "mp4/dolby_vision.h",
--      "mp4/h264_annex_b_to_avc_bitstream_converter.cc",
--      "mp4/h264_annex_b_to_avc_bitstream_converter.h",
--      "mp4/h26x_annex_b_to_bitstream_converter.cc",
--      "mp4/h26x_annex_b_to_bitstream_converter.h",
--      "mp4/mp4_status.h",
--      "mpeg/adts_constants.h",
--      "mpeg/adts_stream_parser.cc",
--      "mpeg/adts_stream_parser.h",
-     ]
--
--    # We need this to make h264_annex_b_to_avc_bitstream_converter.h accessible
--    # from video_encode_accelerator_adapter.cc, unfortunately we can't move
--    # h264_annex_b_to_avc_bitstream_converter.h since it depends on
--    # box_definitions.h
--    # TODO(eugene): consider moving media/video/h264_parser.(h|cc) to
--    # media/formats. It might help to break this dependency cycle.
--    allow_circular_includes_from = [ "//media/video" ]
-   }
++  # Hook: the Dolby Vision boxes are parsing, not decoding, and the H.264 path
++  # parses them unconditionally now (browser/patches/0025-parsing-is-not-decoding).
++  # Without this the object file references MaybeParseDOVI and nothing defines
++  # it, which the linker reports rather than the compiler.
++  sources += [
++    "mp4/dolby_vision.cc",
++    "mp4/dolby_vision.h",
++  ]
    if (proprietary_codecs && enable_platform_hevc) {
      sources += [
+       "mp4/hevc.cc",
 diff --git a/media/formats/mp4/box_definitions.cc b/media/formats/mp4/box_definitions.cc
-index 017e7fbb6b..41af012344 100644
+index 017e7fbb6b..8b51bb2002 100644
 --- a/media/formats/mp4/box_definitions.cc
 +++ b/media/formats/mp4/box_definitions.cc
-@@ -30,12 +30,13 @@
+@@ -30,17 +30,16 @@
  #include "media/media_buildflags.h"
  #include "ui/gfx/hdr_metadata.h"
  
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
 +#include "media/formats/mp4/avc.h"
 +#include "media/parsers/h264_parser.h"
 +
- #if BUILDFLAG(USE_PROPRIETARY_CODECS)
  #include <optional>
  
 -#include "media/formats/mp4/avc.h"
@@ -197,7 +226,28 @@ index 017e7fbb6b..41af012344 100644
  
  #if BUILDFLAG(ENABLE_PLATFORM_HEVC)
  #include "media/formats/mp4/hevc.h"
-@@ -744,7 +745,8 @@ bool HandlerReference::Parse(BoxReader* reader) {
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+ namespace media {
+ namespace mp4 {
+@@ -50,7 +49,6 @@ namespace {
+ const size_t kKeyIdSize = 16;
+ const size_t kFlacMetadataBlockStreaminfoSize = 34;
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ // Try to parse dvcC or dvvC box if exists, return `video_info` and an optional
+ // `dv_info` based on the configuration.
+ std::tuple<CodecProfileLevel, std::optional<DolbyVisionInfo>> MaybeParseDOVI(
+@@ -99,7 +97,6 @@ std::tuple<CodecProfileLevel, std::optional<DolbyVisionInfo>> MaybeParseDOVI(
+   // If the buffer is not backward compatible, always treat it as Dolby Vision.
+   return {dv_info.codec_info, dv_info};
+ }
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+ // Read color coordinate value as defined in the MasteringDisplayColorVolume
+ // ('mdcv') box.  Each coordinate is a float encoded in uint16_t, with upper
+@@ -744,7 +741,8 @@ bool HandlerReference::Parse(BoxReader* reader) {
    return true;
  }
  
@@ -207,7 +257,7 @@ index 017e7fbb6b..41af012344 100644
  AVCDecoderConfigurationRecord::AVCDecoderConfigurationRecord()
      : version(0),
        profile_indication(0),
-@@ -966,8 +968,6 @@ bool AVCDecoderConfigurationRecord::Serialize(
+@@ -966,8 +964,6 @@ bool AVCDecoderConfigurationRecord::Serialize(
    return result;
  }
  
@@ -216,6 +266,50 @@ index 017e7fbb6b..41af012344 100644
  VPCodecConfigurationRecord::VPCodecConfigurationRecord()
      : profile(VIDEO_CODEC_PROFILE_UNKNOWN) {}
  
+@@ -1291,7 +1287,6 @@ bool VideoSampleEntry::Parse(BoxReader* reader) {
+   const FourCC actual_format =
+       format == FOURCC_ENCV ? sinf.format.format : format;
+   switch (actual_format) {
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     case FOURCC_AVC1:
+     case FOURCC_AVC3: {
+       DVLOG(2) << __func__ << " reading AVCDecoderConfigurationRecord (avcC)";
+@@ -1363,7 +1358,6 @@ bool VideoSampleEntry::Parse(BoxReader* reader) {
+       break;
+     }
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+     case FOURCC_VP09: {
+       DVLOG(2) << __func__ << " reading VPCodecConfigurationRecord (vpcC)";
+       std::unique_ptr<VPCodecConfigurationRecord> vp_config(
+@@ -1470,7 +1464,6 @@ bool VideoSampleEntry::IsFormatValid() const {
+   const FourCC actual_format =
+       format == FOURCC_ENCV ? sinf.format.format : format;
+   switch (actual_format) {
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     case FOURCC_AVC1:
+     case FOURCC_AVC3:
+ #if BUILDFLAG(ENABLE_PLATFORM_HEVC)
+@@ -1481,7 +1474,6 @@ bool VideoSampleEntry::IsFormatValid() const {
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
+     case FOURCC_DVA1:
+     case FOURCC_DVAV:
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+     case FOURCC_VP09:
+       return true;
+ #if BUILDFLAG(ENABLE_AV1_DECODER)
+@@ -1519,11 +1511,7 @@ bool ElementaryStreamDescriptor::Parse(BoxReader* reader) {
+   object_type = es_desc.object_type();
+ 
+   if (es_desc.IsAAC(object_type)) {
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     RCHECK(aac.Parse(es_desc.decoder_specific_info(), reader->media_log()));
+-#else
+-    return false;
+-#endif
+   }
+ 
+   return true;
 diff --git a/media/formats/mp4/box_definitions.h b/media/formats/mp4/box_definitions.h
 index 08cf9684eb..07f321ab5f 100644
 --- a/media/formats/mp4/box_definitions.h
@@ -248,3 +342,191 @@ index 08cf9684eb..07f321ab5f 100644
  };
  
  struct MEDIA_EXPORT FlacSpecificBox : Box {
+diff --git a/media/formats/mp4/mp4_stream_parser.cc b/media/formats/mp4/mp4_stream_parser.cc
+index 39829a2648..7be29711a5 100644
+--- a/media/formats/mp4/mp4_stream_parser.cc
++++ b/media/formats/mp4/mp4_stream_parser.cc
+@@ -77,7 +77,6 @@ class ExternalMemoryAdapter : public DecoderBuffer::ExternalMemory {
+   std::vector<uint8_t> memory_;
+ };
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ base::HeapArray<uint8_t> PrepareAACBuffer(
+     const AAC& aac_config,
+     base::span<const uint8_t> frame_buf,
+@@ -106,7 +105,6 @@ base::HeapArray<uint8_t> PrepareAACBuffer(
+ 
+   return output_buffer;
+ }
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+ // Create a StreamParserMetadataTrack for attaching metadata to track samples.
+ // Returns nullptr on failure.
+@@ -529,10 +527,7 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
+       base::TimeDelta seek_preroll;
+       std::vector<uint8_t> extra_data;
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS) || \
+-    BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO) || BUILDFLAG(ENABLE_IAMF_TOOLS)
+       AudioCodecProfile profile = AudioCodecProfile::kUnknown;
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS) || ...
+ 
+       if (audio_format == FOURCC_OPUS) {
+         codec = AudioCodec::kOpus;
+@@ -580,7 +575,6 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
+         channel_layout_config = ChannelLayoutConfig::Stereo();
+         sample_per_second = 48000;
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO) || ...
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #if BUILDFLAG(ENABLE_PLATFORM_MPEG_H_AUDIO)
+       } else if (audio_format == FOURCC_MHM1 || audio_format == FOURCC_MHA1) {
+         codec = AudioCodec::kMpegHAudio;
+@@ -699,7 +693,6 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
+               << static_cast<int>(audio_type) << " in esds.";
+           return false;
+         }
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+       }
+ 
+       SampleFormat sample_format;
+@@ -731,12 +724,10 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
+       DVLOG(3) << __func__ << " audio_track_id=" << audio_track_id
+                << " is_encrypted=" << is_track_encrypted;
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+       if (codec == AudioCodec::kAAC) {
+         audio_config.disable_discard_decoder_delay();
+         audio_config.set_profile(profile);
+       }
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #if BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO) || BUILDFLAG(ENABLE_IAMF_TOOLS)
+       if (codec == AudioCodec::kIAMF) {
+         audio_config.set_profile(profile);
+@@ -1170,7 +1161,6 @@ ParseResult MP4StreamParser::EnqueueSample(BufferQueueMap* buffers) {
+     }
+   } else if (buffer_type == DemuxerStream::AUDIO) {
+     if (ESDescriptor::IsAAC(runs_->audio_description().esds.object_type)) {
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+       heap_frame_buf = PrepareAACBuffer(runs_->audio_description().esds.aac,
+                                         buf.first(sample_size), &subsamples);
+       if (heap_frame_buf.empty()) {
+@@ -1178,9 +1168,6 @@ ParseResult MP4StreamParser::EnqueueSample(BufferQueueMap* buffers) {
+             << "Failed to prepare AAC sample for decode";
+         return ParseResult::kError;
+       }
+-#else
+-      return ParseResult::kError;
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+     }
+   }
+ 
+diff --git a/media/filters/stream_parser_factory.cc b/media/filters/stream_parser_factory.cc
+index b569fe800d..299a45a219 100644
+--- a/media/filters/stream_parser_factory.cc
++++ b/media/filters/stream_parser_factory.cc
+@@ -36,12 +36,10 @@
+ #include "media/base/android/media_codec_util.h"
+ #endif
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #include "media/formats/mp4/es_descriptor.h"
+ #if BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
+ #include "media/formats/mp2t/mp2t_stream_parser.h"
+ #endif
+-#endif
+ 
+ namespace media {
+ 
+@@ -136,7 +134,6 @@ static StreamParser* BuildWebMParser(base::span<const std::string> codecs,
+   return new WebMStreamParser();
+ }
+ 
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ static int GetMP4AudioObjectType(std::string_view codec_id,
+                                  MediaLog* media_log) {
+   // From RFC 6381 section 3.3 (ISO Base Media File Format Name Space):
+@@ -289,7 +286,6 @@ static const CodecInfo kMpegHAudioCodecInfo2 = {
+     "mha1.*", CodecInfo::AUDIO, nullptr, CodecInfo::HISTOGRAM_MPEG_H_AUDIO};
+ #endif
+ 
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+ static const CodecInfo kMP3CodecInfo = {nullptr, CodecInfo::AUDIO, nullptr,
+                                         CodecInfo::HISTOGRAM_MP3};
+@@ -328,7 +324,6 @@ static const auto kVideoMP4Codecs = std::to_array<const CodecInfo* const>({
+     &kOpusCodecInfo,
+     &kOpusCodecInfo2,
+     &kMPEG4VP09CodecInfo,
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     &kH264AVC1CodecInfo,
+     &kH264AVC3CodecInfo,
+ #if BUILDFLAG(ENABLE_PLATFORM_HEVC)
+@@ -377,7 +372,6 @@ static const auto kVideoMP4Codecs = std::to_array<const CodecInfo* const>({
+     &kDTSECodecInfo2,
+     &kDTSECodecInfo3,
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #if BUILDFLAG(ENABLE_AV1_DECODER)
+     &kAV1CodecInfo,
+ #endif  // BUILDFLAG(ENABLE_AV1_DECODER)
+@@ -398,7 +392,6 @@ static const auto kAudioMP4Codecs = std::to_array<const CodecInfo* const>({
+     &kMPEG4FLACCodecInfo2,
+     &kOpusCodecInfo,
+     &kOpusCodecInfo2,
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     &kMPEG4AACCodecInfo,
+     &kMPEG2AACLCCodecInfo,
+ #if BUILDFLAG(ENABLE_PLATFORM_MPEG_H_AUDIO)
+@@ -432,7 +425,6 @@ static const auto kAudioMP4Codecs = std::to_array<const CodecInfo* const>({
+     &kDTSECodecInfo2,
+     &kDTSECodecInfo3,
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #if BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO) || BUILDFLAG(ENABLE_IAMF_TOOLS)
+     &kIAMFCodecInfo1,
+     &kIAMFCodecInfo2,
+@@ -463,7 +455,6 @@ static StreamParser* BuildMP4Parser(base::span<const std::string> codecs,
+     if (base::MatchPattern(codec_id, kMPEG4FLACCodecInfo.pattern) ||
+         base::MatchPattern(codec_id, kMPEG4FLACCodecInfo2.pattern)) {
+       has_flac = true;
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     } else if (base::MatchPattern(codec_id, kMPEG2AACLCCodecInfo.pattern)) {
+       audio_object_types.insert(mp4::kISO_13818_7_AAC_LC);
+     } else if (base::MatchPattern(codec_id, kMPEG4AACCodecInfo.pattern)) {
+@@ -523,7 +514,6 @@ static StreamParser* BuildMP4Parser(base::span<const std::string> codecs,
+                base::MatchPattern(codec_id, kDTSECodecInfo3.pattern)) {
+       audio_object_types.insert(mp4::kDTSE);
+ #endif  // BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #if BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO) || BUILDFLAG(ENABLE_IAMF_TOOLS)
+     } else if (base::MatchPattern(codec_id, kIAMFCodecInfo1.pattern) ||
+                base::MatchPattern(codec_id, kIAMFCodecInfo2.pattern)) {
+@@ -535,7 +525,6 @@ static StreamParser* BuildMP4Parser(base::span<const std::string> codecs,
+   return new mp4::MP4StreamParser(audio_object_types, has_sbr, has_flac,
+                                   has_iamf, has_dv);
+ }
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+ static const CodecInfo kADTSCodecInfo = {nullptr, CodecInfo::AUDIO, nullptr,
+                                          CodecInfo::HISTOGRAM_MPEG4AAC};
+ static const auto kAudioADTSCodecs =
+@@ -582,7 +571,6 @@ static StreamParser* BuildMP2TParser(base::span<const std::string> codecs,
+   return new media::mp2t::Mp2tStreamParser(codecs, has_sbr);
+ }
+ #endif  // ENABLE_MSE_MPEG2TS_STREAM_PARSER
+-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+ static const SupportedTypeInfo kSupportedTypeInfo[] = {
+     {"video/webm", &BuildWebMParser, kVideoWebMCodecs},
+@@ -591,12 +579,10 @@ static const SupportedTypeInfo kSupportedTypeInfo[] = {
+     // NOTE: Including proprietary MP4 codecs is gated by build flags above.
+     {"video/mp4", &BuildMP4Parser, kVideoMP4Codecs},
+     {"audio/mp4", &BuildMP4Parser, kAudioMP4Codecs},
+-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+     {"audio/aac", &BuildADTSParser, kAudioADTSCodecs},
+ #if BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
+     {"video/mp2t", &BuildMP2TParser, kVideoMP2TCodecs},
+ #endif
+-#endif
+ };
+ 
+ #if BUILDFLAG(ENABLE_HLS_DEMUXER)

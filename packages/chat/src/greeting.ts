@@ -38,7 +38,16 @@ export interface GreetingEntry {
 }
 
 /** The catalog, by time window. Order is the order a fresh shuffle draws from. */
-export const GREETINGS: Record<GreetingWindow, readonly GreetingEntry[]> = {
+/**
+ * One window's entries. A non-empty tuple, not an array: every window has at
+ * least one greeting, and saying so in the type is what lets `entries[0]` mean a
+ * greeting rather than `GreetingEntry | undefined` under
+ * `noUncheckedIndexedAccess` — which Chromium's WebUI build turns on, and this
+ * file is copied into it verbatim.
+ */
+type GreetingCatalog = readonly [GreetingEntry, ...GreetingEntry[]];
+
+export const GREETINGS: Record<GreetingWindow, GreetingCatalog> = {
   early: [
     { id: "early-early-bird", text: "Morning, early bird." },
     {
@@ -264,13 +273,21 @@ export function resetGreetings(): void {
 /** Fisher–Yates, with the last draw kept out of the front of a new cycle. */
 function shuffled(ids: readonly string[], avoidFirst: string | null): string[] {
   const next = [...ids];
+  // The two `undefined` guards are unreachable — both indexes are in range — and
+  // they are here because this file also compiles with `noUncheckedIndexedAccess`
+  // inside Chromium's WebUI build, where an indexed read is a Maybe.
+  const swap = (a: number, b: number): void => {
+    const held = next[a];
+    const other = next[b];
+    if (held === undefined || other === undefined) return;
+    next[a] = other;
+    next[b] = held;
+  };
   for (let i = next.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [next[i], next[j]] = [next[j], next[i]];
+    swap(i, Math.floor(Math.random() * (i + 1)));
   }
   if (next.length > 1 && next[0] === avoidFirst) {
-    const swap = 1 + Math.floor(Math.random() * (next.length - 1));
-    [next[0], next[swap]] = [next[swap], next[0]];
+    swap(0, 1 + Math.floor(Math.random() * (next.length - 1)));
   }
   return next;
 }

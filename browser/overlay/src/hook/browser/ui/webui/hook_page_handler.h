@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
@@ -20,6 +21,7 @@
 #include "hook/browser/channel/hook_channel.h"
 #include "hook/common/hook.mojom.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 
 namespace content {
 class WebContents;
@@ -63,6 +65,8 @@ class HookPageHandler : public mojom::PageHandler {
                    const std::string& text,
                    SendMessageCallback callback) override;
   void StopMessage(const std::string& id) override;
+  void ObserveChat(const std::string& id,
+                   mojo::PendingRemote<mojom::ChatObserver> observer) override;
   void GetSignIn(GetSignInCallback callback) override;
   void StartSignIn(StartSignInCallback callback) override;
   void CancelSignIn() override;
@@ -88,6 +92,18 @@ class HookPageHandler : public mojom::PageHandler {
   // the profile's, shared with the page-read poller: one descriptor, one token,
   // one reconnect.
   HookChannel* Channel();
+
+  // One page's view of a running turn: the observer it handed over, and the
+  // stream that feeds it. They live and die together — dropping this cancels the
+  // request, which is how the host learns nobody is watching any more.
+  struct Observation;
+  // By id rather than by pointer: a frame that arrives for a stream the page
+  // already dropped finds nothing, instead of a reused address.
+  Observation* FindObservation(int id);
+  void OnStreamFrame(int id, const std::string& frame);
+  void OnStreamEnd(int id, const std::string& error);
+  int next_observation_ = 1;
+  std::vector<std::unique_ptr<Observation>> observations_;
 
   // The WebContents this page belongs to: the tab reader needs it to find the
   // window whose tabstrip the page is describing. Owned by the WebUI, which

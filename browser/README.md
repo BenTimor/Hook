@@ -346,10 +346,33 @@ node browser/tools/smoke.mjs                  # the seam, the dock, one send
 node browser/tools/smoke.mjs --side-panel     # chrome://hook-panel, pinned
 node browser/tools/smoke.mjs --newtab         # Ctrl+T's page, and the first tab
 node browser/tools/smoke.mjs --signin-state out   # the gate refuses, card drawn
-node browser/tools/smoke.mjs --codecs         # H.264, AAC, VP9 all decode
+node browser/tools/smoke.mjs --codecs         # H.264, AAC, VP9 are claimed, and MSE
+node browser/tools/smoke.mjs --codecs --media a.mp4   # …and a frame actually decodes
+node browser/tools/smoke.mjs --codecs --media frag.mp4 --mse   # …and an append plays
 node browser/tools/smoke.mjs --host           # the browser starts its own host
 node browser/tools/smoke.mjs --channel        # the dock on real conversations
 ```
+
+`--codecs` asks the *build* what it can play (`canPlayType`, `MediaSource`); a
+build can answer "probably" and still produce no picture, which was the state for
+a day while the OS-decoder work was half-wired (`docs/browser-os-decoders.md`,
+"It decodes"). `--media <file>` closes that gap: it serves the file from loopback,
+plays it and counts `requestVideoFrameCallback` frames — or decoded audio bytes,
+which is the only thing an `.m4a` can produce. It runs on its own page rather than
+on `chrome://hook`, because a `chrome://` page has every cross-scheme subresource
+refused and a media element there can only report that.
+
+Both builds have to pass it, and they get their decoders from opposite places: the
+dev build from FFmpeg compiled in, a release-shaped one (`out/NoComp`, in the
+codes matrix below) from Windows' Media Foundation through patches `0022`–`0025`.
+A pass on the first and a failure on the second is the normal shape of a half
+finished un-gate, not a regression to shrug at.
+
+`--mse` takes the same file and appends it to a `MediaSource` instead of playing
+it: a site that streams asks `isTypeSupported` (a codec list) and then appends (a
+parser), and those are different tables, so an un-gate that satisfies one is not
+the other. Use a fragmented file — `ffmpeg -i in.mp4 -c copy -movflags
+frag_keyframe+empty_moov+default_base_moof frag.mp4`.
 
 **After a build, run the whole matrix instead** — `pnpm browser:check`
 (`smoke.mjs --all`). It is the list above arranged into five launches, about a
@@ -687,6 +710,20 @@ reports the `browser` product.
 `--channel` borrows for a machine with no `hook-host` build — but the browser no
 longer depends on it. The design, the two shapes it considered and the order of
 work are in `docs/browser-host.md`; steps 1–4 are in.
+
+A running turn is a **stream**, not a poll. The host writes it as server-sent
+events (`GET /chats/<id>/events`, `stream_chat` in `crates/hook-core/src/channel.rs`:
+`started` with the conversation when a reply first appears, `delta` with only the
+text that grew, `done` with the authoritative list), the browser process holds
+that one response open (`SimpleURLLoader::DownloadAsStream`,
+`hook/browser/channel/hook_channel.cc`) and pushes each frame to the page over a
+mojom observer (`ChatObserver`), and `browser/ui/transport.ts` draws it. The
+350 ms poll the dock used before is still there, unmodified, as the fallback: a
+host too old to know the route answers 404 and the transport asks for the chat the
+old way, so an older Hook costs nothing but the old behaviour.
+`pnpm browser:smoke --channel` opens the observer and asserts a frame arrives
+(an idle conversation answers `started` and `done` at once, so the check needs no
+model call).
 
 `pnpm browser:smoke` is the check for all of it, so the answer to the POC's question —
 does our overlay reach Chromium, and can the Hook chat surface live inside it — is

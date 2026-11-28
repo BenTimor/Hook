@@ -62,6 +62,25 @@ export interface ChatView {
   messages: ChatMessage[];
 }
 
+/** One frame of a running turn, as the host writes it. */
+export type ChatEventFrame =
+  | { kind: "started"; chat?: ChatSummary; messages?: ChatMessage[] }
+  | { kind: "delta"; id?: string; text: string }
+  | { kind: "done"; chat?: ChatSummary; messages?: ChatMessage[] }
+  | { kind: "error"; error: string };
+
+/** The generated bindings, as much of them as this bundle names. */
+interface MojomModule {
+  PageHandler: { getRemote(): HookPageHandler };
+  /** Generated for `interface ChatObserver`; absent before this build. */
+  ChatObserverReceiver?: new (impl: {
+    onChatEvent(frame: string): void;
+    onChatEnd(error: string): void;
+  }) => {
+    $: { bindNewPipeAndPassRemote(): unknown; close?(): void };
+  };
+}
+
 export interface SignInView {
   signedIn: boolean;
   /** Whether a Hook app answers on this computer. */
@@ -92,6 +111,12 @@ export interface HookPageHandler {
     text: string,
   ): Promise<{ ok: boolean; error: string }>;
   stopMessage(id: string): void;
+  /**
+   * A running turn, pushed. `observer` is a `ChatObserverReceiver`'s endpoint:
+   * the browser process holds the host's stream open and calls it. Older builds
+   * of this page had no such method; `streamChat` checks for it.
+   */
+  observeChat(id: string, observer: unknown): void;
   getSignIn(): Promise<SignInView>;
   startSignIn(): Promise<{ view: SignInView; error: string }>;
   cancelSignIn(): Promise<void>;
@@ -99,10 +124,14 @@ export interface HookPageHandler {
 
 let handler: HookPageHandler | null = null;
 let unavailable = false;
+let bindings: MojomModule | null = null;
 
-/** The page's handler, or null when this page is not served by the browser. */
-export async function hookHandler(): Promise<HookPageHandler | null> {
-  if (handler) return handler;
+/**
+ * The page's own generated bindings, or null when this page is not served by the
+ * browser (the Vite dev server, a static preview).
+ */
+export async function hookMojom(): Promise<MojomModule | null> {
+  if (bindings) return bindings;
   if (unavailable) return null;
   try {
     // Resolved against this module's own URL — `chrome://hook-panel/panel.mjs`
@@ -110,15 +139,58 @@ export async function hookHandler(): Promise<HookPageHandler | null> {
     // literal makes Vite's dev server try to resolve a file that only exists in
     // the browser's pak (and fail the page).
     const specifier = new URL("./hook.mojom-webui.js", import.meta.url).href;
-    const module = (await import(/* @vite-ignore */ specifier)) as {
-      PageHandler: { getRemote(): HookPageHandler };
-    };
-    handler = module.PageHandler.getRemote();
-    return handler;
+    bindings = (await import(/* @vite-ignore */ specifier)) as MojomModule;
+    return bindings;
   } catch {
     unavailable = true;
     return null;
   }
+}
+
+/** The page's handler, or null when this page is not served by the browser. */
+export async function hookHandler(): Promise<HookPageHandler | null> {
+  if (handler) return handler;
+  const module = await hookMojom();
+  if (!module) return null;
+  handler = module.PageHandler.getRemote();
+  return handler;
+}
+
+/**
+ * Follow one running turn, the way the browser draws it.
+ *
+ * The host writes a frame per change (`/chats/<id>/events`, `stream_chat` in
+ * `channel.rs`) and the browser process pushes each one here over mojom, so the
+ * page holds one open stream instead of asking for the whole conversation three
+ * times a second. The frames are the events the dock already draws.
+ *
+ * Returns a teardown; calling it drops the observer, which is what closes the
+ * request on the host.
+ */
+export async function streamChat(
+  id: string,
+  onEvent: (frame: ChatEventFrame) => void,
+  onEnd: (error: string) => void,
+): Promise<() => void> {
+  const module = await hookMojom();
+  const page = await hookHandler();
+  const Receiver = module?.ChatObserverReceiver;
+  if (!Receiver || !page?.observeChat) {
+    onEnd("This build cannot stream a turn.");
+    return () => {};
+  }
+  const receiver = new Receiver({
+    onChatEvent: (frame) => {
+      try {
+        onEvent(JSON.parse(frame) as ChatEventFrame);
+      } catch {
+        // A frame that cannot be read is not worth ending a turn over.
+      }
+    },
+    onChatEnd: (error) => onEnd(error),
+  });
+  page.observeChat(id, receiver.$.bindNewPipeAndPassRemote());
+  return () => receiver.$.close?.();
 }
 
 /** The tab that is selected, which is the one a message is about. */

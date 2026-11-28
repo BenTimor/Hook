@@ -100,6 +100,17 @@ struct SignInView {
   string message;
 };
 
+// What a running turn sends the page, while it runs. One frame is one line of
+// the host's stream (`stream_chat` in `crates/hook-core/src/channel.rs`):
+// `{"kind":"delta",...}`, `{"kind":"done",...}`, and so on — the same shape
+// the dock's own events already have.
+interface ChatObserver {
+  OnChatEvent(string frame);
+  // The stream is over. Empty when the turn finished, a sentence when the host
+  // went away; a page that was cut off falls back to asking for the chat.
+  OnChatEnd(string error);
+};
+
 interface PageHandler {
   // The live tab list of the browser window that hosts this page.
   GetTabs() => (array<Tab> tabs);
@@ -134,6 +145,13 @@ interface PageHandler {
   // handles a tab handle and cannot point a read at a tab of its choosing.
   SendMessage(string id, string text) => (bool ok, string error);
   StopMessage(string id);
+
+  // A running turn, written as it happens: the browser process holds one
+  // response open on the host's stream and pushes every frame here, so the page
+  // neither polls nor redraws a conversation it already has. The observer is
+  // dropped when the turn ends or the page goes away, which is what closes the
+  // request.
+  ObserveChat(string id, pending_remote<ChatObserver> observer);
 
   // The sign-in card: the account file, plus the running app's answer when there
   // is one. Every call re-reads the file, so a page that has just watched an
