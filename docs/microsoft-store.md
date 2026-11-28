@@ -152,8 +152,9 @@ per field, ready to select and paste without Markdown or rich text:
   newest — the 0.6.3 section is 1,361 characters, limit 1,500)
 
 These are the 0.6.3 listing and release notes. The package itself is built from
-this commit at `0.6.3.0`; `release.config.json` keeps `store.latest` at the last
-certified version (0.6.2) until Microsoft certifies this one. Search terms: AI chat, coding
+this commit at `0.6.3.0`, and `release.config.json` names it in `store.latest`
+now that Microsoft has certified it, so a Store install is told the update
+exists. Search terms: AI chat, coding
 agent, AI assistant, code assistant, developer tools, cross-device sync,
 project sync. ("ChatGPT import" is tempting but it is someone else's trademark
 in a keyword field - leave it out unless you want to argue about it.)
