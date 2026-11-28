@@ -156,28 +156,34 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_boards",
-            "Boards hold the tasks. A board has typed columns: exactly one `status` column (whose options are the columns of the board view) and any of text, number, date, select, person. Read a board before adding tasks so you use its real column ids.",
+            "Boards hold the tasks. A board has typed columns: exactly one `status` column (whose options are the columns of the board view) and any of text, number, date, select, person. Read a board before adding tasks so you use its real column ids. A board also has saved **views** — a preset of filters and hidden columns, plus one default view. Use `views` to read them, `create_view` / `update_view` / `delete_view` to change them, and `set_default_view` to choose the one the board opens on. Pass `view: \"none\"` to set_default_view to clear it.",
             json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["list", "create", "update", "delete"] },
+                    "action": { "type": "string", "enum": ["list", "get", "create", "update", "delete", "views", "create_view", "update_view", "delete_view", "set_default_view"] },
                     "project": { "type": "string" },
                     "board": { "type": "string", "description": "Board id (bd_…)." },
-                    "name": { "type": "string" },
+                    "name": { "type": "string", "description": "Board name, or the name of the view being created or renamed." },
                     "description": { "type": "string" },
                     "folder": { "type": "string" },
                     "columns": {
                         "type": "array",
                         "description": "The board's columns. Each is {name, type, options?}. One type may be \"status\"; its options become the kanban columns.",
                         "items": { "type": "object" }
-                    }
+                    },
+                    "view": { "type": "string", "description": "A view id (vw_…) or its name, for update_view, delete_view and set_default_view." },
+                    "views": { "type": "array", "items": { "type": "object" }, "description": "For create/update: the board's saved views in full. Prefer the view actions." },
+                    "defaultView": { "type": "string", "description": "For create/update: the view id the board opens on, or null." },
+                    "filters": { "type": "array", "items": { "type": "object" }, "description": "For create_view / update_view: filter rules. Each is {field, op, value}. `field` is a column id or \"title\" (the task title is the only free-text search; descriptions are not searched). `op` is is, is_not, contains, not_contains, gt, lt, empty or not_empty. `value` is a string or an array of strings (any of); omit it for empty/not_empty. Rules combine with AND." },
+                    "hiddenColumns": { "type": "array", "items": { "type": "string" }, "description": "For create_view / update_view: column ids this view hides. Omit to show every column." },
+                    "makeDefault": { "type": "boolean", "description": "For create_view / update_view: make this the board's default view." }
                 },
                 "required": ["action"]
             }),
         ),
         tool(
             "workspace_tasks",
-            "Tasks on a board: title, Markdown description, status, assignees and custom column values. Create several in one turn when the user asks for a list of work.",
+            "Tasks on a board: title, Markdown description, status, assignees and custom column values. Create several in one turn when the user asks for a list of work. `list` can narrow the board: pass `view` (a saved view id or name), `filters` (your own rules), or `search` (a phrase in the title). A filtered list also reports `total` and `shown`, so you can tell a partial answer from the whole board.",
             json!({
                 "type": "object",
                 "properties": {
@@ -191,6 +197,9 @@ pub fn definitions() -> Vec<Value> {
                     "assignees": { "type": "array", "items": { "type": "string" }, "description": "One or more account subjects (or pending invitation email addresses). Each is resolved to the person's account when they accept." },
                     "fields": { "type": "object", "description": "Values keyed by column id." },
                     "position": { "type": "integer" },
+                    "view": { "type": "string", "description": "For list: a saved view (id or name) whose filters narrow the tasks. A board's default view is not applied unless you ask for it: list reads the whole board by default." },
+                    "filters": { "type": "array", "items": { "type": "object" }, "description": "For list: your own filter rules instead of a view's. Each is {field, op, value}: field is a column id or \"title\"; op is is, is_not, contains, not_contains, gt, lt, empty or not_empty; value is a string or array of strings. Rules combine with AND. An empty array means every task." },
+                    "search": { "type": "string", "description": "For list: free text in the task title. Shorthand for a {field: \"title\", op: \"contains\"} rule." },
                     "edits": { "type": "array", "items": { "type": "object" }, "description": "For update: change the description by the piece instead of sending it again. The same operations as `workspace_documents` (`replace`, `replace_section`, `insert_after_section`, `insert_before_section`, `delete_section`, `append`), applied to the stored description. Do not send `description` as well." }
                 },
                 "required": ["action"]
@@ -330,12 +339,14 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "workspace_preview",
-            "Show a task, board, document, roadmap or brainstorm in the user's preview panel. A roadmap draws its milestones on a timeline and a brainstorm draws its central word with the ideas around it. Call it as soon as you know what to show and before you write the reply: the tool result has to be followed by another message, so previewing after the answer turns that message into a redundant confirmation. The user can read it beside the chat; do not say that it is open.",
+            "Show a task, board, document, roadmap or brainstorm in the user's preview panel. A roadmap draws its milestones on a timeline and a brainstorm draws its central word with the ideas around it. For a board you decide what the user sees: omit `view` and `filters` to show the board's default view (or every task when it has none), pass `view` to show one of the board's saved views, or pass `filters` to narrow it yourself. Call it as soon as you know what to show and before you write the reply: the tool result has to be followed by another message, so previewing after the answer turns that message into a redundant confirmation. The user can read it beside the chat; do not say that it is open.",
             json!({
                 "type": "object",
                 "properties": {
                     "kind": { "type": "string", "enum": ["task", "document", "board", "roadmap", "brainstorm"] },
-                    "id": { "type": "string" }
+                    "id": { "type": "string" },
+                    "view": { "type": "string", "description": "For a board: a saved view id or name. Its filters and hidden columns shape the preview." },
+                    "filters": { "type": "array", "items": { "type": "object" }, "description": "For a board: your own filter rules, replacing the view's. Each is {field, op, value} exactly as in workspace_tasks." }
                 },
                 "required": ["kind", "id"]
             }),
@@ -490,6 +501,12 @@ async fn boards(client: &WorkspaceClient, args: &Value) -> ToolResult {
             if let Some(columns) = args.get("columns").filter(|value| value.is_array()) {
                 body["columns"] = columns.clone();
             }
+            if let Some(views) = args.get("views").filter(|value| value.is_array()) {
+                body["views"] = views.clone();
+            }
+            if let Some(default) = args.get("defaultView") {
+                body["defaultView"] = default.clone();
+            }
             client.post(&format!("/projects/{project}/boards"), body).await
         }
         "update" => {
@@ -507,16 +524,159 @@ async fn boards(client: &WorkspaceClient, args: &Value) -> ToolResult {
             if let Some(columns) = args.get("columns").filter(|value| value.is_array()) {
                 body["columns"] = columns.clone();
             }
+            if let Some(views) = args.get("views").filter(|value| value.is_array()) {
+                body["views"] = views.clone();
+            }
+            if let Some(default) = args.get("defaultView") {
+                body["defaultView"] = default.clone();
+            }
             client.patch(&format!("/boards/{board}"), body).await
         }
         "delete" => client.delete(&format!("/boards/{}", required(args, "board")?)).await,
+        "views" | "create_view" | "update_view" | "delete_view" | "set_default_view" => {
+            board_views(client, args, action(args)?).await
+        }
         other => Err(format!("Unknown action: {other}")),
+    }
+}
+
+/// The view half of `workspace_boards`: read the board, change one preset and
+/// write the list back. Views live inside the board row, so there is no second
+/// entity to keep in step — and the server prunes a rule whose column is gone.
+async fn board_views(client: &WorkspaceClient, args: &Value, action: String) -> ToolResult {
+    let board_id = required(args, "board")?;
+    let value = client.get(&format!("/boards/{board_id}")).await?;
+    let board = value.get("board").cloned().unwrap_or(value);
+    let mut views = board["views"].as_array().cloned().unwrap_or_default();
+    match action.as_str() {
+        "views" => Ok(json!({
+            "board": board_id,
+            "name": board["name"],
+            "views": views,
+            "defaultView": board["defaultView"],
+        })),
+        "create_view" => {
+            let name = required(args, "name")?;
+            if views.len() >= 40 {
+                return Err("This board already has 40 views; delete one first.".into());
+            }
+            if views.iter().any(|view| view["name"] == json!(name)) {
+                return Err(format!("This board already has a view called \"{name}\"."));
+            }
+            let mut view = json!({ "name": name, "filters": [], "hiddenColumns": [] });
+            if let Some(filters) = args.get("filters") {
+                if !filters.is_array() {
+                    return Err("\"filters\" must be a list of rules.".into());
+                }
+                view["filters"] = filters.clone();
+            }
+            if let Some(hidden) = args.get("hiddenColumns").filter(|value| value.is_array()) {
+                view["hiddenColumns"] = hidden.clone();
+            }
+            views.push(view);
+            let saved = client
+                .patch(&format!("/boards/{board_id}"), json!({ "views": views }))
+                .await?;
+            if args.get("makeDefault").and_then(Value::as_bool).unwrap_or(false) {
+                let saved_board = saved.get("board").cloned().unwrap_or_else(|| saved.clone());
+                let created = saved_board["views"]
+                    .as_array()
+                    .and_then(|views| views.iter().rev().find(|view| view["name"] == json!(name)))
+                    .cloned();
+                if let Some(id) = created.as_ref().and_then(|view| view["id"].as_str()) {
+                    return client
+                        .patch(&format!("/boards/{board_id}"), json!({ "defaultView": id }))
+                        .await;
+                }
+                return Ok(saved);
+            }
+            Ok(saved)
+        }
+        "update_view" => {
+            let reference = required(args, "view")?;
+            let index = find_view_index(&views, &reference)?;
+            if let Some(name) = string(args, "name") {
+                views[index]["name"] = json!(name);
+            }
+            if let Some(filters) = args.get("filters") {
+                if !filters.is_array() {
+                    return Err("\"filters\" must be a list of rules.".into());
+                }
+                views[index]["filters"] = filters.clone();
+            }
+            if let Some(hidden) = args.get("hiddenColumns") {
+                if !hidden.is_array() {
+                    return Err("\"hiddenColumns\" must be a list of column ids.".into());
+                }
+                views[index]["hiddenColumns"] = hidden.clone();
+            }
+            let mut body = json!({ "views": views });
+            if args.get("makeDefault").and_then(Value::as_bool).unwrap_or(false) {
+                if let Some(id) = views[index]["id"].as_str() {
+                    body["defaultView"] = json!(id);
+                }
+            }
+            client.patch(&format!("/boards/{board_id}"), body).await
+        }
+        "delete_view" => {
+            let reference = required(args, "view")?;
+            let index = find_view_index(&views, &reference)?;
+            views.remove(index);
+            client
+                .patch(&format!("/boards/{board_id}"), json!({ "views": views }))
+                .await
+        }
+        "set_default_view" => {
+            let reference = required(args, "view")?;
+            if reference == "none" || reference == "all" || reference == "off" {
+                return client
+                    .patch(&format!("/boards/{board_id}"), json!({ "defaultView": null }))
+                    .await;
+            }
+            let index = find_view_index(&views, &reference)?;
+            let id = views[index]["id"].as_str().unwrap_or_default().to_string();
+            client
+                .patch(&format!("/boards/{board_id}"), json!({ "defaultView": id }))
+                .await
+        }
+        other => Err(format!("Unknown view action: {other}")),
+    }
+}
+
+/// A view is named by its id or its name; a name is what a person reads, so an
+/// agent that has the board may use it.
+fn find_view_index(views: &[Value], reference: &str) -> Result<usize, String> {
+    if let Some(index) = views.iter().position(|view| view["id"].as_str() == Some(reference)) {
+        return Ok(index);
+    }
+    let lowered = reference.to_lowercase();
+    if let Some(index) = views.iter().position(|view| {
+        view["name"]
+            .as_str()
+            .map(|name| name.to_lowercase() == lowered)
+            .unwrap_or(false)
+    }) {
+        return Ok(index);
+    }
+    let names: Vec<String> = views
+        .iter()
+        .filter_map(|view| view["name"].as_str().map(str::to_string))
+        .collect();
+    if names.is_empty() {
+        Err(format!(
+            "This board has no view called \"{reference}\" (it has none yet)."
+        ))
+    } else {
+        Err(format!(
+            "This board has no view called \"{reference}\". Its views are: {}.",
+            names.join(", ")
+        ))
     }
 }
 
 async fn tasks(client: &WorkspaceClient, args: &Value) -> ToolResult {
     match action(args)?.as_str() {
-        "list" => client.get(&format!("/boards/{}/tasks", required(args, "board")?)).await,
+        "list" => list_tasks(client, args).await,
         "get" => client.get(&format!("/tasks/{}", required(args, "task")?)).await,
         "create" => {
             let board = required(args, "board")?;
@@ -970,6 +1130,336 @@ async fn invites(client: &WorkspaceClient, args: &Value) -> ToolResult {
 /// Fetch the entity and hand it back in the shape the preview panel renders.
 /// The panel itself lives in the chat product; the call is answered here so the
 /// tool works the same from an embedded chat that has no panel.
+/// `workspace_tasks` list, optionally narrowed by a saved view, the agent's own
+/// rules, or a title search. An unfiltered list is the plain board response:
+/// no view is applied unless the agent names one, because "list the tasks" and
+/// "show me the board's default view" are different questions.
+async fn list_tasks(client: &WorkspaceClient, args: &Value) -> ToolResult {
+    let board_id = required(args, "board")?;
+    let narrowed = string(args, "view").is_some()
+        || args.get("filters").is_some()
+        || string(args, "search").is_some();
+    if !narrowed {
+        return client
+            .get(&format!("/boards/{board_id}/tasks"))
+            .await;
+    }
+    let value = client.get(&format!("/boards/{board_id}")).await?;
+    let board = value.get("board").cloned().unwrap_or(value);
+    let columns = board_columns(&board);
+    let view = match string(args, "view") {
+        Some(reference) => Some(view_by_reference(&board, &reference)?),
+        None => None,
+    };
+    let rules = rules_for(args, view.as_ref(), &columns)?;
+    let tasks = client
+        .get(&format!("/boards/{board_id}/tasks"))
+        .await?;
+    let all = tasks["tasks"].as_array().cloned().unwrap_or_default();
+    let total = all.len();
+    let shown = filter_tasks(&all, &columns, &rules);
+    let count = shown.len();
+    let mut out = json!({ "tasks": shown, "total": total, "shown": count });
+    if let Some(view) = &view {
+        out["view"] = json!({ "id": view["id"], "name": view["name"] });
+    }
+    Ok(out)
+}
+
+/// One filter rule, read from JSON. The shape is the one a saved view stores,
+/// so a view and an agent's own rules are the same thing to the evaluator.
+#[derive(Clone, Debug, PartialEq)]
+struct FilterRule {
+    field: String,
+    op: String,
+    value: Vec<String>,
+}
+
+const FILTER_OPS: [&str; 8] = [
+    "is",
+    "is_not",
+    "contains",
+    "not_contains",
+    "gt",
+    "lt",
+    "empty",
+    "not_empty",
+];
+
+fn parse_filter_rules(raw: &Value) -> Result<Vec<FilterRule>, String> {
+    let entries = raw
+        .as_array()
+        .ok_or_else(|| "\"filters\" must be a list of rules.".to_string())?;
+    if entries.len() > 30 {
+        return Err("That is more than 30 filters; narrow the board with fewer rules.".into());
+    }
+    let mut rules = Vec::new();
+    for entry in entries {
+        let field = entry
+            .get("field")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "Every filter rule needs a \"field\" (a column id or \"title\").".to_string()
+            })?;
+        let op = entry.get("op").and_then(Value::as_str).unwrap_or("");
+        if !FILTER_OPS.contains(&op) {
+            return Err(format!(
+                "Unknown filter operator \"{op}\". Use is, is_not, contains, not_contains, gt, lt, empty or not_empty."
+            ));
+        }
+        let mut value = Vec::new();
+        if op != "empty" && op != "not_empty" {
+            match entry.get("value") {
+                Some(Value::String(text)) if !text.trim().is_empty() => {
+                    value.push(text.trim().to_string());
+                }
+                Some(Value::Array(items)) if !items.is_empty() && items.len() <= 20 => {
+                    for item in items {
+                        let text = item
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|text| !text.is_empty())
+                            .ok_or_else(|| {
+                                "A filter value must be a non-empty string.".to_string()
+                            })?;
+                        value.push(text.to_string());
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "A \"{op}\" filter needs \"value\" (a string or a list of strings)."
+                    ))
+                }
+            }
+        }
+        rules.push(FilterRule {
+            field: field.to_string(),
+            op: op.to_string(),
+            value,
+        });
+    }
+    Ok(rules)
+}
+
+fn board_columns(board: &Value) -> Vec<Value> {
+    board
+        .get("columns")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn column_by_id<'a>(columns: &'a [Value], id: &str) -> Option<&'a Value> {
+    columns
+        .iter()
+        .find(|column| column["id"].as_str() == Some(id))
+}
+
+/// A rule that names a column the board no longer has is a refused call, not a
+/// filter that silently matches nothing: the agent can read the board and fix
+/// its field. (The server prunes saved views for the same reason.)
+fn validate_filter_fields(columns: &[Value], rules: &[FilterRule]) -> Result<(), String> {
+    for rule in rules {
+        if rule.field == "title" || column_by_id(columns, &rule.field).is_some() {
+            continue;
+        }
+        let known: Vec<String> = columns
+            .iter()
+            .filter_map(|column| {
+                Some(format!(
+                    "{} ({})",
+                    column["name"].as_str()?,
+                    column["id"].as_str()?
+                ))
+            })
+            .collect();
+        return Err(format!(
+            "No column \"{}\" on this board. Its columns are: {}.",
+            rule.field,
+            known.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+fn rules_for(
+    args: &Value,
+    view: Option<&Value>,
+    columns: &[Value],
+) -> Result<Vec<FilterRule>, String> {
+    let mut rules = match args.get("filters") {
+        Some(raw) => parse_filter_rules(raw)?,
+        None => match view.and_then(|view| view.get("filters")) {
+            Some(raw) => parse_filter_rules(raw)?,
+            None => Vec::new(),
+        },
+    };
+    if let Some(search) = string(args, "search") {
+        if !rules.iter().any(|rule| rule.field == "title") {
+            rules.push(FilterRule {
+                field: "title".to_string(),
+                op: "contains".to_string(),
+                value: vec![search],
+            });
+        }
+    }
+    validate_filter_fields(columns, &rules)?;
+    Ok(rules)
+}
+
+fn filter_tasks(tasks: &[Value], columns: &[Value], rules: &[FilterRule]) -> Vec<Value> {
+    if rules.is_empty() {
+        return tasks.to_vec();
+    }
+    tasks
+        .iter()
+        .filter(|task| rules.iter().all(|rule| rule_matches(task, columns, rule)))
+        .cloned()
+        .collect()
+}
+
+fn rule_matches(task: &Value, columns: &[Value], rule: &FilterRule) -> bool {
+    let column = if rule.field == "title" {
+        None
+    } else {
+        column_by_id(columns, &rule.field)
+    };
+    if rule.field != "title" && column.is_none() {
+        // A stale rule must not empty the board under the reader.
+        return true;
+    }
+    let raw = raw_strings(task, column);
+    match rule.op.as_str() {
+        "empty" => raw.is_empty(),
+        "not_empty" => !raw.is_empty(),
+        "is" => any_equals(&raw, &rule.value),
+        "is_not" => !any_equals(&raw, &rule.value),
+        "contains" => any_contains(&raw, &rule.value),
+        "not_contains" => !any_contains(&raw, &rule.value),
+        "gt" | "lt" => raw
+            .first()
+            .map(|left| {
+                rule.value
+                    .iter()
+                    .any(|right| compare(left, right, rule.op == "gt"))
+            })
+            .unwrap_or(false),
+        _ => true,
+    }
+}
+
+/// The task's value for a rule, as the strings an operator compares. Empty and
+/// missing values are the same thing: a task with no number has no value, not
+/// a value of "null".
+fn raw_strings(task: &Value, column: Option<&Value>) -> Vec<String> {
+    let Some(column) = column else {
+        return scalar(task.get("title")).into_iter().collect();
+    };
+    let id = column["id"].as_str().unwrap_or_default();
+    let kind = column["type"].as_str().unwrap_or("text");
+    match kind {
+        "status" => scalar(task.get("status")).into_iter().collect(),
+        "person" => {
+            let mut out = Vec::new();
+            if let Some(list) = task["assignees"].as_array() {
+                for item in list {
+                    if let Some(value) = scalar(Some(item)) {
+                        out.push(value);
+                    }
+                }
+            }
+            if out.is_empty() {
+                if let Some(value) = scalar(task.get("assignee")) {
+                    out.push(value);
+                }
+            }
+            out
+        }
+        "multiselect" => task["fields"][id]
+            .as_array()
+            .map(|items| items.iter().filter_map(|item| scalar(Some(item))).collect())
+            .unwrap_or_default(),
+        "checkbox" => task["fields"][id]
+            .as_bool()
+            .map(|value| vec![value.to_string()])
+            .unwrap_or_default(),
+        "daterange" => {
+            let raw = &task["fields"][id];
+            let mut out = Vec::new();
+            if let Some(start) = scalar(raw.get("start")) {
+                out.push(start);
+            }
+            if let Some(end) = scalar(raw.get("end")) {
+                out.push(end);
+            }
+            out
+        }
+        _ => scalar(Some(&task["fields"][id])).into_iter().collect(),
+    }
+}
+
+fn scalar(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) if !text.trim().is_empty() => Some(text.clone()),
+        Value::String(_) | Value::Null => None,
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+fn any_equals(raw: &[String], values: &[String]) -> bool {
+    raw.iter().any(|left| {
+        values
+            .iter()
+            .any(|right| left.to_lowercase() == right.to_lowercase())
+    })
+}
+
+fn any_contains(raw: &[String], values: &[String]) -> bool {
+    raw.iter().any(|left| {
+        let left = left.to_lowercase();
+        values
+            .iter()
+            .any(|right| left.contains(&right.to_lowercase()))
+    })
+}
+
+fn compare(left: &str, right: &str, greater: bool) -> bool {
+    if let (Ok(left), Ok(right)) = (left.parse::<f64>(), right.parse::<f64>()) {
+        return if greater { left > right } else { left < right };
+    }
+    // ISO dates and any other strings compare in their own order.
+    if greater {
+        left > right
+    } else {
+        left < right
+    }
+}
+
+fn views_of(board: &Value) -> Vec<Value> {
+    board
+        .get("views")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn view_by_reference(board: &Value, reference: &str) -> Result<Value, String> {
+    let views = views_of(board);
+    let index = find_view_index(&views, reference)?;
+    Ok(views[index].clone())
+}
+
+fn default_board_view(board: &Value) -> Option<Value> {
+    let id = board["defaultView"].as_str()?;
+    views_of(board)
+        .into_iter()
+        .find(|view| view["id"].as_str() == Some(id))
+}
+
 async fn preview(client: &WorkspaceClient, args: &Value) -> ToolResult {
     let kind = required(args, "kind")?;
     let id = required(args, "id")?;
@@ -988,16 +1478,57 @@ async fn preview(client: &WorkspaceClient, args: &Value) -> ToolResult {
         }
         "board" => {
             // The board plus its tasks: the panel renders the kanban columns so
-            // the user sees the shape of the work at a glance.
-            let board = client.get(&format!("/boards/{id}")).await?;
+            // the user sees the shape of the work at a glance. A view shapes
+            // it too, and the agent may narrow it with rules of its own.
+            let value = client.get(&format!("/boards/{id}")).await?;
+            let board = value.get("board").cloned().unwrap_or(value);
+            let columns = board_columns(&board);
+            let requested = string(args, "view");
+            let view = match (&requested, args.get("filters")) {
+                (Some(reference), _) => Some(view_by_reference(&board, reference)?),
+                // Own rules replace a view's rules, so the default view's
+                // rules must not sneak back in with its hidden columns.
+                (None, Some(_)) => None,
+                (None, None) => default_board_view(&board),
+            };
+            let rules = rules_for(args, view.as_ref(), &columns)?;
             let tasks = client.get(&format!("/boards/{id}/tasks")).await?;
-            Ok(json!({
-                "preview": {
-                    "kind": "board",
-                    "board": board["board"],
-                    "tasks": tasks["tasks"],
-                }
-            }))
+            let all = tasks["tasks"].as_array().cloned().unwrap_or_default();
+            let total = all.len();
+            let shown = filter_tasks(&all, &columns, &rules);
+            let count = shown.len();
+            let hidden: Vec<&str> = view
+                .as_ref()
+                .and_then(|view| view["hiddenColumns"].as_array())
+                .map(|ids| ids.iter().filter_map(|id| id.as_str()).collect())
+                .unwrap_or_default();
+            let visible: Vec<Value> = columns
+                .iter()
+                .filter(|column| {
+                    let id = column["id"].as_str().unwrap_or_default();
+                    // The status column is the board's shape: a view may hide it
+                    // in the window, where grouping falls back to another
+                    // property, but a preview with no columns to draw is empty.
+                    let is_status = column["type"].as_str() == Some("status");
+                    is_status
+                        || (!hidden.contains(&id)
+                            && !column["hidden"].as_bool().unwrap_or(false))
+                })
+                .cloned()
+                .collect();
+            let mut preview_board = board.clone();
+            preview_board["columns"] = json!(visible);
+            let mut preview = json!({
+                "kind": "board",
+                "board": preview_board,
+                "tasks": shown,
+                "total": total,
+                "shown": count,
+            });
+            if let Some(view) = &view {
+                preview["view"] = json!({ "id": view["id"], "name": view["name"] });
+            }
+            Ok(json!({ "preview": preview }))
         }
         "roadmap" => {
             // The roadmap plus its milestones: the panel draws the timeline,
@@ -1035,9 +1566,10 @@ fn action(args: &Value) -> Result<String, String> {
         .get("action")
         .and_then(Value::as_str)
         .ok_or_else(|| "Missing \"action\".".to_string())?;
-    const KNOWN: [&str; 13] = [
+    const KNOWN: [&str; 18] = [
         "list", "outline", "get", "create", "update", "edit", "delete", "invite",
-        "set_role", "remove", "accept", "decline", "revoke",
+        "set_role", "remove", "accept", "decline", "revoke", "views", "create_view",
+        "update_view", "delete_view", "set_default_view",
     ];
     if KNOWN.contains(&value) {
         Ok(value.to_string())
@@ -1212,6 +1744,159 @@ mod tests {
         for tool in definitions {
             let text = tool.to_string();
             assert!(!text.contains("\"transfer\""));
+        }
+    }
+
+    fn sample_board() -> Value {
+        json!({
+            "id": "bd_1",
+            "name": "Launch",
+            "defaultView": "vw_work",
+            "columns": [
+                { "id": "col_status", "name": "Status", "type": "status", "options": [
+                    { "id": "opt_todo", "label": "To do" },
+                    { "id": "opt_done", "label": "Done" },
+                ] },
+                { "id": "col_owner", "name": "Owner", "type": "person" },
+                { "id": "col_points", "name": "Points", "type": "number" },
+                { "id": "col_tags", "name": "Tags", "type": "multiselect", "options": [
+                    { "id": "opt_design", "label": "Design" },
+                    { "id": "opt_docs", "label": "Docs" },
+                ] },
+                { "id": "col_due", "name": "Due", "type": "date" },
+                { "id": "col_span", "name": "Span", "type": "daterange" },
+                { "id": "col_notes", "name": "Notes", "type": "longtext", "hidden": true },
+            ],
+            "views": [
+                {
+                    "id": "vw_work",
+                    "name": "My work",
+                    "filters": [{ "field": "col_status", "op": "is", "value": ["opt_todo"] }],
+                    "hiddenColumns": ["col_points"],
+                },
+                { "id": "vw_done", "name": "Shipped", "filters": [] },
+            ],
+        })
+    }
+
+    fn sample_tasks() -> Vec<Value> {
+        vec![
+            json!({
+                "id": "tk_1", "title": "Fix the login bug", "status": "opt_todo",
+                "assignees": ["u1"],
+                "fields": {
+                    "col_points": 3,
+                    "col_tags": ["opt_design"],
+                    "col_due": "2026-06-10",
+                    "col_span": { "start": "2026-06-01", "end": "2026-06-15" },
+                },
+            }),
+            json!({
+                "id": "tk_2", "title": "Write the docs", "status": "opt_done",
+                "assignees": ["u2"],
+                "fields": {
+                    "col_points": 8,
+                    "col_tags": ["opt_docs"],
+                    "col_due": "2026-07-01",
+                },
+            }),
+            json!({
+                "id": "tk_3", "title": "Unassigned chore", "status": "opt_todo",
+                "assignees": [],
+                "fields": {},
+            }),
+        ]
+    }
+
+    fn titles(tasks: &[Value]) -> Vec<&str> {
+        tasks
+            .iter()
+            .filter_map(|task| task["title"].as_str())
+            .collect()
+    }
+
+    fn filtered(rule: Value) -> Vec<String> {
+        let board = sample_board();
+        let columns = board_columns(&board);
+        let rules = parse_filter_rules(&json!([rule])).expect("the rule is valid");
+        titles(&filter_tasks(&sample_tasks(), &columns, &rules))
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn a_rule_reads_every_kind_of_column() {
+        assert_eq!(filtered(json!({ "field": "title", "op": "contains", "value": "login" })), vec!["Fix the login bug"]);
+        assert_eq!(filtered(json!({ "field": "col_status", "op": "is", "value": ["opt_todo"] })), vec!["Fix the login bug", "Unassigned chore"]);
+        assert_eq!(filtered(json!({ "field": "col_status", "op": "is_not", "value": ["opt_todo"] })), vec!["Write the docs"]);
+        assert_eq!(filtered(json!({ "field": "col_owner", "op": "is", "value": "u1" })), vec!["Fix the login bug"]);
+        assert_eq!(filtered(json!({ "field": "col_points", "op": "gt", "value": "5" })), vec!["Write the docs"]);
+        assert_eq!(filtered(json!({ "field": "col_points", "op": "lt", "value": "5" })), vec!["Fix the login bug"]);
+        assert_eq!(filtered(json!({ "field": "col_points", "op": "empty" })), vec!["Unassigned chore"]);
+        assert_eq!(filtered(json!({ "field": "col_tags", "op": "is", "value": ["opt_design"] })), vec!["Fix the login bug"]);
+        assert_eq!(filtered(json!({ "field": "col_due", "op": "gt", "value": "2026-06-15" })), vec!["Write the docs"]);
+        assert_eq!(filtered(json!({ "field": "col_span", "op": "is", "value": "2026-06-01" })), vec!["Fix the login bug"]);
+    }
+
+    #[test]
+    fn rules_combine_with_and() {
+        let board = sample_board();
+        let columns = board_columns(&board);
+        let rules = parse_filter_rules(&json!([
+            { "field": "col_status", "op": "is", "value": ["opt_todo"] },
+            { "field": "title", "op": "contains", "value": "chore" },
+        ]))
+        .unwrap();
+        assert_eq!(titles(&filter_tasks(&sample_tasks(), &columns, &rules)), vec!["Unassigned chore"]);
+    }
+
+    #[test]
+    fn a_bad_rule_is_refused_with_the_board_s_columns() {
+        assert!(parse_filter_rules(&json!([{ "field": "title", "op": "nope", "value": "x" }])).is_err());
+        assert!(parse_filter_rules(&json!([{ "field": "title", "op": "contains" }])).is_err());
+        let columns = board_columns(&sample_board());
+        let rules = parse_filter_rules(&json!([{ "field": "col_gone", "op": "empty" }])).unwrap();
+        let message = validate_filter_fields(&columns, &rules).unwrap_err();
+        assert!(message.contains("col_gone"), "{message}");
+        assert!(message.contains("Status (col_status)"), "{message}");
+    }
+
+    #[test]
+    fn a_view_is_found_by_id_or_by_the_name_a_person_reads() {
+        let board = sample_board();
+        assert_eq!(find_view_index(&views_of(&board), "vw_work").unwrap(), 0);
+        assert_eq!(find_view_index(&views_of(&board), "my work").unwrap(), 0);
+        let missing = find_view_index(&views_of(&board), "nothing").unwrap_err();
+        assert!(missing.contains("My work"), "{missing}");
+        assert_eq!(default_board_view(&board).unwrap()["id"], "vw_work");
+        assert_eq!(views_of(&board).len(), 2);
+    }
+
+    #[test]
+    fn the_agent_can_save_and_preview_a_board_view() {
+        let boards = definitions()
+            .into_iter()
+            .find(|tool| tool["function"]["name"] == "workspace_boards")
+            .expect("workspace_boards is advertised");
+        let actions = boards["function"]["parameters"]["properties"]["action"]["enum"].to_string();
+        for action in ["create_view", "update_view", "delete_view", "set_default_view", "views"] {
+            assert!(actions.contains(&format!("\"{action}\"")), "{action} is not an action");
+        }
+        assert!(boards["function"]["parameters"]["properties"]["hiddenColumns"].is_object());
+        let tasks = definitions()
+            .into_iter()
+            .find(|tool| tool["function"]["name"] == "workspace_tasks")
+            .expect("workspace_tasks is advertised");
+        for key in ["view", "filters", "search"] {
+            assert!(tasks["function"]["parameters"]["properties"][key].is_object(), "{key} is missing");
+        }
+        let preview = definitions()
+            .into_iter()
+            .find(|tool| tool["function"]["name"] == "workspace_preview")
+            .expect("workspace_preview is advertised");
+        for key in ["view", "filters"] {
+            assert!(preview["function"]["parameters"]["properties"][key].is_object(), "{key} is missing");
         }
     }
 }

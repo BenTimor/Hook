@@ -4,6 +4,7 @@ import { isTauri } from "@hook/ui";
 
 import type {
   Board,
+  BoardView,
   Brainstorm,
   BrainstormIdea,
   ChangesPage,
@@ -390,6 +391,8 @@ function demoRequest(path: string, method: string, body?: unknown): unknown {
         description: String(payload.description ?? ""),
         columns: Array.isArray(payload.columns) ? (payload.columns as Column[]) : DEMO_COLUMNS,
         view: payload.view === "board" ? "board" : "table",
+        views: Array.isArray(payload.views) ? (payload.views as BoardView[]) : [],
+        defaultView: typeof payload.defaultView === "string" ? payload.defaultView : null,
         position: demoSeq,
         updatedAt: demoNow(),
         seq: demoSeq,
@@ -914,7 +917,9 @@ export const api = {
     }),
   updateBoard: (
     id: string,
-    patch: Partial<Pick<Board, "name" | "description" | "folderId" | "columns" | "view">>,
+    patch: Partial<
+      Pick<Board, "name" | "description" | "folderId" | "columns" | "view" | "views" | "defaultView">
+    >,
   ) => call<{ board: Board }>("PATCH", `/boards/${id}`, patch),
   deleteBoard: (id: string) => call<{ ok: true }>("DELETE", `/boards/${id}`),
 

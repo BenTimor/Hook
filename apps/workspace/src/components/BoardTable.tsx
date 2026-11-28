@@ -3,7 +3,8 @@ import { GripVertical, Plus, Trash2 } from "lucide-react";
 
 import { firstLine } from "@hook/markdown";
 
-import type { Board, Column, Task } from "../lib/types";
+import type { Board, BoardFilterRule, Column, Task } from "../lib/types";
+import { seedFromFilters } from "../lib/boardFilters";
 import { pendingPeople, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { AssigneesPicker } from "./AssigneesPicker";
@@ -95,7 +96,15 @@ function ProgressCell({
  * input that saves on blur. The grip on the left reorders the rows, which is
  * the same `position` the board view sorts by — the two views never disagree.
  */
-export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
+export function BoardTable({
+  board,
+  tasks,
+  filters = [],
+}: {
+  board: Board;
+  tasks: Task[];
+  filters?: BoardFilterRule[];
+}) {
   const openTask = useWorkspaceStore((state) => state.openTask);
   const createTask = useWorkspaceStore((state) => state.createTask);
   const updateTask = useWorkspaceStore((state) => state.updateTask);
@@ -189,7 +198,12 @@ export function BoardTable({ board, tasks }: { board: Board; tasks: Task[] }) {
     }
     quickSaving.current = true;
     setQuickBusy(true);
-    const created = await createTask(board.id, firstStatus, { title, activate: false });
+    const seeded = seedFromFilters(board, filters);
+    const created = await createTask(board.id, seeded.status ?? firstStatus, {
+      title,
+      activate: false,
+      ...(Object.keys(seeded.fields).length ? { fields: seeded.fields } : {}),
+    });
     quickSaving.current = false;
     setQuickBusy(false);
     if (created) setQuickTitle(null);

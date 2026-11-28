@@ -13,6 +13,7 @@ import type {
   WorkspaceDocument,
   WorkspaceMilestone,
   WorkspacePreviewBody,
+  WorkspacePreviewView,
   WorkspaceRoadmap,
   WorkspaceTask,
 } from "./types";
@@ -46,7 +47,12 @@ export function WorkspacePreview({
       ) : null;
     case "board":
       return body.board ? (
-        <BoardPreview board={body.board} tasks={body.tasks ?? []} />
+        <BoardPreview
+          board={body.board}
+          tasks={body.tasks ?? []}
+          view={body.view}
+          total={body.total}
+        />
       ) : null;
     case "roadmap":
       return body.roadmap ? (
@@ -148,9 +154,13 @@ export function TaskPreview({
 export function BoardPreview({
   board,
   tasks,
+  view,
+  total,
 }: {
   board: WorkspaceBoard;
   tasks: WorkspaceTask[];
+  view?: WorkspacePreviewView;
+  total?: number;
 }) {
   const status = board.columns.find((column) => column.type === "status");
   const columns = status?.options ?? [];
@@ -163,6 +173,16 @@ export function BoardPreview({
       <h2 className="preview-entity-title">{board.name}</h2>
       {board.description ? (
         <p className="preview-entity-note">{board.description}</p>
+      ) : null}
+      {view || (typeof total === "number" && total !== tasks.length) ? (
+        <p className="preview-board-summary">
+          {view ? <span className="preview-board-view">{view.name}</span> : null}
+          <span>
+            {typeof total === "number" && total !== tasks.length
+              ? `${tasks.length} of ${total} tasks`
+              : `${tasks.length} task${tasks.length === 1 ? "" : "s"}`}
+          </span>
+        </p>
       ) : null}
       <div className="preview-board">
         {columns.map((column) => {

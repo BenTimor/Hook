@@ -1129,6 +1129,23 @@ Changing one side of a boundary is the most common way to break this repo.
   `assignee` column mirrors the first person for older readers. Anything that
   writes assignees must go through `assigneesFrom` / `resolveAssignees`, and
   anything that lists people needs the `pending` half.
+- **Board views and filters:** `apps/workspace/src/lib/types.ts`
+  (`BoardFilterRule`, `BoardView`, `Board.views`/`defaultView`) →
+  `apps/workspace/src/lib/boardFilters.ts` (the one evaluator the window uses:
+  title is the only free-text field, rules AND, values OR) →
+  `server/workspace.mjs` (`parseViews`/`parseFilters`/`pruneViews`, the
+  `views`/`default_view` columns, and the board branch of the changes feed) →
+  `apps/workspace/src/components/{BoardViewsMenu,BoardColumnsMenu,BoardFilter}`
+  and `BoardView.tsx` (autosave into the active view; "All tasks" is the board
+  itself) → `crates/hook-core/src/workspace.rs` (`workspace_boards` view actions,
+  `workspace_tasks` `list` with `view`/`filters`/`search`, and the filtered board
+  preview; the Rust evaluator must keep the same rules as the TS one) →
+  `packages/chat/src/preview` (`view`/`total` on a board preview) →
+  `docs/workspace.md`. A filter field is a column id or `title`; a view stores
+  `hiddenColumns` (absent means all columns) and the board stores one
+  `defaultView`. The server validates a view against the columns written in the
+  same request and prunes rules for removed columns; keep that or an agent gets
+  a filter that can never match.
 - **Board templates and property types:** a template is configuration in
   `apps/workspace/src/lib/boardTemplates.ts`; it may only suggest a name, a set
   of board columns (properties), a default view and example rows, and it creates

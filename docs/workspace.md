@@ -205,6 +205,25 @@ rows written before this rule are adopted when the service starts.
   in either view for Edit and Delete; in the list a row (or its grip) drags to
   change the stored order. Both lists follow the text's own direction, so Hebrew
   and Arabic ideas align from the right.
+- **A board has views: a saved filter and column preset.** A view carries the
+  rules that narrow its tasks and the columns it hides; everything else is the
+  board. "All tasks" is not a view but the board itself, so a view can always be
+  deleted and the board is still there. Views live on the board row
+  (`views`, `default_view` in `ws_boards`), travel in the changes feed, and one
+  of them may be the board's default — the view a fresh window opens on. The
+  window autosaves an edit to the view it was made in, because a filter is a
+  lens, not a draft; "Save current as a view" turns an ad-hoc filter into one.
+  The filter shape is one rule per column: `{field, op, value}`, where `field`
+  is a column id or `title` (free text in the title only — a description is a
+  document, not a row), `op` is `is`, `is_not`, `contains`, `not_contains`,
+  `gt`, `lt`, `empty` or `not_empty`, and `value` is a string or a list of
+  strings meaning "any of". Rules combine with AND. The title search is the one
+  always-visible box. A view's `hiddenColumns` is the complete hidden set for
+  that view; no list means every column, which is the normal case. The server
+  validates a view against the board's columns (`server/workspace.mjs`), prunes
+  a rule whose column is removed, and refuses a default that names no view. The
+  window filters in `apps/workspace/src/lib/boardFilters.ts`; the agent tools
+  filter the same shape in `crates/hook-core/src/workspace.rs`.
 - **Comments know how they were written.** `author_kind` is `user` or `agent`,
   and an agent comment carries the conversation it came from, so a teammate sees
   "via Hook agent" instead of mistaking it for something the user typed. The
@@ -219,13 +238,20 @@ rows written before this rule are adopted when the service starts.
   chat tools (`crates/hook-core/src/workspace.rs`) that call the account API with
   the user's token, so the server checks the user's real role. `document_markdown`
   is the one that answers from the binary: the dialect's reference, so a style it
-  writes is a style documents can render.
+  writes is a style documents can render. `workspace_boards` also owns views
+  (`views`, `create_view`, `update_view`, `delete_view`, `set_default_view`,
+  with `makeDefault`), and `workspace_tasks` `list` accepts `view`, `filters` or
+  `search` and reports `total`/`shown`, so an agent reads only the slice it was
+  asked about instead of every task on the board.
 - **Previews.** `workspace_preview` puts a task, board, document, roadmap or brainstorm in the preview
   panel. It is a second kind of preview next to the HTML page a coding agent can
   show, and the panel renders it directly instead of in an iframe. A roadmap
   draws its milestones on a vertical timeline. A brainstorm
   shows its central word with the ideas around it, or the ideas as a list when
-  the panel is too narrow for a ring.
+  the panel is too narrow for a ring. A board preview follows the board's
+  default view unless the agent names one with `view` or narrows it with its own
+  `filters`; the panel shows the view's name and "N of M tasks", so a partial
+  answer is never mistaken for the whole board.
 - **Folders are rows, not a client feature.** A folder carries a name, an
   optional parent and a position; a board, a document, a roadmap or a
   brainstorm carries a `folderId`. Deleting a folder deletes what it holds ׳’ג‚¬ג€ nested folders, boards with their

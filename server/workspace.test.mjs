@@ -516,6 +516,105 @@ test("a board's statuses can be extended without replacing the board", async (t)
   assert.equal(task.body.task.status, "opt_blocked");
 });
 
+test("board views keep their filters, hidden columns and default", async (t) => {
+  const { request } = await setup(t);
+  const project = await sharedProject(request);
+  const created = await request(`/projects/${project.id}/boards`, {
+    method: "POST",
+    body: {
+      name: "Launch board",
+      columns: [
+        {
+          name: "Status",
+          type: "status",
+          options: [{ label: "To do" }, { label: "Done" }],
+        },
+        { name: "Owner", type: "person" },
+        { name: "Notes", type: "longtext" },
+      ],
+    },
+  });
+  assert.equal(created.status, 201);
+  const board = created.body.board;
+  assert.deepEqual(board.views, []);
+  assert.equal(board.defaultView, null);
+  const status = board.columns.find((column) => column.type === "status");
+  const notes = board.columns.find((column) => column.name === "Notes");
+  const todo = status.options[0].id;
+
+  const views = [
+    {
+      id: "vw_mine",
+      name: "My launch work",
+      filters: [
+        { id: "fl_title", field: "title", op: "contains", value: "launch" },
+        { field: status.id, op: "is", value: [todo] },
+      ],
+      hiddenColumns: [notes.id],
+    },
+  ];
+  const saved = await request(`/boards/${board.id}`, {
+    method: "PATCH",
+    body: { views, defaultView: "vw_mine" },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.board.defaultView, "vw_mine");
+  assert.equal(saved.body.board.views.length, 1);
+  assert.deepEqual(saved.body.board.views[0].hiddenColumns, [notes.id]);
+  assert.equal(saved.body.board.views[0].filters.length, 2);
+
+  // The changes feed carries the same preset, so an open window does not need
+  // a reload to learn about a view an agent saved.
+  const feed = await request("/changes?since=0");
+  const change = feed.body.changes.find((entry) => entry.kind === "board" && entry.id === board.id);
+  assert.equal(change.defaultView, "vw_mine");
+  assert.equal(change.views[0].name, "My launch work");
+
+  // A filter names a real option: a typo is a refusal, not a silent no-match.
+  const typo = await request(`/boards/${board.id}`, {
+    method: "PATCH",
+    body: {
+      views: [{ name: "Broken", filters: [{ field: status.id, op: "is", value: ["opt_nope"] }] }],
+    },
+  });
+  assert.equal(typo.status, 400);
+
+  // Removing a property prunes the rules and hidden ids that pointed at it,
+  // and a default that is gone cannot survive.
+  const pruned = await request(`/boards/${board.id}`, {
+    method: "PATCH",
+    body: {
+      columns: board.columns.filter((column) => column.id !== notes.id),
+      views: [{ ...views[0], filters: [{ field: notes.id, op: "contains", value: "x" }] }],
+      defaultView: "vw_gone",
+    },
+  });
+  assert.equal(pruned.status, 400);
+  const withoutView = await request(`/boards/${board.id}`, {
+    method: "PATCH",
+    body: { columns: board.columns.filter((column) => column.id !== notes.id) },
+  });
+  assert.equal(withoutView.status, 200);
+  assert.deepEqual(withoutView.body.board.views[0].filters.map((rule) => rule.field), ["title", status.id]);
+  assert.deepEqual(withoutView.body.board.views[0].hiddenColumns, []);
+  assert.equal(withoutView.body.board.defaultView, "vw_mine");
+
+  const missing = await request(`/boards/${board.id}`, {
+    method: "PATCH",
+    body: { defaultView: "vw_absent" },
+  });
+  assert.equal(missing.status, 400);
+
+  // Deleting the view that was the default takes the default with it.
+  const dropped = await request(`/boards/${board.id}`, {
+    method: "PATCH",
+    body: { views: [] },
+  });
+  assert.equal(dropped.status, 200);
+  assert.deepEqual(dropped.body.board.views, []);
+  assert.equal(dropped.body.board.defaultView, null);
+});
+
 test("flexible properties persist their types, options, hidden state and view", async (t) => {
   const { request } = await setup(t);
   const project = await sharedProject(request);

@@ -137,6 +137,8 @@ function migrate(db) {
       description TEXT NOT NULL DEFAULT '',
       columns TEXT NOT NULL DEFAULT '[]',
       view TEXT NOT NULL DEFAULT 'table',
+      views TEXT NOT NULL DEFAULT '[]',
+      default_view TEXT,
       position INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL,
       deleted_at INTEGER,
@@ -265,6 +267,12 @@ function migrate(db) {
   const boardColumns = db.prepare("PRAGMA table_info(ws_boards)").all();
   if (!boardColumns.some((column) => column.name === "view")) {
     db.exec("ALTER TABLE ws_boards ADD COLUMN view TEXT NOT NULL DEFAULT 'table'");
+  }
+  if (!boardColumns.some((column) => column.name === "views")) {
+    db.exec("ALTER TABLE ws_boards ADD COLUMN views TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!boardColumns.some((column) => column.name === "default_view")) {
+    db.exec("ALTER TABLE ws_boards ADD COLUMN default_view TEXT");
   }
   const documentColumns = db.prepare("PRAGMA table_info(ws_documents)").all();
   if (!documentColumns.some((column) => column.name === "direction")) {
@@ -427,6 +435,154 @@ function parseColumns(raw) {
   }
   if (statuses > 1) return null;
   return columns;
+}
+
+/**
+ * A view is a saved preset: which columns it shows and which tasks it keeps.
+ * Filter rules combine with "and"; the values inside one rule are "any of".
+ * Nothing here knows how a rule is evaluated - the window and the agent tools
+ * both filter with the same shape, so the server only decides what is valid.
+ */
+const FILTER_OPS = [
+  "is",
+  "is_not",
+  "contains",
+  "not_contains",
+  "gt",
+  "lt",
+  "empty",
+  "not_empty",
+];
+const FILTER_VALUE_OPS = new Set([
+  "is",
+  "is_not",
+  "contains",
+  "not_contains",
+  "gt",
+  "lt",
+]);
+const TEXT_FILTER_TYPES = new Set([
+  "text",
+  "longtext",
+  "url",
+  "email",
+  "phone",
+  "title",
+]);
+
+function filterValue(value) {
+  const entries = Array.isArray(value) ? value : [value];
+  if (entries.length === 0 || entries.length > 20) return null;
+  const values = [];
+  for (const entry of entries) {
+    if (typeof entry !== "string") return null;
+    const trimmed = entry.trim();
+    if (!trimmed || trimmed.length > 200) return null;
+    values.push(trimmed);
+  }
+  return Array.isArray(value) ? values : values[0];
+}
+
+function parseFilters(raw, columns) {
+  if (!Array.isArray(raw) || raw.length > 30) return null;
+  const byId = new Map(columns.map((column) => [column.id, column]));
+  const rules = [];
+  const seen = new Set();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") return null;
+    const field = typeof entry.field === "string" ? entry.field : "";
+    const column = field === "title" ? { id: "title", type: "title", options: [] } : byId.get(field);
+    if (!column) return null;
+    const op = FILTER_OPS.includes(entry.op) ? entry.op : null;
+    if (!op) return null;
+    const rule = {
+      id:
+        typeof entry.id === "string" && /^fl_[A-Za-z0-9_-]{1,24}$/.test(entry.id)
+          ? entry.id
+          : newId("fl"),
+      field,
+      op,
+    };
+    if (seen.has(rule.id)) rule.id = newId("fl");
+    seen.add(rule.id);
+    if (FILTER_VALUE_OPS.has(op)) {
+      const value = filterValue(entry.value);
+      if (value === null) return null;
+      const values = Array.isArray(value) ? value : [value];
+      // An option filter names the board's own options, so a typo is a refusal
+      // rather than a filter that can never match.
+      if ((op === "is" || op === "is_not") && column.options?.length) {
+        const allowed = new Set(column.options.map((option) => option.id));
+        if (!values.every((optionId) => allowed.has(optionId))) return null;
+      }
+      if (column.type === "checkbox" && !values.every((value) => value === "true" || value === "false")) {
+        return null;
+      }
+      if (TEXT_FILTER_TYPES.has(column.type) && Array.isArray(value)) return null;
+      rule.value = value;
+    }
+    rules.push(rule);
+  }
+  return rules;
+}
+
+function parseViews(raw, columns) {
+  if (!Array.isArray(raw) || raw.length > 40) return null;
+  const columnIds = new Set(columns.map((column) => column.id));
+  const views = [];
+  const ids = new Set();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") return null;
+    const name = text(entry.name, 40);
+    if (!name) return null;
+    const view = {
+      id:
+        typeof entry.id === "string" && /^vw_[A-Za-z0-9_-]{1,24}$/.test(entry.id)
+          ? entry.id
+          : newId("vw"),
+      name,
+      filters: [],
+      hiddenColumns: [],
+    };
+    if (ids.has(view.id)) view.id = newId("vw");
+    ids.add(view.id);
+    if (entry.filters !== undefined) {
+      const filters = parseFilters(entry.filters, columns);
+      if (!filters) return null;
+      view.filters = filters;
+    }
+    if (entry.hiddenColumns !== undefined) {
+      if (!Array.isArray(entry.hiddenColumns)) return null;
+      view.hiddenColumns = [...new Set(entry.hiddenColumns.filter((id) => columnIds.has(id)))];
+    }
+    views.push(view);
+  }
+  return views;
+}
+
+/** A column that was removed must not leave a filter pointing at nothing. */
+function pruneViews(views, columns) {
+  const columnIds = new Set(columns.map((column) => column.id));
+  return views.map((view) => {
+    const filters = (view.filters ?? []).filter(
+      (rule) => rule.field === "title" || columnIds.has(rule.field),
+    );
+    const hiddenColumns = (view.hiddenColumns ?? []).filter((id) => columnIds.has(id));
+    if (
+      filters.length === (view.filters ?? []).length &&
+      hiddenColumns.length === (view.hiddenColumns ?? []).length
+    ) {
+      return view;
+    }
+    return { ...view, filters, hiddenColumns };
+  });
+}
+
+function parseDefaultView(value, views) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (typeof value !== "string" || !views.some((view) => view.id === value)) return null;
+  return value;
 }
 
 export function createWorkspaceRouter({ db, env = {} }) {
@@ -1035,6 +1191,12 @@ export function createWorkspaceRouter({ db, env = {} }) {
       ],
     );
     if (!columns) return badRequest(res, "Those columns are not valid.");
+    const views = parseViews(req.body?.views ?? [], columns);
+    if (!views) return badRequest(res, "Those views are not valid.");
+    const defaultView = parseDefaultView(req.body?.defaultView, views);
+    if (defaultView === null && req.body?.defaultView) {
+      return badRequest(res, "That default view is not on this board.");
+    }
     const view = req.body?.view === "board" ? "board" : "table";
     const row = insert(db, "boards", {
       project_id: id,
@@ -1043,6 +1205,8 @@ export function createWorkspaceRouter({ db, env = {} }) {
       description,
       columns: JSON.stringify(columns),
       view,
+      views: JSON.stringify(views),
+      default_view: defaultView ?? null,
       position: Number.isSafeInteger(req.body?.position) ? req.body.position : 0,
     });
     res.status(201).json({ board: shapeBoard(row) });
@@ -1079,6 +1243,39 @@ export function createWorkspaceRouter({ db, env = {} }) {
       ["position", "position"],
     ]) {
       if (req.body?.[key] !== undefined) fields[column] = req.body[key];
+    }
+
+    // Views are a board's saved presets. They are read against the columns this
+    // same request writes, so a view can never point at a property that is not
+    // there; a column removed on its own prunes the views it left behind.
+    const existing = db.prepare("SELECT * FROM ws_boards WHERE id = ?").get(req.params.id);
+    const nextColumns = fields.columns ? JSON.parse(fields.columns) : JSON.parse(existing.columns);
+    let views = existing.views ? JSON.parse(existing.views) : [];
+    if (req.body?.views !== undefined) {
+      const parsed = parseViews(req.body.views, nextColumns);
+      if (!parsed) return badRequest(res, "Those views are not valid.");
+      views = parsed;
+      fields.views = JSON.stringify(views);
+    } else if (fields.columns) {
+      const pruned = pruneViews(views, nextColumns);
+      if (JSON.stringify(pruned) !== JSON.stringify(views)) {
+        views = pruned;
+        fields.views = JSON.stringify(views);
+      }
+    }
+    let defaultView = existing.default_view ?? null;
+    if (req.body?.defaultView !== undefined) {
+      const parsed = parseDefaultView(req.body.defaultView, views);
+      if (parsed === null && req.body.defaultView) {
+        return badRequest(res, "That default view is not on this board.");
+      }
+      defaultView = parsed ?? null;
+      fields.default_view = defaultView;
+    }
+    // Deleting the default view drops the default with it: a board that opens
+    // on a view that is gone is a board that opens on nothing.
+    if (fields.views !== undefined && defaultView && !views.some((view) => view.id === defaultView)) {
+      fields.default_view = null;
     }
     res.json({ board: shapeBoard(update(db, "boards", req.params.id, fields)) });
   });
@@ -2125,6 +2322,8 @@ function shapeBoard(row) {
     description: row.description,
     columns: JSON.parse(row.columns),
     view: row.view ?? "table",
+    views: row.views ? JSON.parse(row.views) : [],
+    defaultView: row.default_view ?? null,
     position: row.position,
     updatedAt: row.updated_at,
     seq: row.seq,
@@ -2291,6 +2490,8 @@ function shapeChange(row) {
         name: row.name,
         columns: row.columns ? JSON.parse(row.columns) : [],
         view: row.view ?? "table",
+        views: row.views ? JSON.parse(row.views) : [],
+        defaultView: row.default_view ?? null,
         position: row.position,
       });
       break;

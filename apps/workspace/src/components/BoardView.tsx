@@ -2,13 +2,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, LayoutList, Pencil, Plus, Rows3, Settings2, Trash2, X } from "lucide-react";
 import { firstLine } from "@hook/markdown";
 
-import type { Board, Comment, Member, Task } from "../lib/types";
+import type { Board, BoardFilterRule, BoardView, Comment, Member, Task } from "../lib/types";
+import {
+  boardAsShown,
+  filterTasks,
+  hiddenColumnIds,
+  newViewId,
+  orderedRules,
+  seedFromFilters,
+} from "../lib/boardFilters";
 import { pendingPeople, personLabel, taskAssignees } from "../lib/people";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { AssigneesPicker, PersonAvatar } from "./AssigneesPicker";
-import { BoardFilter, type BoardFilters } from "./BoardFilter";
+import { BoardColumnsMenu } from "./BoardColumnsMenu";
+import { BoardFilter, ruleChip } from "./BoardFilter";
 import { BoardPropertiesDialog } from "./BoardPropertiesDialog";
 import { BoardTable } from "./BoardTable";
+import { BoardViewsMenu } from "./BoardViewsMenu";
 import { DocumentEditor } from "./DocumentEditor";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { SelectMenu } from "./SelectMenu";
@@ -21,17 +31,55 @@ import { optionColor, TaskStatus } from "./TaskStatus";
  * edits everything else. The status select in the task view remains the
  * keyboard-accessible path to the same change.
  */
+/**
+ * The view a person was last on, per board, for this run of the window. The
+ * board's default decides what opens first; this only stops a detour into a
+ * task from throwing the reader back to "All tasks" on the way out.
+ */
+const lastViewByBoard = new Map<string, string | null>();
+
+function openingView(board: Board): string | null {
+  const remembered = lastViewByBoard.get(board.id);
+  if (remembered === null) return null;
+  if (remembered && (board.views ?? []).some((view) => view.id === remembered)) {
+    return remembered;
+  }
+  return board.defaultView ?? null;
+}
+
 export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
   const createTask = useWorkspaceStore((state) => state.createTask);
+  const updateBoardColumns = useWorkspaceStore((state) => state.updateBoardColumns);
+  const saveBoardViews = useWorkspaceStore((state) => state.saveBoardViews);
   const project = useWorkspaceStore((state) =>
     state.projects.find((candidate) => candidate.id === state.activeProjectId),
+  );
+  const members = useWorkspaceStore((state) =>
+    state.activeProjectId ? (state.members[state.activeProjectId] ?? EMPTY) : EMPTY,
+  );
+  const pending = useWorkspaceStore((state) =>
+    state.activeProjectId ? (state.pending[state.activeProjectId] ?? EMPTY) : EMPTY,
   );
   const [mode, setMode] = useState<"table" | "board">(board.view === "board" ? "board" : "table");
   const [adding, setAdding] = useState(false);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
-  const [filters, setFilters] = useState<BoardFilters>({});
+  const [views, setViews] = useState<BoardView[]>(board.views ?? []);
+  const [defaultView, setDefaultView] = useState<string | null>(board.defaultView ?? null);
+  const [activeViewId, setActiveViewId] = useState<string | null>(() => openingView(board));
+  // "All tasks" is not a view: its filters live for this visit only. Saving
+  // them is what makes them a view.
+  const [looseFilters, setLooseFilters] = useState<BoardFilterRule[]>([]);
+  const saving = useRef(0);
+  const savedQueue = useRef<Promise<unknown>>(Promise.resolve());
+  // Typing in a filter must not write once per keystroke; a view is saved a
+  // beat after the last change, and any structural edit flushes it at once.
+  const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const active = views.find((view) => view.id === activeViewId) ?? null;
+  const hidden = hiddenColumnIds({ ...board, views }, active);
+  const shown = boardAsShown({ ...board, views, defaultView }, hidden);
+  const filters = active ? active.filters : looseFilters;
   const status = board.columns.find((column) => column.type === "status");
-  const groupable = board.columns.filter(
+  const groupable = shown.columns.filter(
     (column) =>
       !column.hidden &&
       (column.type === "status" || column.type === "select") &&
@@ -43,55 +91,120 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
   const readOnly = project?.role === "viewer";
 
   useEffect(() => {
-    setFilters({});
+    const initial = openingView(board);
+    setViews(board.views ?? []);
+    setDefaultView(board.defaultView ?? null);
+    setActiveViewId(initial);
+    setLooseFilters([]);
     setMode(board.view === "board" ? "board" : "table");
     setGroupBy(board.columns.find((column) => column.type === "status")?.id ?? groupable[0]?.id ?? "");
-    // A different board starts from its own template's default view.
+    // A different board starts from its own default view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board.id]);
 
-  // A status or option can disappear while a filter still points at it.
+  // Another device (or an agent) can save a view while this board is open.
+  // Local edits win until their own save is answered.
   useEffect(() => {
-    setFilters((current) => {
-      let changed = false;
-      const next: BoardFilters = {};
-      for (const [columnId, values] of Object.entries(current)) {
-        const column = board.columns.find((candidate) => candidate.id === columnId);
-        const kept = values.filter((value) => column?.options?.some((option) => option.id === value));
-        if (kept.length) {
-          next[columnId] = kept;
-          if (kept.length !== values.length) changed = true;
-        } else {
-          changed = true;
-        }
-      }
-      return changed ? next : current;
+    if (saving.current > 0) return;
+    setViews(board.views ?? []);
+    setDefaultView(board.defaultView ?? null);
+    setActiveViewId((current) => {
+      if (current && (board.views ?? []).some((view) => view.id === current)) return current;
+      lastViewByBoard.set(board.id, null);
+      return null;
     });
-  }, [board.columns]);
+  }, [board.views, board.defaultView]);
+
+  const persistViews = (next: BoardView[], nextDefault: string | null = defaultView) => {
+    setViews(next);
+    setDefaultView(nextDefault);
+    if (readOnly) return;
+    if (viewTimer.current) {
+      clearTimeout(viewTimer.current);
+      viewTimer.current = null;
+    }
+    queueSave(next, nextDefault);
+  };
+
+  const queueSave = (next: BoardView[], nextDefault: string | null) => {
+    saving.current += 1;
+    savedQueue.current = savedQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        await saveBoardViews(board.id, next, nextDefault);
+        saving.current = Math.max(0, saving.current - 1);
+      });
+  };
+
+  const changeFilters = (next: BoardFilterRule[]) => {
+    if (!active) {
+      setLooseFilters(next);
+      return;
+    }
+    const nextViews = views.map((view) =>
+      view.id === active.id ? { ...view, filters: next } : view,
+    );
+    setViews(nextViews);
+    if (readOnly) return;
+    if (viewTimer.current) clearTimeout(viewTimer.current);
+    viewTimer.current = setTimeout(() => {
+      viewTimer.current = null;
+      queueSave(nextViews, defaultView);
+    }, 300);
+  };
+
+  const changeColumns = (next: Set<string>) => {
+    const hiddenColumns = [...next];
+    if (active) {
+      persistViews(
+        views.map((view) => (view.id === active.id ? { ...view, hiddenColumns } : view)),
+      );
+      return;
+    }
+    if (readOnly) return;
+    void updateBoardColumns(
+      board.id,
+      board.columns.map((column) => ({ ...column, hidden: next.has(column.id) })),
+    );
+  };
+
+  const selectView = (id: string | null) => {
+    setActiveViewId(id);
+    lastViewByBoard.set(board.id, id);
+    if (!id) setLooseFilters([]);
+  };
+
+  const saveAsView = (name: string) => {
+    const view: BoardView = {
+      id: newViewId(),
+      name,
+      filters: [...filters],
+      hiddenColumns: [...hidden],
+    };
+    persistViews([...views, view], defaultView);
+    setActiveViewId(view.id);
+    lastViewByBoard.set(board.id, view.id);
+  };
+
+  const renameView = (id: string, name: string) => {
+    persistViews(views.map((view) => (view.id === id ? { ...view, name } : view)));
+  };
+
+  const deleteView = (id: string) => {
+    const next = views.filter((view) => view.id !== id);
+    persistViews(next, defaultView === id ? null : defaultView);
+    if (activeViewId === id) {
+      setActiveViewId(null);
+      lastViewByBoard.set(board.id, null);
+    }
+  };
 
   const visibleTasks = useMemo(
-    () =>
-      tasks.filter((task) =>
-        board.columns.every((column) => {
-          if (column.hidden) return true;
-          const values = filters[column.id];
-          if (!values?.length) return true;
-          const raw = column.type === "status" ? task.status : task.fields?.[column.id];
-          const value = raw === null || raw === undefined ? "" : String(raw);
-          return values.includes(value);
-        }),
-      ),
+    () => filterTasks(tasks, board.columns, filters),
     [tasks, filters, board.columns],
   );
 
-  const filterGroups = board.columns.flatMap((column) => {
-    const values = filters[column.id] ?? [];
-    if (column.hidden || values.length === 0) return [];
-    return [{
-      column,
-      labels: values.map((value) => column.options?.find((option) => option.id === value)?.label ?? value),
-    }];
-  });
+  const chipRules = orderedRules(filters);
 
   return (
     <div className="ws-board-page">
@@ -102,6 +215,16 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
           {board.description ? <p>{board.description}</p> : null}
         </div>
         <div className="ws-page-actions">
+          <BoardViewsMenu
+            board={{ ...board, views, defaultView }}
+            activeId={activeViewId}
+            canEdit={!readOnly}
+            onSelect={selectView}
+            onSaveAs={saveAsView}
+            onRename={renameView}
+            onSetDefault={(id) => persistViews(views, id)}
+            onDelete={deleteView}
+          />
           <div className="ws-segment" role="tablist" aria-label="Board view">
             <button
               role="tab"
@@ -122,7 +245,20 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
               Board
             </button>
           </div>
-          <BoardFilter board={board} filters={filters} onChange={setFilters} />
+          <BoardFilter
+            board={{ ...board, views }}
+            rules={filters}
+            onChange={changeFilters}
+            members={members}
+            pending={pending}
+          />
+          <BoardColumnsMenu
+            board={{ ...board, views }}
+            hidden={hidden}
+            onChange={changeColumns}
+            disabled={!active && readOnly}
+            scope={active ? "view" : "board"}
+          />
           {mode === "board" && groupable.length > 1 ? (
             <div className="ws-group-by">
               <span>Group</span>
@@ -150,11 +286,21 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
             onClick={async () => {
               setAdding(true);
               const grouping = board.columns.find((column) => column.id === groupBy);
-              const fields =
-                grouping && grouping.type !== "status" && grouping.options?.[0]
+              // A filtered view is where the task will land: seed the values
+              // the view filters on, or the new card disappears the moment it
+              // is created.
+              const seeded = seedFromFilters(board, filters);
+              const fields = {
+                ...(grouping && grouping.type !== "status" && grouping.options?.[0]
                   ? { [grouping.id]: grouping.options[0].id }
-                  : undefined;
-              await createTask(board.id, status?.options?.[0]?.id ?? "", { fields });
+                  : {}),
+                ...seeded.fields,
+              };
+              await createTask(
+                board.id,
+                seeded.status ?? status?.options?.[0]?.id ?? "",
+                { fields: Object.keys(fields).length ? fields : undefined },
+              );
               setAdding(false);
             }}
           >
@@ -163,37 +309,44 @@ export function BoardPage({ board, tasks }: { board: Board; tasks: Task[] }) {
         </div>
       </header>
 
-      {filterGroups.length > 0 ? (
+      {active || chipRules.length > 0 ? (
         <div className="ws-filter-bar" aria-label="Active filters">
-          {filterGroups.map(({ column, labels }) => (
-            <span className="ws-filter-chip" key={column.id}>
-              <span className="ws-filter-chip-key">{column.name}</span>
-              <span>{labels.join(", ")}</span>
-              <button
-                type="button"
-                aria-label={`Clear ${column.name} filter`}
-                onClick={() => {
-                  const next = { ...filters };
-                  delete next[column.id];
-                  setFilters(next);
-                }}
-              >
-                <X aria-hidden="true" />
-              </button>
+          {active ? (
+            <span className="ws-filter-view">
+              <span className="ws-filter-chip-key">View</span>
+              {active.name}
             </span>
-          ))}
-          <button type="button" className="ws-filter-clear" onClick={() => setFilters({})}>
-            Clear filters
-          </button>
+          ) : null}
+          {chipRules.map((rule) => {
+            const chip = ruleChip(board, rule, members, pending);
+            return (
+              <span className="ws-filter-chip" key={rule.id}>
+                <span className="ws-filter-chip-key">{chip.key}</span>
+                <span>{chip.value}</span>
+                <button
+                  type="button"
+                  aria-label={`Clear ${chip.key} filter`}
+                  onClick={() => changeFilters(filters.filter((entry) => entry.id !== rule.id))}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            );
+          })}
+          {chipRules.length > 0 ? (
+            <button type="button" className="ws-filter-clear" onClick={() => changeFilters([])}>
+              Clear filters
+            </button>
+          ) : null}
         </div>
       ) : null}
 
       <BoardPropertiesDialog board={board} open={propertiesOpen} onClose={() => setPropertiesOpen(false)} />
 
       {mode === "table" ? (
-        <BoardTable board={board} tasks={visibleTasks} />
+        <BoardTable board={shown} tasks={visibleTasks} filters={filters} />
       ) : (
-        <BoardColumns board={board} tasks={visibleTasks} groupBy={groupBy} />
+        <BoardColumns board={shown} tasks={visibleTasks} groupBy={groupBy} filters={filters} />
       )}
     </div>
   );
@@ -203,10 +356,12 @@ export function BoardColumns({
   board,
   tasks,
   groupBy,
+  filters = [],
 }: {
   board: Board;
   tasks: Task[];
   groupBy?: string;
+  filters?: BoardFilterRule[];
 }) {
   const openTask = useWorkspaceStore((state) => state.openTask);
   const createTask = useWorkspaceStore((state) => state.createTask);
@@ -343,11 +498,19 @@ export function BoardColumns({
                 disabled={pending === column.id}
                 onClick={async () => {
                   setPending(column.id);
-                  await createTask(board.id, statusColumn?.options?.[0]?.id ?? "", {
-                    fields:
-                      groupColumn && groupColumn.type !== "status"
-                        ? { [groupColumn.id]: column.id }
-                        : undefined,
+                  const seeded = seedFromFilters(board, filters);
+                  const status =
+                    groupColumn?.type === "status"
+                      ? column.id
+                      : seeded.status ?? statusColumn?.options?.[0]?.id ?? "";
+                  const fields = {
+                    ...(groupColumn && groupColumn.type !== "status"
+                      ? { [groupColumn.id]: column.id }
+                      : {}),
+                    ...seeded.fields,
+                  };
+                  await createTask(board.id, status, {
+                    fields: Object.keys(fields).length ? fields : undefined,
                   });
                   setPending(null);
                 }}

@@ -67,6 +67,39 @@ export interface Column {
   hidden?: boolean;
 }
 
+/**
+ * One row of a board filter. Rules combine with "and"; the values inside one
+ * rule are "any of". A field is a column id, or "title" for the task's own
+ * title (free text, never the description).
+ */
+export type FilterOp =
+  | "is"
+  | "is_not"
+  | "contains"
+  | "not_contains"
+  | "gt"
+  | "lt"
+  | "empty"
+  | "not_empty";
+
+export interface BoardFilterRule {
+  id: string;
+  field: string;
+  op: FilterOp;
+  value?: string | string[];
+}
+
+/**
+ * A saved board preset: the column it hides and the tasks it keeps. Missing
+ * `hiddenColumns` means every column is shown, which is the normal case.
+ */
+export interface BoardView {
+  id: string;
+  name: string;
+  filters: BoardFilterRule[];
+  hiddenColumns?: string[];
+}
+
 export interface Board {
   id: string;
   projectId: string;
@@ -75,6 +108,9 @@ export interface Board {
   description: string;
   columns: Column[];
   view?: "table" | "board";
+  views?: BoardView[];
+  /** The view the board opens on; null means "All tasks". */
+  defaultView?: string | null;
   position: number;
   updatedAt: number;
   seq: number;

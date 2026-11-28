@@ -43,6 +43,12 @@ export interface WorkspaceBoard {
   columns: WorkspaceColumn[];
 }
 
+/** A saved board view a preview was drawn through, when there was one. */
+export interface WorkspacePreviewView {
+  id?: string;
+  name: string;
+}
+
 export interface WorkspaceRoadmap {
   id: string;
   projectId: string;
@@ -110,6 +116,10 @@ export interface WorkspacePreviewBody {
   comments?: WorkspaceComment[];
   board?: WorkspaceBoard;
   tasks?: WorkspaceTask[];
+  /** The view the board preview used, and how much of the board it shows. */
+  view?: WorkspacePreviewView;
+  total?: number;
+  shown?: number;
   roadmap?: WorkspaceRoadmap;
   milestones?: WorkspaceMilestone[];
   brainstorm?: WorkspaceBrainstorm;

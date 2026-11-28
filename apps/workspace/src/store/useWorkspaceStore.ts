@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { ApiError, api } from "../lib/bridge";
 import type {
   Board,
+  BoardView,
   Brainstorm,
   BrainstormIdea,
   Change,
@@ -72,6 +73,12 @@ interface WorkspaceState {
   ) => Promise<Board | null>;
   renameBoard: (id: string, name: string) => Promise<void>;
   updateBoardColumns: (id: string, columns: Column[]) => Promise<Board | null>;
+  /** Save a board's views, and which one it opens on. */
+  saveBoardViews: (
+    id: string,
+    views: BoardView[],
+    defaultView?: string | null,
+  ) => Promise<Board | null>;
   moveBoard: (id: string, folderId: string | null) => Promise<void>;
   deleteBoard: (id: string) => Promise<void>;
 
@@ -424,6 +431,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async updateBoardColumns(id, columns) {
     try {
       const updated = await api.updateBoard(id, { columns });
+      set((state) => ({
+        boards: {
+          ...state.boards,
+          [updated.board.projectId]: sortByPosition(
+            upsert(state.boards[updated.board.projectId] ?? [], updated.board),
+          ),
+        },
+      }));
+      return updated.board;
+    } catch (error) {
+      set({ error: message(error) });
+      return null;
+    }
+  },
+
+  async saveBoardViews(id, views, defaultView) {
+    try {
+      const updated = await api.updateBoard(id, {
+        views,
+        ...(defaultView !== undefined ? { defaultView } : {}),
+      });
       set((state) => ({
         boards: {
           ...state.boards,
