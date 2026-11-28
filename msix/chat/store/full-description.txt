@@ -8,6 +8,8 @@ Ask anything in a clean, focused chat.
 
 Format an answer: colour, highlight, underline, keyboard keys, and callout boxes for notes, tips, warnings and dangers. The formatting lives in the reply's own text, so it draws the same on every device, and a reply shrinks back to plain prose when it is stripped.
 
+Formulas draw as formulas, in the middle of a sentence or across a block of their own, and the TeX behind one shows only while it is being edited. In a document that reads right to left the maths still reads left to right.
+
 Write and read in the direction your language uses. A reply written in Hebrew or Arabic lays itself out right to left on its own, the same way your own messages do, and a passage quoted in another language can be flipped with one line. Copy gives you the words without the markers that set the direction.
 
 Every conversation is named by the agent from what it turned out to be about, so your list reads like your work instead of like the first line you typed.
@@ -20,6 +22,8 @@ Run a coding agent on any computer signed in to your account, not only the one i
 
 Watch a run live: its answer, its plan and the page it is building. Steer it mid-run or stop it at any time.
 
+A board, a task, a document, a roadmap or a brainstorm from Hook Workspace opens in the panel beside the chat, so a plan the agent built for you is something you read rather than a paragraph in a reply. A roadmap draws its milestones on a timeline, a brainstorm draws its central word with the ideas around it, and a board follows the view it was saved in: its filters, its hidden columns and its default view.
+
 Start a direct coding chat on another computer. The transcript, folder and engine stay there; this computer keeps a readable cache, and only a small stub travels through your account. Open, steer, stop, rename or delete it from any device, and start it in any folder on that computer, not only in a project: the folder picker walks one level at a time and lists the folders you star first.
 
 Create a project on a remote computer from the same picker, without typing a path.
@@ -31,6 +35,8 @@ Turn on Advanced to see how each answer was made, including the model's thinking
 Let Hook remember how you like to work: pinned notes travel in every conversation, the rest is looked up when it matters, and you can edit or forget any of it in Settings.
 
 Attach screenshots and images and ask questions about them when the model supports vision.
+
+Make pictures. Ask for one and it is made and put into the conversation as a picture of its own, with Copy, Save, Save as and full screen. Ask for a change to a picture that is already there - "make it blue", "and the one above in that style" - and that picture is changed rather than described again, and the agent can work from a picture in the chat or one already on this computer. A free account makes ten pictures a day.
 
 Keep every conversation in readable files on your machine, with search, pinning and undoable deletion, plus an account copy that keeps your computers in step.
 
@@ -62,7 +68,7 @@ A direct coding chat writes its own checklist, so you can see the plan above the
 
 A folder that is already your own clone runs your own git, with your credential helper and SSH keys, instead of the bundled copy. Hook projects keep using Hook's copy, so a run started on another computer still pulls the latest saved work.
 
-A project can be deleted from the app, and the deletion reaches your other computers. A folder that holds work is never deleted: only the empty clone Hook made, when a project was begun elsewhere.
+A project can be deleted from the app, its files included: it waits in the trash for seven days and can be restored to the same place, and the deletion reaches your other computers. One project is one folder under its own name even when two windows open the same projects folder, so the copies named "name (2)" no longer appear.
 
 ADVANCED MODE
 

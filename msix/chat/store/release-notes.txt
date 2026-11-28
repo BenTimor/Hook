@@ -1,3 +1,21 @@
+HookCode 0.6.3
+
+Pictures. Ask for one and it arrives in the conversation as a picture of its own, with Copy, Save, Save as and full screen. "Make it blue" changes the picture already there instead of describing a new one, and you can point the agent at any picture in the chat, or one on this computer. A free plan makes ten a day.
+
+Roadmaps and brainstorms now open in the panel beside a chat, next to boards, tasks and documents, so a plan the agent made is something you look at rather than a paragraph in a reply.
+
+Boards carry views: saved filters, hidden columns and one default view, and the agent can follow a view while it works.
+
+Formulas draw as formulas, including one written across a whole block, and the TeX shows only while you edit it. In a Hebrew or Arabic document the maths still reads left to right.
+
+The agent changes one section of a document instead of sending the whole document back, so an edit is quicker and the rest of the page cannot drift.
+
+A deleted project waits in the trash for seven days, files included, and comes back to the same place. One project is one folder again, so the "name (2)" copies are gone.
+
+The checklist above the message box is headed by what the plan is for, not "Untitled".
+
+Sending from up in a long conversation no longer leaves your message off screen, and an arrow takes you back to the latest reply.
+
 HookCode 0.6.2
 
 Replies can be formatted now, in the same language a Hook Workspace document uses: colour, highlight, underline, keyboard keys, and callout boxes for notes, tips, warnings and dangers. A reply shrinks back to plain prose when the formatting is stripped, so it still reads correctly when it is pasted somewhere else.

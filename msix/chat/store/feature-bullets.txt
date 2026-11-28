@@ -2,8 +2,11 @@ Run coding agents on any computer signed in to your account, not only the one in
 Start, steer and stop a run from another PC or from HookCode on your phone.
 Format a reply with colour, highlights, keycaps and callout boxes; pasted elsewhere it is plain prose again.
 Read and write right to left: a reply in Arabic or Hebrew lays itself out on its own, and Copy leaves the markers out.
+Formulas draw as formulas, and the TeX behind one shows only while you edit it.
+A roadmap, a brainstorm, a board, a task or a document the agent made opens in the panel beside the chat.
 The agent names each conversation, so your history reads like the work you did.
 A coding agent can open a picture, and a direct coding chat can attach one.
+Ask for a picture and it arrives in the conversation; ask for a change to that picture instead of a new one.
 A direct coding chat writes its own checklist, so the plan is there while it works.
 Create a project on a remote computer from the New chat menu, without typing a path.
 Direct coding chats can live on another computer; only a small stub is saved to your account.
@@ -15,6 +18,6 @@ Memory carries preferences and decisions between conversations; pin, edit or for
 Bring your ChatGPT or Claude history with you in one import, and re-import whenever you want.
 Projects are backed by private git, so agents continue from the latest saved work.
 A folder that is already your own clone runs your own git, with your credential helper and SSH keys.
-Delete a project from the app and the deletion reaches your other computers; a folder with work in it is never removed.
+Delete a project and its files wait in the trash for a week, ready to be restored; the change reaches your other computers.
 One-click updates through the Microsoft Store, with search, pinning and undoable deletion.
 Report inappropriate AI output from inside the app.
