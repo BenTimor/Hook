@@ -1,0 +1,13 @@
+export function WorkspaceMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 256 256" className={className} aria-hidden="true">
+      <rect width="256" height="256" rx="58" fill="#171716" />
+      <circle cx="61" cy="128" r="33" fill="#fcf4e0" />
+      <rect x="101" y="95" width="54" height="54" rx="9" fill="#fcf4e0" />
+      <path
+        d="M192 93C194 89 197 89 199 93L227 150C229 154 226 158 221 158H169C164 158 161 154 163 150L192 93Z"
+        fill="#fcf4e0"
+      />
+    </svg>
+  );
+}

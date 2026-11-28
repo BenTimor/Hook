@@ -7,7 +7,7 @@ import {
   Plus,
   Users,
 } from "lucide-react";
-import { HookMark } from "@hook/ui";
+import { WorkspaceMark } from "@hook/ui";
 
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
 import { InvitationCard } from "./InvitationCard";
@@ -154,7 +154,7 @@ export function WorkspaceHome({
               </button>
             </section>
             <section className="ws-home-hook">
-              <HookMark className="ws-home-hook-mark" />
+              <WorkspaceMark className="ws-home-hook-mark" />
               <h2>An idea is a good start.</h2>
               <p>
                 Talk it through with Hook. Turn a rough thought into a plan you

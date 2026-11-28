@@ -5,6 +5,7 @@ import {
   SignInCard,
   TextFieldDialog,
   WindowControls,
+  WorkspaceMark,
   useWindowState,
 } from "@hook/ui";
 import { ChatDock } from "@hook/chat";
@@ -669,6 +670,7 @@ function SignIn({
       <main className="ws-signin">
         <SignInCard
           title="Hook Workspace"
+          mark={<WorkspaceMark />}
           copy="Projects, boards, tasks and documents — shared with the same account as Hook, and synced between your computers."
           signInLabel="Sign in with your Hook account"
           state={auth.state === "pending" && auth.userCode ? "pending" : "idle"}

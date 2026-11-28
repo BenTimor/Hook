@@ -18,7 +18,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { Dialog, HookMark, TextFieldDialog } from "@hook/ui";
+import { Dialog, TextFieldDialog, WorkspaceMark } from "@hook/ui";
 
 import type { Board, Brainstorm, DocumentMeta, Folder, Project, Roadmap, Role } from "../lib/types";
 import { useWorkspaceStore } from "../store/useWorkspaceStore";
@@ -854,7 +854,7 @@ export function Sidebar({
     <>
       <aside className="ws-rail" data-tauri-drag-region>
         <button className="ws-wordmark" onClick={onHome} aria-label="Workspace home">
-          <HookMark />
+          <WorkspaceMark />
           <span>Workspace</span>
         </button>
 

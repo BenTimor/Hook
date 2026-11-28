@@ -44,6 +44,8 @@ export type SignInCardProps = {
    * hero composition; every other host keeps the plain mark.
    */
   hero?: ReactNode;
+  /** The product mark above the copy; Hook's H unless the host names its own. */
+  mark?: ReactNode;
   /** A short benefit list, for a host with room for one (the phone). */
   highlights?: SignInHighlight[];
   /** The idle button. A phone says "Continue with Google", a desktop "Sign in". */
@@ -76,6 +78,7 @@ export function SignInCard({
   title,
   copy,
   hero,
+  mark,
   highlights,
   signInLabel = "Continue with Google",
   signInIcon,
@@ -94,7 +97,7 @@ export function SignInCard({
         <div className="signin-hero">{hero}</div>
       ) : (
         <div className="signin-mark" aria-hidden="true">
-          <HookMark />
+          {mark ?? <HookMark />}
         </div>
       )}
 

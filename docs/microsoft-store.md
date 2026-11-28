@@ -89,7 +89,7 @@ the per-size, unplated AppList assets. Hook's mark is a rounded square, so the
 plate showed through its four corners: with `BackgroundColor="transparent"`
 that is the user's accent colour, which looked like a red ring around the
 taskbar button on a red-accent machine. The manifest therefore names the mark's
-own fill (`#191817` for chat, `#20201E` for Workspace), and
+own fill (`#191817` for chat, `#171716` for Workspace), and
 `pnpm msix:icons` renders
 `Square44x44Logo.targetsize-<n>[_altform-unplated|_altform-lightunplated].png`
 (14 sizes × 3 themes) from `apps/<product>/src-tauri/icons/icon.png`. Those
